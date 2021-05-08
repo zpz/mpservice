@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -e
+
+PROJ=mpservice
+
+docker build \
+    -f Dockerfile-release \
+    --build-arg PROJ=${PROJ} \
+    -t ${PROJ}-release:latest \
+    .
+
+docker create --name ${PROJ}-release ${PROJ}-release:latest
+rm -rf $(pwd)/build
+docker cp ${PROJ}-release:/build $(pwd)/build
+docker rm -f ${PROJ}-release

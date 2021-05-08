@@ -1,0 +1,15 @@
+FROM python:3.7-slim
+USER root
+
+ARG PROJ
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --no-upgrade -y curl \
+    && curl -skL https://raw.githubusercontent.com/zpz/linux/master/bash/bashrc -o /etc/bash.bashrc
+
+COPY . /tmp/
+
+RUN cd /tmp \
+    && python -m pip install -e . \
+    && python -m pip uninstall -y ${PROJ}  \
+    && python -m pip install -r /tmp/requirements-test.txt

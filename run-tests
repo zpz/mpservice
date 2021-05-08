@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -e
+
+PROJ=mpservice
+
+docker build \
+    -f Dockerfile-dev \
+    --build-arg PROJ=${PROJ} \
+    -t ${PROJ}-dev:latest \
+    .
+
+
+if [[ $# > 0 ]]; then
+    if [[ $# > 1 ]] || [[ $1 != -i ]]; then
+        >&2 echo unknow options "'$@'"
+        exit 1
+    fi
+
+    docker run \
+        -it --rm \
+        -v $(pwd):/src \
+        --workdir /src \
+        -e PYTHONPATH=/src/src \
+        ${PROJ}-dev:latest \
+        bash
+else
+    echo
+    echo --- checking code ---
+    echo
+    docker run \
+        --rm \
+        -v $(pwd):/src \
+        --workdir /src \
+        -e PYTHONPATH=/src/src \
+        ${PROJ}-dev:latest \
+            /src/check-code
+
+    echo
+    echo --- running tests ---
+    echo
+    docker run \
+        --rm \
+        -v $(pwd):/src \
+        --workdir /src \
+        -e PYTHONPATH=/src/src \
+        ${PROJ}-dev:latest \
+            py.test \
+                --log-cli-level info \
+                --cov=/src/src/${PROJ} \
+                --cov-report term-missing \
+                --cov-fail-under 70 \
+                /src/tests
+fi
