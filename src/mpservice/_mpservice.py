@@ -11,12 +11,11 @@ import queue
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
-from typing import List, Type, Tuple, Sequence, Union, Dict
+from typing import List, Type, Tuple, Sequence, Dict
 
 import psutil  # type: ignore
 
 from ._mperror import MpError
-from ._logging import config_logger
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,7 @@ class Modelet(metaclass=ABCMeta):
             q_err: mp.Queue,
             q_in_lock: synchronize.Lock,
             cpus: Sequence[int] = None,
-            log_level: Union[int, str] = None,
             **init_kwargs):
-        config_logger(level=log_level or 'info', with_process_name=True)
-        # TODO: allow user to customize log formatting.
-
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
         modelet = cls(**init_kwargs)
@@ -239,7 +234,6 @@ class ModelService:
                         'q_err': self._q_err,
                         'cpus': cpu,
                         'q_in_lock': q_in_lock,
-                        'log_level': logger.getEffectiveLevel(),
                         **init_kwargs,
                     },
                 )
