@@ -49,6 +49,6 @@ else
                 --log-cli-level info \
                 --cov=/src/src/${PROJ} \
                 --cov-report term-missing \
-                --cov-fail-under 70 \
+                --cov-fail-under 60 \
                 /src/tests
 fi
