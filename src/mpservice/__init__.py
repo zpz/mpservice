@@ -1,12 +1,12 @@
-__version__ = '0.7.1'
+__version__ = '0.7.2'
 
 from ._mpservice import ModelService, Modelet
-from ._mperror import MpError
+from ._mperror import MPError
 from ._server_process import ServerProcess
 
 
 __all__ = [
-    'MpError',
+    'MPError',
     'Modelet',
     'ModelService',
     'ServerProcess',

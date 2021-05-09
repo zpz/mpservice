@@ -15,7 +15,7 @@ from typing import List, Type, Tuple, Sequence, Dict
 
 import psutil  # type: ignore
 
-from ._mperror import MpError
+from ._mperror import MPError
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +66,9 @@ class Modelet(metaclass=ABCMeta):
                 if not silent_errors or not isinstance(e, silent_errors):
                     logger.info(e)
                 # There are opportunities to print traceback
-                # and details later using the `MpError`
+                # and details later using the `MPError`
                 # object. Be brief on the logging here.
-                err = MpError(e)
+                err = MPError(e)
                 q_err.put((uid, err))
 
     def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
@@ -92,23 +92,17 @@ class Modelet(metaclass=ABCMeta):
                 uids.append(uid)
                 n += 1
 
-                time0 = perf_counter()
+                wait_until = perf_counter() + batch_wait_time
                 while n < batch_size:
+                    time_left = wait_until - perf_counter()
                     try:
-                        if batch_wait_time > 0:
-                            time_left = batch_wait_time - \
-                                (perf_counter() - time0)
-                            if time_left > 0:
-                                uid, x = q_in.get(timeout=time_left)
-                            else:
-                                uid, x = q_in.get_nowait()
-                        else:
-                            uid, x = q_in.get_nowait()
-                        batch.append(x)
-                        uids.append(x)
-                        n += 1
+                        uid, x = q_in.get(timeout=time_left)
                     except queue.Empty:
                         break
+
+                    batch.append(x)
+                    uids.append(uid)
+                    n += 1
 
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
@@ -124,7 +118,7 @@ class Modelet(metaclass=ABCMeta):
             except Exception as e:
                 if not silent_errors or not isinstance(e, silent_errors):
                     logger.info(e)
-                err = MpError(e)
+                err = MPError(e)
                 for uid in uids:
                     q_err.put((uid, err))
             else:
@@ -151,7 +145,7 @@ class Modelet(metaclass=ABCMeta):
 
 
 class ModelService:
-    MPCLASS = mp
+    MP_CLASS = mp
     # This class attribute is provided because in some cases
     # on may want to use `torch.multiprocessing`, which is
     # a drop-in replacement for the standard `multiprocessing`
@@ -163,9 +157,9 @@ class ModelService:
                  cpus: Sequence[int] = None):
         self.max_queue_size = max_queue_size or 1024
         self._q_in_out: List[mp.Queue] = [
-            self.MPCLASS.Queue(self.max_queue_size)]
-        self._q_err: mp.Queue = self.MPCLASS.Queue(self.max_queue_size)
+            self.MP_CLASS.Queue(self.max_queue_size)]
         self._q_in_lock: List[synchronize.Lock] = []
+        self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
 
         self._uid_to_futures: Dict[int, asyncio.Future] = {}
         self._t_gather_results: asyncio.Task = None  # type: ignore
@@ -187,10 +181,13 @@ class ModelService:
         # `modelet` is the class object, not instance.
         assert not self._started
         q_in = self._q_in_out[-1]
-        q_out: mp.Queue = self.MPCLASS.Queue(self.max_queue_size)
-        self._q_in_out.append(q_out)
-        q_in_lock = self.MPCLASS.Lock()
+        q_in_lock = self.MP_CLASS.Lock()
         self._q_in_lock.append(q_in_lock)
+
+        q_out: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        self._q_in_out.append(q_out)
+
+        n_cpus = psutil.cpu_count(logical=True)
 
         if workers:
             # Number of workers is specified.
@@ -212,8 +209,6 @@ class ModelService:
                 # This provides the ultimate flexibility, e.g.
                 #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], None]
 
-        n_cpus = psutil.cpu_count(logical=True)
-
         for cpu in cpus:
             if cpu is None:
                 logger.info('adding modelet %s', modelet.__name__)
@@ -225,7 +220,7 @@ class ModelService:
                             modelet.__name__, cpu)
 
             self._modelets.append(
-                self.MPCLASS.Process(
+                self.MP_CLASS.Process(
                     target=modelet.run,
                     name=f'modelet-{cpu}',
                     kwargs={
@@ -252,11 +247,11 @@ class ModelService:
             return
         if self._t_gather_results is not None and not self._t_gather_results.done():
             self._t_gather_results.cancel()
-            self._t_gather_results = None
+            # self._t_gather_results = None
         for m in self._modelets:
-            if m.is_alive():
-                m.terminate()
-                m.join()
+            # if m.is_alive():
+            m.terminate()
+            m.join()
         self._started = False
 
         # Reset CPU affinity.
@@ -271,7 +266,7 @@ class ModelService:
         futures = self._uid_to_futures
         while True:
             while not q_out.empty():
-                uid, y = q_out.get()
+                uid, y = q_out.get_nowait()
                 fut = futures.pop(uid)
                 try:
                     fut.set_result(y)
@@ -281,7 +276,7 @@ class ModelService:
                 # No sleep. Get results out of the queue as quickly as possible.
 
             while not q_err.empty():
-                uid, err = q_err.get()
+                uid, err = q_err.get_nowait()
                 fut = futures.pop(uid)
                 try:
                     fut.set_exception(err)
@@ -315,5 +310,5 @@ class ModelService:
         self.start()
         return self
 
-    def __exit__(self, *args_ignore, **kwargs_ignore):
+    def __exit__(self, exc_type, exc_value, exc_traceback):
         self.stop()

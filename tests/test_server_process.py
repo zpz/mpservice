@@ -61,7 +61,7 @@ def test_data_server():
     )
     p2 = Process(
         target=wait_long,
-        args=(data_server, 1),
+        args=(data_server,),
     )
     p3 = Process(
         target=increment2,

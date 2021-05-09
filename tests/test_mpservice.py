@@ -38,7 +38,7 @@ async def test_service():
 
 
 @pytest.mark.asyncio
-async def _test_batch():
+async def test_batch():
     service = ModelService(cpus=[0])
     service.add_modelet(Square, cpus=[1, 2, 3])
     with service:

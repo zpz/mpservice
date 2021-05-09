@@ -24,7 +24,7 @@ def full_class_name(cls):
 # about pickling Exceptions with tracebacks.
 
 
-class MpError(Exception):
+class MPError(Exception):
     # An object of this class can be properly pickled
     # to survice transmission in `multiprocessing.Queue`.
     def __init__(self, e: Exception):
@@ -52,7 +52,7 @@ _excepthook_ = sys.excepthook
 
 
 def _my_excepthook(type_, value, tb):
-    if type_ is MpError:
+    if type_ is MPError:
         # With this hook, the printout upon
         #   `raise SubProcessError(ValueError('wrong value'))`
         # is like what happens upon

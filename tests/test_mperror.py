@@ -1,6 +1,6 @@
 from multiprocessing import Process, Queue
 
-from mpservice._mperror import MpError
+from mpservice._mperror import MPError
 
 
 def goo(x, q):
@@ -10,7 +10,7 @@ def goo(x, q):
         else:
             raise ValueError('wrong value!')
     except Exception as e:
-        q.put(MpError(e))
+        q.put(MPError(e))
 
 
 def test_exception():
@@ -20,5 +20,5 @@ def test_exception():
     p.join()
 
     y = q.get()
-    assert isinstance(y, MpError)
+    assert isinstance(y, MPError)
     assert y.message == 'wrong value!'
