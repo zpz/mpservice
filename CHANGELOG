@@ -1,0 +1,7 @@
+Release 0.7.3
+=============
+
+Added:
+
+- `ModelService.a_predict` gains new parameters `enqueue_timeout` and `total_timeout`,
+  with default values 10 and 100 seconds, respectively.

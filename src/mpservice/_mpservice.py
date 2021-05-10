@@ -11,13 +11,25 @@ import queue
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
-from typing import List, Type, Tuple, Sequence, Dict
+from typing import List, Type, Tuple, Sequence, Dict, Union
 
 import psutil  # type: ignore
 
 from ._mperror import MPError
 
 logger = logging.getLogger(__name__)
+
+
+class TimeoutError(Exception):
+    pass
+
+
+class EnqueueTimeout(TimeoutError):
+    pass
+
+
+class TotalTimeout(TimeoutError):
+    pass
 
 
 class Modelet(metaclass=ABCMeta):
@@ -267,7 +279,9 @@ class ModelService:
         while True:
             while not q_out.empty():
                 uid, y = q_out.get_nowait()
-                fut = futures.pop(uid)
+                fut = futures.pop(uid, None)
+                if fut is None:  # timed-out in `a_predic`.
+                    continue
                 try:
                     fut.set_result(y)
                 except asyncio.InvalidStateError:
@@ -277,7 +291,9 @@ class ModelService:
 
             while not q_err.empty():
                 uid, err = q_err.get_nowait()
-                fut = futures.pop(uid)
+                fut = futures.pop(uid, None)
+                if fut is None:
+                    continue  # timed-out in `a_predict`.
                 try:
                     fut.set_exception(err)
                 except asyncio.InvalidStateError:
@@ -287,24 +303,55 @@ class ModelService:
 
             await asyncio.sleep(0.0013)
 
-    async def a_predict(self, x):
-        fut = self.loop.create_future()
+    async def a_predict(self,
+                        x,
+                        *,
+                        enqueue_timeout: Union[int, float] = None,
+                        total_timeout: Union[int, float] = None,
+                        ):
+        if enqueue_timeout is None:
+            enqueue_timeout = 10
+        elif enqueue_timeout < 0:
+            enqueue_timeout = 0
+        if total_timeout is None:
+            total_timeout = max(100, enqueue_timeout * 10)
+        else:
+            assert total_timeout > 0, "total_timeout must be > 0"
+        if enqueue_timeout > total_timeout:
+            enqueue_timeout = total_timeout
+
+        loop = self.loop
+        fut = loop.create_future()
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         q_in = self._q_in_out[0]
 
-        # Exception handling is slow,
-        # hence proactively check until
-        # it's more likely to be un-empty.
+        time0 = loop.time()
+        time1 = time0 + enqueue_timeout
+        time2 = time0 + total_timeout
+
         while True:
-            while q_in.full():
-                await asyncio.sleep(0.0012)
             try:
                 q_in.put_nowait((uid, x))
-                break
             except queue.Full:
-                await asyncio.sleep(0.0013)
-        return await fut
+                timenow = loop.time()
+                if timenow < time1:
+                    await asyncio.sleep(0.00089)
+                else:
+                    fut.cancel()
+                    del self._uid_to_futures[uid]
+                    raise EnqueueTimeout(f'waited {timenow - time0} seconds')
+            else:
+                break
+
+        try:
+            await asyncio.wait_for(fut, timeout=time2 - loop.time())
+        except asyncio.TimeoutError:
+            # `fut` is now cancelled.
+            del self._uid_to_futures[uid]
+            raise TotalTimeout(f'waited {loop.time() - time0} seconds')
+        else:
+            return fut.result()
 
     def __enter__(self):
         self.start()
