@@ -1,3 +1,12 @@
+Release 0.8.0
+=============
+
+Changed:
+
+- Replaced machine learning terminologies ('model', 'predict', etc) in namings
+  by generic names. This broke public APIs.
+
+
 Release 0.7.3
 =============
 

@@ -1,8 +1,8 @@
 # mpservice
 
-Model serving with asyncio, multiprocessing, and batching.
+Serving with asyncio, multiprocessing, and batching.
 
-Although the code uses some machine-learning terminology to name things, the use case is generic.
+One use case is machine learning models, but the code is generic and not restricted to any particular use case.
 
 Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/). This article describes roughly version 0.7.2.
 

@@ -1,9 +1,4 @@
 
-'''
-Although named after machine learning use cases,
-this service utility is generic.
-'''
-
 import asyncio
 import logging
 import multiprocessing as mp
@@ -32,9 +27,9 @@ class TotalTimeout(TimeoutError):
     pass
 
 
-class Modelet(metaclass=ABCMeta):
+class Servelet(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
-    # `__init__` and implement `predict`.
+    # `__init__` and implement `process`.
 
     @classmethod
     def run(cls, *,
@@ -46,11 +41,11 @@ class Modelet(metaclass=ABCMeta):
             **init_kwargs):
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
-        modelet = cls(**init_kwargs)
-        modelet.start(q_in=q_in,
-                      q_out=q_out,
-                      q_err=q_err,
-                      q_in_lock=q_in_lock)
+        obj = cls(**init_kwargs)
+        obj.start(q_in=q_in,
+                  q_out=q_out,
+                  q_err=q_err,
+                  q_in_lock=q_in_lock)
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -69,9 +64,9 @@ class Modelet(metaclass=ABCMeta):
             uid, x = q_in.get()
             try:
                 if batch_size:
-                    y = self.predict([x])[0]
+                    y = self.process([x])[0]
                 else:
-                    y = self.predict(x)
+                    y = self.process(x)
                 q_out.put((uid, y))
 
             except Exception as e:
@@ -126,7 +121,7 @@ class Modelet(metaclass=ABCMeta):
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
             try:
-                results = self.predict(batch)
+                results = self.process(batch)
             except Exception as e:
                 if not silent_errors or not isinstance(e, silent_errors):
                     logger.info(e)
@@ -146,7 +141,7 @@ class Modelet(metaclass=ABCMeta):
             self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
 
     @abstractmethod
-    def predict(self, x):
+    def process(self, x):
         # `x`: a single element if `self.batch_size == 0`;
         # else, a list of elements.
         # When `batch_size == 0`, hence `x` is a single element,
@@ -156,7 +151,7 @@ class Modelet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class ModelService:
+class Service:
     MP_CLASS = mp
     # This class attribute is provided because in some cases
     # on may want to use `torch.multiprocessing`, which is
@@ -175,7 +170,7 @@ class ModelService:
 
         self._uid_to_futures: Dict[int, asyncio.Future] = {}
         self._t_gather_results: asyncio.Task = None  # type: ignore
-        self._modelets: List[mp.Process] = []
+        self._servelets: List[mp.Process] = []
 
         self.loop = asyncio.get_running_loop()
 
@@ -184,13 +179,13 @@ class ModelService:
 
         self._started = False
 
-    def add_modelet(self,
-                    modelet: Type[Modelet],
-                    *,
-                    cpus=None,
-                    workers: int = None,
-                    **init_kwargs):
-        # `modelet` is the class object, not instance.
+    def add_servelet(self,
+                     servelet: Type[Servelet],
+                     *,
+                     cpus=None,
+                     workers: int = None,
+                     **init_kwargs):
+        # `servelet` is the class object, not instance.
         assert not self._started
         q_in = self._q_in_out[-1]
         q_in_lock = self.MP_CLASS.Lock()
@@ -223,18 +218,18 @@ class ModelService:
 
         for cpu in cpus:
             if cpu is None:
-                logger.info('adding modelet %s', modelet.__name__)
+                logger.info('adding servelet %s', servelet.__name__)
             else:
                 if isinstance(cpu, int):
                     cpu = [cpu]
                 assert all(0 <= c < n_cpus for c in cpu)
-                logger.info('adding modelet %s at CPU %s',
-                            modelet.__name__, cpu)
+                logger.info('adding servelet %s at CPU %s',
+                            servelet.__name__, cpu)
 
-            self._modelets.append(
+            self._servelets.append(
                 self.MP_CLASS.Process(
-                    target=modelet.run,
-                    name=f'modelet-{cpu}',
+                    target=servelet.run,
+                    name=f'servelet-{cpu}',
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
@@ -247,9 +242,9 @@ class ModelService:
             )
 
     def start(self):
-        assert self._modelets
+        assert self._servelets
         assert not self._started
-        for m in self._modelets:
+        for m in self._servelets:
             m.start()
         self._t_gather_results = asyncio.create_task(self._gather_results())
         self._started = True
@@ -260,7 +255,7 @@ class ModelService:
         if self._t_gather_results is not None and not self._t_gather_results.done():
             self._t_gather_results.cancel()
             # self._t_gather_results = None
-        for m in self._modelets:
+        for m in self._servelets:
             # if m.is_alive():
             m.terminate()
             m.join()
@@ -293,7 +288,7 @@ class ModelService:
                 uid, err = q_err.get_nowait()
                 fut = futures.pop(uid, None)
                 if fut is None:
-                    continue  # timed-out in `a_predict`.
+                    continue  # timed-out in `__call__`.
                 try:
                     fut.set_exception(err)
                 except asyncio.InvalidStateError:
@@ -303,12 +298,12 @@ class ModelService:
 
             await asyncio.sleep(0.0013)
 
-    async def a_predict(self,
-                        x,
-                        *,
-                        enqueue_timeout: Union[int, float] = None,
-                        total_timeout: Union[int, float] = None,
-                        ):
+    async def __call__(self,
+                       x,
+                       *,
+                       enqueue_timeout: Union[int, float] = None,
+                       total_timeout: Union[int, float] = None,
+                       ):
         if enqueue_timeout is None:
             enqueue_timeout = 10
         elif enqueue_timeout < 0:
