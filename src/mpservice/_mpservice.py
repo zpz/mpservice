@@ -288,12 +288,15 @@ class Service:
                 uid, err = q_err.get_nowait()
                 fut = futures.pop(uid, None)
                 if fut is None:
+                    logger.error(
+                        'got error for an already-cancelled task: %r', err)
                     continue  # timed-out in `__call__`.
                 try:
                     fut.set_exception(err)
                 except asyncio.InvalidStateError:
                     if fut.cancelled():
-                        logger.warning('Future object is already cancelled')
+                        logger.error(
+                            'got error for an already-cancelled task: %r', err)
                 # No sleep. Get results out of the queue as quickly as possible.
 
             await asyncio.sleep(0.0013)
@@ -343,7 +346,11 @@ class Service:
             await asyncio.wait_for(fut, timeout=time2 - loop.time())
         except asyncio.TimeoutError:
             # `fut` is now cancelled.
-            del self._uid_to_futures[uid]
+            if uid in self._uid_to_futures:
+                # `uid` could have been deleted by
+                # `_gather_results` during very subtle
+                # timing coincidence.
+                del self._uid_to_futures[uid]
             raise TotalTimeout(f'waited {loop.time() - time0} seconds')
         else:
             return fut.result()
