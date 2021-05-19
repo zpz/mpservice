@@ -249,10 +249,12 @@ class Server:
         for m in self._servlets:
             m.start()
             n += 1
-        while n > 0:
+        k = 0
+        while k < n:
             z = self._q_err.get()
             assert z == 'ready'
-            n -= 1
+            k += 1
+            print("servlet processes ready:", k)
 
         self._t_gather_results = asyncio.create_task(self._gather_results())
         self._started = True
