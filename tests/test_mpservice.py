@@ -3,22 +3,22 @@ import time
 import pytest
 
 from mpservice._mpservice import (
-    Servelet, Service,
+    Servlet, Server,
     EnqueueTimeout, TotalTimeout,
 )
 
 
-class Scale(Servelet):
+class Scale(Servlet):
     def process(self, x):
         return x * 2
 
 
-class Shift(Servelet):
+class Shift(Servlet):
     def process(self, x):
         return x + 3
 
 
-class Square(Servelet):
+class Square(Servlet):
     def __init__(self):
         super().__init__(batch_size=4)
 
@@ -26,7 +26,7 @@ class Square(Servelet):
         return [v*v for v in x]
 
 
-class Delay(Servelet):
+class Delay(Servlet):
     def process(self, x):
         time.sleep(x)
         return x
@@ -34,9 +34,9 @@ class Delay(Servelet):
 
 @pytest.mark.asyncio
 async def test_service():
-    service = Service(cpus=[0])
-    service.add_servelet(Scale, cpus=[1, 2])
-    service.add_servelet(Shift, cpus=[3])
+    service = Server(cpus=[0])
+    service.add_servlet(Scale, cpus=[1, 2])
+    service.add_servlet(Shift, cpus=[3])
     with service:
         z = await service(3)
         assert z == 3 * 2 + 3
@@ -49,8 +49,8 @@ async def test_service():
 
 @pytest.mark.asyncio
 async def test_batch():
-    service = Service(cpus=[0])
-    service.add_servelet(Square, cpus=[1, 2, 3])
+    service = Server(cpus=[0])
+    service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
         z = await service(3)
         assert z == 3 * 3
@@ -65,8 +65,8 @@ async def test_batch():
 async def test_timeout():
     queue_size = 4
 
-    service = Service(cpus=[0], max_queue_size=queue_size)
-    service.add_servelet(Delay)
+    service = Server(cpus=[0], max_queue_size=queue_size)
+    service.add_servlet(Delay)
     with service:
         z = await service(3)
         assert z == 3

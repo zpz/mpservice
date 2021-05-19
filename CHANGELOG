@@ -5,6 +5,8 @@ Changed:
 
 - Replaced machine learning terminologies ('model', 'predict', etc) in namings
   by generic names. This broke public APIs.
+- Guarantee worker initiation (running in other processes) before service startup
+  finishes.
 
 
 Release 0.7.3

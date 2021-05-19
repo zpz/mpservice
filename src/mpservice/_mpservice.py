@@ -27,7 +27,7 @@ class TotalTimeout(TimeoutError):
     pass
 
 
-class Servelet(metaclass=ABCMeta):
+class Servlet(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
     # `__init__` and implement `process`.
 
@@ -133,6 +133,7 @@ class Servelet(metaclass=ABCMeta):
                     q_out.put((uid, y))
 
     def start(self, *, q_in, q_out, q_err, q_in_lock):
+        q_err.put('ready')
         logger.info('%s started', self.name)
         if self.batch_size > 1:
             self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
@@ -151,7 +152,7 @@ class Servelet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class Service:
+class Server:
     MP_CLASS = mp
     # This class attribute is provided because in some cases
     # on may want to use `torch.multiprocessing`, which is
@@ -170,7 +171,7 @@ class Service:
 
         self._uid_to_futures: Dict[int, asyncio.Future] = {}
         self._t_gather_results: asyncio.Task = None  # type: ignore
-        self._servelets: List[mp.Process] = []
+        self._servlets: List[mp.Process] = []
 
         self.loop = asyncio.get_running_loop()
 
@@ -179,13 +180,13 @@ class Service:
 
         self._started = False
 
-    def add_servelet(self,
-                     servelet: Type[Servelet],
-                     *,
-                     cpus=None,
-                     workers: int = None,
-                     **init_kwargs):
-        # `servelet` is the class object, not instance.
+    def add_servlet(self,
+                    servlet: Type[Servlet],
+                    *,
+                    cpus=None,
+                    workers: int = None,
+                    **init_kwargs):
+        # `servlet` is the class object, not instance.
         assert not self._started
         q_in = self._q_in_out[-1]
         q_in_lock = self.MP_CLASS.Lock()
@@ -218,18 +219,18 @@ class Service:
 
         for cpu in cpus:
             if cpu is None:
-                logger.info('adding servelet %s', servelet.__name__)
+                logger.info('adding servlet %s', servlet.__name__)
             else:
                 if isinstance(cpu, int):
                     cpu = [cpu]
                 assert all(0 <= c < n_cpus for c in cpu)
-                logger.info('adding servelet %s at CPU %s',
-                            servelet.__name__, cpu)
+                logger.info('adding servlet %s at CPU %s',
+                            servlet.__name__, cpu)
 
-            self._servelets.append(
+            self._servlets.append(
                 self.MP_CLASS.Process(
-                    target=servelet.run,
-                    name=f'servelet-{cpu}',
+                    target=servlet.run,
+                    name=f'servlet-{cpu}',
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
@@ -242,10 +243,17 @@ class Service:
             )
 
     def start(self):
-        assert self._servelets
+        assert self._servlets
         assert not self._started
-        for m in self._servelets:
+        n = 0
+        for m in self._servlets:
             m.start()
+            n += 1
+        while n > 0:
+            z = self._q_err.get()
+            assert z == 'ready'
+            n -= 1
+
         self._t_gather_results = asyncio.create_task(self._gather_results())
         self._started = True
 
@@ -255,7 +263,7 @@ class Service:
         if self._t_gather_results is not None and not self._t_gather_results.done():
             self._t_gather_results.cancel()
             # self._t_gather_results = None
-        for m in self._servelets:
+        for m in self._servlets:
             # if m.is_alive():
             m.terminate()
             m.join()
