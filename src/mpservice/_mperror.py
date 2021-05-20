@@ -33,19 +33,20 @@ class MPError(Exception):
         # for otherwise, we can't get the traceback for `e`.
         self.name = e.__class__.__name__
         self.qualname = full_class_name(e.__class__)
-        self.message = str(e)
         self.trace_back = format_exc()
         self._args = e.args
+        self._repr_e = repr(e)
+        self._str_e = str(e)
 
     @property
     def args(self):
         return self._args
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.qualname}('{self.message}'))"
+        return self._repr_e
 
     def __str__(self):
-        return self.qualname + ': ' + self.message
+        return self._str_e
 
 
 _excepthook_ = sys.excepthook
