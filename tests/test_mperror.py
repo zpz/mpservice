@@ -21,4 +21,4 @@ def test_exception():
 
     y = q.get()
     assert isinstance(y, MPError)
-    assert y.message == 'wrong value!'
+    assert str(y) == 'wrong value!'
