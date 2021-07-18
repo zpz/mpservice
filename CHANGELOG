@@ -1,3 +1,11 @@
+Release xxx
+===========
+
+Changed:
+
+- `Servlet.process` is renamed to `Servlet.__call__`.
+
+
 Release 0.8.0
 =============
 

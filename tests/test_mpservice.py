@@ -9,12 +9,12 @@ from mpservice._mpservice import (
 
 
 class Scale(Servlet):
-    def process(self, x):
+    def __call__(self, x):
         return x * 2
 
 
 class Shift(Servlet):
-    def process(self, x):
+    def __call__(self, x):
         return x + 3
 
 
@@ -22,12 +22,12 @@ class Square(Servlet):
     def __init__(self):
         super().__init__(batch_size=4)
 
-    def process(self, x):
+    def __call__(self, x):
         return [v*v for v in x]
 
 
 class Delay(Servlet):
-    def process(self, x):
+    def __call__(self, x):
         time.sleep(x)
         return x
 

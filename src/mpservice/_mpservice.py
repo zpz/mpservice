@@ -64,9 +64,9 @@ class Servlet(metaclass=ABCMeta):
             uid, x = q_in.get()
             try:
                 if batch_size:
-                    y = self.process([x])[0]
+                    y = self([x])[0]
                 else:
-                    y = self.process(x)
+                    y = self(x)
                 q_out.put((uid, y))
 
             except Exception as e:
@@ -121,7 +121,7 @@ class Servlet(metaclass=ABCMeta):
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
             try:
-                results = self.process(batch)
+                results = self(batch)
             except Exception as e:
                 if not silent_errors or not isinstance(e, silent_errors):
                     logger.info(e)
@@ -142,7 +142,7 @@ class Servlet(metaclass=ABCMeta):
             self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
 
     @abstractmethod
-    def process(self, x):
+    def __call__(self, x):
         # `x`: a single element if `self.batch_size == 0`;
         # else, a list of elements.
         # When `batch_size == 0`, hence `x` is a single element,
@@ -155,7 +155,7 @@ class Servlet(metaclass=ABCMeta):
 class Server:
     MP_CLASS = mp
     # This class attribute is provided because in some cases
-    # on may want to use `torch.multiprocessing`, which is
+    # one may want to use `torch.multiprocessing`, which is
     # a drop-in replacement for the standard `multiprocessing`
     # with some enhancements related to data sharing between
     # processes.
