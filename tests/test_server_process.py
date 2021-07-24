@@ -1,7 +1,7 @@
 import time
 from multiprocessing import Process, current_process, active_children
 
-from mpservice._server_process import ServerProcess
+from mpservice.server_process import ServerProcess
 
 
 class MyDataServer(ServerProcess):

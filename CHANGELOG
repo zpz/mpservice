@@ -1,9 +1,11 @@
-Release xxx
+Release 0.8.1
 ===========
 
 Changed:
 
 - `Servlet.process` is renamed to `Servlet.__call__`.
+- `mpservice._http` renamed to `mpservice.http_server` with enhancements.
+- `mpservice._server_process` renamed to `mpservice.server_process`.
 
 
 Release 0.8.0
