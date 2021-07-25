@@ -4,15 +4,10 @@ import logging
 import sys
 from typing import Union
 
-import nest_asyncio
 import uvicorn  # type: ignore
 from starlette.responses import PlainTextResponse
 from starlette.applications import Starlette
 
-
-nest_asyncio.apply()
-# Prevent the "this event loop is alreayd running" problem
-# encountered when using `run_app` in a `multiprocessing.Process`.
 
 logger = logging.getLogger(__name__)
 
@@ -136,16 +131,19 @@ def make_server(
     # `workers > 1` is not used in my use case and
     # is likely broken.
 
+    # This part is not tested.
     if config.should_reload:
         sock = config.bind_socket()
         supervisor = uvicorn.supervisors.ChangeReload(
             config, target=server.run, sockets=[sock])
         return supervisor
+
     # if config.workers > 1:
     #     sock = config.bind_socket()
     #     supervisor = uvicorn.supervisors.Multiprocess(
     #         config, target=server.run, sockets=[sock])
     #     return supervisor
+
     return server
 
 
@@ -155,9 +153,14 @@ def run_app(app, **kwargs):
     # 'http://127.0.0.1:<port>'.
 
     server = make_server(app, **kwargs)
-    server.run()
-    # `nest_asyncio` fixes "this event loop is already running" issue
-    # when this function is called in another process.
+    server.config.setup_event_loop()
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        import nest_asyncio
+        nest_asyncio.apply()
+        # Prevent the "this event loop is alreayd running" problem
+        # encountered when using this in a `multiprocessing.Process`.
+    loop.run_until_complete(server.serve(sockets=None))
 
 
 @contextlib.asynccontextmanager
@@ -169,8 +172,9 @@ async def run_local_app(app, **kwargs):
     server = make_server(app, **kwargs)
     handle = asyncio.ensure_future(server.serve(sockets=None))
 
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.1)
     # This fixes an issue but I didn't understand it.
+    # This is also found in `uvicorn.tests.utils.run_server`.
 
     try:
         yield server
