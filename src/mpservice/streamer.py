@@ -5,6 +5,7 @@ Reference: https://zpz.github.io/blog/stream-processing/
 '''
 
 import asyncio
+import inspect
 import logging
 import multiprocessing
 import typing
@@ -48,14 +49,17 @@ T = TypeVar('T')
 
 
 async def stream(x: Iterable) -> AsyncIterator:
-    '''
-    Turn a sync iterable into an async iterator.
+    '''Turn a sync iterable into an async iterator.
     '''
     for xx in x:
         yield xx
 
 
 async def buffer(in_stream: AsyncIterable, buffer_size: int = None) -> AsyncIterator:
+    '''Buffer is used to stabilize the speed of data flow in situations
+    where each the upstream production or downstream consumption
+    have unstable speed.
+    '''
     out_stream = asyncio.Queue(maxsize=buffer_size or 1024)
 
     async def buff(in_stream, out_stream):
@@ -77,8 +81,7 @@ async def buffer(in_stream: AsyncIterable, buffer_size: int = None) -> AsyncIter
 
 
 async def batch(in_stream: AsyncIterable, batch_size: int) -> AsyncIterator:
-    '''
-    Take elements from an input stream,
+    '''Take elements from an input stream,
     and bundle them up into batches up to a size limit,
     and produce the batches in an iterable.
 
@@ -87,7 +90,7 @@ async def batch(in_stream: AsyncIterable, batch_size: int) -> AsyncIterator:
     There is no 'timeout' logic to produce a smaller batch.
     For efficiency, this requires the input stream to have a steady
     supply.
-    If that is a concern, having a `Buffer` on the input stream
+    If that is a concern, having a `buffer` on the input stream
     may help.
     '''
     assert 0 < batch_size <= 10000
@@ -105,6 +108,9 @@ async def batch(in_stream: AsyncIterable, batch_size: int) -> AsyncIterator:
 
 
 async def unbatch(in_stream: AsyncIterable) -> AsyncIterator:
+    '''Reverse of "batch", turning a stream of batches into
+    a stream of individual elements.
+    '''
     async for batch in in_stream:
         for x in batch:
             yield x
@@ -117,29 +123,29 @@ async def transform(
     *,
     workers: int = None,
     out_buffer_size: int = None,
+    return_exceptions: bool = False,
     **func_args,
 ) -> AsyncIterator:
-    '''
+    '''Apply a transformation on each element of the data stream,
+    producing a stream of corresponding results.
+
     `func`: an async function that takes a single input item,
     and produces a result. Additional args can be passed in
     via `func_args`.
 
-    The outputs are in the order
-    of the input elements in `in_stream`.
+    The outputs are in the order of the input elements in `in_stream`.
 
     `workers`: max number of concurrent calls to `func`.
-    If <= 1, no concurrency.
-    By default there are multiple.
-    Pass in 0 or 1 to enforce single worker.
+    If <= 1, no concurrency. By default there are multiple.
+    Pass in 0 or 1 to enforce single worker. However, since
+    the primary use of this function is to achieve concurrency
+    with multiple workers, the single-worker case is not optimized
+    as much as it can be.
     '''
     if workers is None:
         workers = MAX_THREADS
-
     if workers < 2:
-        async for x in in_stream:
-            y = await func(x, **func_args)
-            yield y
-        return
+        workers = 1
 
     finished = False
 
@@ -148,28 +154,30 @@ async def transform(
         while not finished:
             async with lock:
                 if finished:
-                    break
+                    return
                 try:
                     x = await in_stream.__anext__()
+                    fut = asyncio.Future()
+                    await out_stream.put(fut)
                 except StopAsyncIteration:
                     finished = True
                     await out_stream.put(NO_MORE_DATA)
-                    break
+                    return
                 except Exception as e:
                     fut = asyncio.Future()
                     await out_stream.put(fut)
+                    if inspect.isclass(e):
+                        e = e()
                     fut.set_exception(e)
-                    return
-
-                fut = asyncio.Future()
-                await out_stream.put(fut)
+                    continue
 
             try:
                 y = await func(x, **kwargs)
                 fut.set_result(y)
             except Exception as e:
+                if inspect.isclass(e):
+                    e = e()
                 fut.set_exception(e)
-                return
 
     if out_buffer_size is None:
         out_buffer_size = workers * 8
@@ -191,9 +199,16 @@ async def transform(
         fut = await out_stream.get()
         if fut is NO_MORE_DATA:
             break
-        yield await fut
+        try:
+            z = await fut
+            yield z
+        except Exception as e:
+            if return_exceptions:
+                yield e
+            else:
+                raise e
 
-    for t in asyncio.as_completed(t_workers):
+    for t in t_workers:
         await t
 
 
@@ -203,11 +218,19 @@ async def unordered_transform(
     *,
     workers: int = None,
     out_buffer_size: int = None,
+    return_exceptions: bool = False,
     **func_args,
 ) -> AsyncIterator:
+    '''Similar to `transform`, except that elements
+    in the output stream are not guaranteed to be
+    in the same order as the elements in the input
+    stream.
+    '''
     if workers is None:
         workers = MAX_THREADS
     assert workers > 1
+    # For single worker, there is no point in emphasizing
+    # 'unordered', because order will be preserved.
 
     if out_buffer_size is None:
         out_buffer_size = workers * 8
@@ -215,10 +238,6 @@ async def unordered_transform(
     finished = False
     lock = asyncio.Lock()
     n_active_workers = workers
-
-    class TaskError:
-        def __init__(self, e):
-            self.e = e
 
     async def _process(in_stream, lock, out_stream, func, **kwargs):
         nonlocal finished
@@ -233,17 +252,20 @@ async def unordered_transform(
                     finished = True
                     break
                 except Exception as e:
+                    if inspect.isclass(e):
+                        e = e()
                     error = e
 
             if error is not None:
-                await out_stream.put(TaskError(error))
-                return
-            try:
-                y = await func(x, **kwargs)
-                await out_stream.put(y)
-            except Exception as e:
-                await out_stream.put(TaskError(e))
-                return
+                y = error
+            else:
+                try:
+                    y = await func(x, **kwargs)
+                except Exception as e:
+                    if inspect.isclass(e):
+                        e = e()
+                    y = e
+            await out_stream.put(y)
 
         nonlocal n_active_workers
         n_active_workers -= 1
@@ -262,11 +284,15 @@ async def unordered_transform(
         y = await out_stream.get()
         if y is NO_MORE_DATA:
             break
-        if isinstance(y, TaskError):
-            raise y.e
-        yield y
+        if isinstance(y, Exception):
+            if return_exceptions:
+                yield y
+            else:
+                raise y
+        else:
+            yield y
 
-    for t in asyncio.as_completed(t_workers):
+    for t in t_workers:
         await t
 
 
@@ -276,6 +302,7 @@ async def drain(
         *,
         workers: int = None,
         log_every: int = 1000,
+        ignore_exceptions: bool = False,
         **func_args,
 ) -> int:
     '''
@@ -299,6 +326,7 @@ async def drain(
             in_stream,
             func,
             workers=workers,
+            return_exceptions=ignore_exceptions,
             **func_args,
         )
     else:
@@ -306,12 +334,18 @@ async def drain(
             in_stream,
             func,
             workers=workers,
+            return_exceptions=ignore_exceptions,
             **func_args,
         )
 
     n = 0
     nn = 0
-    async for _ in trans:
+    async for z in trans:
+        if isinstance(z, Exception):
+            if ignore_exceptions:
+                logger.error(z)
+            else:
+                raise z
         if log_every:
             n += 1
             nn += 1
