@@ -1,3 +1,12 @@
+Release 0.8.3
+=============
+
+Added:
+
+- `mpservice.streamer.{transform, unordered_transform}` get new parameter `return_exceptions`.
+  Similarly, `drain` gets new parameter `ignore_exceptions`.
+
+
 Release 0.8.2
 =============
 
