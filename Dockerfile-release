@@ -19,7 +19,7 @@ RUN ( \
             echo; \
             echo ---- building in $pyver ----; \
             echo; \
-            (cd /src/ && "${pybin}/python" -m build --sdist --wheel -o ${BUILDDIR}); \
+            (cd /src/ && "${pybin}/python" -m build --sdist --wheel -o ${BUILDDIR}) || exit 1; \
         done \
     )
 
@@ -45,6 +45,6 @@ RUN ( \
             echo; \
             pybin=/opt/python/${pyver}/bin; \
             "${pybin}/pip" install ${PROJ} --no-index -f ${BUILDDIR}; \
-            (cd "$HOME"; "${pybin}/python" -m pytest /src/tests); \
+            (cd "$HOME"; "${pybin}/python" -m pytest /src/tests) || exit 1; \
         done \
     )

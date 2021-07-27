@@ -78,6 +78,8 @@ async def test_mp(app):
         assert response.status_code == 200
         assert response.text == SHUTDOWN_MSG
 
+        # TODO: 'Future exception was never retrieved' error
+        # during `make-release`.
         with pytest.raises(httpx.ConnectError):
             response = await client.get(url + '/simple1')
             assert response.status_code == 201

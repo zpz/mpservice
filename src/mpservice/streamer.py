@@ -1,5 +1,5 @@
 '''This module provides utilities for processing a continuous stream of data
-in an async context.
+by one or more I/O-bound operations. The processing happens in an async context.
 
 Reference: https://zpz.github.io/blog/stream-processing/
 '''
@@ -119,7 +119,7 @@ async def unbatch(in_stream: AsyncIterable) -> AsyncIterator:
 # TODO: support sync function.
 async def transform(
     in_stream: typing.AsyncIterator[T],
-    func: Callable[[T], Awaitable[Any]],
+    func: Callable,
     *,
     workers: int = None,
     out_buffer_size: int = None,
@@ -129,9 +129,10 @@ async def transform(
     '''Apply a transformation on each element of the data stream,
     producing a stream of corresponding results.
 
-    `func`: an async function that takes a single input item,
-    and produces a result. Additional args can be passed in
-    via `func_args`.
+    `func`: an async function that takes a single input item
+    as the first positional argument and produces a result.
+    Additional keywargs can be passed in via the keyward arguments
+    `func_args`.
 
     The outputs are in the order of the input elements in `in_stream`.
 

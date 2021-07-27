@@ -164,3 +164,47 @@ async def test_unbatch():
     expected = [0, 2, 1, 3, 2, 4, 3, 5, 4, 6]
     got = [v async for v in s]
     assert got == expected
+
+
+@pytest.mark.asyncio
+async def test_return_ex():
+
+    async def corrupt_data():
+        d = [1, 2, 3, 4, 5, 'a', 6, 7]
+        for x in d:
+            yield x
+
+    async def process(x):
+        return x + 2
+
+    with pytest.raises(TypeError):
+        z = transform(corrupt_data(), process, workers=2)
+        zz = [v async for v in z]
+        print(zz)
+
+    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
+    zz = [v async for v in z]
+    print(zz)
+    assert isinstance(zz[5], TypeError)
+
+
+@pytest.mark.asyncio
+async def test_ignore_ex():
+    data = [1, 2, 3, 4, 5, 'a', 6, 7]
+
+    async def corrupt_data():
+        for x in data:
+            yield x
+
+    async def process(x):
+        results.append(x + 2)
+
+    with pytest.raises(TypeError):
+        results = []
+        await drain(corrupt_data(), process, workers=2)
+        print(results)
+
+    results = []
+    await drain(corrupt_data(), process, workers=2, ignore_exceptions=True)
+    print(results)
+    assert len(results) == len(data) - 1
