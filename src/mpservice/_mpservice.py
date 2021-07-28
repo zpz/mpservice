@@ -285,7 +285,7 @@ class Server:
             while not q_out.empty():
                 uid, y = q_out.get_nowait()
                 fut = futures.pop(uid, None)
-                if fut is None:  # timed-out in `a_predic`.
+                if fut is None:  # timed-out in `__call__`.
                     continue
                 try:
                     fut.set_result(y)
@@ -297,16 +297,15 @@ class Server:
             while not q_err.empty():
                 uid, err = q_err.get_nowait()
                 fut = futures.pop(uid, None)
-                if fut is None:
-                    logger.error(
+                if fut is None:  # timed-out in `__call__`
+                    logger.info(
                         'got error for an already-cancelled task: %r', err)
-                    continue  # timed-out in `__call__`.
+                    continue
                 try:
                     fut.set_exception(err)
                 except asyncio.InvalidStateError:
                     if fut.cancelled():
-                        logger.error(
-                            'got error for an already-cancelled task: %r', err)
+                        logger.warning('Future object is already cancelled')
                 # No sleep. Get results out of the queue as quickly as possible.
 
             await asyncio.sleep(0.0013)
