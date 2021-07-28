@@ -257,6 +257,11 @@ async def unordered_transform(
     in the output stream are not guaranteed to be
     in the same order as the elements in the input
     stream.
+
+    This function is useful when the time for processing a
+    single data element varies a lot. The effect of this
+    "eager" mode is such that a slow processing does not block
+    the production of results by other faster workers.
     '''
     if workers is None:
         workers = MAX_THREADS
