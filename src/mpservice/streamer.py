@@ -8,9 +8,9 @@ import asyncio
 import inspect
 import logging
 import multiprocessing
-import typing
-from collections.abc import AsyncIterable, Iterable, AsyncIterator
-from typing import Callable, Awaitable, Any, TypeVar
+from typing import (
+    Callable, Awaitable, Any, TypeVar,
+    AsyncIterable, AsyncIterator, Iterable)
 
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
@@ -48,19 +48,22 @@ T = TypeVar('T')
 # Async generator returns an async iterator.
 
 
-async def stream(x: Iterable) -> AsyncIterator:
+async def stream(x: Iterable[T]) -> AsyncIterator[T]:
     '''Turn a sync iterable into an async iterator.
+    However, user should try to provide a natively async iterable
+    if possible.
     '''
     for xx in x:
         yield xx
 
 
-async def buffer(in_stream: AsyncIterable, buffer_size: int = None) -> AsyncIterator:
+async def buffer(in_stream: AsyncIterable[T],
+                 buffer_size: int = None) -> AsyncIterator[T]:
     '''Buffer is used to stabilize the speed of data flow in situations
     where each the upstream production or downstream consumption
     have unstable speed.
     '''
-    out_stream = asyncio.Queue(maxsize=buffer_size or 1024)
+    out_stream = asyncio.Queue(maxsize=buffer_size or 256)
 
     async def buff(in_stream, out_stream):
         async for x in in_stream:
@@ -80,18 +83,46 @@ async def buffer(in_stream: AsyncIterable, buffer_size: int = None) -> AsyncIter
     await t
 
 
-async def batch(in_stream: AsyncIterable, batch_size: int) -> AsyncIterator:
+async def drop_if(in_stream: AsyncIterable[T],
+                  func: Callable[[T], bool]) -> AsyncIterator[T]:
+    async for x in in_stream:
+        if func(x):
+            continue
+        yield x
+
+
+async def keep_if(in_stream: AsyncIterable[T],
+                  func: Callable[[T], bool]) -> AsyncIterator[T]:
+    async for x in in_stream:
+        if func(x):
+            yield x
+
+
+async def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
+    async for x in in_stream:
+        if (isinstance(x, Exception)
+                or (inspect.isclass(x) and issubclass(x, Exception))):
+            continue
+        yield x
+
+
+async def drop_false(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
+    async for x in in_stream:
+        if not x:
+            continue
+        yield x
+
+
+async def batch(in_stream: AsyncIterable[T],
+                batch_size: int) -> AsyncIterator[T]:
     '''Take elements from an input stream,
     and bundle them up into batches up to a size limit,
     and produce the batches in an iterable.
 
-    The output batches are all of the specified size, except
-    possibly the final batch.
+    The output batches are all of the specified size, except possibly the final batch.
     There is no 'timeout' logic to produce a smaller batch.
-    For efficiency, this requires the input stream to have a steady
-    supply.
-    If that is a concern, having a `buffer` on the input stream
-    may help.
+    For efficiency, this requires the input stream to have a steady supply.
+    If that is a concern, having a `buffer` on the input stream may help.
     '''
     assert 0 < batch_size <= 10000
     batch_ = []
@@ -107,7 +138,7 @@ async def batch(in_stream: AsyncIterable, batch_size: int) -> AsyncIterator:
         yield batch_
 
 
-async def unbatch(in_stream: AsyncIterable) -> AsyncIterator:
+async def unbatch(in_stream: AsyncIterable[Iterable[T]]) -> AsyncIterator[T]:
     '''Reverse of "batch", turning a stream of batches into
     a stream of individual elements.
     '''
@@ -118,14 +149,14 @@ async def unbatch(in_stream: AsyncIterable) -> AsyncIterator:
 
 # TODO: support sync function.
 async def transform(
-    in_stream: typing.AsyncIterator[T],
-    func: Callable,
+    in_stream: AsyncIterator[T],
+    func: Callable[[T], Awaitable[None]],
     *,
     workers: int = None,
     out_buffer_size: int = None,
     return_exceptions: bool = False,
     **func_args,
-) -> AsyncIterator:
+) -> AsyncIterator[T]:
     '''Apply a transformation on each element of the data stream,
     producing a stream of corresponding results.
 
@@ -214,14 +245,14 @@ async def transform(
 
 
 async def unordered_transform(
-    in_stream: typing.AsyncIterator[T],
+    in_stream: AsyncIterator[T],
     func: Callable[[T], Awaitable[Any]],
     *,
     workers: int = None,
     out_buffer_size: int = None,
     return_exceptions: bool = False,
     **func_args,
-) -> AsyncIterator:
+) -> AsyncIterator[T]:
     '''Similar to `transform`, except that elements
     in the output stream are not guaranteed to be
     in the same order as the elements in the input
@@ -298,7 +329,7 @@ async def unordered_transform(
 
 
 async def drain(
-        in_stream: typing.AsyncIterable[T],
+        in_stream: AsyncIterable[T],
         func: Callable[[T], Awaitable[None]],
         *,
         workers: int = None,
@@ -314,13 +345,10 @@ async def drain(
 
     Return number of elements processed.
 
-    When `workers > 1` (or is `None`),
-    order of processing of elements in `in_stream`
-    is NOT guaranteed to be the same as the elements' order
-    in `in_stream`.
-    However, the shuffling of order is local.
-
-    If ordering is desired, then use `transform`.
+    While input is processed in the order they come in `in_stream`,
+    there is no way to guarantee they *finish* in the same order,
+    unless `workers` is 1, in which case the data are processed
+    sequentially.
     '''
     if workers is not None and workers < 2:
         trans = transform(
@@ -344,7 +372,7 @@ async def drain(
     async for z in trans:
         if isinstance(z, Exception):
             if ignore_exceptions:
-                logger.error(z)
+                logger.info(z)
             else:
                 raise z
         if log_every:
