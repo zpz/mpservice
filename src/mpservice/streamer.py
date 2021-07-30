@@ -8,8 +8,9 @@ import asyncio
 import inspect
 import logging
 import multiprocessing
+import random
 from typing import (
-    Callable, Awaitable, Any, TypeVar, Union,
+    Callable, Awaitable, Any, TypeVar, Union, List,
     AsyncIterable, AsyncIterator, Iterable)
 
 
@@ -364,7 +365,7 @@ async def unordered_transform(
 
 async def drain(
         in_stream: AsyncIterable[T],
-        func: Callable[[T], Awaitable[None]],
+        func: Callable[[T], Awaitable[None]] = None,
         *,
         workers: int = None,
         log_every: int = 1000,
@@ -384,38 +385,117 @@ async def drain(
     unless `workers` is 1, in which case the data are processed
     sequentially.
     '''
+    if func is None:
+        n = 0
+        nn = 0
+        async for z in in_stream:
+            if isinstance(z, Exception):
+                if ignore_exceptions:
+                    logger.info(z)
+                else:
+                    raise z
+            if log_every:
+                n += 1
+                nn += 1
+                if n == log_every:
+                    logger.info('drained %d', nn)
+                    n = 0
+        return nn
+
     if workers is not None and workers < 2:
-        trans = transform(
-            in_stream,
-            func,
-            workers=workers,
-            return_exceptions=ignore_exceptions,
-            **func_args,
-        )
-    else:
-        trans = unordered_transform(
-            in_stream,
-            func,
-            workers=workers,
-            return_exceptions=ignore_exceptions,
-            **func_args,
+        return await drain(
+            transform(
+                in_stream,
+                func,
+                workers=workers,
+                return_exceptions=ignore_exceptions,
+                **func_args,
+            ),
+            log_every=log_every,
+            ignore_exceptions=ignore_exceptions,
         )
 
+    return await drain(
+        unordered_transform(
+            in_stream,
+            func,
+            workers=workers,
+            return_exceptions=ignore_exceptions,
+            **func_args,
+        ),
+        log_every=log_every,
+        ignore_exceptions=ignore_exceptions,
+    )
+
+
+async def collect(in_stream: AsyncIterable[T]) -> List[T]:
+    return [v async for v in in_stream]
+
+
+async def peek_regularly(in_stream: AsyncIterable[T],
+                         kth: int,
+                         func: Callable[[int, T], None] = None,
+                         ) -> AsyncIterator[T]:
+    '''Take a peek at the data at regular intervals.
+
+    `func` usually prints out info of the data element,
+    but can save it to a file or does other things.
+    The function should not modify the data element.
+    '''
+    assert kth > 0
+
+    if func is None:
+        def func(n, x):
+            print('#', n)
+            print(x)
+
     n = 0
-    nn = 0
-    async for z in trans:
-        if isinstance(z, Exception):
-            if ignore_exceptions:
-                logger.info(z)
-            else:
-                raise z
-        if log_every:
-            n += 1
-            nn += 1
-            if n == log_every:
-                logger.info('drained %d', nn)
-                n = 0
-    return nn
+    k = 0
+    async for x in in_stream:
+        n += 1
+        k += 1
+        if k == kth:
+            func(n, x)
+            k = 0
+        yield x
+
+
+async def peek_randomly(in_stream: AsyncIterable[T],
+                        frac: float,
+                        func: Callable[[int, T], None] = None,
+                        ) -> AsyncIterator[T]:
+    assert 0 < frac <= 1
+    rand = random.random
+
+    if func is None:
+        def func(n, x):
+            print('#', n)
+            print(x)
+
+    n = 0
+    async for x in in_stream:
+        n += 1
+        if rand() < frac:
+            func(n, x)
+        yield x
+
+
+async def sample_randomly(in_stream: AsyncIterable[T], frac: float) -> AsyncIterator[T]:
+    assert 0 < frac <= 1
+    rand = random.random
+    async for x in in_stream:
+        if rand() < frac:
+            yield x
+
+
+async def sample_regularly(in_stream: AsyncIterable[T], kth: int) -> AsyncIterator[T]:
+    assert kth > 0
+    k = 0
+    async for x in in_stream:
+        k += 1
+        if k == kth:
+            yield x
+            k = 0
 
 
 class Stream:
@@ -461,9 +541,27 @@ class Stream:
             workers=workers, out_buffer_size=out_buffer_size,
             return_exceptions=return_exceptions, **func_args))
 
-    def drain(self, func, *, workers=None, log_every=1000,
+    def drain(self, func=None, *,
+              workers=None, log_every=1000,
               ignore_exceptions=False, **func_args):
         return drain(
             self.in_stream, func,
             workers=workers, log_every=log_every,
             ignore_exceptions=ignore_exceptions, **func_args)
+
+    def collect(self) -> List[T]:
+        return collect(self.in_stream)
+
+    def peek_regularly(self, kth, func=None):
+        return self.__class__(peek_regularly(
+            self.in_stream, kth, func=func))
+
+    def peek_randomly(self, frac, func=None):
+        return self.__class__(peek_randomly(
+            self.in_stream, frac, func=func))
+
+    def sample_randomly(self, frac):
+        return self.__class__(sample_randomly(self.in_stream, frac))
+
+    def sample_regularly(self, kth):
+        return self.__class__(sample_regularly(self.in_stream, kth))

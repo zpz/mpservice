@@ -276,6 +276,9 @@ async def test_stream_class():
     ss = [_ async for _ in s]
     assert ss == [0, 2, 4, 6, 8, 10, 12]
 
+    s = await Stream(y).transform(double).collect()
+    assert s == [0, 2, 4, 6, 8, 10, 12]
+
     class Total:
         def __init__(self):
             self.value = 0
@@ -287,3 +290,26 @@ async def test_stream_class():
     s = Stream(y).transform(double).buffer().drain(total)
     await s
     assert total.value == 42
+
+
+@pytest.mark.asyncio
+async def test_peek():
+    data = list(range(10))
+
+    n = await Stream(data).peek_regularly(3).drain()
+    assert n == 10
+
+    n = await Stream(data).peek_randomly(
+        0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
+    assert n == 10
+
+
+@pytest.mark.asyncio
+async def test_sample():
+    data = list(range(10))
+
+    z = await Stream(data).sample_regularly(3).collect()
+    assert z == [2, 5, 8]
+
+    z = await Stream(data).sample_randomly(0.5).collect()
+    print(z)
