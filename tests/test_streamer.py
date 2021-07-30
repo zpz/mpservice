@@ -4,10 +4,50 @@ import random
 
 import pytest
 
-
 from mpservice.streamer import (
     stream, buffer, transform, unordered_transform,
-    drain, batch, unbatch)
+    drain, batch, unbatch,
+    Stream,
+)
+
+
+@pytest.mark.asyncio
+async def test_stream():
+    class A:
+        def __init__(self):
+            self.k = 0
+
+        async def __anext__(self):
+            if self.k < 5:
+                self.k += 1
+                return self.k
+            raise StopAsyncIteration
+
+    class B:
+        async def __aiter__(self):
+            for x in [1, 2, 3]:
+                yield x
+
+    class C:
+        def __init__(self):
+            self.k = 0
+
+        def __next__(self):
+            if self.k < 5:
+                self.k += 1
+                return self.k
+            raise StopIteration
+
+    class D:
+        def __iter__(self):
+            for x in [1, 2, 3]:
+                yield x
+
+    assert [_ async for _ in stream(A())] == [1, 2, 3, 4, 5]
+    assert [_ async for _ in stream(B())] == [1, 2, 3]
+    assert [_ async for _ in stream(C())] == [1, 2, 3, 4, 5]
+    assert [_ async for _ in stream(D())] == [1, 2, 3]
+    assert [_ async for _ in stream(['a', 'b', 'c'])] == ['a', 'b', 'c']
 
 
 async def f1(x):
@@ -208,3 +248,42 @@ async def test_ignore_ex():
     await drain(corrupt_data(), process, workers=2, ignore_exceptions=True)
     print(results)
     assert len(results) == len(data) - 1
+
+
+@pytest.mark.asyncio
+async def test_stream_class():
+    s = Stream([1, 2, 3])
+    assert [_ async for _ in s] == [1, 2, 3]
+
+    x = [0, 1, 2, 3, 'a', ValueError(3), 4, 5]
+    s = Stream(x).drop_if(lambda x: x == 'a').drop_exceptions()
+    ss = [_ async for _ in s]
+    assert ss == [0, 1, 2, 3, 4, 5]
+
+    y = [0, 1, 2, 3, 4, 5, 6]
+    s = Stream(y).batch(3)
+    ss = [_ async for _ in s]
+    assert ss == [[0, 1, 2], [3, 4, 5], [6]]
+
+    s = Stream(y).batch(3).unbatch()
+    ss = [_ async for _ in s]
+    assert ss == [0, 1, 2, 3, 4, 5, 6]
+
+    async def double(x):
+        return x * 2
+
+    s = Stream(y).transform(double)
+    ss = [_ async for _ in s]
+    assert ss == [0, 2, 4, 6, 8, 10, 12]
+
+    class Total:
+        def __init__(self):
+            self.value = 0
+
+        async def __call__(self, x):
+            self.value += x
+
+    total = Total()
+    s = Stream(y).transform(double).buffer().drain(total)
+    await s
+    assert total.value == 42

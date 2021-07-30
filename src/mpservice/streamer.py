@@ -9,7 +9,7 @@ import inspect
 import logging
 import multiprocessing
 from typing import (
-    Callable, Awaitable, Any, TypeVar,
+    Callable, Awaitable, Any, TypeVar, Union,
     AsyncIterable, AsyncIterator, Iterable)
 
 
@@ -48,13 +48,83 @@ T = TypeVar('T')
 # Async generator returns an async iterator.
 
 
-async def stream(x: Iterable[T]) -> AsyncIterator[T]:
+def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
     '''Turn a sync iterable into an async iterator.
     However, user should try to provide a natively async iterable
     if possible.
+
+    The returned object has both `__anext__` and `__aiter__`
+    methods.
     '''
-    for xx in x:
-        yield xx
+    async def f1(data):
+        async for v in data:
+            yield v
+
+    async def f2(data):
+        while True:
+            try:
+                yield await data.__anext__()
+            except StopAsyncIteration:
+                break
+
+    async def f3(data):
+        for v in data:
+            yield v
+
+    async def f4(data):
+        while True:
+            try:
+                yield data.__next__()
+            except StopIteration:
+                break
+
+    if hasattr(x, '__aiter__'):
+        if hasattr(x, '__anext__'):
+            return x
+        else:
+            return f1(x)
+    if hasattr(x, '__anext__'):
+        return f2(x)
+    if hasattr(x, '__iter__'):
+        return f3(x)
+    if hasattr(x, '__next__'):
+        return f4(x)
+
+    raise TypeError("`x` is neither iterable or async iterable")
+
+
+async def batch(in_stream: AsyncIterable[T],
+                batch_size: int) -> AsyncIterator[T]:
+    '''Take elements from an input stream,
+    and bundle them up into batches up to a size limit,
+    and produce the batches in an iterable.
+
+    The output batches are all of the specified size, except possibly the final batch.
+    There is no 'timeout' logic to produce a smaller batch.
+    For efficiency, this requires the input stream to have a steady supply.
+    If that is a concern, having a `buffer` on the input stream may help.
+    '''
+    assert 0 < batch_size <= 10000
+    batch_ = []
+    n = 0
+    async for x in in_stream:
+        batch_.append(x)
+        n += 1
+        if n >= batch_size:
+            yield batch_
+            batch_ = []
+            n = 0
+    if n:
+        yield batch_
+
+
+async def unbatch(in_stream: AsyncIterable[Iterable[T]]) -> AsyncIterator[T]:
+    '''Reverse of "batch", turning a stream of batches into
+    a stream of individual elements.
+    '''
+    async for batch in in_stream:
+        for x in batch:
+            yield x
 
 
 async def buffer(in_stream: AsyncIterable[T],
@@ -91,13 +161,6 @@ async def drop_if(in_stream: AsyncIterable[T],
         yield x
 
 
-async def keep_if(in_stream: AsyncIterable[T],
-                  func: Callable[[T], bool]) -> AsyncIterator[T]:
-    async for x in in_stream:
-        if func(x):
-            yield x
-
-
 async def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
     async for x in in_stream:
         if (isinstance(x, Exception)
@@ -106,44 +169,10 @@ async def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
         yield x
 
 
-async def drop_false(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
+async def keep_if(in_stream: AsyncIterable[T],
+                  func: Callable[[T], bool]) -> AsyncIterator[T]:
     async for x in in_stream:
-        if not x:
-            continue
-        yield x
-
-
-async def batch(in_stream: AsyncIterable[T],
-                batch_size: int) -> AsyncIterator[T]:
-    '''Take elements from an input stream,
-    and bundle them up into batches up to a size limit,
-    and produce the batches in an iterable.
-
-    The output batches are all of the specified size, except possibly the final batch.
-    There is no 'timeout' logic to produce a smaller batch.
-    For efficiency, this requires the input stream to have a steady supply.
-    If that is a concern, having a `buffer` on the input stream may help.
-    '''
-    assert 0 < batch_size <= 10000
-    batch_ = []
-    n = 0
-    async for x in in_stream:
-        batch_.append(x)
-        n += 1
-        if n >= batch_size:
-            yield batch_
-            batch_ = []
-            n = 0
-    if n:
-        yield batch_
-
-
-async def unbatch(in_stream: AsyncIterable[Iterable[T]]) -> AsyncIterator[T]:
-    '''Reverse of "batch", turning a stream of batches into
-    a stream of individual elements.
-    '''
-    async for batch in in_stream:
-        for x in batch:
+        if func(x):
             yield x
 
 
@@ -387,3 +416,54 @@ async def drain(
                 logger.info('drained %d', nn)
                 n = 0
     return nn
+
+
+class Stream:
+    def __init__(self, in_stream: Union[Iterable[T], AsyncIterable[T]]):
+        self.in_stream = stream(in_stream)
+
+    def __anext__(self):
+        return self.in_stream.__anext__()
+
+    def __aiter__(self):
+        return self.in_stream.__aiter__()
+
+    def batch(self, batch_size: int):
+        return self.__class__(batch(self.in_stream, batch_size=batch_size))
+
+    def unbatch(self):
+        return self.__class__(unbatch(self.in_stream))
+
+    def buffer(self, buffer_size: int = None):
+        return self.__class__(buffer(self.in_stream, buffer_size=buffer_size))
+
+    def drop_if(self, func):
+        return self.__class__(drop_if(self.in_stream, func))
+
+    def drop_exceptions(self):
+        return self.__class__(drop_exceptions(self.in_stream))
+
+    def keep_if(self, func):
+        return self.__class__(keep_if(self.in_stream, func))
+
+    def transform(self, func, *, workers=None, out_buffer_size=None,
+                  return_exceptions=False, **func_args):
+        return self.__class__(transform(
+            self.in_stream, func,
+            workers=workers, out_buffer_size=out_buffer_size,
+            return_exceptions=return_exceptions, **func_args))
+
+    def unordered_transform(self, func, *, workers=None,
+                            out_buffer_size=None,
+                            return_exceptions=False, **func_args):
+        return self.__class__(unordered_transform(
+            self.in_stream, func,
+            workers=workers, out_buffer_size=out_buffer_size,
+            return_exceptions=return_exceptions, **func_args))
+
+    def drain(self, func, *, workers=None, log_every=1000,
+              ignore_exceptions=False, **func_args):
+        return drain(
+            self.in_stream, func,
+            workers=workers, log_every=log_every,
+            ignore_exceptions=ignore_exceptions, **func_args)
