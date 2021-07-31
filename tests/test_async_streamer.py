@@ -4,9 +4,9 @@ import random
 
 import pytest
 
-from mpservice.streamer import (
+from mpservice.async_streamer import (
     stream, buffer, transform, unordered_transform,
-    drain, batch, unbatch,
+    drain, batch, unbatch, collect,
     Stream,
 )
 
@@ -152,8 +152,8 @@ async def test_drain_1_worker():
             self.result += x * 3
 
     mysink = MySink()
-    s = transform(stream(SYNC_INPUT), f1)
-    n = await drain(s, mysink, workers=1)
+    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
+    n = await drain(s)
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -172,8 +172,8 @@ async def test_drain():
             self.result += x * 3
 
     mysink = MySink()
-    s = transform(stream(SYNC_INPUT), f1)
-    n = await drain(s, mysink)
+    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
+    n = await drain(s)
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -246,7 +246,7 @@ async def test_ignore_ex():
         print(results)
 
     results = []
-    await drain(corrupt_data(), process, workers=2, ignore_exceptions=True)
+    await drain(transform(corrupt_data(), process, workers=2, return_exceptions=True))
     print(results)
     assert len(results) == len(data) - 1
 
@@ -257,9 +257,8 @@ async def test_stream_class():
     assert [_ async for _ in s] == [1, 2, 3]
 
     x = [0, 1, 2, 3, 'a', ValueError(3), 4, 5]
-    s = Stream(x).drop_if(lambda x: x == 'a').drop_exceptions()
-    ss = [_ async for _ in s]
-    assert ss == [0, 1, 2, 3, 4, 5]
+    s = Stream(x).drop_if(lambda i, x: x == 'a').drop_exceptions()
+    assert await collect(s) == [0, 1, 2, 3, 4, 5]
 
     y = [0, 1, 2, 3, 4, 5, 6]
     s = Stream(y).batch(3)
@@ -288,7 +287,7 @@ async def test_stream_class():
             self.value += x
 
     total = Total()
-    s = Stream(y).transform(double).buffer().drain(total)
+    s = Stream(y).transform(double).buffer().transform(total).drain()
     await s
     assert total.value == 42
 
@@ -297,20 +296,20 @@ async def test_stream_class():
 async def test_peek():
     data = list(range(10))
 
-    n = await Stream(data).peek_regularly(3).drain()
+    n = await Stream(data).peek_at_intervals(3).drain()
     assert n == 10
 
-    n = await Stream(data).peek_randomly(
+    n = await Stream(data).peek_at_random(
         0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
     assert n == 10
 
 
 @pytest.mark.asyncio
-async def test_sample():
+async def test_keep():
     data = list(range(10))
 
-    z = await Stream(data).sample_regularly(3).collect()
-    assert z == [2, 5, 8]
+    z = await Stream(data).keep_at_intervals(3).collect()
+    assert z == [0, 3, 6, 9]
 
-    z = await Stream(data).sample_randomly(0.5).collect()
+    z = await Stream(data).keep_at_random(0.5).collect()
     print(z)
