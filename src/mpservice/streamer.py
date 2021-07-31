@@ -86,6 +86,11 @@ T = TypeVar('T')
 # Async generator returns an async iterator.
 
 
+def _is_exc(e):
+    assert isinstance(e, Exception) or (
+        inspect.isclass(e) and issubclass(e, Exception))
+
+
 def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
     '''Turn a sync iterable into an async iterator.
     However, user should try to provide a natively async iterable
@@ -206,8 +211,7 @@ async def drop_if(in_stream: AsyncIterable[T],
 
 async def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
     async for x in in_stream:
-        if (isinstance(x, Exception)
-                or (inspect.isclass(x) and issubclass(x, Exception))):
+        if _is_exc(x):
             continue
         yield x
 
@@ -405,7 +409,7 @@ async def unordered_transform(
         y = await out_stream.get()
         if y is NO_MORE_DATA:
             break
-        if isinstance(y, Exception):
+        if _is_exc(y):
             if return_exceptions:
                 yield y
             else:
@@ -443,14 +447,9 @@ async def drain(
         n = 0
         nn = 0
         async for z in in_stream:
-            if isinstance(z, Exception):
-                if ignore_exceptions:
-                    logger.info(z)
-                else:
-                    raise z
+            nn += 1
             if log_every:
                 n += 1
-                nn += 1
                 if n == log_every:
                     logger.info('drained %d', nn)
                     n = 0
@@ -464,21 +463,8 @@ async def drain(
     else:
         workers > 0
 
-    if workers == 1:
-        return await drain(
-            transform(
-                in_stream,
-                func,
-                workers=workers,
-                return_exceptions=ignore_exceptions,
-                **func_args,
-            ),
-            log_every=log_every,
-            ignore_exceptions=ignore_exceptions,
-        )
-
     return await drain(
-        unordered_transform(
+        transform(
             in_stream,
             func,
             workers=workers,
