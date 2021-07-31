@@ -1,16 +1,53 @@
-'''This module provides utilities for processing a continuous stream of data
-by one or more I/O-bound operations. The processing happens in an async context.
+'''Utilities for processing a continuous stream of data in an async context.
 
-Reference: https://zpz.github.io/blog/stream-processing/
+There is an input stream, which is an AsyncIterator.
+This stream goes through a series of async operations, each of which
+takes an AsyncIterator, and returns another AsyncIterator.
+Thanks to this consistency of input/output, the operations can be "chained".
+
+If the input is not an AsyncIterator, but rather some other (sync or async)
+iterable, then the function `stream` will turn it into an AsyncIterator.
+
+The target use case is that one or more operations is I/O bound,
+hence can benefit from async or multi-thread concurrency.
+Concurrency is enabled by `transform`, `unordered_transform`, and `drain`.
+
+There are two ways to use these utilities. In the first way, one calls the
+operation functions in sequence, e.g.
+
+    data = range(100)
+    data_stream = stream(data)
+    result = transform(
+        batch(data_stream, 10),
+        my_op_that_takes_stream_of_batches)
+    result = [_ async for _ in unbatch(result))]
+
+In the second way, one starts with a `Stream` object, and calls
+its methods in a "chained" fashion:
+
+    data = range(100)
+    result = (
+        Stream(data)
+        .batch(10)
+        .transform(my_op_that_takes_stream_of_batches)
+        .unbatch()
+        .collect()
+        )
+    result = await result
+
+(Of course, you don't have to call all the methods in one statement.)
+
+Reference for an early version: https://zpz.github.io/blog/stream-processing/
 '''
 
 import asyncio
+import functools
 import inspect
 import logging
 import multiprocessing
 import random
 from typing import (
-    Callable, Awaitable, Any, TypeVar, Union, List,
+    Callable, Awaitable, Any, TypeVar, Optional, Union,
     AsyncIterable, AsyncIterator, Iterable)
 
 
@@ -130,9 +167,14 @@ async def unbatch(in_stream: AsyncIterable[Iterable[T]]) -> AsyncIterator[T]:
 
 async def buffer(in_stream: AsyncIterable[T],
                  buffer_size: int = None) -> AsyncIterator[T]:
-    '''Buffer is used to stabilize the speed of data flow in situations
-    where each the upstream production or downstream consumption
-    have unstable speed.
+    '''Buffer is used to stabilize and improve the speed of data flow.
+
+    A buffer is useful after any operation that can not guarantee
+    (almost) instant availability of output. A buffer allows its
+    output to "pile up" when the downstream consumer is slow in requests,
+    so that data *is* available when the downstream does come to request
+    data. The buffer evens out unstabilities in the speeds of upstream
+    production and downstream consumption.
     '''
     out_stream = asyncio.Queue(maxsize=buffer_size or 256)
 
@@ -182,8 +224,7 @@ async def transform(
     in_stream: AsyncIterator[T],
     func: Callable[[T], Awaitable[None]],
     *,
-    workers: int = None,
-    out_buffer_size: int = None,
+    workers: Optional[Union[int, str]] = None,
     return_exceptions: bool = False,
     **func_args,
 ) -> AsyncIterator[T]:
@@ -197,17 +238,29 @@ async def transform(
 
     The outputs are in the order of the input elements in `in_stream`.
 
-    `workers`: max number of concurrent calls to `func`.
-    If <= 1, no concurrency. By default there are multiple.
-    Pass in 0 or 1 to enforce single worker. However, since
-    the primary use of this function is to achieve concurrency
-    with multiple workers, the single-worker case is not optimized
-    as much as it can be.
+    `workers`: max number of concurrent calls to `func`. By default
+    this is 1, i.e. there is no concurrency.
     '''
     if workers is None:
-        workers = MAX_THREADS
-    if workers < 2:
         workers = 1
+    elif isinstance(workers, str):
+        assert workers == 'max'
+        workers = MAX_THREADS
+    else:
+        workers > 0
+
+    if workers == 1:
+        async for x in in_stream:
+            try:
+                z = await func(x, **func_args
+                               )
+                yield z
+            except Exception as e:
+                if return_exceptions:
+                    yield e
+                else:
+                    raise e
+        return
 
     finished = False
 
@@ -241,8 +294,7 @@ async def transform(
                     e = e()
                 fut.set_exception(e)
 
-    if out_buffer_size is None:
-        out_buffer_size = workers * 8
+    out_buffer_size = workers * 8
     out_stream = asyncio.Queue(out_buffer_size)
     lock = asyncio.Lock()
 
@@ -278,8 +330,7 @@ async def unordered_transform(
     in_stream: AsyncIterator[T],
     func: Callable[[T], Awaitable[Any]],
     *,
-    workers: int = None,
-    out_buffer_size: int = None,
+    workers: Optional[Union[int, str]] = None,
     return_exceptions: bool = False,
     **func_args,
 ) -> AsyncIterator[T]:
@@ -295,12 +346,15 @@ async def unordered_transform(
     '''
     if workers is None:
         workers = MAX_THREADS
-    assert workers > 1
-    # For single worker, there is no point in emphasizing
-    # 'unordered', because order will be preserved.
+    elif isinstance(workers, str):
+        assert workers == 'max'
+        workers = MAX_THREADS
+    else:
+        assert workers > 1
+        # For single worker, there is no point in emphasizing
+        # 'unordered', because order will be preserved.
 
-    if out_buffer_size is None:
-        out_buffer_size = workers * 8
+    out_buffer_size = workers * 8
     out_stream = asyncio.Queue(out_buffer_size)
     finished = False
     lock = asyncio.Lock()
@@ -367,7 +421,7 @@ async def drain(
         in_stream: AsyncIterable[T],
         func: Callable[[T], Awaitable[None]] = None,
         *,
-        workers: int = None,
+        workers: Optional[Union[int, str]] = None,
         log_every: int = 1000,
         ignore_exceptions: bool = False,
         **func_args,
@@ -402,7 +456,15 @@ async def drain(
                     n = 0
         return nn
 
-    if workers is not None and workers < 2:
+    if workers is None:
+        workers = 1
+    elif isinstance(workers, str):
+        assert workers == 'max'
+        workers = MAX_THREADS
+    else:
+        workers > 0
+
+    if workers == 1:
         return await drain(
             transform(
                 in_stream,
@@ -428,8 +490,24 @@ async def drain(
     )
 
 
-async def collect(in_stream: AsyncIterable[T]) -> List[T]:
-    return [v async for v in in_stream]
+async def peek_randomly(in_stream: AsyncIterable[T],
+                        frac: float,
+                        func: Callable[[int, T], None] = None,
+                        ) -> AsyncIterator[T]:
+    assert 0 < frac <= 1
+    rand = random.random
+
+    if func is None:
+        def func(n, x):
+            print('#', n)
+            print(x)
+
+    n = 0
+    async for x in in_stream:
+        n += 1
+        if rand() < frac:
+            func(n, x)
+        yield x
 
 
 async def peek_regularly(in_stream: AsyncIterable[T],
@@ -457,26 +535,6 @@ async def peek_regularly(in_stream: AsyncIterable[T],
         if k == kth:
             func(n, x)
             k = 0
-        yield x
-
-
-async def peek_randomly(in_stream: AsyncIterable[T],
-                        frac: float,
-                        func: Callable[[int, T], None] = None,
-                        ) -> AsyncIterator[T]:
-    assert 0 < frac <= 1
-    rand = random.random
-
-    if func is None:
-        def func(n, x):
-            print('#', n)
-            print(x)
-
-    n = 0
-    async for x in in_stream:
-        n += 1
-        if rand() < frac:
-            func(n, x)
         yield x
 
 
@@ -508,38 +566,16 @@ class Stream:
     def __aiter__(self):
         return self.in_stream.__aiter__()
 
-    def batch(self, batch_size: int):
-        return self.__class__(batch(self.in_stream, batch_size=batch_size))
+    @classmethod
+    def registerapi(cls, func: Callable, name=None):
+        if not name:
+            name = func.__name__
 
-    def unbatch(self):
-        return self.__class__(unbatch(self.in_stream))
+        @functools.wraps(func)
+        def wrapped(self, *args, **kwargs):
+            return cls(func(self.in_stream, *args, **kwargs))
 
-    def buffer(self, buffer_size: int = None):
-        return self.__class__(buffer(self.in_stream, buffer_size=buffer_size))
-
-    def drop_if(self, func):
-        return self.__class__(drop_if(self.in_stream, func))
-
-    def drop_exceptions(self):
-        return self.__class__(drop_exceptions(self.in_stream))
-
-    def keep_if(self, func):
-        return self.__class__(keep_if(self.in_stream, func))
-
-    def transform(self, func, *, workers=None, out_buffer_size=None,
-                  return_exceptions=False, **func_args):
-        return self.__class__(transform(
-            self.in_stream, func,
-            workers=workers, out_buffer_size=out_buffer_size,
-            return_exceptions=return_exceptions, **func_args))
-
-    def unordered_transform(self, func, *, workers=None,
-                            out_buffer_size=None,
-                            return_exceptions=False, **func_args):
-        return self.__class__(unordered_transform(
-            self.in_stream, func,
-            workers=workers, out_buffer_size=out_buffer_size,
-            return_exceptions=return_exceptions, **func_args))
+        setattr(cls, name, wrapped)
 
     def drain(self, func=None, *,
               workers=None, log_every=1000,
@@ -549,19 +585,19 @@ class Stream:
             workers=workers, log_every=log_every,
             ignore_exceptions=ignore_exceptions, **func_args)
 
-    def collect(self) -> List[T]:
-        return collect(self.in_stream)
+    async def collect(self) -> list:
+        return [_ async for _ in self.in_stream]
 
-    def peek_regularly(self, kth, func=None):
-        return self.__class__(peek_regularly(
-            self.in_stream, kth, func=func))
 
-    def peek_randomly(self, frac, func=None):
-        return self.__class__(peek_randomly(
-            self.in_stream, frac, func=func))
-
-    def sample_randomly(self, frac):
-        return self.__class__(sample_randomly(self.in_stream, frac))
-
-    def sample_regularly(self, kth):
-        return self.__class__(sample_regularly(self.in_stream, kth))
+Stream.registerapi(batch)
+Stream.registerapi(unbatch)
+Stream.registerapi(buffer)
+Stream.registerapi(drop_if)
+Stream.registerapi(drop_exceptions)
+Stream.registerapi(keep_if)
+Stream.registerapi(transform)
+Stream.registerapi(unordered_transform)
+Stream.registerapi(peek_randomly)
+Stream.registerapi(peek_regularly)
+Stream.registerapi(sample_randomly)
+Stream.registerapi(sample_regularly)

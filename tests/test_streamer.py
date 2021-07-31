@@ -43,6 +43,7 @@ async def test_stream():
             for x in [1, 2, 3]:
                 yield x
 
+    assert [_ async for _ in stream(range(4))] == [0, 1, 2, 3]
     assert [_ async for _ in stream(A())] == [1, 2, 3, 4, 5]
     assert [_ async for _ in stream(B())] == [1, 2, 3]
     assert [_ async for _ in stream(C())] == [1, 2, 3, 4, 5]
