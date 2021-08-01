@@ -304,6 +304,13 @@ def log_every_nth(in_stream, nth: int):
     return peek_every_nth(in_stream, nth, peek_func)
 
 
+def log_exceptions(in_stream, level: str = 'error'):
+    flog = getattr(logger, level)
+    return peek_if(in_stream,
+                   lambda i, x: _is_exc(x),
+                   lambda i, x: flog(x))
+
+
 # TODO: support sync function.
 async def transform(
     in_stream: AsyncIterator[T],
@@ -366,8 +373,6 @@ async def transform(
                 except Exception as e:
                     fut = asyncio.Future()
                     await out_stream.put(fut)
-                    if inspect.isclass(e):
-                        e = e()
                     fut.set_exception(e)
                     continue
 
@@ -375,8 +380,6 @@ async def transform(
                 y = await func(x, **kwargs)
                 fut.set_result(y)
             except Exception as e:
-                if inspect.isclass(e):
-                    e = e()
                 fut.set_exception(e)
 
     out_buffer_size = workers * 8
@@ -482,4 +485,5 @@ Stream.registerapi(peek_if)
 Stream.registerapi(peek_every_nth)
 Stream.registerapi(peek_random)
 Stream.registerapi(log_every_nth)
+Stream.registerapi(log_exceptions)
 Stream.registerapi(transform)
