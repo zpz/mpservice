@@ -1,6 +1,6 @@
 import asyncio
 import time
-from mpservice.streamer import transform, stream, buffer
+from mpservice.async_streamer import Stream
 
 NX = 100
 
@@ -28,9 +28,9 @@ async def plain():
 
 async def streamed(workers):
     t0 = time.perf_counter()
-    z = transform(stream(data()), inc, workers=workers)
+    s = Stream(data()).transform(inc, workers=workers)
 
-    result = [x async for x in z]
+    result = await s.collect()
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
@@ -39,22 +39,22 @@ async def streamed(workers):
 
 print('streamed')
 asyncio.run(streamed(workers=100))
-# This took 1.0078 seconds on my 4-core Linux machine,
+# This took 1.0075 seconds on my 4-core Linux machine,
 # compared to the perfect value 1.0000.
 
 print('')
 print('10-streamed')
 asyncio.run(streamed(workers=10))
-# This took 10.0189 seconds on my 4-core Linux machine,
+# This took 10.0181 seconds on my 4-core Linux machine,
 # compared to the perfect value 10.0000.
 
 print('')
 print('unistreamed')
 asyncio.run(streamed(workers=1))
-# This took 100.1347 seconds on my 4-core Linux machine,
+# This took 100.1306 seconds on my 4-core Linux machine,
 # compared to the perfect value 100.0000.
 
 print('')
 print('plain')
 asyncio.run(plain())
-# This took 100.1188 seconds on my 4-core Linux machine.
+# This took 100.1310 seconds on my 4-core Linux machine.

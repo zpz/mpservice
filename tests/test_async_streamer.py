@@ -5,10 +5,7 @@ import random
 import pytest
 
 from mpservice.async_streamer import (
-    stream, buffer, transform, unordered_transform,
-    drain, batch, unbatch, collect,
-    Stream,
-)
+    stream, Stream, collect, transform, drain)
 
 
 @pytest.mark.asyncio
@@ -43,106 +40,145 @@ async def test_stream():
             for x in [1, 2, 3]:
                 yield x
 
-    assert [_ async for _ in stream(range(4))] == [0, 1, 2, 3]
-    assert [_ async for _ in stream(A())] == [1, 2, 3, 4, 5]
-    assert [_ async for _ in stream(B())] == [1, 2, 3]
-    assert [_ async for _ in stream(C())] == [1, 2, 3, 4, 5]
-    assert [_ async for _ in stream(D())] == [1, 2, 3]
-    assert [_ async for _ in stream(['a', 'b', 'c'])] == ['a', 'b', 'c']
+    assert await collect(stream(range(4))) == [0, 1, 2, 3]
+    assert await collect(stream(A())) == [1, 2, 3, 4, 5]
+    assert await collect(stream(B())) == [1, 2, 3]
+    assert await collect(stream(C())) == [1, 2, 3, 4, 5]
+    assert await collect(stream(D())) == [1, 2, 3]
+    assert await collect(stream(['a', 'b', 'c'])) == ['a', 'b', 'c']
 
-
-async def f1(x):
-    await asyncio.sleep(random.random() * 0.01)
-    return x + 3.8
-
-
-async def f2(x):
-    await asyncio.sleep(random.random() * 0.01)
-    return x*2
-
-
-SYNC_INPUT = list(range(278))
+    assert await Stream(range(4)).collect() == [0, 1, 2, 3]
+    assert await Stream(A()).collect() == [1, 2, 3, 4, 5]
+    assert await Stream(B()).collect() == [1, 2, 3]
+    assert await Stream(C()).collect() == [1, 2, 3, 4, 5]
+    assert await Stream(D()).collect() == [1, 2, 3]
+    assert await Stream(['a', 'b', 'c']).collect() == ['a', 'b', 'c']
 
 
 @pytest.mark.asyncio
-async def test_transform_1_worker():
+async def test_batch():
+    s = Stream(range(11))
+    assert await s.batch(3).collect() == [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
+
+    assert await s.collect() == []
+
+    s = Stream(list(range(11)))
+    assert await s.batch(3).unbatch().collect() == list(range(11))
+    assert await s.collect() == []
+
+
+@pytest.mark.asyncio
+async def test_buffer():
+    s = Stream(range(11))
+    assert await s.buffer(5).collect() == list(range(11))
+    s = Stream(range(11))
+    assert await s.buffer(20).collect() == list(range(11))
+
+
+@pytest.mark.asyncio
+async def test_drop():
+    data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
+
+    s = Stream(data)
+    assert await s.drop_exceptions().collect() == [
+        0, 1, 2, 'a', 4, 6, 7]
+
+    s = Stream(data)
+    assert await s.drop_exceptions().drop_if(
+        lambda i, x: isinstance(x, str)).collect() == [
+        0, 1, 2, 4, 6, 7]
+
+    s = Stream(data)
+    assert await s.drop_first_n(6).collect() == [6, 7]
+
+    assert await Stream((2, 3, 1, 5, 4, 7)).drop_if(
+        lambda i, x: x > i).collect() == [1, 4, 7]
+
+
+@pytest.mark.asyncio
+async def test_keep():
+    data = [0, 1, 2, 3, 'a', 5]
+
+    s = Stream(data)
+    assert await s.keep_if(lambda i, x: isinstance(x, int)).collect() == [0, 1, 2, 3, 5]
+
+    s = Stream(data)
+    assert await s.keep_every_nth(2).collect() == [0, 2, 'a']
+
+    s = Stream(data)
+    assert await s.keep_first_n(3).collect() == [0, 1, 2]
+
+    s = Stream(data)
+    assert await s.keep_first_n(4).drop_first_n(3).collect() == [3]
+
+    s = Stream(data)
+    assert await s.drop_first_n(3).keep_first_n(1).collect() == [3]
+
+    s = Stream(data)
+    ss = await s.keep_random(0.5).collect()
+    print(ss)
+    assert 0 < len(ss) < len(data)
+
+
+@pytest.mark.asyncio
+async def test_peek():
+    # The main point of this test is in checking the printout.
+
+    data = list(range(10))
+
+    n = await Stream(data).peek_every_nth(3).drain()
+    assert n == 10
+
+    n = await Stream(data).peek_random(
+        0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
+    assert n == 10
+
+    await Stream(data).peek_if(lambda i, x: 4 < i < 7).drain()
+
+    await Stream(data).log_every_nth(4).drain()
+
+
+@pytest.mark.asyncio
+async def test_drain():
+    z = await Stream(range(10)).drain()
+    assert z == 10
+
+    z = await Stream(range(10)).drain(log_nth=3)
+    assert z == 10
+
+    z = await Stream((1, 2, ValueError(3), 5, RuntimeError, 9)).drain()
+    assert z == (6, 2)
+
+
+@pytest.mark.asyncio
+async def test_transform():
+
+    async def f1(x):
+        await asyncio.sleep(random.random() * 0.01)
+        return x + 3.8
+
+    async def f2(x):
+        await asyncio.sleep(random.random() * 0.01)
+        return x*2
+
+    SYNC_INPUT = list(range(278))
+
     expected = [v + 3.8 for v in SYNC_INPUT]
     s = transform(stream(SYNC_INPUT), f1, workers=1)
     got = [v async for v in s]
     assert got == expected
 
+    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
+    assert await s == expected
 
-@pytest.mark.asyncio
-async def test_transform():
-    expected = [v + 3.8 for v in SYNC_INPUT]
-    s = transform(stream(SYNC_INPUT), f1, workers=10)
-    got = [v async for v in s]
-    assert got == expected
-
-
-@pytest.mark.asyncio
-async def test_unordered_transform():
-    expected = [v + 3.8 for v in SYNC_INPUT]
-    s = unordered_transform(stream(SYNC_INPUT), f1, workers=5)
-    got = [v async for v in s]
-    assert got != expected
-    assert sorted(got) == expected
-
-
-def generate_data():
-    for x in SYNC_INPUT:
-        yield x
-
-
-async def a_generate_data():
-    for x in SYNC_INPUT:
-        yield x
-
-
-@pytest.mark.asyncio
-async def test_input():
-    expected = [v + 3.8 for v in SYNC_INPUT]
-
-    s = transform(stream(generate_data()), f1)
-    got = [v async for v in s]
-    assert got == expected
-
-    s = transform(a_generate_data(), f1)
-    got = [v async for v in s]
-    assert got == expected
-
-
-@pytest.mark.asyncio
-async def test_chain():
-    expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    s = stream(SYNC_INPUT)
-    s = transform(s, f1)
-    s = transform(s, f2)
-    got = [v async for v in s]
-    assert got == expected
-
-
-@pytest.mark.asyncio
-async def test_buffer():
-    expected = [v + 3.8 for v in SYNC_INPUT]
-    s = transform(
-        buffer(stream(SYNC_INPUT)),
-        f1)
-    got = [v async for v in s]
-    assert got == expected
+    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
+    assert await s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    s = transform(
-        transform(
-            buffer(stream(SYNC_INPUT)),
-            f1),
-        f2)
-    got = [v async for v in s]
-    assert got == expected
+    s = Stream(SYNC_INPUT).transform(f1).transform(f2)
+    assert await s.collect() == expected
 
-
-@pytest.mark.asyncio
-async def test_drain_1_worker():
     class MySink:
         def __init__(self):
             self.result = 0
@@ -162,75 +198,7 @@ async def test_drain_1_worker():
 
 
 @pytest.mark.asyncio
-async def test_drain():
-    class MySink:
-        def __init__(self):
-            self.result = 0
-
-        async def __call__(self, x):
-            await asyncio.sleep(random.random() * 0.01)
-            self.result += x * 3
-
-    mysink = MySink()
-    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
-    n = await drain(s)
-    assert n == len(SYNC_INPUT)
-
-    got = mysink.result
-    expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
-    assert math.isclose(got, expected)
-
-
-async def f3(x):
-    return sum(x)
-
-
-@pytest.mark.asyncio
-async def test_batch():
-    data = list(range(11))
-    s = transform(batch(stream(data), 3), f3)
-    expected = [3, 12, 21, 19]
-    got = [v async for v in s]
-    assert got == expected
-
-
-async def f4(x):
-    return [x-1, x+1]
-
-
-@pytest.mark.asyncio
-async def test_unbatch():
-    data = [1, 2, 3, 4, 5]
-    s = unbatch(transform(stream(data), f4))
-    expected = [0, 2, 1, 3, 2, 4, 3, 5, 4, 6]
-    got = [v async for v in s]
-    assert got == expected
-
-
-@pytest.mark.asyncio
-async def test_return_ex():
-
-    async def corrupt_data():
-        d = [1, 2, 3, 4, 5, 'a', 6, 7]
-        for x in d:
-            yield x
-
-    async def process(x):
-        return x + 2
-
-    with pytest.raises(TypeError):
-        z = transform(corrupt_data(), process, workers=2)
-        zz = [v async for v in z]
-        print(zz)
-
-    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
-    zz = [v async for v in z]
-    print(zz)
-    assert isinstance(zz[5], TypeError)
-
-
-@pytest.mark.asyncio
-async def test_ignore_ex():
+async def test_transform_with_error():
     data = [1, 2, 3, 4, 5, 'a', 6, 7]
 
     async def corrupt_data():
@@ -238,78 +206,18 @@ async def test_ignore_ex():
             yield x
 
     async def process(x):
-        results.append(x + 2)
+        return x + 2
 
     with pytest.raises(TypeError):
-        results = []
-        await drain(corrupt_data(), process, workers=2)
-        print(results)
+        z = transform(corrupt_data(), process, workers=2)
+        zz = await collect(z)
+        print(zz)
 
-    results = []
-    await drain(transform(corrupt_data(), process, workers=2, return_exceptions=True))
-    print(results)
-    assert len(results) == len(data) - 1
+    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
+    zz = await collect(z)
+    print(zz)
+    assert isinstance(zz[5], TypeError)
 
-
-@pytest.mark.asyncio
-async def test_stream_class():
-    s = Stream([1, 2, 3])
-    assert [_ async for _ in s] == [1, 2, 3]
-
-    x = [0, 1, 2, 3, 'a', ValueError(3), 4, 5]
-    s = Stream(x).drop_if(lambda i, x: x == 'a').drop_exceptions()
-    assert await collect(s) == [0, 1, 2, 3, 4, 5]
-
-    y = [0, 1, 2, 3, 4, 5, 6]
-    s = Stream(y).batch(3)
-    ss = [_ async for _ in s]
-    assert ss == [[0, 1, 2], [3, 4, 5], [6]]
-
-    s = Stream(y).batch(3).unbatch()
-    ss = [_ async for _ in s]
-    assert ss == [0, 1, 2, 3, 4, 5, 6]
-
-    async def double(x):
-        return x * 2
-
-    s = Stream(y).transform(double)
-    ss = [_ async for _ in s]
-    assert ss == [0, 2, 4, 6, 8, 10, 12]
-
-    s = await Stream(y).transform(double).collect()
-    assert s == [0, 2, 4, 6, 8, 10, 12]
-
-    class Total:
-        def __init__(self):
-            self.value = 0
-
-        async def __call__(self, x):
-            self.value += x
-
-    total = Total()
-    s = Stream(y).transform(double).buffer().transform(total).drain()
-    await s
-    assert total.value == 42
-
-
-@pytest.mark.asyncio
-async def test_peek():
-    data = list(range(10))
-
-    n = await Stream(data).peek_at_intervals(3).drain()
-    assert n == 10
-
-    n = await Stream(data).peek_at_random(
-        0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
-    assert n == 10
-
-
-@pytest.mark.asyncio
-async def test_keep():
-    data = list(range(10))
-
-    z = await Stream(data).keep_at_intervals(3).collect()
-    assert z == [0, 3, 6, 9]
-
-    z = await Stream(data).keep_at_random(0.5).collect()
-    print(z)
+    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
+    zz = await drain(z)
+    assert zz == (len(data), 1)

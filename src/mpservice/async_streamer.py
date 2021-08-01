@@ -37,6 +37,8 @@ its methods in a "chained" fashion:
 
 (Of course, you don't have to call all the methods in one statement.)
 
+In most cases, the second way is recommended.
+
 Reference for an early version: https://zpz.github.io/blog/stream-processing/
 '''
 
@@ -47,8 +49,9 @@ import logging
 import multiprocessing
 import random
 from typing import (
-    Callable, Awaitable, Any, TypeVar, Optional, Union,
-    AsyncIterable, AsyncIterator, Iterable)
+    Callable, Awaitable, TypeVar, Optional, Union,
+    AsyncIterable, AsyncIterator, Iterable,
+    Tuple, List)
 
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
@@ -62,6 +65,7 @@ logger = logging.getLogger(__name__)
 NO_MORE_DATA = object()
 
 T = TypeVar('T')
+TT = TypeVar('TT')
 
 # Iterable vs iterator
 #
@@ -136,8 +140,12 @@ def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
     raise TypeError("`x` is neither iterable or async iterable")
 
 
+async def collect(in_stream: AsyncIterable[T]) -> List[T]:
+    return [_ async for _ in in_stream]
+
+
 async def batch(in_stream: AsyncIterable[T],
-                batch_size: int) -> AsyncIterator[T]:
+                batch_size: int) -> AsyncIterator[List[T]]:
     '''Take elements from an input stream,
     and bundle them up into batches up to a size limit,
     and produce the batches in an iterable.
@@ -212,8 +220,15 @@ async def drop_if(in_stream: AsyncIterable[T],
         n += 1
 
 
-def drop_exceptions(in_stream):
+def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
     return drop_if(in_stream, lambda i, x: _is_exc(x))
+
+
+def drop_first_n(in_stream, n: int):
+    assert n >= 0
+    if n == 0:
+        return in_stream
+    return drop_if(in_stream, lambda i, x: i < n)
 
 
 async def keep_if(in_stream: AsyncIterable[T],
@@ -225,15 +240,25 @@ async def keep_if(in_stream: AsyncIterable[T],
         n += 1
 
 
-def keep_at_intervals(in_stream, nth: int):
+def keep_every_nth(in_stream, nth: int):
     assert nth > 0
     return keep_if(in_stream, lambda i, x: i % nth == 0)
 
 
-def keep_at_random(in_stream, frac: float):
+def keep_random(in_stream, frac: float):
     assert 0 < frac <= 1
     rand = random.random
     return keep_if(in_stream, lambda i, x: rand() < frac)
+
+
+async def keep_first_n(in_stream, n: int):
+    assert n > 0
+    k = 0
+    async for x in in_stream:
+        yield x
+        k += 1
+        if k >= n:
+            break
 
 
 def _default_peek_func(i, x):
@@ -245,7 +270,7 @@ def _default_peek_func(i, x):
 async def peek_if(in_stream: AsyncIterable[T],
                   condition_func: Callable[[int, T], bool],
                   peek_func: Callable[[int, T], None] = _default_peek_func,
-                  ) -> AsyncIterator:
+                  ) -> AsyncIterator[T]:
     '''Take a peek at the data elements that statisfy the specified condition.
 
     `peek_func` usually prints out info of the data element,
@@ -262,32 +287,32 @@ async def peek_if(in_stream: AsyncIterable[T],
         n += 1
 
 
-def peek_at_intervals(in_stream, nth: int, peek_func=_default_peek_func):
+def peek_every_nth(in_stream, nth: int, peek_func=_default_peek_func):
     return peek_if(in_stream, lambda i, x: i % nth == 0, peek_func)
 
 
-def peek_at_random(in_stream, frac: float, peek_func=_default_peek_func):
+def peek_random(in_stream, frac: float, peek_func=_default_peek_func):
     assert 0 < frac <= 1
     rand = random.random
     return peek_if(in_stream, lambda i, x: rand() < frac, peek_func)
 
 
-def log_at_intervals(in_stream, nth: int):
+def log_every_nth(in_stream, nth: int):
     def peek_func(i, x):
-        logger.info('processing data element #d', i)
+        logger.info('data item #%d:  %s', i, x)
 
-    return peek_at_intervals(in_stream, nth, peek_func)
+    return peek_every_nth(in_stream, nth, peek_func)
 
 
 # TODO: support sync function.
 async def transform(
     in_stream: AsyncIterator[T],
-    func: Callable[[T], Awaitable[None]],
+    func: Callable[[T], Awaitable[TT]],
     *,
     workers: Optional[Union[int, str]] = None,
     return_exceptions: bool = False,
     **func_args,
-) -> AsyncIterator[T]:
+) -> AsyncIterator[TT]:
     '''Apply a transformation on each element of the data stream,
     producing a stream of corresponding results.
 
@@ -386,124 +411,38 @@ async def transform(
         await t
 
 
-async def unordered_transform(
-    in_stream: AsyncIterator[T],
-    func: Callable[[T], Awaitable[Any]],
-    *,
-    workers: Optional[Union[int, str]] = None,
-    return_exceptions: bool = False,
-    **func_args,
-) -> AsyncIterator[T]:
-    '''Similar to `transform`, except that elements
-    in the output stream are not guaranteed to be
-    in the same order as the elements in the input
-    stream.
-
-    This function is useful when the time for processing a
-    single data element varies a lot. The effect of this
-    "eager" mode is such that a slow processing does not block
-    the production of results by other faster workers.
-    '''
-    if workers is None:
-        workers = MAX_THREADS
-    elif isinstance(workers, str):
-        assert workers == 'max'
-        workers = MAX_THREADS
-    else:
-        assert workers > 1
-        # For single worker, there is no point in emphasizing
-        # 'unordered', because order will be preserved.
-
-    out_buffer_size = workers * 8
-    out_stream = asyncio.Queue(out_buffer_size)
-    finished = False
-    lock = asyncio.Lock()
-    n_active_workers = workers
-
-    async def _process(in_stream, lock, out_stream, func, **kwargs):
-        nonlocal finished
-        while not finished:
-            error = None
-            async with lock:
-                if finished:
-                    break
-                try:
-                    x = await in_stream.__anext__()
-                except StopAsyncIteration:
-                    finished = True
-                    break
-                except Exception as e:
-                    if inspect.isclass(e):
-                        e = e()
-                    error = e
-
-            if error is not None:
-                y = error
-            else:
-                try:
-                    y = await func(x, **kwargs)
-                except Exception as e:
-                    if inspect.isclass(e):
-                        e = e()
-                    y = e
-            await out_stream.put(y)
-
-        nonlocal n_active_workers
-        n_active_workers -= 1
-        if n_active_workers == 0:
-            await out_stream.put(NO_MORE_DATA)
-
-    t_workers = [
-        asyncio.create_task(_process(
-            in_stream, lock, out_stream,
-            func, **func_args,
-        ))
-        for _ in range(workers)
-    ]
-
-    while True:
-        y = await out_stream.get()
-        if y is NO_MORE_DATA:
-            break
-        if _is_exc(y):
-            if return_exceptions:
-                yield y
-            else:
-                raise y
-        else:
-            yield y
-
-    for t in t_workers:
-        await t
-
-
-async def drain(in_stream: AsyncIterable[T], log_every_nth: int = 0) -> int:
+async def drain(in_stream: AsyncIterable,
+                log_nth: int = 0) -> Union[int, Tuple[int, int]]:
     '''Drain off the stream and the number of elements processed.
     '''
-    if log_every_nth:
-        in_stream = log_at_intervals(in_stream, log_every_nth)
+    if log_nth:
+        in_stream = log_every_nth(in_stream, log_nth)
     n = 0
-    async for _ in in_stream:
+    nexc = 0
+    async for v in in_stream:
         n += 1
+        if _is_exc(v):
+            nexc += 1
+    if nexc:
+        return n, nexc
     return n
 
 
-async def collect(in_stream):
-    return [_ async for _ in in_stream]
-
-
 class Stream:
-    def __init__(self, in_stream: Union[Iterable[T], AsyncIterable[T]]):
-        self.in_stream = stream(in_stream)
-
-    def __anext__(self):
-        return self.in_stream.__anext__()
-
-    def __aiter__(self):
-        return self.in_stream.__aiter__()
-
     @classmethod
-    def registerapi(cls, func: Callable, name=None):
+    def registerapi(cls,
+                    func: Callable[..., AsyncIterator],
+                    name: str = None) -> None:
+        '''
+        `func` expects the data stream, an AsyncIterable or AsyncIterator,
+        as the first positional argument. It may take additional positional
+        and keyword arguments. See the functions `batch`, `drop_if`,
+        `transform`, etc for examples.
+
+        User can use this method to register other functions so that they
+        can be used as methods of a `Stream` object, just like `batch`,
+        `drop_if`, etc.
+        '''
         if not name:
             name = func.__name__
 
@@ -513,11 +452,20 @@ class Stream:
 
         setattr(cls, name, wrapped)
 
-    def drain(self, log_every_nth=0):
-        return drain(self.in_stream, log_every_nth)
+    def __init__(self, in_stream: Union[Iterable, AsyncIterable]):
+        self.in_stream = stream(in_stream)
+
+    def __anext__(self):
+        return self.in_stream.__anext__()
+
+    def __aiter__(self):
+        return self.in_stream.__aiter__()
 
     def collect(self):
         return collect(self.in_stream)
+
+    def drain(self, log_nth=0):
+        return drain(self.in_stream, log_nth)
 
 
 Stream.registerapi(batch)
@@ -525,12 +473,13 @@ Stream.registerapi(unbatch)
 Stream.registerapi(buffer)
 Stream.registerapi(drop_if)
 Stream.registerapi(drop_exceptions)
+Stream.registerapi(drop_first_n)
 Stream.registerapi(keep_if)
-Stream.registerapi(keep_at_intervals)
-Stream.registerapi(keep_at_random)
+Stream.registerapi(keep_every_nth)
+Stream.registerapi(keep_random)
+Stream.registerapi(keep_first_n)
 Stream.registerapi(peek_if)
-Stream.registerapi(peek_at_intervals)
-Stream.registerapi(peek_at_random)
-Stream.registerapi(log_at_intervals)
+Stream.registerapi(peek_every_nth)
+Stream.registerapi(peek_random)
+Stream.registerapi(log_every_nth)
 Stream.registerapi(transform)
-Stream.registerapi(unordered_transform)
