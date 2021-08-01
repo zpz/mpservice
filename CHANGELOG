@@ -1,3 +1,9 @@
+Release 0.8.5
+=============
+
+Refactor the async streamer API and tests.
+
+
 Release 0.8.4
 =============
 
