@@ -93,7 +93,7 @@ async def test_drop():
     assert await s.drop_first_n(6).collect() == [6, 7]
 
     assert await Stream((2, 3, 1, 5, 4, 7)).drop_if(
-        lambda i, x: x > i).collect() == [1, 4, 7]
+        lambda i, x: x > i).collect() == [1, 4]
 
 
 @pytest.mark.asyncio
