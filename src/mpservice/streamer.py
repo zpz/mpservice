@@ -1,3 +1,8 @@
+'''Utilities for processing a continuous stream of data in a synchronous context.
+
+Please refer to the async counterpart in the module `mpservice.async_streamer`.
+'''
+
 import functools
 import inspect
 import logging
@@ -14,9 +19,12 @@ from typing import (
 )
 
 
-NO_MORE_DATA = object()
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
+
+NO_MORE_DATA = object()
+
 logger = logging.getLogger(__name__)
+
 T = TypeVar('T')
 TT = TypeVar('TT')
 
@@ -28,17 +36,21 @@ def _is_exc(e):
 
 
 class IterQueue(Queue):
+    DEFAULT_MAXSIZE = 256
+
     def __init__(self, maxsize: int = None, q_err: Queue = None):
-        super().__init__(maxsize or 256)
+        super().__init__(maxsize or self.DEFAULT_MAXSIZE)
         self._q_err = Queue() if q_err is None else q_err
         self._closed = False
         self._exhausted = False
 
     def put_end(self):
+        assert not self._closed
         self.put(NO_MORE_DATA)
         self._closed = True
 
     def put_error(self, e):
+        assert not self._closed
         self._q_err.put(e)
 
     def put(self, x, **kwargs):
@@ -75,13 +87,13 @@ class IterQueue(Queue):
                     raise StopIteration
                 return z
             except Empty:
-                sleep(0.007)
+                sleep(0.005)
 
     def __iter__(self):
         return self
 
 
-def stream(x: Iterable, max_queue_size: int = None) -> IterQueue:
+def stream(x: Iterable, maxsize: int = None) -> IterQueue:
     if isinstance(x, IterQueue):
         return x
 
@@ -105,10 +117,9 @@ def stream(x: Iterable, max_queue_size: int = None) -> IterQueue:
             q_out.put_error(e)
         q_out.put_end()
 
-    q = IterQueue(max_queue_size)
+    q = IterQueue(maxsize)
     t = Thread(target=enqueue, args=(x, q))
     t.start()
-    # TODO: how to join the thread? handle exceptions?
 
     return q
 
@@ -117,12 +128,13 @@ def collect(in_stream: Iterable[T]) -> List[T]:
     return list(in_stream)
 
 
-def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int):
+def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
     '''Take elements from an input stream,
     and bundle them up into batches up to a size limit,
     and produce the batches in an iterable.
 
-    The output batches are all of the specified size, except possibly the final batch.
+    The output batches are all of the specified size,
+    except possibly the final batch.
     There is no 'timeout' logic to produce a smaller batch.
     For efficiency, this requires the input stream to have a steady supply.
     If that is a concern, having a `buffer` on the input stream may help.
@@ -130,29 +142,35 @@ def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int):
     assert 0 < batch_size <= 10000
     batch_ = []
     n = 0
-    for x in q_in:
-        batch_.append(x)
-        n += 1
-        if n >= batch_size:
+    try:
+        for x in q_in:
+            batch_.append(x)
+            n += 1
+            if n >= batch_size:
+                q_out.put(batch_)
+                batch_ = []
+                n = 0
+        if n:
             q_out.put(batch_)
-            batch_ = []
-            n = 0
-    if n:
-        q_out.put(batch_)
+    except Exception as e:
+        q_out.put_error(e)
     q_out.put_end()
 
 
-def unbatch(q_in, q_out):
+def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
     '''Reverse of "batch", turning a stream of batches into
     a stream of individual elements.
     '''
-    for batch in q_in:
-        for x in batch:
-            q_out.put(x)
+    try:
+        for batch in q_in:
+            for x in batch:
+                q_out.put(x)
+    except Exception as e:
+        q_out.put_error(e)
     q_out.put_end()
 
 
-def buffer(q_in, q_out):
+def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
     '''Buffer is used to stabilize and improve the speed of data flow.
 
     A buffer is useful after any operation that can not guarantee
@@ -167,14 +185,18 @@ def buffer(q_in, q_out):
     q_out.put_end()
 
 
-def drop_if(q_in, q_out, func: Callable[[int, T], bool]):
+def drop_if(q_in: IterQueue, q_out: IterQueue,
+            func: Callable[[int, T], bool]) -> None:
     n = 0
-    for x in q_in:
-        if func(n, x):
+    try:
+        for x in q_in:
+            if func(n, x):
+                n += 1
+                continue
+            q_out.put(x)
             n += 1
-            continue
-        q_out.put(x)
-        n += 1
+    except Exception as e:
+        q_out.put_error(e)
     q_out.put_end()
 
 
@@ -187,13 +209,17 @@ def drop_first_n(q_in, q_out, n: int):
     return drop_if(q_in, q_out, lambda i, x: i < n)
 
 
-def keep_if(q_in, q_out,
-            func: Callable[[int, T], bool]) -> IterQueue:
+def keep_if(q_in: IterQueue,
+            q_out: IterQueue,
+            func: Callable[[int, T], bool]) -> None:
     n = 0
-    for x in q_in:
-        if func(n, x):
-            q_out.put(x)
-        n += 1
+    try:
+        for x in q_in:
+            if func(n, x):
+                q_out.put(x)
+            n += 1
+    except Exception as e:
+        q_out.put_error(e)
     q_out.put_end()
 
 
@@ -212,23 +238,18 @@ def keep_first_n(q_in, q_out, n: int):
     assert n > 0
     k = 0
     for x in q_in:
-        q_out.put(x)
         k += 1
-        if k >= n:
+        if k > n:
             break
+        q_out.put(x)
     q_out.put_end()
 
 
-def _default_peek_func(i, x):
-    print('')
-    print('#', i)
-    print(x)
-
-
-def peek_if(q_in, q_out,
+def peek_if(q_in: IterQueue,
+            q_out: IterQueue,
             condition_func: Callable[[int, T], bool],
-            peek_func: Callable[[int, T], None] = _default_peek_func,
-            ):
+            peek_func: Callable[[int, T], None] = None,
+            ) -> None:
     '''Take a peek at the data elements that statisfy the specified condition.
 
     `peek_func` usually prints out info of the data element,
@@ -237,20 +258,29 @@ def peek_if(q_in, q_out,
 
     The peek function usually should not modify the data element.
     '''
+    if peek_func is None:
+        def peek_func(i, x):
+            print('')
+            print('#', i)
+            print(x)
+
     n = 0
-    for x in q_in:
-        if condition_func(n, x):
-            peek_func(n, x)
-        q_out.put(x)
-        n += 1
+    try:
+        for x in q_in:
+            if condition_func(n, x):
+                peek_func(n, x)
+            q_out.put(x)
+            n += 1
+    except Exception as e:
+        q_out.put_error(e)
     q_out.put_end()
 
 
-def peek_every_nth(q_in, q_out, nth: int, peek_func=_default_peek_func):
+def peek_every_nth(q_in, q_out, nth: int, peek_func=None):
     return peek_if(q_in, q_out, lambda i, x: i % nth == 0, peek_func)
 
 
-def peek_random(q_in, q_out, frac: float, peek_func=_default_peek_func):
+def peek_random(q_in, q_out, frac: float, peek_func=None):
     assert 0 < frac <= 1
     rand = random.random
     return peek_if(q_in, q_out, lambda i, x: rand() < frac, peek_func)
@@ -272,13 +302,14 @@ def log_exceptions(q_in, q_out, level: str = 'error'):
     )
 
 
-def transform(q_in, q_out,
+def transform(q_in: IterQueue,
+              q_out: IterQueue,
               func: Callable[[T], TT],
               *,
               workers: Optional[Union[int, str]] = None,
               return_exceptions: bool = False,
               **func_args,
-              ):
+              ) -> None:
     '''Apply a transformation on each element of the data stream,
     producing a stream of corresponding results.
 
@@ -287,7 +318,7 @@ def transform(q_in, q_out,
     Additional keywargs can be passed in via the keyward arguments
     `func_args`.
 
-    The outputs are in the order of the input elements in `in_stream`.
+    The outputs are in the order of the input elements.
 
     `workers`: max number of concurrent calls to `func`. By default
     this is 1, i.e. there is no concurrency.
@@ -310,13 +341,13 @@ def transform(q_in, q_out,
                     q_out.put(e)
                 else:
                     q_out.put_error(e)
-                    break
+                    break  # No need to process subsequent data.
         q_out.put_end()
         return
 
     finished = False
 
-    def _process(in_stream, lock, out_stream, func, **kwargs):
+    def _process(in_stream, out_stream, func, lock, **kwargs):
         nonlocal finished
         while not finished:
             with lock:
@@ -342,17 +373,17 @@ def transform(q_in, q_out,
             except Exception as e:
                 fut.set_exception(e)
 
-    out_buffer_size = workers * 8
-    out_stream = IterQueue(out_buffer_size)
+    out_stream = IterQueue(max(q_in.maxsize, workers * 8))
     lock = Lock()
 
     t_workers = [
         Thread(target=_process,
                args=(
                    q_in,
-                   lock,
                    out_stream,
-                   func),
+                   func,
+                   lock,
+               ),
                kwargs=func_args)
         for _ in range(workers)
     ]
@@ -368,24 +399,32 @@ def transform(q_in, q_out,
                 q_out.put(e)
             else:
                 q_out.put_error(e)
-                break
+                finished = True
+                break  # No need to process subsequent data.
     q_out.put_end()
+    for t in t_workers:
+        t.join()
 
 
-def drain(in_stream: IterQueue, log_nth: int = 0) -> Union[int, Tuple[int, int]]:
-    '''Drain off the stream and the number of elements processed.
+def drain(q_in: IterQueue, log_nth: int = 0) -> Union[int, Tuple[int, int]]:
+    '''Drain off the stream.
+
+    Return the number of elements processed.
     '''
-    if log_nth:
-        out_stream = IterQueue(in_stream.maxsize, in_stream._q_err)
-        log_every_nth(in_stream, out_stream, log_nth)
+    if log_nth > 0:
+        q_out = IterQueue(q_in.maxsize, q_in._q_err)
+        t = Thread(target=log_every_nth, args=(q_in, q_out, log_nth))
+        t.start()
     else:
-        out_stream = in_stream
+        q_out = q_in
     n = 0
     nexc = 0
-    for v in out_stream:
+    for v in q_out:
         n += 1
         if _is_exc(v):
             nexc += 1
+    if log_nth > 0:
+        t.join()
     if nexc:
         return n, nexc
     return n
@@ -395,15 +434,25 @@ class Stream:
     @classmethod
     def registerapi(cls,
                     func: Callable[..., None],
-                    name: str = None) -> None:
+                    *,
+                    name: str = None,
+                    maxsize: bool = False,
+                    ) -> None:
         '''
         `func` expects the input and output streams (both of type IterQueue)
-        as the first two positional arguments. It may take additional positional
-        and keyword arguments. See the functions `batch`, `drop_if`,
+        as the first two positional arguments. It may take additional
+        positional and keyword arguments. See the functions `batch`, `drop_if`,
         `transform`, etc for examples.
 
-        The created method adds a keyword argument `max_queue_size`,
-        but does not have the input and output stream args.
+        The created method accepts the extra positional and keyword
+        args after the first two positional args. The input and output
+        streams are not args of the method, because the first is
+        provided by the host object, whereas the second is constructed
+        during this registration.
+
+        If `maxsize` is `True`, the created method also takes keyword
+        arg `maxsize`, which is passed to the constructor of the
+        output stream object, which is of type IterQueue.
 
         User can use this method to register other functions so that they
         can be used as methods of a `Stream` object, just like `batch`,
@@ -412,21 +461,34 @@ class Stream:
         if not name:
             name = func.__name__
 
-        @functools.wraps(func)
-        def wrapped(self, *args, max_queue_size: int = None, **kwargs):
-            q_out = IterQueue(max_queue_size, self.in_stream._q_err)
-            t = Thread(target=func,
-                       args=(self.in_stream, q_out, *args),
-                       kwargs=kwargs)
-            t.start()
-            return cls(q_out)
+        if maxsize:
+            @functools.wraps(func)
+            def wrapped(self, *args, maxsize: int = None, **kwargs):
+                if maxsize is None:
+                    maxsize = self.in_stream.maxsize
+                q_out = IterQueue(maxsize, self.in_stream._q_err)
+                t = Thread(target=func,
+                           args=(self.in_stream, q_out, *args),
+                           kwargs=kwargs)
+                t.start()
+                return cls(q_out)
+        else:
+            @functools.wraps(func)
+            def wrapped(self, *args, **kwargs):
+                q_out = IterQueue(self.in_stream.maxsize,
+                                  self.in_stream._q_err)
+                t = Thread(target=func,
+                           args=(self.in_stream, q_out, *args),
+                           kwargs=kwargs)
+                t.start()
+                return cls(q_out)
 
         setattr(cls, name, wrapped)
 
     def __init__(self,
                  in_stream: Union[Iterable, Iterator, IterQueue],
-                 max_queue_size: int = None):
-        self.in_stream = stream(in_stream, max_queue_size)
+                 maxsize: int = None):
+        self.in_stream = stream(in_stream, maxsize)
 
     def __next__(self):
         return self.in_stream.__next__()
@@ -440,10 +502,17 @@ class Stream:
     def drain(self, log_nth: int = 0):
         return drain(self.in_stream, log_nth)
 
+    def buffer(self, buffer_size: int = None):
+        if buffer_size is None:
+            buffer_size = self.in_stream.maxsize * 4
+        q = IterQueue(buffer_size, self.in_stream._q_err)
+        t = Thread(target=buffer, args=(self.in_stream, q))
+        t.start()
+        return self.__class__(q)
 
-Stream.registerapi(batch)
-Stream.registerapi(unbatch)
-Stream.registerapi(buffer)
+
+Stream.registerapi(batch, maxsize=True)
+Stream.registerapi(unbatch, maxsize=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(drop_exceptions)
 Stream.registerapi(drop_first_n)
