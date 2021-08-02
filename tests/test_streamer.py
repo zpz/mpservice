@@ -4,8 +4,7 @@ from time import sleep
 
 import pytest
 
-from mpservice.streamer import (
-    stream, Stream, collect, transform, drain)
+from mpservice.streamer import Stream
 
 
 def test_stream():
@@ -23,11 +22,6 @@ def test_stream():
         def __iter__(self):
             for x in [1, 2, 3]:
                 yield x
-
-    assert collect(stream(range(4))) == [0, 1, 2, 3]
-    assert collect(stream(C())) == [1, 2, 3, 4, 5]
-    assert collect(stream(D())) == [1, 2, 3]
-    assert collect(stream(['a', 'b', 'c'])) == ['a', 'b', 'c']
 
     assert Stream(range(4)).collect() == [0, 1, 2, 3]
     assert Stream(C()).collect() == [1, 2, 3, 4, 5]
@@ -49,9 +43,9 @@ def test_batch():
 
 def test_buffer():
     s = Stream(range(11))
-    assert s.buffer(5).collect() == list(range(11))
+    assert s.buffer(max_queue_size=5).collect() == list(range(11))
     s = Stream(range(11))
-    assert s.buffer(20).collect() == list(range(11))
+    assert s.buffer(max_queue_size=20).collect() == list(range(11))
 
 
 def test_drop():
@@ -139,7 +133,7 @@ def test_transform():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-    s = transform(stream(SYNC_INPUT), f1, workers=1)
+    s = Stream(SYNC_INPUT).transform(f1, workers=1)
     got = [v for v in s]
     assert got == expected
 
@@ -162,8 +156,8 @@ def test_transform():
             self.result += x * 3
 
     mysink = MySink()
-    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
-    n = drain(s)
+    s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
+    n = s.drain()
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -182,15 +176,17 @@ def test_transform_with_error():
         return x + 2
 
     with pytest.raises(TypeError):
-        z = transform(corrupt_data(), process, workers=2)
-        zz = collect(z)
+        z = Stream(corrupt_data()).transform(process, workers=2)
+        zz = z.collect()
         print(zz)
 
-    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
-    zz = collect(z)
+    z = Stream(corrupt_data()).transform(
+        process, workers=2, return_exceptions=True)
+    zz = z.collect()
     print(zz)
     assert isinstance(zz[5], TypeError)
 
-    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
-    zz = drain(z)
+    z = Stream(corrupt_data()).transform(
+        process, workers=2, return_exceptions=True)
+    zz = z.drain()
     assert zz == (len(data), 1)
