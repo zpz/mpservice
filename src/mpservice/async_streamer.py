@@ -220,7 +220,7 @@ async def drop_if(in_stream: AsyncIterable[T],
         n += 1
 
 
-def drop_exceptions(in_stream: AsyncIterable[T]) -> AsyncIterator[T]:
+def drop_exceptions(in_stream):
     return drop_if(in_stream, lambda i, x: _is_exc(x))
 
 
@@ -269,7 +269,7 @@ def _default_peek_func(i, x):
 
 async def peek_if(in_stream: AsyncIterable[T],
                   condition_func: Callable[[int, T], bool],
-                  peek_func: Callable[[int, T], None] = _default_peek_func,
+                  peek_func: Callable[[int, T], None] = None,
                   ) -> AsyncIterator[T]:
     '''Take a peek at the data elements that statisfy the specified condition.
 
@@ -279,6 +279,9 @@ async def peek_if(in_stream: AsyncIterable[T],
 
     The peek function usually should not modify the data element.
     '''
+    if peek_func is None:
+        peek_func = _default_peek_func
+
     n = 0
     async for x in in_stream:
         if condition_func(n, x):
@@ -287,11 +290,11 @@ async def peek_if(in_stream: AsyncIterable[T],
         n += 1
 
 
-def peek_every_nth(in_stream, nth: int, peek_func=_default_peek_func):
+def peek_every_nth(in_stream, nth: int, peek_func=None):
     return peek_if(in_stream, lambda i, x: i % nth == 0, peek_func)
 
 
-def peek_random(in_stream, frac: float, peek_func=_default_peek_func):
+def peek_random(in_stream, frac: float, peek_func=None):
     assert 0 < frac <= 1
     rand = random.random
     return peek_if(in_stream, lambda i, x: rand() < frac, peek_func)
@@ -302,6 +305,13 @@ def log_every_nth(in_stream, nth: int):
         logger.info('data item #%d:  %s', i, x)
 
     return peek_every_nth(in_stream, nth, peek_func)
+
+
+def log_exceptions(in_stream, level: str = 'error'):
+    flog = getattr(logger, level)
+    return peek_if(in_stream,
+                   lambda i, x: _is_exc(x),
+                   lambda i, x: flog(x))
 
 
 # TODO: support sync function.
@@ -337,8 +347,7 @@ async def transform(
     if workers == 1:
         async for x in in_stream:
             try:
-                z = await func(x, **func_args
-                               )
+                z = await func(x, **func_args)
                 yield z
             except Exception as e:
                 if return_exceptions:
@@ -366,8 +375,6 @@ async def transform(
                 except Exception as e:
                     fut = asyncio.Future()
                     await out_stream.put(fut)
-                    if inspect.isclass(e):
-                        e = e()
                     fut.set_exception(e)
                     continue
 
@@ -375,8 +382,6 @@ async def transform(
                 y = await func(x, **kwargs)
                 fut.set_result(y)
             except Exception as e:
-                if inspect.isclass(e):
-                    e = e()
                 fut.set_exception(e)
 
     out_buffer_size = workers * 8
@@ -413,7 +418,9 @@ async def transform(
 
 async def drain(in_stream: AsyncIterable,
                 log_nth: int = 0) -> Union[int, Tuple[int, int]]:
-    '''Drain off the stream and the number of elements processed.
+    '''Drain off the stream.
+
+    Return the number of elements processed.
     '''
     if log_nth:
         in_stream = log_every_nth(in_stream, log_nth)
@@ -432,6 +439,7 @@ class Stream:
     @classmethod
     def registerapi(cls,
                     func: Callable[..., AsyncIterator],
+                    *,
                     name: str = None) -> None:
         '''
         `func` expects the data stream, an AsyncIterable or AsyncIterator,
@@ -482,4 +490,5 @@ Stream.registerapi(peek_if)
 Stream.registerapi(peek_every_nth)
 Stream.registerapi(peek_random)
 Stream.registerapi(log_every_nth)
+Stream.registerapi(log_exceptions)
 Stream.registerapi(transform)
