@@ -1,6 +1,7 @@
 '''Utilities for processing a continuous stream of data in a synchronous context.
 
-Please refer to the async counterpart in the module `mpservice.async_streamer`.
+Please refer to the async counterpart in the module `mpservice.async_streamer`
+for additional info and doc.
 '''
 
 import functools
@@ -129,16 +130,6 @@ def collect(in_stream: Iterable[T]) -> List[T]:
 
 
 def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
-    '''Take elements from an input stream,
-    and bundle them up into batches up to a size limit,
-    and produce the batches in an iterable.
-
-    The output batches are all of the specified size,
-    except possibly the final batch.
-    There is no 'timeout' logic to produce a smaller batch.
-    For efficiency, this requires the input stream to have a steady supply.
-    If that is a concern, having a `buffer` on the input stream may help.
-    '''
     assert 0 < batch_size <= 10000
     batch_ = []
     n = 0
@@ -158,9 +149,6 @@ def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
 
 
 def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
-    '''Reverse of "batch", turning a stream of batches into
-    a stream of individual elements.
-    '''
     try:
         for batch in q_in:
             for x in batch:
@@ -171,15 +159,6 @@ def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
 
 
 def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
-    '''Buffer is used to stabilize and improve the speed of data flow.
-
-    A buffer is useful after any operation that can not guarantee
-    (almost) instant availability of output. A buffer allows its
-    output to "pile up" when the downstream consumer is slow in requests,
-    so that data *is* available when the downstream does come to request
-    data. The buffer evens out unstabilities in the speeds of upstream
-    production and downstream consumption.
-    '''
     for x in q_in:
         q_out.put(x)
     q_out.put_end()
@@ -250,14 +229,6 @@ def peek_if(q_in: IterQueue,
             condition_func: Callable[[int, T], bool],
             peek_func: Callable[[int, T], None] = None,
             ) -> None:
-    '''Take a peek at the data elements that statisfy the specified condition.
-
-    `peek_func` usually prints out info of the data element,
-    but can save it to a file or does other things. This happens *before*
-    the element is sent downstream.
-
-    The peek function usually should not modify the data element.
-    '''
     if peek_func is None:
         def peek_func(i, x):
             print('')
@@ -310,19 +281,6 @@ def transform(q_in: IterQueue,
               return_exceptions: bool = False,
               **func_args,
               ) -> None:
-    '''Apply a transformation on each element of the data stream,
-    producing a stream of corresponding results.
-
-    `func`: a function that takes a single input item
-    as the first positional argument and produces a result.
-    Additional keywargs can be passed in via the keyward arguments
-    `func_args`.
-
-    The outputs are in the order of the input elements.
-
-    `workers`: max number of concurrent calls to `func`. By default
-    this is 1, i.e. there is no concurrency.
-    '''
     if workers is None:
         workers = 1
     elif isinstance(workers, str):
@@ -407,10 +365,6 @@ def transform(q_in: IterQueue,
 
 
 def drain(q_in: IterQueue, log_nth: int = 0) -> Union[int, Tuple[int, int]]:
-    '''Drain off the stream.
-
-    Return the number of elements processed.
-    '''
     if log_nth > 0:
         q_out = IterQueue(q_in.maxsize, q_in._q_err)
         t = Thread(target=log_every_nth, args=(q_in, q_out, log_nth))

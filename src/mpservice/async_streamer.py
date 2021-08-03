@@ -10,34 +10,48 @@ iterable, then the function `stream` will turn it into an AsyncIterator.
 
 The target use case is that one or more operations is I/O bound,
 hence can benefit from async or multi-thread concurrency.
-Concurrency is enabled by `transform`, `unordered_transform`, and `drain`.
+These operations are triggered via `transform`.
+
+The other operations are light weight and supportive of the main (concurrent)
+operation. These operations perform batching, unbatching, buffering,
+filtering, logging, etc.
 
 There are two ways to use these utilities. In the first way, one calls the
 operation functions in sequence, e.g.
 
     data = range(100)
     data_stream = stream(data)
-    result = transform(
-        batch(data_stream, 10),
-        my_op_that_takes_stream_of_batches)
-    result = [_ async for _ in unbatch(result))]
+    pipeline = unbatch(
+                transform(
+                    batch(data_stream, 10),
+                    my_op_that_takes_stream_of_batches,
+                    workers=4,
+                ),
+            )
+    result = [_ async for _ in pipeline]
+or
+    result = await collect(pipeline)
 
 In the second way, one starts with a `Stream` object, and calls
 its methods in a "chained" fashion:
 
     data = range(100)
-    result = (
+    pipeline = (
         Stream(data)
         .batch(10)
-        .transform(my_op_that_takes_stream_of_batches)
+        .transform(my_op_that_takes_stream_of_batches, workers=4)
         .unbatch()
-        .collect()
         )
-    result = await result
+    result = [_ async for _ in pipeline]
+or
+    result = await result.collect()
 
 (Of course, you don't have to call all the methods in one statement.)
 
 In most cases, the second way is recommended.
+
+Although the primary or initial target use is concurrent I/O-bound
+operations, a CPU-bound operation may be handled by a `mpservice.Server`.
 
 Reference for an early version: https://zpz.github.io/blog/stream-processing/
 '''
@@ -328,10 +342,14 @@ async def transform(
 
     `func`: an async function that takes a single input item
     as the first positional argument and produces a result.
-    Additional keywargs can be passed in via the keyward arguments
-    `func_args`.
+    Additional keyword args can be passed in via `func_args`.
 
     The outputs are in the order of the input elements in `in_stream`.
+
+    The main point of `func` does not have to be the output.
+    It could rather be some side effect. For example,
+    saves data in a database. In that case, the output may be
+    `None`.
 
     `workers`: max number of concurrent calls to `func`. By default
     this is 1, i.e. there is no concurrency.
@@ -421,6 +439,8 @@ async def drain(in_stream: AsyncIterable,
     '''Drain off the stream.
 
     Return the number of elements processed.
+    When there are exceptions, return the total number of elements
+    as well as the number of exceptions.
     '''
     if log_nth:
         in_stream = log_every_nth(in_stream, log_nth)
