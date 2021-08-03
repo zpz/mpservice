@@ -1,6 +1,7 @@
 import asyncio
 import math
 import random
+import time
 
 import pytest
 
@@ -185,6 +186,52 @@ async def test_transform():
 
         async def __call__(self, x):
             await asyncio.sleep(random.random() * 0.01)
+            self.result += x * 3
+
+    mysink = MySink()
+    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
+    n = await drain(s)
+    assert n == len(SYNC_INPUT)
+
+    got = mysink.result
+    expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
+    assert math.isclose(got, expected)
+
+
+@pytest.mark.asyncio
+async def test_transform_sync():
+
+    def f1(x):
+        time.sleep(random.random() * 0.01)
+        return x + 3.8
+
+    def f2(x):
+        time.sleep(random.random() * 0.01)
+        return x*2
+
+    SYNC_INPUT = list(range(278))
+
+    expected = [v + 3.8 for v in SYNC_INPUT]
+    s = transform(stream(SYNC_INPUT), f1, workers=1)
+    got = [v async for v in s]
+    assert got == expected
+
+    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
+    assert await s == expected
+
+    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
+    assert await s == expected
+
+    expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
+    s = Stream(SYNC_INPUT).transform(f1).transform(f2)
+    assert await s.collect() == expected
+
+    class MySink:
+        def __init__(self):
+            self.result = 0
+
+        def __call__(self, x):
+            time.sleep(random.random() * 0.01)
             self.result += x * 3
 
     mysink = MySink()

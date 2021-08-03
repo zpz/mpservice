@@ -61,12 +61,16 @@ import functools
 import inspect
 import logging
 import multiprocessing
+import queue
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Callable, Awaitable, TypeVar, Optional, Union,
     AsyncIterable, AsyncIterator, Iterable,
     Tuple, List)
 
+from . import streamer as _sync_streamer
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
@@ -330,44 +334,11 @@ def log_exceptions(in_stream, level: str = 'error'):
                    lambda i, x: flog(x))
 
 
-# TODO: support sync function.
-async def transform(
-    in_stream: AsyncIterator[T],
-    func: Callable[[T], Awaitable[TT]],
-    *,
-    workers: Optional[Union[int, str]] = None,
-    return_exceptions: bool = False,
-    **func_args,
-) -> AsyncIterator[TT]:
-    '''Apply a transformation on each element of the data stream,
-    producing a stream of corresponding results.
-
-    `func`: an async function that takes a single input item
-    as the first positional argument and produces a result.
-    Additional keyword args can be passed in via `func_args`.
-
-    The outputs are in the order of the input elements in `in_stream`.
-
-    The main point of `func` does not have to be the output.
-    It could rather be some side effect. For example,
-    saves data in a database. In that case, the output may be
-    `None`.
-
-    `workers`: max number of concurrent calls to `func`. By default
-    this is 1, i.e. there is no concurrency.
-    '''
-    if workers is None:
-        workers = 1
-    elif isinstance(workers, str):
-        assert workers == 'max'
-        workers = MAX_THREADS
-    else:
-        workers > 0
-
+async def _transform_async(in_stream, func, workers, return_exceptions):
     if workers == 1:
         async for x in in_stream:
             try:
-                z = await func(x, **func_args)
+                z = await func(x)
                 yield z
             except Exception as e:
                 if return_exceptions:
@@ -378,7 +349,7 @@ async def transform(
 
     finished = False
 
-    async def _process(in_stream, lock, out_stream, func, **kwargs):
+    async def _process(in_stream, out_stream, lock):
         nonlocal finished
         while not finished:
             async with lock:
@@ -399,7 +370,7 @@ async def transform(
                     continue
 
             try:
-                y = await func(x, **kwargs)
+                y = await func(x)
                 fut.set_result(y)
             except Exception as e:
                 fut.set_exception(e)
@@ -411,10 +382,8 @@ async def transform(
     t_workers = [
         asyncio.create_task(_process(
             in_stream,
-            lock,
             out_stream,
-            func,
-            **func_args,
+            lock,
         ))
         for _ in range(workers)
     ]
@@ -434,6 +403,94 @@ async def transform(
 
     for t in t_workers:
         await t
+
+
+async def _transform_sync(in_stream, func, workers, return_exceptions):
+    loop = asyncio.get_running_loop()
+    q_in = _sync_streamer.IterQueue(512)
+    q_out = _sync_streamer.IterQueue(512, q_in._q_err)
+    NO_MORE_DATA = _sync_streamer.NO_MORE_DATA
+
+    async def _put_input_in_queue():
+        async for x in in_stream:
+            while True:
+                try:
+                    q_in.put_nowait(x)
+                    break
+                except queue.Full:
+                    await asyncio.sleep(0.002)
+        q_in.put_end()
+
+    def _put_output_in_queue(q_in, q_out, func):
+        _sync_streamer.transform(q_in, q_out, func,
+                                 workers=workers,
+                                 return_exceptions=return_exceptions)
+
+    t_in = loop.create_task(_put_input_in_queue())
+    t_out = loop.run_in_executor(None, _put_output_in_queue, q_in, q_out, func)
+
+    while True:
+        if not q_out._q_err.empty():
+            raise q_out._q_err.get()
+        try:
+            z = q_out.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0.003)
+            continue
+        if z is NO_MORE_DATA:
+            break
+        yield z
+
+    await t_in
+    await t_out
+
+
+def transform(
+    in_stream: AsyncIterator[T],
+    func: Callable[[T], Union[TT, Awaitable[TT]]],
+    *,
+    workers: Optional[Union[int, str]] = None,
+    return_exceptions: bool = False,
+    **func_args,
+) -> AsyncIterator[TT]:
+    '''Apply a transformation on each element of the data stream,
+    producing a stream of corresponding results.
+
+    `func`: a sync or async function that takes a single input item
+    as the first positional argument and produces a result.
+    Additional keyword args can be passed in via `func_args`.
+
+    The outputs are in the order of the input elements in `in_stream`.
+
+    The main point of `func` does not have to be the output.
+    It could rather be some side effect. For example,
+    saving data in a database. In that case, the output may be
+    `None`. Regardless, the output is yielded to be consumed by the next
+    operator in the pipeline. A stream of `None`s could be used
+    in counting, for example. The output stream may also contain
+    Exception objects (if `return_exceptions` is `True`), which may be
+    counted, logged, or handled in other ways.
+
+    `workers`: max number of concurrent calls to `func`. By default
+    this is 1, i.e. there is no concurrency.
+    '''
+    if workers is None:
+        workers = 1
+    elif isinstance(workers, str):
+        assert workers == 'max'
+        workers = MAX_THREADS
+    else:
+        workers > 0
+
+    fun = functools.partial(func, **func_args)
+    if inspect.iscoroutinefunction(func) or (
+        not inspect.isfunction(func)
+        and hasattr(func, '__call__')
+        and inspect.iscoroutinefunction(func.__call__)
+    ):
+        return _transform_async(in_stream, fun, workers, return_exceptions)
+    else:
+        return _transform_sync(in_stream, fun, workers, return_exceptions)
 
 
 async def drain(in_stream: AsyncIterable,
@@ -460,7 +517,7 @@ async def drain(in_stream: AsyncIterable,
 
 
 class Stream:
-    @classmethod
+    @ classmethod
     def registerapi(cls,
                     func: Callable[..., AsyncIterator],
                     *,
@@ -478,7 +535,7 @@ class Stream:
         if not name:
             name = func.__name__
 
-        @functools.wraps(func)
+        @ functools.wraps(func)
         def wrapped(self, *args, **kwargs):
             return cls(func(self.in_stream, *args, **kwargs))
 
