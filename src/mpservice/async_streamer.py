@@ -314,9 +314,11 @@ def peek_random(in_stream, frac: float, peek_func=None):
     return peek_if(in_stream, lambda i, x: rand() < frac, peek_func)
 
 
-def log_every_nth(in_stream, nth: int):
+def log_every_nth(in_stream, nth: int, level: str = 'info'):
+    flog = getattr(logger, level)
+
     def peek_func(i, x):
-        logger.info('data item #%d:  %s', i, x)
+        flog('data item #%d:  %s', i, x)
 
     return peek_every_nth(in_stream, nth, peek_func)
 
@@ -435,7 +437,9 @@ async def transform(
 
 
 async def drain(in_stream: AsyncIterable,
-                log_nth: int = 0) -> Union[int, Tuple[int, int]]:
+                log_nth: int = 0,
+                log_level: str = 'info',
+                ) -> Union[int, Tuple[int, int]]:
     '''Drain off the stream.
 
     Return the number of elements processed.
@@ -443,7 +447,7 @@ async def drain(in_stream: AsyncIterable,
     as well as the number of exceptions.
     '''
     if log_nth:
-        in_stream = log_every_nth(in_stream, log_nth)
+        in_stream = log_every_nth(in_stream, log_nth, log_level)
     n = 0
     nexc = 0
     async for v in in_stream:

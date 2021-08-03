@@ -257,9 +257,11 @@ def peek_random(q_in, q_out, frac: float, peek_func=None):
     return peek_if(q_in, q_out, lambda i, x: rand() < frac, peek_func)
 
 
-def log_every_nth(q_in, q_out, nth: int):
+def log_every_nth(q_in, q_out, nth: int, level: str = 'info'):
+    flog = getattr(logger, level)
+
     def peek_func(i, x):
-        logger.info('data item #%d:  %s', i, x)
+        flog('data item #%d:  %s', i, x)
 
     return peek_every_nth(q_in, q_out, nth, peek_func)
 
@@ -364,10 +366,14 @@ def transform(q_in: IterQueue,
         t.join()
 
 
-def drain(q_in: IterQueue, log_nth: int = 0) -> Union[int, Tuple[int, int]]:
+def drain(q_in: IterQueue,
+          log_nth: int = 0,
+          log_level: str = 'info',
+          ) -> Union[int, Tuple[int, int]]:
     if log_nth > 0:
         q_out = IterQueue(q_in.maxsize, q_in._q_err)
-        t = Thread(target=log_every_nth, args=(q_in, q_out, log_nth))
+        t = Thread(target=log_every_nth, args=(
+            q_in, q_out, log_nth, log_level))
         t.start()
     else:
         q_out = q_in
