@@ -10,7 +10,8 @@ iterable, then the function `stream` will turn it into an AsyncIterator.
 
 The target use case is that one or more operations is I/O bound,
 hence can benefit from async or multi-thread concurrency.
-These operations are triggered via `transform`.
+These operations (which are sync or async functions) are triggered
+via `transform`.
 
 The other operations are light weight and supportive of the main (concurrent)
 operation. These operations perform batching, unbatching, buffering,
