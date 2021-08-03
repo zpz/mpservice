@@ -52,7 +52,8 @@ or
 In most cases, the second way is recommended.
 
 Although the primary or initial target use is concurrent I/O-bound
-operations, a CPU-bound operation may be handled by a `mpservice.Server`.
+operations, CPU-bound operations could be performed concurrently
+in a `mpservice.Server` and registered by `transform`.
 
 Reference for an early version: https://zpz.github.io/blog/stream-processing/
 '''
