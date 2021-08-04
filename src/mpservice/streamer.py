@@ -39,9 +39,9 @@ def _is_exc(e):
 class IterQueue(Queue):
     DEFAULT_MAXSIZE = 256
 
-    def __init__(self, maxsize: int = None, q_err: Queue = None):
+    def __init__(self, maxsize: int = None):
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
-        self._q_err = Queue() if q_err is None else q_err
+        self.exception = None
         self._closed = False
         self._exhausted = False
 
@@ -50,9 +50,9 @@ class IterQueue(Queue):
         self.put(NO_MORE_DATA)
         self._closed = True
 
-    def put_error(self, e):
+    def put_exception(self, e):
         assert not self._closed
-        self._q_err.put(e)
+        self.exception = e
 
     def put(self, x, **kwargs):
         assert not self._closed
@@ -63,6 +63,8 @@ class IterQueue(Queue):
         super().put_nowait(x)
 
     def get(self, **kwargs):
+        if self.exception is not None:
+            raise self.exception
         if self._exhausted:
             return NO_MORE_DATA
         z = super().get(**kwargs)
@@ -71,8 +73,8 @@ class IterQueue(Queue):
         return z
 
     def get_nowait(self):
-        if not self._q_err.empty():
-            raise self._q_err.get()
+        if self.exception is not None:
+            raise self.exception
         if self._exhausted:
             return NO_MORE_DATA
         z = super().get_nowait()
@@ -115,7 +117,7 @@ def stream(x: Iterable, maxsize: int = None) -> IterQueue:
             for v in q_in:
                 q_out.put(v)
         except Exception as e:
-            q_out.put_error(e)
+            q_out.put_exception(e)
         q_out.put_end()
 
     q = IterQueue(maxsize)
@@ -144,7 +146,7 @@ def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
         if n:
             q_out.put(batch_)
     except Exception as e:
-        q_out.put_error(e)
+        q_out.put_exception(e)
     q_out.put_end()
 
 
@@ -154,13 +156,17 @@ def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
             for x in batch:
                 q_out.put(x)
     except Exception as e:
-        q_out.put_error(e)
+        q_out.put_exception(e)
     q_out.put_end()
 
 
 def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
-    for x in q_in:
-        q_out.put(x)
+    try:
+        for x in q_in:
+            print('in buffer, got', x)
+            q_out.put(x)
+    except Exception as e:
+        q_out.put_exception(e)
     q_out.put_end()
 
 
@@ -175,7 +181,7 @@ def drop_if(q_in: IterQueue, q_out: IterQueue,
             q_out.put(x)
             n += 1
     except Exception as e:
-        q_out.put_error(e)
+        q_out.put_exception(e)
     q_out.put_end()
 
 
@@ -198,7 +204,7 @@ def keep_if(q_in: IterQueue,
                 q_out.put(x)
             n += 1
     except Exception as e:
-        q_out.put_error(e)
+        q_out.put_exception(e)
     q_out.put_end()
 
 
@@ -216,17 +222,20 @@ def keep_random(q_in, q_out, frac: float):
 def keep_first_n(q_in, q_out, n: int):
     assert n > 0
     k = 0
-    for x in q_in:
-        k += 1
-        if k > n:
-            break
-        q_out.put(x)
+    try:
+        for x in q_in:
+            k += 1
+            if k > n:
+                break
+            q_out.put(x)
+    except Exception as e:
+        q_out.put_exception(e)
     q_out.put_end()
 
 
 def peek_if(q_in: IterQueue,
             q_out: IterQueue,
-            condition_func: Callable[[int, T], bool],
+            if_func: Callable[[int, T], bool],
             peek_func: Callable[[int, T], None] = None,
             ) -> None:
     if peek_func is None:
@@ -238,12 +247,12 @@ def peek_if(q_in: IterQueue,
     n = 0
     try:
         for x in q_in:
-            if condition_func(n, x):
+            if if_func(n, x):
                 peek_func(n, x)
             q_out.put(x)
             n += 1
     except Exception as e:
-        q_out.put_error(e)
+        q_out.put_exception(e)
     q_out.put_end()
 
 
@@ -292,16 +301,19 @@ def transform(q_in: IterQueue,
         workers > 0
 
     if workers == 1:
-        for x in q_in:
-            try:
-                z = func(x, **func_args)
-                q_out.put(z)
-            except Exception as e:
-                if return_exceptions:
-                    q_out.put(e)
-                else:
-                    q_out.put_error(e)
-                    break  # No need to process subsequent data.
+        try:
+            for x in q_in:
+                try:
+                    z = func(x, **func_args)
+                    q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        q_out.put(e)
+                    else:
+                        q_out.put_exception(e)
+                        break  # No need to process subsequent data.
+        except Exception as e:
+            q_out.put_exception(e)
         q_out.put_end()
         return
 
@@ -319,19 +331,25 @@ def transform(q_in: IterQueue,
                     out_stream.put(fut)
                 except StopIteration:
                     finished = True
-                    out_stream.put(NO_MORE_DATA)
+                    out_stream.put_end()
                     return
                 except Exception as e:
-                    fut = Future()
-                    out_stream.put(fut)
-                    fut.set_exception(e)
-                    continue
+                    finished = True
+                    out_stream.put_exception(e)
+                    out_stream.put_end()
+                    return
 
             try:
                 y = func(x, **kwargs)
                 fut.set_result(y)
             except Exception as e:
-                fut.set_exception(e)
+                if return_exceptions:
+                    fut.set_result(e)
+                else:
+                    fut.set_exception(e)
+                    finished = True
+                    out_stream.put_end()
+                    return
 
     out_stream = IterQueue(max(q_in.maxsize, workers * 8))
     lock = Lock()
@@ -350,17 +368,17 @@ def transform(q_in: IterQueue,
     for t in t_workers:
         t.start()
 
-    for fut in out_stream:
-        try:
-            z = fut.result()
-            q_out.put(z)
-        except Exception as e:
-            if return_exceptions:
-                q_out.put(e)
-            else:
-                q_out.put_error(e)
-                finished = True
+    try:
+        for fut in out_stream:
+            try:
+                z = fut.result()
+                q_out.put(z)
+            except Exception as e:
+                q_out.put_exception(e)
                 break  # No need to process subsequent data.
+    except Exception as e:
+        q_out.put_exception(e)
+    finished = True
     q_out.put_end()
     for t in t_workers:
         t.join()
@@ -371,7 +389,7 @@ def drain(q_in: IterQueue,
           log_level: str = 'info',
           ) -> Union[int, Tuple[int, int]]:
     if log_nth > 0:
-        q_out = IterQueue(q_in.maxsize, q_in._q_err)
+        q_out = IterQueue(q_in.maxsize)
         t = Thread(target=log_every_nth, args=(
             q_in, q_out, log_nth, log_level))
         t.start()
@@ -426,7 +444,7 @@ class Stream:
             def wrapped(self, *args, maxsize: int = None, **kwargs):
                 if maxsize is None:
                     maxsize = self.in_stream.maxsize
-                q_out = IterQueue(maxsize, self.in_stream._q_err)
+                q_out = IterQueue(maxsize)
                 t = Thread(target=func,
                            args=(self.in_stream, q_out, *args),
                            kwargs=kwargs)
@@ -435,8 +453,7 @@ class Stream:
         else:
             @functools.wraps(func)
             def wrapped(self, *args, **kwargs):
-                q_out = IterQueue(self.in_stream.maxsize,
-                                  self.in_stream._q_err)
+                q_out = IterQueue(self.in_stream.maxsize)
                 t = Thread(target=func,
                            args=(self.in_stream, q_out, *args),
                            kwargs=kwargs)
@@ -465,7 +482,7 @@ class Stream:
     def buffer(self, buffer_size: int = None):
         if buffer_size is None:
             buffer_size = self.in_stream.maxsize * 4
-        q = IterQueue(buffer_size, self.in_stream._q_err)
+        q = IterQueue(buffer_size)
         t = Thread(target=buffer, args=(self.in_stream, q))
         t.start()
         return self.__class__(q)

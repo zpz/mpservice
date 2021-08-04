@@ -65,8 +65,6 @@ import logging
 import multiprocessing
 import queue
 import random
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Callable, Awaitable, TypeVar, Optional, Union,
     AsyncIterable, AsyncIterator, Iterable,
@@ -113,6 +111,63 @@ TT = TypeVar('TT')
 def _is_exc(e):
     return isinstance(e, Exception) or (
         inspect.isclass(e) and issubclass(e, Exception))
+
+
+class IterQueue(asyncio.Queue):
+    DEFAULT_MAXSIZE = 256
+
+    def __init__(self, maxsize: int = None):
+        super().__init__(maxsize or self.DEFAULT_MAXSIZE)
+        self.exception = None
+        self._closed = False
+        self._exhausted = False
+
+    async def put_end(self):
+        assert not self._closed
+        await self.put(NO_MORE_DATA)
+        self._closed = True
+
+    async def put_exception(self, e):
+        assert not self._closed
+        self.exception = e
+
+    async def put(self, x, **kwargs):
+        assert not self._closed
+        await super().put(x, **kwargs)
+
+    def put_nowait(self, x):
+        assert not self._closed
+        super().put_nowait(x)
+
+    async def get(self, **kwargs):
+        if self.exception is not None:
+            raise self.exception
+        if self._exhausted:
+            return NO_MORE_DATA
+        z = await super().get(**kwargs)
+        if z is NO_MORE_DATA:
+            self._exhausted = True
+        return z
+
+    def get_nowait(self):
+        if self.exception is not None:
+            raise self.exception
+        if self._exhausted:
+            return NO_MORE_DATA
+        z = super().get_nowait()
+        if z is NO_MORE_DATA:
+            self._exhausted = True
+        return z
+
+    async def __anext__(self):
+        while True:
+            z = await self.get()
+            if z is NO_MORE_DATA:
+                raise StopAsyncIteration
+            return z
+
+    def __aiter__(self):
+        return self
 
 
 def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
@@ -209,21 +264,19 @@ async def buffer(in_stream: AsyncIterable[T],
     data. The buffer evens out unstabilities in the speeds of upstream
     production and downstream consumption.
     '''
-    out_stream = asyncio.Queue(maxsize=buffer_size or 256)
+    out_stream = IterQueue(buffer_size)
 
     async def buff(in_stream, out_stream):
-        async for x in in_stream:
-            await out_stream.put(x)
-        await out_stream.put(NO_MORE_DATA)
+        try:
+            async for x in in_stream:
+                await out_stream.put(x)
+        except Exception as e:
+            await out_stream.put_exception(e)
+        await out_stream.put_end()
 
     t = asyncio.create_task(buff(in_stream, out_stream))
 
-    while True:
-        if t.done() and t.exception() is not None:
-            raise t.exception()
-        x = await out_stream.get()
-        if x is NO_MORE_DATA:
-            break
+    async for x in out_stream:
         yield x
 
     await t
@@ -288,7 +341,7 @@ def _default_peek_func(i, x):
 
 
 async def peek_if(in_stream: AsyncIterable[T],
-                  condition_func: Callable[[int, T], bool],
+                  if_func: Callable[[int, T], bool],
                   peek_func: Callable[[int, T], None] = None,
                   ) -> AsyncIterator[T]:
     '''Take a peek at the data elements that statisfy the specified condition.
@@ -304,7 +357,7 @@ async def peek_if(in_stream: AsyncIterable[T],
 
     n = 0
     async for x in in_stream:
-        if condition_func(n, x):
+        if if_func(n, x):
             peek_func(n, x)
         yield x
         n += 1
@@ -363,22 +416,31 @@ async def _transform_async(in_stream, func, workers, return_exceptions):
                     await out_stream.put(fut)
                 except StopAsyncIteration:
                     finished = True
-                    await out_stream.put(NO_MORE_DATA)
+                    await out_stream.put_end()
                     return
                 except Exception as e:
-                    fut = asyncio.Future()
-                    await out_stream.put(fut)
-                    fut.set_exception(e)
-                    continue
+                    if return_exceptions:
+                        await out_stream.put(e)
+                        continue
+                    else:
+                        finished = True
+                        await out_stream.put_exception(e)
+                        # No need to process subsequent data.
+                        await out_stream.put_end()
+                        return
 
             try:
                 y = await func(x)
                 fut.set_result(y)
             except Exception as e:
                 fut.set_exception(e)
+                if not return_exceptions:
+                    finished = True
+                    await out_stream.put_end()
+                    return
 
     out_buffer_size = workers * 8
-    out_stream = asyncio.Queue(out_buffer_size)
+    out_stream = IterQueue(out_buffer_size)
     lock = asyncio.Lock()
 
     t_workers = [
@@ -390,37 +452,41 @@ async def _transform_async(in_stream, func, workers, return_exceptions):
         for _ in range(workers)
     ]
 
-    while True:
-        fut = await out_stream.get()
-        if fut is NO_MORE_DATA:
-            break
-        try:
-            z = await fut
-            yield z
-        except Exception as e:
+    async for fut in out_stream:
+        if _is_exc(fut):
             if return_exceptions:
-                yield e
+                yield fut
             else:
-                raise e
+                raise fut
+        else:
+            try:
+                z = await fut
+                yield z
+            except Exception as e:
+                if return_exceptions:
+                    yield e
+                else:
+                    raise e
 
     for t in t_workers:
         await t
 
 
 async def _transform_sync(in_stream, func, workers, return_exceptions):
-    loop = asyncio.get_running_loop()
-    q_in = _sync_streamer.IterQueue(512)
-    q_out = _sync_streamer.IterQueue(512, q_in._q_err)
-    NO_MORE_DATA = _sync_streamer.NO_MORE_DATA
+    q_in = _sync_streamer.IterQueue()
+    q_out = _sync_streamer.IterQueue()
 
     async def _put_input_in_queue():
-        async for x in in_stream:
-            while True:
-                try:
-                    q_in.put_nowait(x)
-                    break
-                except queue.Full:
-                    await asyncio.sleep(0.002)
+        try:
+            async for x in in_stream:
+                while True:
+                    try:
+                        q_in.put_nowait(x)
+                        break
+                    except queue.Full:
+                        await asyncio.sleep(0.002)
+        except Exception as e:
+            q_in.put_exception(e)
         q_in.put_end()
 
     def _put_output_in_queue(q_in, q_out, func):
@@ -428,18 +494,17 @@ async def _transform_sync(in_stream, func, workers, return_exceptions):
                                  workers=workers,
                                  return_exceptions=return_exceptions)
 
-    t_in = loop.create_task(_put_input_in_queue())
-    t_out = loop.run_in_executor(None, _put_output_in_queue, q_in, q_out, func)
+    t_in = asyncio.create_task(_put_input_in_queue())
+    t_out = asyncio.get_running_loop().run_in_executor(
+        None, _put_output_in_queue, q_in, q_out, func)
 
     while True:
-        if not q_out._q_err.empty():
-            raise q_out._q_err.get()
         try:
             z = q_out.get_nowait()
         except queue.Empty:
-            await asyncio.sleep(0.003)
+            await asyncio.sleep(0.0023)
             continue
-        if z is NO_MORE_DATA:
+        if q_out._exhausted:
             break
         yield z
 

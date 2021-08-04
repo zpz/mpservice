@@ -1,6 +1,7 @@
 import math
 import random
 from time import sleep
+from mpservice.async_streamer import transform
 
 import pytest
 
@@ -190,3 +191,57 @@ def test_transform_with_error():
         process, workers=2, return_exceptions=True)
     zz = z.drain()
     assert zz == (len(data), 1)
+
+
+def test_chain():
+    data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]
+
+    def corrupt_data():
+        for x in data:
+            yield x
+
+    def process1(x):
+        return x + 2
+
+    def process2(x):
+        if x > 8:
+            raise ValueError(x)
+        return x - 2
+
+    with pytest.raises(TypeError):
+        z = Stream(corrupt_data()).transform(process1, workers=2)
+        z.drain()
+
+    with pytest.raises(TypeError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2)
+             .buffer(3)
+             .transform(process2, workers=3)
+             )
+        z.drain()
+
+    with pytest.raises(ValueError):
+        # TODO: hangs here
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2, return_exceptions=True)
+             .buffer(3)
+             .transform(process2, workers=3)
+             )
+        z.drain()
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .peek_every_nth(1))
+    print(z.collect())
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .drop_exceptions()
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .log_exceptions()
+         .drop_exceptions()
+         )
+    assert z.collect() == [1, 2, 3, 4, 5, 6]
