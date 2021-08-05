@@ -71,60 +71,63 @@ async def chained(workers, f1, f2):
 
 print('streamed')
 asyncio.run(streamed(100, inc))
-# This took 1.0082 seconds on my 4-core Linux machine,
-# compared to the perfect value 1.0000.
+# 1.0094 seconds
+# 4-core Linux machine
 
+print('')
 print('streamed sync')
 asyncio.run(streamed(100, sinc))
-# 1.0251 seconds
+# 1.0175 seconds
 
 print('')
 print('chained async sync')
 asyncio.run(chained(100, inc, sdec))
-# This took 1.0082 seconds on my 4-core Linux machine,
-# compared to the perfect value 1.0000.
+# 1.0297 seconds
 
 print('')
 print('chained sync async')
 asyncio.run(chained(100, sinc, dec))
-# This took 1.0082 seconds on my 4-core Linux machine,
-# compared to the perfect value 1.0000.
+# 1.1272 seconds
 
 print('')
 print('10-streamed')
 asyncio.run(streamed(10, inc))
-# 10.0162 seconds, compared to 10.0000.
+# 10.0201 seconds
 
 print('')
 print('10-streamed sync')
 asyncio.run(streamed(10, sinc))
-# 10.0234 seconds.
+# 10.0198 seconds
 
 print('')
 print('10-chained async sync')
 asyncio.run(chained(10, inc, sdec))
+# 10.0266 seconds
 
 print('')
 print('10-chained sync async')
 asyncio.run(chained(10, sinc, dec))
+# 10.1243 seconds
 
 print('')
 print('unistreamed')
 asyncio.run(streamed(1, inc))
-# 100.1277 seconds, compared to 100.0000.
+# 100.1345 seconds
 
 print('')
 print('unistreamed sync')
 asyncio.run(streamed(1, sinc))
-# 100.1160 seconds.
+# 100.1037 seconds
 
 print('')
 print('uni-chained async sync')
 asyncio.run(chained(1, inc, sdec))
+# 100.0990 seconds
 
 print('')
 print('uni-chained sync async')
 asyncio.run(chained(1, sinc, dec))
+# 100.2087 seconds
 
 print('')
 print('plain')
