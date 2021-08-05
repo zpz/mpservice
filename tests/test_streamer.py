@@ -1,11 +1,10 @@
 import math
 import random
 from time import sleep
-from mpservice.async_streamer import transform
 
 import pytest
 
-from mpservice.streamer import Stream
+from mpservice.streamer import Stream, _default_peek_func
 
 
 def test_stream():
@@ -90,7 +89,7 @@ def test_keep():
     s = Stream(data)
     ss = s.keep_random(0.5).collect()
     print(ss)
-    assert 0 < len(ss) < len(data)
+    assert 0 <= len(ss) < len(data)
 
 
 def test_peek():
@@ -105,7 +104,11 @@ def test_peek():
         0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
     assert n == 10
 
-    Stream(data).peek_if(lambda i, x: 4 < i < 7).drain()
+    def peek_func(i, x):
+        if 4 < i < 7:
+            _default_peek_func(i, x)
+
+    Stream(data).peek(peek_func).drain()
 
     Stream(data).log_every_nth(4).drain()
 
@@ -114,7 +117,7 @@ def test_drain():
     z = Stream(range(10)).drain()
     assert z == 10
 
-    z = Stream(range(10)).drain(log_nth=3)
+    z = Stream(range(10)).log_every_nth(3).drain()
     assert z == 10
 
     z = Stream((1, 2, ValueError(3), 5, RuntimeError, 9)).drain()
@@ -221,10 +224,9 @@ def test_chain():
         z.drain()
 
     with pytest.raises(ValueError):
-        # TODO: hangs here
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(3)
+             .buffer(2)
              .transform(process2, workers=3)
              )
         z.drain()

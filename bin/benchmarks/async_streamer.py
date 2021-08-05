@@ -10,6 +10,16 @@ async def inc(x):
     return x + 1
 
 
+async def dec(x):
+    await asyncio.sleep(0.1)
+    return x - 1
+
+
+def sdec(x):
+    time.sleep(0.01)
+    return x - 1
+
+
 def sinc(x):
     time.sleep(1)
     return x + 1
@@ -28,7 +38,7 @@ async def plain():
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
-    print(result)
+    assert result == list(range(1, NX+1))
 
 
 async def streamed(workers, func):
@@ -39,7 +49,24 @@ async def streamed(workers, func):
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
-    print(result)
+    assert result == list(range(1, NX+1))
+
+
+async def chained(workers, f1, f2):
+    t0 = time.perf_counter()
+    s = (
+        Stream(data())
+        .transform(f1, workers=workers)
+        .buffer(30)
+        .transform(f2, workers=workers)
+    )
+
+    result = await s.collect()
+    t1 = time.perf_counter()
+
+    print('time elapsed:', t1 - t0)
+
+    assert result == list(range(NX))
 
 
 print('streamed')
@@ -52,6 +79,18 @@ asyncio.run(streamed(100, sinc))
 # 1.0251 seconds
 
 print('')
+print('chained async sync')
+asyncio.run(chained(100, inc, sdec))
+# This took 1.0082 seconds on my 4-core Linux machine,
+# compared to the perfect value 1.0000.
+
+print('')
+print('chained sync async')
+asyncio.run(chained(100, sinc, dec))
+# This took 1.0082 seconds on my 4-core Linux machine,
+# compared to the perfect value 1.0000.
+
+print('')
 print('10-streamed')
 asyncio.run(streamed(10, inc))
 # 10.0162 seconds, compared to 10.0000.
@@ -62,6 +101,14 @@ asyncio.run(streamed(10, sinc))
 # 10.0234 seconds.
 
 print('')
+print('10-chained async sync')
+asyncio.run(chained(10, inc, sdec))
+
+print('')
+print('10-chained sync async')
+asyncio.run(chained(10, sinc, dec))
+
+print('')
 print('unistreamed')
 asyncio.run(streamed(1, inc))
 # 100.1277 seconds, compared to 100.0000.
@@ -70,6 +117,14 @@ print('')
 print('unistreamed sync')
 asyncio.run(streamed(1, sinc))
 # 100.1160 seconds.
+
+print('')
+print('uni-chained async sync')
+asyncio.run(chained(1, inc, sdec))
+
+print('')
+print('uni-chained sync async')
+asyncio.run(chained(1, sinc, dec))
 
 print('')
 print('plain')

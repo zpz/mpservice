@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from mpservice.async_streamer import (
-    stream, Stream, collect, transform, drain)
+from mpservice.async_streamer import stream, Stream, collect, transform, drain
+from mpservice.streamer import _default_peek_func
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_keep():
     s = Stream(data)
     ss = await s.keep_random(0.5).collect()
     print(ss)
-    assert 0 < len(ss) < len(data)
+    assert 0 <= len(ss) < len(data)
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,13 @@ async def test_peek():
         0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
     assert n == 10
 
-    await Stream(data).peek_if(lambda i, x: 4 < i < 7).drain()
+    await Stream(data).log_every_nth(4).drain()
+
+    def peek_func(i, x):
+        if 4 < i < 7:
+            _default_peek_func(i, x)
+
+    await Stream(data).peek(peek_func).drain()
 
     await Stream(data).log_every_nth(4).drain()
 
@@ -145,7 +151,7 @@ async def test_drain():
     z = await Stream(range(10)).drain()
     assert z == 10
 
-    z = await Stream(range(10)).drain(log_nth=3)
+    z = await Stream(range(10)).log_every_nth(3).drain()
     assert z == 10
 
     z = await Stream((1, 2, ValueError(3), 5, RuntimeError, 9)).drain()
@@ -166,7 +172,7 @@ async def test_transform():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-    s = transform(stream(SYNC_INPUT), f1, workers=1)
+    s = Stream(SYNC_INPUT).transform(f1, workers=1)
     got = [v async for v in s]
     assert got == expected
 
@@ -189,8 +195,8 @@ async def test_transform():
             self.result += x * 3
 
     mysink = MySink()
-    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
-    n = await drain(s)
+    s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
+    n = await s.drain()
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -212,7 +218,7 @@ async def test_transform_sync():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-    s = transform(stream(SYNC_INPUT), f1, workers=1)
+    s = Stream(SYNC_INPUT).transform(f1, workers=1)
     got = [v async for v in s]
     assert got == expected
 
@@ -235,8 +241,8 @@ async def test_transform_sync():
             self.result += x * 3
 
     mysink = MySink()
-    s = transform(transform(stream(SYNC_INPUT), f1), mysink)
-    n = await drain(s)
+    s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
+    n = await s.drain()
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -272,6 +278,60 @@ async def test_transform_with_error():
 
 @pytest.mark.asyncio
 async def test_chain():
+    data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]
+
+    def corrupt_data():
+        for x in data:
+            yield x
+
+    async def process1(x):
+        return x + 2
+
+    async def process2(x):
+        if x > 8:
+            raise ValueError(x)
+        return x - 2
+
+    with pytest.raises(TypeError):
+        z = Stream(corrupt_data()).transform(process1, workers=2)
+        await z.drain()
+
+    with pytest.raises(TypeError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2)
+             .buffer(3)
+             .transform(process2, workers=3)
+             )
+        await z.drain()
+
+    with pytest.raises(ValueError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2, return_exceptions=True)
+             .buffer(3)
+             .transform(process2, workers=3)
+             )
+        await z.drain()
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .peek_every_nth(1))
+    print(await z.collect())
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .drop_exceptions()
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .log_exceptions()
+         .drop_exceptions()
+         )
+    assert await z.collect() == [1, 2, 3, 4, 5, 6]
+
+
+@pytest.mark.asyncio
+async def test_chain_sync():
     data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]
 
     def corrupt_data():
@@ -321,4 +381,6 @@ async def test_chain():
          .log_exceptions()
          .drop_exceptions()
          )
-    assert await z.collect() == [1, 2, 3, 4, 5, 6]
+    z = await z.collect()
+    print(z)
+    assert z == [1, 2, 3, 4, 5, 6]

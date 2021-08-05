@@ -1,24 +1,81 @@
-'''Utilities for processing a continuous stream of data in a synchronous context.
+'''Utilities for processing a continuous stream of data.
 
-Please refer to the async counterpart in the module `mpservice.async_streamer`
-for additional info and doc.
+An input data stream goes through a series of operations.
+The target use case is that one or more operations is I/O bound,
+hence can benefit from multi-thread concurrency.
+These operations are triggered via `transform`.
+
+The other operations are light weight and supportive of the main (concurrent)
+operation. These operations perform batching, unbatching, buffering,
+filtering, logging, etc.
+
+In a typical use case, one starts with a `Stream` object, and calls
+its methods in a "chained" fashion:
+
+    data = range(100)
+    pipeline = (
+        Stream(data)
+        .batch(10)
+        .transform(my_op_that_takes_stream_of_batches, workers=4)
+        .unbatch()
+        )
+
+    result = result.collect()
+
+or
+
+    pipeline.drain()
+
+Note that `collect` should not be used when the data stream is long.
+In that case, just use the `pipeline` object as an iterable in subsequent
+processing.
+
+(Of course, you don't have to call all the methods in one statement.)
+
+======================
+Handling of exceptions
+======================
+
+There are two modes of exception handling.
+In the first mode, exception propagates and, as it should, halts the program with
+a printout of traceback. Any not-yet-processed data is discarded.
+
+In the second mode, exception object is passed on in the pipeline as if it is
+a regular data item. Subsequent data items are processed as usual.
+This mode is enabled by `return_exceptions=True` to the function `transform`.
+However, to the next operation, the exception object that is coming along
+with regular data elements (i.e. regular output of the previous operation)
+is most likely a problem. One may want to call `drop_exceptions` to remove
+exception objects from the data stream before they reach the next operation.
+In order to be knowledgeable about exceptions before they are removed,
+the function `log_exceptions` can be used. Therefore, this is a useful pattern:
+
+    (
+        data_stream
+        .transform(func1,..., return_exceptions=True)
+        .log_exceptions()
+        .drop_exceptions()
+        .transform(func2,..., return_exceptions=True)
+    )
+
+Bear in mind that the first mode, with `return_exceptions=False` (the default),
+is a totally legitimate and useful mode.
 '''
 
+import concurrent.futures
 import functools
 import inspect
 import logging
 import multiprocessing
+import queue
 import random
-from concurrent.futures import Future
-from queue import Queue, Empty
-from threading import Lock, Thread
+import threading
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
-    Tuple, List,
+    Tuple,
 )
-
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 
@@ -30,57 +87,69 @@ T = TypeVar('T')
 TT = TypeVar('TT')
 
 
-def _is_exc(e):
+def is_exception(e):
     return isinstance(e, Exception) or (
         inspect.isclass(e) and issubclass(e, Exception)
     )
 
 
-class IterQueue(Queue):
+class IterQueue(queue.Queue):
     DEFAULT_MAXSIZE = 256
 
-    def __init__(self, maxsize: int = None):
+    def __init__(self, maxsize: int = None, to_shutdown: threading.Event = None):
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
         self.exception = None
         self._closed = False
         self._exhausted = False
+        if to_shutdown is None:
+            to_shutdown = threading.Event()
+        self._to_shutdown = to_shutdown
 
     def put_end(self):
-        assert not self._closed
         self.put(NO_MORE_DATA)
         self._closed = True
 
     def put_exception(self, e):
         assert not self._closed
         self.exception = e
+        self._to_shutdown.set()
 
-    def put(self, x, **kwargs):
-        assert not self._closed
-        super().put(x, **kwargs)
+    def put(self, x, block=True):
+        while True:
+            if self._to_shutdown.is_set():
+                return
+            assert not self._closed
+            try:
+                super().put(x, block=False)
+                break
+            except queue.Full:
+                if block:
+                    sleep(0.0015)
+                else:
+                    raise
 
     def put_nowait(self, x):
-        assert not self._closed
-        super().put_nowait(x)
+        self.put(x, block=False)
 
-    def get(self, **kwargs):
-        if self.exception is not None:
-            raise self.exception
-        if self._exhausted:
-            return NO_MORE_DATA
-        z = super().get(**kwargs)
-        if z is NO_MORE_DATA:
-            self._exhausted = True
-        return z
+    def get(self, block=True):
+        while True:
+            try:
+                if self.exception is not None:
+                    raise self.exception
+                if self._exhausted:
+                    return NO_MORE_DATA
+                z = super().get(block=False)
+                if z is NO_MORE_DATA:
+                    self._exhausted = True
+                return z
+            except queue.Empty:
+                if block:
+                    sleep(0.0012)
+                else:
+                    raise
 
     def get_nowait(self):
-        if self.exception is not None:
-            raise self.exception
-        if self._exhausted:
-            return NO_MORE_DATA
-        z = super().get_nowait()
-        if z is NO_MORE_DATA:
-            self._exhausted = True
-        return z
+        return self.get(block=False)
 
     def __next__(self):
         while True:
@@ -89,8 +158,8 @@ class IterQueue(Queue):
                 if z is NO_MORE_DATA:
                     raise StopIteration
                 return z
-            except Empty:
-                sleep(0.005)
+            except queue.Empty:
+                sleep(0.003)
 
     def __iter__(self):
         return self
@@ -116,22 +185,27 @@ def stream(x: Iterable, maxsize: int = None) -> IterQueue:
         try:
             for v in q_in:
                 q_out.put(v)
+            q_out.put_end()
         except Exception as e:
             q_out.put_exception(e)
-        q_out.put_end()
 
     q = IterQueue(maxsize)
-    t = Thread(target=enqueue, args=(x, q))
+    t = threading.Thread(target=enqueue, args=(x, q))
     t.start()
 
     return q
 
 
-def collect(in_stream: Iterable[T]) -> List[T]:
-    return list(in_stream)
-
-
 def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
+    '''Take elements from an input stream,
+    and bundle them up into batches up to a size limit,
+    and produce the batches in an iterable.
+
+    The output batches are all of the specified size, except possibly the final batch.
+    There is no 'timeout' logic to produce a smaller batch.
+    For efficiency, this requires the input stream to have a steady supply.
+    If that is a concern, having a `buffer` on the input stream may help.
+    '''
     assert 0 < batch_size <= 10000
     batch_ = []
     n = 0
@@ -145,29 +219,40 @@ def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
                 n = 0
         if n:
             q_out.put(batch_)
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
 
 
 def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
+    '''Reverse of "batch", turning a stream of batches into
+    a stream of individual elements.
+    '''
     try:
         for batch in q_in:
             for x in batch:
                 q_out.put(x)
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
 
 
 def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
+    '''Buffer is used to stabilize and improve the speed of data flow.
+
+    A buffer is useful after any operation that can not guarantee
+    (almost) instant availability of output. A buffer allows its
+    output to "pile up" when the downstream consumer is slow in requests,
+    so that data *is* available when the downstream does come to request
+    data. The buffer evens out unstabilities in the speeds of upstream
+    production and downstream consumption.
+    '''
     try:
         for x in q_in:
-            print('in buffer, got', x)
             q_out.put(x)
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
 
 
 def drop_if(q_in: IterQueue, q_out: IterQueue,
@@ -180,18 +265,9 @@ def drop_if(q_in: IterQueue, q_out: IterQueue,
                 continue
             q_out.put(x)
             n += 1
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
-
-
-def drop_exceptions(q_in, q_out):
-    return drop_if(q_in, q_out, lambda i, x: _is_exc(x))
-
-
-def drop_first_n(q_in, q_out, n: int):
-    assert n >= 0
-    return drop_if(q_in, q_out, lambda i, x: i < n)
 
 
 def keep_if(q_in: IterQueue,
@@ -203,20 +279,9 @@ def keep_if(q_in: IterQueue,
             if func(n, x):
                 q_out.put(x)
             n += 1
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
-
-
-def keep_every_nth(q_in, q_out, nth: int):
-    assert nth > 0
-    return keep_if(q_in, q_out, lambda i, x: i % nth == 0)
-
-
-def keep_random(q_in, q_out, frac: float):
-    assert 0 < frac <= 1
-    rand = random.random
-    return keep_if(q_in, q_out, lambda i, x: rand() < frac)
 
 
 def keep_first_n(q_in, q_out, n: int):
@@ -228,60 +293,59 @@ def keep_first_n(q_in, q_out, n: int):
             if k > n:
                 break
             q_out.put(x)
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
 
 
-def peek_if(q_in: IterQueue,
-            q_out: IterQueue,
-            if_func: Callable[[int, T], bool],
-            peek_func: Callable[[int, T], None] = None,
-            ) -> None:
+def _default_peek_func(i, x):
+    print('')
+    print('#', i)
+    print(x)
+
+
+def peek(q_in: IterQueue,
+         q_out: IterQueue,
+         peek_func: Callable[[int, T], None] = None,
+         ) -> None:
+    '''Take a peek at the data element *before* it is sent
+    on for processing.
+
+    The function `peek_func` takes the data index (0-based)
+    and the data element. Typical actions include print out
+    info or save the data for later inspection. Usually this
+    function should not modify the data element in the stream.
+    '''
     if peek_func is None:
-        def peek_func(i, x):
-            print('')
-            print('#', i)
-            print(x)
+        peek_func = _default_peek_func
 
     n = 0
     try:
         for x in q_in:
-            if if_func(n, x):
-                peek_func(n, x)
+            peek_func(n, x)
             q_out.put(x)
             n += 1
+        q_out.put_end()
     except Exception as e:
         q_out.put_exception(e)
-    q_out.put_end()
 
 
-def peek_every_nth(q_in, q_out, nth: int, peek_func=None):
-    return peek_if(q_in, q_out, lambda i, x: i % nth == 0, peek_func)
-
-
-def peek_random(q_in, q_out, frac: float, peek_func=None):
-    assert 0 < frac <= 1
-    rand = random.random
-    return peek_if(q_in, q_out, lambda i, x: rand() < frac, peek_func)
-
-
-def log_every_nth(q_in, q_out, nth: int, level: str = 'info'):
+def log_exceptions(q_in: IterQueue,
+                   q_out: IterQueue,
+                   level: str = 'error',
+                   drop: bool = False):
     flog = getattr(logger, level)
 
-    def peek_func(i, x):
-        flog('data item #%d:  %s', i, x)
-
-    return peek_every_nth(q_in, q_out, nth, peek_func)
-
-
-def log_exceptions(q_in, q_out, level: str = 'error'):
-    flog = getattr(logger, level)
-    return peek_if(
-        q_in, q_out,
-        lambda i, x: _is_exc(x),
-        lambda i, x: flog(x)
-    )
+    try:
+        for x in q_in:
+            if is_exception(x):
+                flog(x)
+                if drop:
+                    continue
+            q_out.put(x)
+        q_out.put_end()
+    except Exception as e:
+        q_out.put_exception(e)
 
 
 def transform(q_in: IterQueue,
@@ -311,58 +375,63 @@ def transform(q_in: IterQueue,
                         q_out.put(e)
                     else:
                         q_out.put_exception(e)
-                        break  # No need to process subsequent data.
+                        return  # No need to process subsequent data.
+            q_out.put_end()
         except Exception as e:
             q_out.put_exception(e)
-        q_out.put_end()
         return
 
-    finished = False
-
-    def _process(in_stream, out_stream, func, lock, **kwargs):
-        nonlocal finished
-        while not finished:
+    def _process(in_stream, out_stream, func, lock, finished):
+        Future = concurrent.futures.Future
+        while not finished.is_set():
             with lock:
-                if finished:
+                # This locked block ensures that
+                # input is read in order and their corresponding
+                # result placeholders (Future objects) are
+                # put in the output stream in order.
+                if finished.is_set():
                     return
                 try:
                     x = in_stream.__next__()
                     fut = Future()
                     out_stream.put(fut)
                 except StopIteration:
-                    finished = True
+                    finished.set()
                     out_stream.put_end()
                     return
                 except Exception as e:
-                    finished = True
+                    # `in_stream.exception` is not None.
+                    # Propagate.
+                    finished.set()
                     out_stream.put_exception(e)
-                    out_stream.put_end()
                     return
 
             try:
-                y = func(x, **kwargs)
+                y = func(x)
                 fut.set_result(y)
             except Exception as e:
                 if return_exceptions:
                     fut.set_result(e)
                 else:
                     fut.set_exception(e)
-                    finished = True
-                    out_stream.put_end()
+                    finished.set()
                     return
 
     out_stream = IterQueue(max(q_in.maxsize, workers * 8))
-    lock = Lock()
+    lock = threading.Lock()
+    func = functools.wraps(func)(func, **func_args)
+    finished = threading.Event()
 
     t_workers = [
-        Thread(target=_process,
-               args=(
-                   q_in,
-                   out_stream,
-                   func,
-                   lock,
-               ),
-               kwargs=func_args)
+        threading.Thread(target=_process,
+                         args=(
+                             q_in,
+                             out_stream,
+                             func,
+                             lock,
+                             finished,
+                         ),
+                         )
         for _ in range(workers)
     ]
     for t in t_workers:
@@ -370,45 +439,88 @@ def transform(q_in: IterQueue,
 
     try:
         for fut in out_stream:
-            try:
-                z = fut.result()
-                q_out.put(z)
-            except Exception as e:
-                q_out.put_exception(e)
-                break  # No need to process subsequent data.
+            z = fut.result()
+            q_out.put(z)
+        q_out.put_end()
+
     except Exception as e:
         q_out.put_exception(e)
-    finished = True
-    q_out.put_end()
+    finished.set()
     for t in t_workers:
         t.join()
 
 
-def drain(q_in: IterQueue,
-          log_nth: int = 0,
-          log_level: str = 'info',
-          ) -> Union[int, Tuple[int, int]]:
-    if log_nth > 0:
-        q_out = IterQueue(q_in.maxsize)
-        t = Thread(target=log_every_nth, args=(
-            q_in, q_out, log_nth, log_level))
-        t.start()
-    else:
-        q_out = q_in
+def drain(q_in: IterQueue) -> Union[int, Tuple[int, int]]:
+    '''Drain off the stream.
+
+    Return the number of elements processed.
+    When there are exceptions, return the total number of elements
+    as well as the number of exceptions.
+    '''
     n = 0
     nexc = 0
-    for v in q_out:
+    for v in q_in:
         n += 1
-        if _is_exc(v):
+        if is_exception(v):
             nexc += 1
-    if log_nth > 0:
-        t.join()
     if nexc:
         return n, nexc
     return n
 
 
-class Stream:
+class StreamMixin:
+    def drop_exceptions(self):
+        return self.drop_if(lambda i, x: is_exception(x))
+
+    def drop_first_n(self, n: int):
+        assert n >= 0
+        return self.drop_if(lambda i, x: i < n)
+
+    def keep_every_nth(self, nth: int):
+        assert nth > 0
+        return self.keep_if(lambda i, x: i % nth == 0)
+
+    def keep_random(self, frac: float):
+        assert 0 < frac <= 1
+        rand = random.random
+        return self.keep_if(lambda i, x: rand() < frac)
+
+    def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None):
+        assert nth > 0
+
+        if peek_func is None:
+            peek_func = _default_peek_func
+
+        def foo(i, x):
+            if i % nth == 0:
+                peek_func(i, x)
+
+        return self.peek(foo)
+
+    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None):
+        assert 0 < frac <= 1
+        rand = random.random
+
+        if peek_func is None:
+            peek_func = _default_peek_func
+
+        def foo(i, x):
+            if rand() < frac:
+                peek_func(i, x)
+
+        return self.peek(foo)
+
+    def log_every_nth(self, nth: int, level: str = 'info'):
+        assert nth > 0
+        flog = getattr(logger, level)
+
+        def foo(i, x):
+            flog('data item #%d:  %s', i, x)
+
+        return self.peek_every_nth(nth, foo)
+
+
+class Stream(StreamMixin):
     @classmethod
     def registerapi(cls,
                     func: Callable[..., None],
@@ -444,19 +556,20 @@ class Stream:
             def wrapped(self, *args, maxsize: int = None, **kwargs):
                 if maxsize is None:
                     maxsize = self.in_stream.maxsize
-                q_out = IterQueue(maxsize)
-                t = Thread(target=func,
-                           args=(self.in_stream, q_out, *args),
-                           kwargs=kwargs)
+                q_out = IterQueue(maxsize, self.in_stream._to_shutdown)
+                t = threading.Thread(target=func,
+                                     args=(self.in_stream, q_out, *args),
+                                     kwargs=kwargs)
                 t.start()
                 return cls(q_out)
         else:
             @functools.wraps(func)
             def wrapped(self, *args, **kwargs):
-                q_out = IterQueue(self.in_stream.maxsize)
-                t = Thread(target=func,
-                           args=(self.in_stream, q_out, *args),
-                           kwargs=kwargs)
+                q_out = IterQueue(self.in_stream.maxsize,
+                                  self.in_stream._to_shutdown)
+                t = threading.Thread(target=func,
+                                     args=(self.in_stream, q_out, *args),
+                                     kwargs=kwargs)
                 t.start()
                 return cls(q_out)
 
@@ -473,17 +586,17 @@ class Stream:
     def __iter__(self):
         return self.in_stream.__iter__()
 
-    def collect(self):
-        return collect(self.in_stream)
+    def collect(self) -> list:
+        return list(self.in_stream)
 
-    def drain(self, log_nth: int = 0):
-        return drain(self.in_stream, log_nth)
+    def drain(self):
+        return drain(self.in_stream)
 
     def buffer(self, buffer_size: int = None):
         if buffer_size is None:
             buffer_size = self.in_stream.maxsize * 4
         q = IterQueue(buffer_size)
-        t = Thread(target=buffer, args=(self.in_stream, q))
+        t = threading.Thread(target=buffer, args=(self.in_stream, q))
         t.start()
         return self.__class__(q)
 
@@ -491,15 +604,8 @@ class Stream:
 Stream.registerapi(batch, maxsize=True)
 Stream.registerapi(unbatch, maxsize=True)
 Stream.registerapi(drop_if)
-Stream.registerapi(drop_exceptions)
-Stream.registerapi(drop_first_n)
 Stream.registerapi(keep_if)
-Stream.registerapi(keep_every_nth)
-Stream.registerapi(keep_random)
 Stream.registerapi(keep_first_n)
-Stream.registerapi(peek_if)
-Stream.registerapi(peek_every_nth)
-Stream.registerapi(peek_random)
-Stream.registerapi(log_every_nth)
+Stream.registerapi(peek)
 Stream.registerapi(log_exceptions)
 Stream.registerapi(transform)
