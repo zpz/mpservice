@@ -9,6 +9,11 @@ def inc(x):
     return x + 1
 
 
+def dec(x):
+    time.sleep(0.1)
+    return x - 1
+
+
 def data():
     for i in range(NX):
         yield i
@@ -22,7 +27,8 @@ def plain():
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
-    print(result)
+
+    assert result == list(range(1, NX+1))
 
 
 def streamed(workers):
@@ -33,27 +39,57 @@ def streamed(workers):
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
-    print(result)
+    assert result == list(range(1, NX+1))
+
+
+def chained(workers):
+    t0 = time.perf_counter()
+    s = (
+        Stream(data())
+        .transform(inc, workers=workers)
+        .buffer(30)
+        .transform(dec, workers=workers)
+    )
+
+    result = s.collect()
+    t1 = time.perf_counter()
+
+    print('time elapsed:', t1 - t0)
+
+    assert result == list(range(NX))
 
 
 print('streamed')
 streamed(workers=100)
-# This took 1.0183 seconds on my 4-core Linux machine,
-# compared to the perfect value 1.0000.
+# 1.0138 seconds
+# 4-core Linux machine.
+
+print('')
+print('chained')
+chained(workers=100)
+# 1.1398 seconds
 
 print('')
 print('10-streamed')
 streamed(workers=10)
-# This took 10.0186 seconds on my 4-core Linux machine,
-# compared to the perfect value 10.0000.
+# 10.0170 seconds
+
+print('')
+print('10-chained')
+chained(workers=10)
+# 10.1298 seconds
 
 print('')
 print('unistreamed')
 streamed(workers=1)
-# This took 100.1112 seconds on my 4-core Linux machine,
-# compared to the perfect value 100.0000.
+# 100.1035 seconds
+
+print('')
+print('uni-chained')
+chained(workers=1)
+# 100.2106 seconds
 
 print('')
 print('plain')
 plain()
-# This took 100.1073 seconds on my 4-core Linux machine.
+# 100.1073 seconds

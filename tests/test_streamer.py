@@ -4,7 +4,7 @@ from time import sleep
 
 import pytest
 
-from mpservice.streamer import Stream
+from mpservice.streamer import Stream, _default_peek_func
 
 
 def test_stream():
@@ -89,7 +89,7 @@ def test_keep():
     s = Stream(data)
     ss = s.keep_random(0.5).collect()
     print(ss)
-    assert 0 < len(ss) < len(data)
+    assert 0 <= len(ss) < len(data)
 
 
 def test_peek():
@@ -104,7 +104,11 @@ def test_peek():
         0.5, lambda i, x: print(f'--{i}--  {x}')).drain()
     assert n == 10
 
-    Stream(data).peek_if(lambda i, x: 4 < i < 7).drain()
+    def peek_func(i, x):
+        if 4 < i < 7:
+            _default_peek_func(i, x)
+
+    Stream(data).peek(peek_func).drain()
 
     Stream(data).log_every_nth(4).drain()
 
@@ -113,7 +117,7 @@ def test_drain():
     z = Stream(range(10)).drain()
     assert z == 10
 
-    z = Stream(range(10)).drain(log_nth=3)
+    z = Stream(range(10)).log_every_nth(3).drain()
     assert z == 10
 
     z = Stream((1, 2, ValueError(3), 5, RuntimeError, 9)).drain()
@@ -190,3 +194,56 @@ def test_transform_with_error():
         process, workers=2, return_exceptions=True)
     zz = z.drain()
     assert zz == (len(data), 1)
+
+
+def test_chain():
+    data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]
+
+    def corrupt_data():
+        for x in data:
+            yield x
+
+    def process1(x):
+        return x + 2
+
+    def process2(x):
+        if x > 8:
+            raise ValueError(x)
+        return x - 2
+
+    with pytest.raises(TypeError):
+        z = Stream(corrupt_data()).transform(process1, workers=2)
+        z.drain()
+
+    with pytest.raises(TypeError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2)
+             .buffer(3)
+             .transform(process2, workers=3)
+             )
+        z.drain()
+
+    with pytest.raises(ValueError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2, return_exceptions=True)
+             .buffer(2)
+             .transform(process2, workers=3)
+             )
+        z.drain()
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .peek_every_nth(1))
+    print(z.collect())
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .drop_exceptions()
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .log_exceptions()
+         .drop_exceptions()
+         )
+    assert z.collect() == [1, 2, 3, 4, 5, 6]

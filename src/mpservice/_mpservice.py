@@ -103,7 +103,10 @@ class Servlet(metaclass=ABCMeta):
                 while n < batch_size:
                     time_left = wait_until - perf_counter()
                     try:
-                        uid, x = q_in.get(timeout=time_left)
+                        if time_left > 0:
+                            uid, x = q_in.get(timeout=time_left)
+                        else:
+                            uid, x = q_in.get_nowait()
                     except queue.Empty:
                         break
 
@@ -317,11 +320,11 @@ class Server:
                        total_timeout: Union[int, float] = None,
                        ):
         if enqueue_timeout is None:
-            enqueue_timeout = 10
+            enqueue_timeout = 1
         elif enqueue_timeout < 0:
             enqueue_timeout = 0
         if total_timeout is None:
-            total_timeout = max(100, enqueue_timeout * 10)
+            total_timeout = max(10, enqueue_timeout * 10)
         else:
             assert total_timeout > 0, "total_timeout must be > 0"
         if enqueue_timeout > total_timeout:
