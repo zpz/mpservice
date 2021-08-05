@@ -43,9 +43,9 @@ def test_batch():
 
 def test_buffer():
     s = Stream(range(11))
-    assert s.buffer(5).collect() == list(range(11))
+    assert s.buffer(maxsize=5).collect() == list(range(11))
     s = Stream(range(11))
-    assert s.buffer(20).collect() == list(range(11))
+    assert s.buffer(maxsize=20).collect() == list(range(11))
 
 
 def test_drop():

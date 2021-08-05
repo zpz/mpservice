@@ -106,6 +106,7 @@ class IterQueue(queue.Queue):
         self._to_shutdown = to_shutdown
 
     def put_end(self):
+        assert not self._closed
         self.put(NO_MORE_DATA)
         self._closed = True
 
@@ -592,17 +593,10 @@ class Stream(StreamMixin):
     def drain(self):
         return drain(self.in_stream)
 
-    def buffer(self, buffer_size: int = None):
-        if buffer_size is None:
-            buffer_size = self.in_stream.maxsize * 4
-        q = IterQueue(buffer_size)
-        t = threading.Thread(target=buffer, args=(self.in_stream, q))
-        t.start()
-        return self.__class__(q)
-
 
 Stream.registerapi(batch, maxsize=True)
 Stream.registerapi(unbatch, maxsize=True)
+Stream.registerapi(buffer, maxsize=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(keep_if)
 Stream.registerapi(keep_first_n)
