@@ -43,9 +43,9 @@ def test_batch():
 
 def test_buffer():
     s = Stream(range(11))
-    assert s.buffer(maxsize=5).collect() == list(range(11))
+    assert s.buffer(5).collect() == list(range(11))
     s = Stream(range(11))
-    assert s.buffer(maxsize=20).collect() == list(range(11))
+    assert s.buffer(20).collect() == list(range(11))
 
 
 def test_drop():
@@ -218,7 +218,7 @@ def test_chain():
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         z.drain()
@@ -226,14 +226,14 @@ def test_chain():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(2)
+             .buffer(maxsize=2)
              .transform(process2, workers=3)
              )
         z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(z.collect())
@@ -241,7 +241,7 @@ def test_chain():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()

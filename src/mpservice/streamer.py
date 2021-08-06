@@ -528,6 +528,7 @@ class Stream(StreamMixin):
                     *,
                     name: str = None,
                     maxsize: bool = False,
+                    maxsize_first: bool = False,
                     ) -> None:
         '''
         `func` expects the input and output streams (both of type IterQueue)
@@ -552,27 +553,32 @@ class Stream(StreamMixin):
         if not name:
             name = func.__name__
 
+        def _internal(maxsize, in_stream, *args, **kwargs):
+            q_out = IterQueue(maxsize, in_stream._to_shutdown)
+            t = threading.Thread(target=func,
+                                 args=(in_stream, q_out, *args),
+                                 kwargs=kwargs)
+            t.start()
+            return cls(q_out)
+
         if maxsize:
-            @functools.wraps(func)
-            def wrapped(self, *args, maxsize: int = None, **kwargs):
-                if maxsize is None:
-                    maxsize = self.in_stream.maxsize
-                q_out = IterQueue(maxsize, self.in_stream._to_shutdown)
-                t = threading.Thread(target=func,
-                                     args=(self.in_stream, q_out, *args),
-                                     kwargs=kwargs)
-                t.start()
-                return cls(q_out)
+            if maxsize_first:
+                @functools.wraps(func)
+                def wrapped(self, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, **kwargs)
+            else:
+                @functools.wraps(func)
+                def wrapped(self, *args, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, *args, **kwargs)
         else:
             @functools.wraps(func)
             def wrapped(self, *args, **kwargs):
-                q_out = IterQueue(self.in_stream.maxsize,
-                                  self.in_stream._to_shutdown)
-                t = threading.Thread(target=func,
-                                     args=(self.in_stream, q_out, *args),
-                                     kwargs=kwargs)
-                t.start()
-                return cls(q_out)
+                return _internal(self.in_stream.maxsize,
+                                 self.in_stream, *args, **kwargs)
 
         setattr(cls, name, wrapped)
 
@@ -596,7 +602,7 @@ class Stream(StreamMixin):
 
 Stream.registerapi(batch, maxsize=True)
 Stream.registerapi(unbatch, maxsize=True)
-Stream.registerapi(buffer, maxsize=True)
+Stream.registerapi(buffer, maxsize=True, maxsize_first=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(keep_if)
 Stream.registerapi(keep_first_n)

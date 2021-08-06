@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from mpservice.async_streamer import Stream, transform, drain
+from mpservice.async_streamer import Stream
 from mpservice.streamer import _default_peek_func
 
 
@@ -65,9 +65,9 @@ async def test_batch():
 @pytest.mark.asyncio
 async def test_buffer():
     s = Stream(range(11))
-    assert await s.buffer(maxsize=5).collect() == list(range(11))
+    assert await s.buffer(5).collect() == list(range(11))
     s = Stream(range(11))
-    assert await s.buffer(maxsize=20).collect() == list(range(11))
+    assert await s.buffer(20).collect() == list(range(11))
 
 
 @pytest.mark.asyncio
@@ -294,38 +294,35 @@ async def test_chain():
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
-    print(2)
 
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
-    print(3)
 
-    # z = (Stream(corrupt_data())
-    #      .transform(process1, workers=2, return_exceptions=True)
-    #      .buffer(3)
-    #      .transform(process2, workers=3, return_exceptions=True)
-    #      .peek_every_nth(1))
-    # print(await z.collect())
-    # print(4)
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .buffer(maxsize=3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .peek_every_nth(1))
+    print(await z.collect())
 
-    # z = (Stream(corrupt_data())
-    #      .transform(process1, workers=2, return_exceptions=True)
-    #      .drop_exceptions()
-    #      .buffer(3)
-    #      .transform(process2, workers=3, return_exceptions=True)
-    #      .log_exceptions()
-    #      .drop_exceptions()
-    #      )
-    # assert await z.collect() == [1, 2, 3, 4, 5, 6]
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .drop_exceptions()
+         .buffer(maxsize=3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .log_exceptions()
+         .drop_exceptions()
+         )
+    assert await z.collect() == [1, 2, 3, 4, 5, 6]
 
 
 @pytest.mark.asyncio
@@ -351,7 +348,7 @@ async def test_chain_sync():
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
@@ -359,14 +356,14 @@ async def test_chain_sync():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(await z.collect())
@@ -374,7 +371,7 @@ async def test_chain_sync():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()

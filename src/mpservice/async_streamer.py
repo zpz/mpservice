@@ -17,8 +17,8 @@ The other operations are light weight and supportive of the main (concurrent)
 operation. These operations perform batching, unbatching, buffering,
 filtering, logging, etc.
 
-In the recommended usage,
-one starts with a `Stream` object and calls its methods in a "chained" fashion:
+In a typical use, one starts with a `Stream` object and calls its methods
+in a "chained" fashion:
 
     data = range(100)
     pipeline = (
@@ -46,7 +46,6 @@ for additional info and doc.
 '''
 
 import asyncio
-import concurrent.futures
 import functools
 import inspect
 import logging
@@ -162,14 +161,10 @@ class IterQueue(asyncio.Queue):
         return self
 
 
-def stream(x: Union[Iterable, AsyncIterable], maxsize: int = None) -> IterQueue:
-    '''Turn a sync iterable into an async iterator.
-    However, user should try to provide a natively async iterable
-    if possible.
+def stream(x: Union[Iterable, AsyncIterable, IterQueue], maxsize: int = None) -> IterQueue:
+    if isinstance(x, IterQueue):
+        return x
 
-    The returned object has both `__anext__` and `__aiter__`
-    methods.
-    '''
     async def f1(data):
         async for v in data:
             yield v
@@ -202,7 +197,7 @@ def stream(x: Union[Iterable, AsyncIterable], maxsize: int = None) -> IterQueue:
     elif hasattr(x, '__next__'):
         x = f4(x)
     else:
-        raise TypeError("`x` is neither iterable or async iterable")
+        raise TypeError("`x` is neither iterable nor async iterable")
 
     async def enqueue(q_in, q_out):
         try:
@@ -271,7 +266,8 @@ async def drop_if(q_in: IterQueue,
         await q_out.put_exception(e)
 
 
-async def keep_if(q_in, q_out,
+async def keep_if(q_in: IterQueue,
+                  q_out: IterQueue,
                   func: Callable[[int, T], bool]) -> None:
     n = 0
     try:
@@ -284,7 +280,7 @@ async def keep_if(q_in, q_out,
         await q_out.put_exception(e)
 
 
-async def keep_first_n(q_in, q_out, n: int):
+async def keep_first_n(q_in: IterQueue, q_out: IterQueue, n: int) -> None:
     assert n > 0
     k = 0
     try:
@@ -298,7 +294,8 @@ async def keep_first_n(q_in, q_out, n: int):
         await q_out.put_exception(e)
 
 
-async def peek(q_in, q_out,
+async def peek(q_in: IterQueue,
+               q_out: IterQueue,
                peek_func: Callable[[int, T], None] = None,
                ) -> None:
     if peek_func is None:
@@ -315,7 +312,8 @@ async def peek(q_in, q_out,
         await q_out.put_exception(e)
 
 
-async def log_exceptions(q_in, q_out,
+async def log_exceptions(q_in: IterQueue,
+                         q_out: IterQueue,
                          level: str = 'error',
                          drop: bool = False):
     flog = getattr(logger, level)
@@ -331,7 +329,11 @@ async def log_exceptions(q_in, q_out,
         await q_out.put_exception(e)
 
 
-async def _transform_async(q_in, q_out, func, workers, return_exceptions):
+async def _transform_async(q_in: IterQueue,
+                           q_out: IterQueue,
+                           func: Callable,
+                           workers: int,
+                           return_exceptions: bool):
     if workers == 1:
         try:
             async for x in q_in:
@@ -404,7 +406,11 @@ async def _transform_async(q_in, q_out, func, workers, return_exceptions):
         await q_out.put_exception(e)
 
 
-async def _transform_sync(q_in, q_out, func, workers, return_exceptions):
+async def _transform_sync(q_in: IterQueue,
+                          q_out: IterQueue,
+                          func: Callable,
+                          workers: int,
+                          return_exceptions: bool):
     def _put_input_in_queue(q_in, q_out):
         try:
             while True:
@@ -426,9 +432,9 @@ async def _transform_sync(q_in, q_out, func, workers, return_exceptions):
 
     q_sync = _sync_streamer.IterQueue(to_shutdown=q_in._to_shutdown)
     q_sync2 = _sync_streamer.IterQueue(to_shutdown=q_in._to_shutdown)
-    pool = concurrent.futures.ThreadPoolExecutor(2)
-    pool.submit(target=_put_input_in_queue, args=(q_in, q_sync))
-    pool.submit(target=_put_output_in_queue, args=(q_sync, q_sync2))
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _put_input_in_queue, q_in, q_sync)
+    loop.run_in_executor(None, _put_output_in_queue, q_sync, q_sync2)
 
     try:
         while True:
@@ -445,7 +451,8 @@ async def _transform_sync(q_in, q_out, func, workers, return_exceptions):
 
 
 async def transform(
-    q_in, q_out,
+    q_in: IterQueue,
+    q_out: IterQueue,
     func: Callable[[T], Union[TT, Awaitable[TT]]],
     *,
     workers: Optional[Union[int, str]] = None,
@@ -507,37 +514,44 @@ async def drain(q_in: IterQueue) -> Union[int, Tuple[int, int]]:
 class Stream(_sync_streamer.StreamMixin):
     @ classmethod
     def registerapi(cls,
-                    func: Callable[..., AsyncIterator],
+                    func: Callable[..., Awaitable[None]],
                     *,
                     name: str = None,
-                    maxsize: bool = False) -> None:
+                    maxsize: bool = False,
+                    maxsize_first: bool = False,
+                    ) -> None:
         '''
-        `func` expects the data stream, an AsyncIterable or AsyncIterator,
-        as the first positional argument. It may take additional positional
-        and keyword arguments. See the functions `batch`, `drop_if`,
+        `func`: see the functions `batch`, `drop_if`,
         `transform`, etc for examples.
 
         User can use this method to register other functions so that they
         can be used as methods of a `Stream` object, just like `batch`,
         `drop_if`, etc.
         '''
+        def _internal(maxsize, in_stream, *args, **kwargs):
+            q_out = IterQueue(maxsize, in_stream._to_shutdown)
+            _ = asyncio.create_task(
+                func(in_stream, q_out, *args, **kwargs))
+            return cls(q_out)
+
         if maxsize:
-            @functools.wraps(func)
-            def wrapped(self, *args, maxsize: int = None, **kwargs):
-                if maxsize is None:
-                    maxsize = self.in_stream.maxsize
-                q_out = IterQueue(maxsize, self.in_stream._to_shutdown)
-                _ = asyncio.create_task(
-                    func(self.in_stream, q_out, *args, **kwargs))
-                return cls(q_out)
+            if maxsize_first:
+                @functools.wraps(func)
+                def wrapped(self, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, **kwargs)
+            else:
+                @functools.wraps(func)
+                def wrapped(self, *args, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, *args, **kwargs)
         else:
             @functools.wraps(func)
             def wrapped(self, *args, **kwargs):
-                q_out = IterQueue(self.in_stream.maxsize,
-                                  self.in_stream._to_shutdown)
-                _ = asyncio.create_task(
-                    func(self.in_stream, q_out, *args, **kwargs))
-                return cls(q_out)
+                return _internal(self.in_stream.maxsize, self.in_stream,
+                                 *args, **kwargs)
 
         setattr(cls, name or func.__name__, wrapped)
 
@@ -559,7 +573,7 @@ class Stream(_sync_streamer.StreamMixin):
 
 Stream.registerapi(batch, maxsize=True)
 Stream.registerapi(unbatch, maxsize=True)
-Stream.registerapi(buffer, maxsize=True)
+Stream.registerapi(buffer, maxsize=True, maxsize_first=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(keep_if)
 Stream.registerapi(keep_first_n)
