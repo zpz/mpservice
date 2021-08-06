@@ -106,6 +106,7 @@ class IterQueue(queue.Queue):
         self._to_shutdown = to_shutdown
 
     def put_end(self):
+        assert not self._closed
         self.put(NO_MORE_DATA)
         self._closed = True
 
@@ -527,6 +528,7 @@ class Stream(StreamMixin):
                     *,
                     name: str = None,
                     maxsize: bool = False,
+                    maxsize_first: bool = False,
                     ) -> None:
         '''
         `func` expects the input and output streams (both of type IterQueue)
@@ -551,27 +553,32 @@ class Stream(StreamMixin):
         if not name:
             name = func.__name__
 
+        def _internal(maxsize, in_stream, *args, **kwargs):
+            q_out = IterQueue(maxsize, in_stream._to_shutdown)
+            t = threading.Thread(target=func,
+                                 args=(in_stream, q_out, *args),
+                                 kwargs=kwargs)
+            t.start()
+            return cls(q_out)
+
         if maxsize:
-            @functools.wraps(func)
-            def wrapped(self, *args, maxsize: int = None, **kwargs):
-                if maxsize is None:
-                    maxsize = self.in_stream.maxsize
-                q_out = IterQueue(maxsize, self.in_stream._to_shutdown)
-                t = threading.Thread(target=func,
-                                     args=(self.in_stream, q_out, *args),
-                                     kwargs=kwargs)
-                t.start()
-                return cls(q_out)
+            if maxsize_first:
+                @functools.wraps(func)
+                def wrapped(self, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, **kwargs)
+            else:
+                @functools.wraps(func)
+                def wrapped(self, *args, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, *args, **kwargs)
         else:
             @functools.wraps(func)
             def wrapped(self, *args, **kwargs):
-                q_out = IterQueue(self.in_stream.maxsize,
-                                  self.in_stream._to_shutdown)
-                t = threading.Thread(target=func,
-                                     args=(self.in_stream, q_out, *args),
-                                     kwargs=kwargs)
-                t.start()
-                return cls(q_out)
+                return _internal(self.in_stream.maxsize,
+                                 self.in_stream, *args, **kwargs)
 
         setattr(cls, name, wrapped)
 
@@ -592,17 +599,10 @@ class Stream(StreamMixin):
     def drain(self):
         return drain(self.in_stream)
 
-    def buffer(self, buffer_size: int = None):
-        if buffer_size is None:
-            buffer_size = self.in_stream.maxsize * 4
-        q = IterQueue(buffer_size)
-        t = threading.Thread(target=buffer, args=(self.in_stream, q))
-        t.start()
-        return self.__class__(q)
-
 
 Stream.registerapi(batch, maxsize=True)
 Stream.registerapi(unbatch, maxsize=True)
+Stream.registerapi(buffer, maxsize=True, maxsize_first=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(keep_if)
 Stream.registerapi(keep_first_n)

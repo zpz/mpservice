@@ -57,7 +57,7 @@ async def chained(workers, f1, f2):
     s = (
         Stream(data())
         .transform(f1, workers=workers)
-        .buffer(30)
+        .buffer(maxsize=30)
         .transform(f2, workers=workers)
     )
 

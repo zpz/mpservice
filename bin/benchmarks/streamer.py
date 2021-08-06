@@ -47,7 +47,7 @@ def chained(workers):
     s = (
         Stream(data())
         .transform(inc, workers=workers)
-        .buffer(30)
+        .buffer(maxsize=30)
         .transform(dec, workers=workers)
     )
 

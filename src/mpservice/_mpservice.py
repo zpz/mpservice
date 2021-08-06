@@ -257,7 +257,7 @@ class Server:
             z = self._q_err.get()
             assert z == 'ready'
             k += 1
-            print(f"servlet processes ready: {k}/{n}")
+            logger.info(f"servlet processes ready: {k}/{n}")
 
         self._t_gather_results = asyncio.create_task(self._gather_results())
         self._started = True

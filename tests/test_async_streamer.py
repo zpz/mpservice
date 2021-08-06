@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from mpservice.async_streamer import stream, Stream, collect, transform, drain
+from mpservice.async_streamer import Stream
 from mpservice.streamer import _default_peek_func
 
 
@@ -40,13 +40,6 @@ async def test_stream():
         def __iter__(self):
             for x in [1, 2, 3]:
                 yield x
-
-    assert await collect(stream(range(4))) == [0, 1, 2, 3]
-    assert await collect(stream(A())) == [1, 2, 3, 4, 5]
-    assert await collect(stream(B())) == [1, 2, 3]
-    assert await collect(stream(C())) == [1, 2, 3, 4, 5]
-    assert await collect(stream(D())) == [1, 2, 3]
-    assert await collect(stream(['a', 'b', 'c'])) == ['a', 'b', 'c']
 
     assert await Stream(range(4)).collect() == [0, 1, 2, 3]
     assert await Stream(A()).collect() == [1, 2, 3, 4, 5]
@@ -262,17 +255,19 @@ async def test_transform_with_error():
         return x + 2
 
     with pytest.raises(TypeError):
-        z = transform(corrupt_data(), process, workers=2)
-        zz = await collect(z)
+        z = Stream(corrupt_data()).transform(process, workers=2)
+        zz = await z.collect()
         print(zz)
 
-    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
-    zz = await collect(z)
+    z = Stream(corrupt_data()).transform(
+        process, workers=2, return_exceptions=True)
+    zz = await z.collect()
     print(zz)
     assert isinstance(zz[5], TypeError)
 
-    z = transform(corrupt_data(), process, workers=2, return_exceptions=True)
-    zz = await drain(z)
+    z = Stream(corrupt_data()).transform(
+        process, workers=2, return_exceptions=True)
+    zz = await z.drain()
     assert zz == (len(data), 1)
 
 
@@ -299,7 +294,7 @@ async def test_chain():
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
@@ -307,14 +302,14 @@ async def test_chain():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(await z.collect())
@@ -322,7 +317,7 @@ async def test_chain():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()
@@ -353,7 +348,7 @@ async def test_chain_sync():
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
@@ -361,14 +356,14 @@ async def test_chain_sync():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(3)
+             .buffer(maxsize=3)
              .transform(process2, workers=3)
              )
         await z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(await z.collect())
@@ -376,7 +371,7 @@ async def test_chain_sync():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(3)
+         .buffer(maxsize=3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()

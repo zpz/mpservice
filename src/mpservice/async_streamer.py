@@ -17,8 +17,8 @@ The other operations are light weight and supportive of the main (concurrent)
 operation. These operations perform batching, unbatching, buffering,
 filtering, logging, etc.
 
-In the recommended usage,
-one starts with a `Stream` object and calls its methods in a "chained" fashion:
+In a typical use, one starts with a `Stream` object and calls its methods
+in a "chained" fashion:
 
     data = range(100)
     pipeline = (
@@ -51,10 +51,12 @@ import inspect
 import logging
 import multiprocessing
 import queue
+import threading
+import time
 from typing import (
     Callable, Awaitable, TypeVar, Optional, Union,
     AsyncIterable, AsyncIterator, Iterable,
-    Tuple, List)
+    Tuple)
 
 from . import streamer as _sync_streamer
 from .streamer import is_exception
@@ -98,11 +100,14 @@ TT = TypeVar('TT')
 class IterQueue(asyncio.Queue):
     DEFAULT_MAXSIZE = 256
 
-    def __init__(self, maxsize: int = None):
+    def __init__(self, maxsize: int = None, to_shutdown: threading.Event = None):
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
         self.exception = None
         self._closed = False
         self._exhausted = False
+        if to_shutdown is None:
+            to_shutdown = threading.Event()
+        self._to_shutdown = to_shutdown
 
     async def put_end(self):
         assert not self._closed
@@ -112,36 +117,34 @@ class IterQueue(asyncio.Queue):
     async def put_exception(self, e):
         assert not self._closed
         self.exception = e
+        self._to_shutdown.set()
 
-    async def put(self, x, **kwargs):
-        assert not self._closed
-        await super().put(x, **kwargs)
+    async def put(self, x):
+        while True:
+            try:
+                self.put_nowait(x)
+                break
+            except asyncio.QueueFull:
+                await asyncio.sleep(0.0015)
 
     def put_nowait(self, x):
+        if self._to_shutdown.is_set():
+            return
         assert not self._closed
         super().put_nowait(x)
 
-    async def get(self, **kwargs):
-        if self.exception is not None:
-            raise self.exception
-        if self._exhausted:
-            return NO_MORE_DATA
-        # if self._closed and self.empty():
-        #     self._exhausted = True
-        #     return NO_MORE_DATA
-        z = await super().get(**kwargs)
-        if z is NO_MORE_DATA:
-            self._exhausted = True
-        return z
+    async def get(self):
+        while True:
+            try:
+                return self.get_nowait()
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0.0012)
 
     def get_nowait(self):
         if self.exception is not None:
             raise self.exception
         if self._exhausted:
             return NO_MORE_DATA
-        # if self._closed and self.empty():
-        #     self._exhausted = True
-        #     return NO_MORE_DATA
         z = super().get_nowait()
         if z is NO_MORE_DATA:
             self._exhausted = True
@@ -158,14 +161,10 @@ class IterQueue(asyncio.Queue):
         return self
 
 
-def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
-    '''Turn a sync iterable into an async iterator.
-    However, user should try to provide a natively async iterable
-    if possible.
+def stream(x: Union[Iterable, AsyncIterable, IterQueue], maxsize: int = None) -> IterQueue:
+    if isinstance(x, IterQueue):
+        return x
 
-    The returned object has both `__anext__` and `__aiter__`
-    methods.
-    '''
     async def f1(data):
         async for v in data:
             yield v
@@ -189,254 +188,277 @@ def stream(x: Union[Iterable[T], AsyncIterable[T]]) -> AsyncIterator[T]:
                 break
 
     if hasattr(x, '__aiter__'):
-        if hasattr(x, '__anext__'):
-            return x
-        else:
-            return f1(x)
-    if hasattr(x, '__anext__'):
-        return f2(x)
-    if hasattr(x, '__iter__'):
-        return f3(x)
-    if hasattr(x, '__next__'):
-        return f4(x)
+        if not hasattr(x, '__anext__'):
+            x = f1(x)
+    elif hasattr(x, '__anext__'):
+        x = f2(x)
+    elif hasattr(x, '__iter__'):
+        x = f3(x)
+    elif hasattr(x, '__next__'):
+        x = f4(x)
+    else:
+        raise TypeError("`x` is neither iterable nor async iterable")
 
-    raise TypeError("`x` is neither iterable or async iterable")
+    async def enqueue(q_in, q_out):
+        try:
+            async for v in q_in:
+                await q_out.put(v)
+            await q_out.put_end()
+        except Exception as e:
+            await q_out.put_exception(e)
+
+    q_out = IterQueue(maxsize=maxsize)
+    _ = asyncio.create_task(enqueue(x, q_out))
+    return q_out
 
 
-async def collect(in_stream: AsyncIterable[T]) -> List[T]:
-    return [_ async for _ in in_stream]
-
-
-async def batch(in_stream: AsyncIterable[T],
-                batch_size: int) -> AsyncIterator[List[T]]:
-
+async def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
     assert 0 < batch_size <= 10000
     batch_ = []
     n = 0
-    async for x in in_stream:
-        batch_.append(x)
-        n += 1
-        if n >= batch_size:
-            yield batch_
-            batch_ = []
-            n = 0
-    if n:
-        yield batch_
-
-
-async def unbatch(in_stream: AsyncIterable[Iterable[T]]) -> AsyncIterator[T]:
-
-    async for batch in in_stream:
-        for x in batch:
-            yield x
-
-
-async def buffer(in_stream: AsyncIterable[T],
-                 buffer_size: int = None) -> AsyncIterator[T]:
-
-    out_stream = IterQueue(buffer_size)
-
-    async def buff(in_stream, out_stream):
-        try:
-            async for x in in_stream:
-                await out_stream.put(x)
-        except Exception as e:
-            await out_stream.put_exception(e)
-        await out_stream.put_end()
-
-    t = asyncio.create_task(buff(in_stream, out_stream))
-
-    async for x in out_stream:
-        yield x
-
-    await t
-
-
-async def drop_if(in_stream: AsyncIterable[T],
-                  func: Callable[[int, T], bool]) -> AsyncIterator[T]:
-    n = 0
-    async for x in in_stream:
-        if func(n, x):
+    try:
+        async for x in q_in:
+            batch_.append(x)
             n += 1
-            continue
-        yield x
-        n += 1
+            if n >= batch_size:
+                await q_out.put(batch_)
+                batch_ = []
+                n = 0
+        if n:
+            await q_out.put(batch_)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def keep_if(in_stream: AsyncIterable[T],
-                  func: Callable[[int, T], bool]) -> AsyncIterator[T]:
+async def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
+    try:
+        async for batch in q_in:
+            for x in batch:
+                await q_out.put(x)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
+
+
+async def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
+    try:
+        async for x in q_in:
+            await q_out.put(x)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
+
+
+async def drop_if(q_in: IterQueue,
+                  q_out: IterQueue,
+                  func: Callable[[int, T], bool]) -> None:
     n = 0
-    async for x in in_stream:
-        if func(n, x):
-            yield x
-        n += 1
+    try:
+        async for x in q_in:
+            if func(n, x):
+                n += 1
+                continue
+            await q_out.put(x)
+            n += 1
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def keep_first_n(in_stream, n: int):
+async def keep_if(q_in: IterQueue,
+                  q_out: IterQueue,
+                  func: Callable[[int, T], bool]) -> None:
+    n = 0
+    try:
+        async for x in q_in:
+            if func(n, x):
+                await q_out.put(x)
+            n += 1
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
+
+
+async def keep_first_n(q_in: IterQueue, q_out: IterQueue, n: int) -> None:
     assert n > 0
     k = 0
-    async for x in in_stream:
-        yield x
-        k += 1
-        if k >= n:
-            break
+    try:
+        async for x in q_in:
+            await q_out.put(x)
+            k += 1
+            if k >= n:
+                break
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def peek(in_stream: AsyncIterable[T],
+async def peek(q_in: IterQueue,
+               q_out: IterQueue,
                peek_func: Callable[[int, T], None] = None,
-               ) -> AsyncIterator[T]:
+               ) -> None:
     if peek_func is None:
         peek_func = _sync_streamer._default_peek_func
 
     n = 0
-    async for x in in_stream:
-        peek_func(n, x)
-        yield x
-        n += 1
+    try:
+        async for x in q_in:
+            peek_func(n, x)
+            await q_out.put(x)
+            n += 1
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def log_exceptions(in_stream: AsyncIterable,
+async def log_exceptions(q_in: IterQueue,
+                         q_out: IterQueue,
                          level: str = 'error',
                          drop: bool = False):
     flog = getattr(logger, level)
-    async for x in in_stream:
-        if is_exception(x):
-            flog(x)
-            if drop:
-                continue
-        yield x
+    try:
+        async for x in q_in:
+            if is_exception(x):
+                flog(x)
+                if drop:
+                    continue
+            await q_out.put(x)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def _transform_async(in_stream, func, workers, return_exceptions):
+async def _transform_async(q_in: IterQueue,
+                           q_out: IterQueue,
+                           func: Callable,
+                           workers: int,
+                           return_exceptions: bool):
     if workers == 1:
-        async for x in in_stream:
-            try:
-                z = await func(x)
-                yield z
-            except Exception as e:
-                if return_exceptions:
-                    yield e
-                else:
-                    raise e
+        try:
+            async for x in q_in:
+                try:
+                    z = await func(x)
+                    await q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        await q_out.put(e)
+                    else:
+                        raise
+            await q_out.put_end()
+        except Exception as e:
+            await q_out.put_exception(e)
+
         return
 
-    finished = False
-
-    async def _process(in_stream, out_stream, lock):
-        nonlocal finished
-        while not finished:
+    async def _do_compute(in_stream, out_stream, lock, finished):
+        while not finished.is_set():
             async with lock:
-                if finished:
+                if finished.is_set():
                     return
                 try:
                     x = await in_stream.__anext__()
-                    fut = asyncio.Future()
-                    await out_stream.put(fut)
                 except StopAsyncIteration:
-                    finished = True
+                    finished.set()
                     await out_stream.put_end()
                     return
                 except Exception as e:
-                    if return_exceptions:
-                        await out_stream.put(e)
-                        continue
-                    else:
-                        finished = True
-                        await out_stream.put_exception(e)
-                        # No need to process subsequent data.
-                        await out_stream.put_end()
-                        return
+                    await out_stream.put_exception(e)
+                    finished.set()
+                    return
+
+                fut = asyncio.Future()
+                await out_stream.put(fut)
 
             try:
                 y = await func(x)
                 fut.set_result(y)
             except Exception as e:
-                fut.set_exception(e)
-                if not return_exceptions:
-                    finished = True
-                    await out_stream.put_end()
+                if return_exceptions:
+                    fut.set_result(e)
+                else:
+                    fut.cancel()
+                    finished.set()
+                    await out_stream.put_exception(e)
                     return
 
     out_buffer_size = workers * 8
-    out_stream = IterQueue(out_buffer_size)
+    q_fut = IterQueue(out_buffer_size, q_in._to_shutdown)
     lock = asyncio.Lock()
+    finished = asyncio.Event()
 
-    t_workers = [
-        asyncio.create_task(_process(
-            in_stream,
-            out_stream,
+    _ = [
+        asyncio.create_task(_do_compute(
+            q_in,
+            q_fut,
             lock,
+            finished,
         ))
         for _ in range(workers)
     ]
 
-    async for fut in out_stream:
-        if is_exception(fut):
-            if return_exceptions:
-                yield fut
-            else:
-                raise fut
-        else:
-            try:
-                z = await fut
-                yield z
-            except Exception as e:
-                if return_exceptions:
-                    yield e
-                else:
-                    raise e
-
-    for t in t_workers:
-        await t
+    try:
+        async for fut in q_fut:
+            z = await fut
+            await q_out.put(z)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
 
-async def _transform_sync(in_stream, func, workers, return_exceptions):
-    q_in = _sync_streamer.IterQueue()
-    q_out = _sync_streamer.IterQueue()
-
-    async def _put_input_in_queue():
+async def _transform_sync(q_in: IterQueue,
+                          q_out: IterQueue,
+                          func: Callable,
+                          workers: int,
+                          return_exceptions: bool):
+    def _put_input_in_queue(q_in, q_out):
         try:
-            async for x in in_stream:
-                while True:
-                    try:
-                        q_in.put_nowait(x)
+            while True:
+                try:
+                    x = q_in.get_nowait()
+                    if x is NO_MORE_DATA:
                         break
-                    except queue.Full:
-                        await asyncio.sleep(0.002)
-            q_in.put_end()
+                    q_out.put(x)
+                except asyncio.QueueEmpty:
+                    time.sleep(0.0013)
+            q_out.put_end()
         except Exception as e:
-            q_in.put_exception(e)
+            q_out.put_exception(e)
 
-    def _put_output_in_queue(q_in, q_out, func):
+    def _put_output_in_queue(q_in, q_out):
         _sync_streamer.transform(q_in, q_out, func,
                                  workers=workers,
                                  return_exceptions=return_exceptions)
 
-    t_in = asyncio.create_task(_put_input_in_queue())
-    t_out = asyncio.get_running_loop().run_in_executor(
-        None, _put_output_in_queue, q_in, q_out, func)
+    q_sync = _sync_streamer.IterQueue(to_shutdown=q_in._to_shutdown)
+    q_sync2 = _sync_streamer.IterQueue(to_shutdown=q_in._to_shutdown)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _put_input_in_queue, q_in, q_sync)
+    loop.run_in_executor(None, _put_output_in_queue, q_sync, q_sync2)
 
-    while True:
-        try:
-            z = q_out.get_nowait()
-            if z is _sync_streamer.NO_MORE_DATA:
-                break
-            yield z
-        except queue.Empty:
-            await asyncio.sleep(0.0023)
+    try:
+        while True:
+            try:
+                z = q_sync2.get_nowait()
+                if z is _sync_streamer.NO_MORE_DATA:
+                    break
+                await q_out.put(z)
+            except queue.Empty:
+                await asyncio.sleep(0.0013)
+        await q_out.put_end()
+    except Exception as e:
+        await q_out.put_exception(e)
 
-    await t_in
-    await t_out
 
-
-def transform(
-    in_stream: AsyncIterator[T],
+async def transform(
+    q_in: IterQueue,
+    q_out: IterQueue,
     func: Callable[[T], Union[TT, Awaitable[TT]]],
     *,
     workers: Optional[Union[int, str]] = None,
     return_exceptions: bool = False,
     **func_args,
-) -> AsyncIterator[TT]:
+) -> None:
     '''Apply a transformation on each element of the data stream,
     producing a stream of corresponding results.
 
@@ -466,21 +488,21 @@ def transform(
     else:
         workers > 0
 
-    fun = functools.partial(func, **func_args)
+    fun = functools.wraps(func)(functools.partial(func, **func_args))
     if inspect.iscoroutinefunction(func) or (
         not inspect.isfunction(func)
         and hasattr(func, '__call__')
         and inspect.iscoroutinefunction(func.__call__)
     ):
-        return _transform_async(in_stream, fun, workers, return_exceptions)
+        await _transform_async(q_in, q_out, fun, workers, return_exceptions)
     else:
-        return _transform_sync(in_stream, fun, workers, return_exceptions)
+        await _transform_sync(q_in, q_out, fun, workers, return_exceptions)
 
 
-async def drain(in_stream: AsyncIterable) -> Union[int, Tuple[int, int]]:
+async def drain(q_in: IterQueue) -> Union[int, Tuple[int, int]]:
     n = 0
     nexc = 0
-    async for v in in_stream:
+    async for v in q_in:
         n += 1
         if is_exception(v):
             nexc += 1
@@ -492,27 +514,46 @@ async def drain(in_stream: AsyncIterable) -> Union[int, Tuple[int, int]]:
 class Stream(_sync_streamer.StreamMixin):
     @ classmethod
     def registerapi(cls,
-                    func: Callable[..., AsyncIterator],
+                    func: Callable[..., Awaitable[None]],
                     *,
-                    name: str = None) -> None:
+                    name: str = None,
+                    maxsize: bool = False,
+                    maxsize_first: bool = False,
+                    ) -> None:
         '''
-        `func` expects the data stream, an AsyncIterable or AsyncIterator,
-        as the first positional argument. It may take additional positional
-        and keyword arguments. See the functions `batch`, `drop_if`,
+        `func`: see the functions `batch`, `drop_if`,
         `transform`, etc for examples.
 
         User can use this method to register other functions so that they
         can be used as methods of a `Stream` object, just like `batch`,
         `drop_if`, etc.
         '''
-        if not name:
-            name = func.__name__
+        def _internal(maxsize, in_stream, *args, **kwargs):
+            q_out = IterQueue(maxsize, in_stream._to_shutdown)
+            _ = asyncio.create_task(
+                func(in_stream, q_out, *args, **kwargs))
+            return cls(q_out)
 
-        @ functools.wraps(func)
-        def wrapped(self, *args, **kwargs):
-            return cls(func(self.in_stream, *args, **kwargs))
+        if maxsize:
+            if maxsize_first:
+                @functools.wraps(func)
+                def wrapped(self, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, **kwargs)
+            else:
+                @functools.wraps(func)
+                def wrapped(self, *args, maxsize: int = None, **kwargs):
+                    if maxsize is None:
+                        maxsize = self.in_stream.maxsize
+                    return _internal(maxsize, self.in_stream, *args, **kwargs)
+        else:
+            @functools.wraps(func)
+            def wrapped(self, *args, **kwargs):
+                return _internal(self.in_stream.maxsize, self.in_stream,
+                                 *args, **kwargs)
 
-        setattr(cls, name, wrapped)
+        setattr(cls, name or func.__name__, wrapped)
 
     def __init__(self, in_stream: Union[Iterable, AsyncIterable]):
         self.in_stream = stream(in_stream)
@@ -523,16 +564,16 @@ class Stream(_sync_streamer.StreamMixin):
     def __aiter__(self):
         return self.in_stream.__aiter__()
 
-    def collect(self):
-        return collect(self.in_stream)
+    async def collect(self):
+        return [v async for v in self.in_stream]
 
-    def drain(self):
-        return drain(self.in_stream)
+    async def drain(self):
+        return await drain(self.in_stream)
 
 
-Stream.registerapi(batch)
-Stream.registerapi(unbatch)
-Stream.registerapi(buffer)
+Stream.registerapi(batch, maxsize=True)
+Stream.registerapi(unbatch, maxsize=True)
+Stream.registerapi(buffer, maxsize=True, maxsize_first=True)
 Stream.registerapi(drop_if)
 Stream.registerapi(keep_if)
 Stream.registerapi(keep_first_n)
