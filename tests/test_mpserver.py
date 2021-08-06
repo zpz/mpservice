@@ -2,7 +2,7 @@ import asyncio
 import time
 import pytest
 
-from mpservice._mpservice import (
+from mpservice.mpserver import (
     Servlet, Server,
     EnqueueTimeout, TotalTimeout,
 )

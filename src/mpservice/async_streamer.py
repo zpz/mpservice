@@ -55,7 +55,7 @@ import threading
 import time
 from typing import (
     Callable, Awaitable, TypeVar, Optional, Union,
-    AsyncIterable, AsyncIterator, Iterable,
+    AsyncIterable, Iterable,
     Tuple)
 
 from . import streamer as _sync_streamer
