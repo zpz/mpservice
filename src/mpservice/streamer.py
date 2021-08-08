@@ -9,6 +9,10 @@ The other operations are light weight and supportive of the main (concurrent)
 operation. These operations perform batching, unbatching, buffering,
 filtering, logging, etc.
 
+===========
+Basic usage
+===========
+
 In a typical use case, one starts with a `Stream` object, and calls
 its methods in a "chained" fashion:
 
@@ -20,17 +24,30 @@ its methods in a "chained" fashion:
         .unbatch()
         )
 
-    result = result.collect()
+After this setup, there are four ways to use the object `pipeline`.
 
-or
+    1. Since `pipeline` is an Iterable and an Iterator, we can use it as such.
+       Most naturally, iterate over it and process each element however
+       we like.
 
-    pipeline.drain()
+    2. If the stream is not too long (not "big data"), we can convert it to
+       a list by the method `collect`:
 
-Note that `collect` should not be used when the data stream is long.
-In that case, just use the `pipeline` object as an iterable in subsequent
-processing.
+            result = pipeline.collect()
 
-(Of course, you don't have to call all the methods in one statement.)
+    3. If we don't need the elements coming out of `pipeline`, but rather
+       just need the original data (`data`) to flow through all the operations
+       of the pipeline (e.g. if the last "substantial" operation is inserting
+       the data into a database), we can "drain" the pipeline:
+
+            n = pipeline.drain()
+
+       where the returned `n` is the number of elements coming out of the
+       last operation in the pipeline.
+
+    4. We can continue to add more operations to the pipeline, for example,
+
+            pipeline = pipeline.transform(another_op, workers=3)
 
 ======================
 Handling of exceptions
@@ -60,7 +77,64 @@ the function `log_exceptions` can be used. Therefore, this is a useful pattern:
 
 Bear in mind that the first mode, with `return_exceptions=False` (the default),
 is a totally legitimate and useful mode.
+
+=====
+Hooks
+=====
+
+There are several "hooks" that allow user to pass in custom functions to
+perform operations tailored to their need. Check out the following functions:
+
+    `drop_if`
+    `keep_if`
+    `peek`
+    `transform`
+
+Both `drop_if` and `keep_if` accept a function that evaluates a data element
+and return a boolean value. Dependending on the return value, the element
+is dropped from or kept in the data stream.
+
+`peek` accepts a function that takes a data element and usually does
+informational printing or logging (including persisting info to files).
+This function may check conditions on the data element to decide whether
+to do the printing or do nothing. (Usually we don't want to print for
+every element; that would be overwhelming.)
+This function is called for the side-effect;
+it does not affect the flow of the data stream. The user-provided operator
+should not modify the data element.
+
+`transform` accepts a function that takes a data element, does something
+about it, and returns a value. For example, modify the element and return
+a new value, or call an external service with the data element as part of
+the payload. Each input element will produce a new elment, becoming the
+resultant stream. If the operation is mainly for the side effect, e.g.
+saving data in files or a database, hence there isn't much useful result,
+then the result could be `None`, which is not a problem. The returned
+`None`s will still become the resultant stream.
 '''
+
+# Iterable vs iterator
+#
+# if we need to use
+#
+#   for v in X:
+#       ...
+#
+# then `X.__iter__()` is called to get an "iterator".
+# In this case, `X` is an "iterable", and it must implement `__iter__`.
+#
+# If we do not use it that way, but rather only directly call
+#
+#   next(X)
+#
+# then `X` must implement `__next__` (but does not need to implement `__iter__`).
+# This `X` is an "iterator".
+#
+# Often we let `__iter__` return `self`, and implement `__next__` in the same class.
+# This way the class is both an iterable and an iterator.
+
+# Async generator returns an async iterator.
+
 
 import concurrent.futures
 import functools
@@ -357,6 +431,27 @@ def transform(q_in: IterQueue,
               return_exceptions: bool = False,
               **func_args,
               ) -> None:
+    '''Apply a transformation on each element of the data stream,
+    producing a stream of corresponding results.
+
+    `func`: a sync function that takes a single input item
+    as the first positional argument and produces a result.
+    Additional keyword args can be passed in via `func_args`.
+
+    The outputs are in the order of the input elements in `in_stream`.
+
+    The main point of `func` does not have to be the output.
+    It could rather be some side effect. For example,
+    saving data in a database. In that case, the output may be
+    `None`. Regardless, the output is yielded to be consumed by the next
+    operator in the pipeline. A stream of `None`s could be used
+    in counting, for example. The output stream may also contain
+    Exception objects (if `return_exceptions` is `True`), which may be
+    counted, logged, or handled in other ways.
+
+    `workers`: max number of concurrent calls to `func`. By default
+    this is 1, i.e. there is no concurrency.
+    '''
     if workers is None:
         workers = 1
     elif isinstance(workers, str):
