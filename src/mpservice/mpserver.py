@@ -10,7 +10,7 @@ from typing import List, Type, Tuple, Sequence, Dict, Union
 
 import psutil  # type: ignore
 
-from ._mperror import MPError
+from .mperror import MPError
 
 logger = logging.getLogger(__name__)
 

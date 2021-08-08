@@ -1,6 +1,6 @@
 from multiprocessing import Process, Queue
 
-from mpservice._mperror import MPError
+from mpservice.mperror import MPError
 
 
 def goo(x, q):

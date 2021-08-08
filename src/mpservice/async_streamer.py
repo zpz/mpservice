@@ -27,13 +27,15 @@ in a "chained" fashion:
         .transform(my_op_that_takes_stream_of_batches, workers=4)
         .unbatch()
         )
-    result = [_ async for _ in pipeline]
-or
-    result = await result.collect()
-or
-    await result.drain()
 
-(Of course, you don't have to call all the methods in one statement.)
+Then use `pipeline` in onf the the following ways:
+
+    async for elem in pipeline:
+        ...
+
+    result = await pipeline.collect()
+
+    await pipeline.drain()
 
 Although the primary or initial target use is concurrent I/O-bound
 operations, CPU-bound operations could be performed concurrently
@@ -55,7 +57,7 @@ import threading
 import time
 from typing import (
     Callable, Awaitable, TypeVar, Optional, Union,
-    AsyncIterable, AsyncIterator, Iterable,
+    AsyncIterable, Iterable,
     Tuple)
 
 from . import streamer as _sync_streamer
@@ -73,28 +75,6 @@ NO_MORE_DATA = object()
 
 T = TypeVar('T')
 TT = TypeVar('TT')
-
-# Iterable vs iterator
-#
-# if we need to use
-#
-#   for v in X:
-#       ...
-#
-# then `X.__iter__()` is called to get an "iterator".
-# In this case, `X` is an "iterable", and it must implement `__iter__`.
-#
-# If we do not use it that way, but rather only directly call
-#
-#   next(X)
-#
-# then `X` must implement `__next__` (but does not need to implement `__iter__`).
-# This `X` is an "iterator".
-#
-# Often we let `__iter__` return `self`, and implement `__next__` in the same class.
-# This way the class is both an iterable and an iterator.
-
-# Async generator returns an async iterator.
 
 
 class IterQueue(asyncio.Queue):
@@ -467,18 +447,6 @@ async def transform(
     Additional keyword args can be passed in via `func_args`.
 
     The outputs are in the order of the input elements in `in_stream`.
-
-    The main point of `func` does not have to be the output.
-    It could rather be some side effect. For example,
-    saving data in a database. In that case, the output may be
-    `None`. Regardless, the output is yielded to be consumed by the next
-    operator in the pipeline. A stream of `None`s could be used
-    in counting, for example. The output stream may also contain
-    Exception objects (if `return_exceptions` is `True`), which may be
-    counted, logged, or handled in other ways.
-
-    `workers`: max number of concurrent calls to `func`. By default
-    this is 1, i.e. there is no concurrency.
     '''
     if workers is None:
         workers = 1
