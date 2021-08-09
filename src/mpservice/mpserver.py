@@ -1,8 +1,10 @@
 
 import asyncio
+import concurrent.futures
 import logging
 import multiprocessing as mp
 import queue
+import threading
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
@@ -11,6 +13,8 @@ from typing import List, Type, Tuple, Sequence, Dict, Union
 import psutil  # type: ignore
 
 from .mperror import MPError
+from .streamer import IterQueue, MyThread as StreamerThread
+
 
 logger = logging.getLogger(__name__)
 
@@ -165,23 +169,24 @@ class Server:
 
     def __init__(self,
                  max_queue_size: int = None,
-                 cpus: Sequence[int] = None):
+                 cpus: Sequence[int] = None,
+                 ):
         self.max_queue_size = max_queue_size or 1024
         self._q_in_out: List[mp.Queue] = [
             self.MP_CLASS.Queue(self.max_queue_size)]
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
 
-        self._uid_to_futures: Dict[int, asyncio.Future] = {}
-        self._t_gather_results: asyncio.Task = None  # type: ignore
-        self._servlets: List[mp.Process] = []
+        self._uid_to_futures = {}
 
-        self.loop = asyncio.get_running_loop()
+        self._t_gather_results: threading.Thread = None  # type: ignore
+        self._servlets: List[mp.Process] = []
 
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
 
         self._started = False
+        self._cancelled = False
 
     def add_servlet(self,
                     servlet: Type[Servlet],
@@ -259,15 +264,17 @@ class Server:
             k += 1
             logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_results = asyncio.create_task(self._gather_results())
+        self._t_gather_results = threading.Thread(
+            target=self._gather_results)
+        self._t_gather_results.start()
         self._started = True
 
     def stop(self):
         if not self._started:
             return
-        if self._t_gather_results is not None and not self._t_gather_results.done():
-            self._t_gather_results.cancel()
-            # self._t_gather_results = None
+        self._cancelled = True
+        self._t_gather_results.join()
+        self._t_gather_results = None
         for m in self._servlets:
             # if m.is_alive():
             m.terminate()
@@ -280,11 +287,14 @@ class Server:
     def __del__(self):
         self.stop()
 
-    async def _gather_results(self):
+    def _gather_results(self):
         q_out = self._q_in_out[-1]
         q_err = self._q_err
         futures = self._uid_to_futures
         while True:
+            if self._cancelled:
+                return
+
             while not q_out.empty():
                 uid, y = q_out.get_nowait()
                 fut = futures.pop(uid, None)
@@ -311,14 +321,14 @@ class Server:
                         logger.warning('Future object is already cancelled')
                 # No sleep. Get results out of the queue as quickly as possible.
 
-            await asyncio.sleep(0.0013)
+            time.sleep(0.0013)
 
-    async def __call__(self,
-                       x,
-                       *,
-                       enqueue_timeout: Union[int, float] = None,
-                       total_timeout: Union[int, float] = None,
-                       ):
+    async def a_call(self,
+                     x,
+                     *,
+                     enqueue_timeout: Union[int, float] = None,
+                     total_timeout: Union[int, float] = None,
+                     ):
         if enqueue_timeout is None:
             enqueue_timeout = 1
         elif enqueue_timeout < 0:
@@ -330,7 +340,7 @@ class Server:
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
 
-        loop = self.loop
+        loop = asyncio.get_running_loop()
         fut = loop.create_future()
         uid = id(fut)
         self._uid_to_futures[uid] = fut
@@ -366,6 +376,89 @@ class Server:
             raise TotalTimeout(f'waited {loop.time() - time0} seconds')
         else:
             return fut.result()
+
+    async def __call__(self, x, **kwargs):
+        return await self.async_call(x, **kwargs)
+
+    def call(self,
+             x,
+             *,
+             enqueue_timeout: Union[int, float] = None,
+             total_timeout: Union[int, float] = None,
+             ):
+        if enqueue_timeout is None:
+            enqueue_timeout = 1
+        elif enqueue_timeout < 0:
+            enqueue_timeout = 0
+        if total_timeout is None:
+            total_timeout = max(10, enqueue_timeout * 10)
+        else:
+            assert total_timeout > 0, "total_timeout must be > 0"
+        if enqueue_timeout > total_timeout:
+            enqueue_timeout = total_timeout
+
+        fut = concurrent.futures.Future()
+        uid = id(fut)
+        self._uid_to_futures[uid] = fut
+        q_in = self._q_in_out[0]
+
+        time0 = time.perf_counter()
+        time1 = time0 + enqueue_timeout
+        time2 = time0 + total_timeout
+
+        while True:
+            try:
+                q_in.put_nowait((uid, x))
+            except queue.Full:
+                timenow = time.perf_counter()
+                if timenow < time1:
+                    time.sleep(0.00089)
+                else:
+                    fut.cancel()
+                    del self._uid_to_futures[uid]
+                    raise EnqueueTimeout(f'waited {timenow - time0} seconds')
+            else:
+                break
+
+        try:
+            z = fut.result(timeout=time2 - time.perf_counter())
+        except (asyncio.TimeoutError, concurrent.futures.futures.TimeoutError):
+            # `fut` is now cancelled.
+            if uid in self._uid_to_futures:
+                # `uid` could have been deleted by
+                # `_gather_results` during very subtle
+                # timing coincidence.
+                del self._uid_to_futures[uid]
+            raise TotalTimeout(f'waited {time.perf_counter() - time0} seconds')
+        else:
+            return z
+
+    def stream(self, data_stream, *,
+               return_exceptions: bool = False,
+               output_buffer_size: int = 1024,
+               ):
+        def _enqueue(input_stream, future_stream):
+            q_in = self._q_in_out[0]
+            for x in input_stream:
+                fut = concurrent.futures.Future()
+                uid = id(fut)
+                q_in.put((uid, x))
+                self._uid_to_futures[uid] = fut
+                future_stream.put(fut)
+
+        q_fut = IterQueue(output_buffer_size)
+        t_enqueue = StreamerThread(_enqueue, data_stream, q_fut)
+        t_enqueue.start()
+
+        for fut in q_fut:
+            try:
+                z = fut.result()
+                yield z
+            except Exception as e:
+                if return_exceptions:
+                    yield e
+                else:
+                    raise e
 
     def __enter__(self):
         self.start()

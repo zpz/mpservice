@@ -150,6 +150,8 @@ from typing import (
     Iterable, Iterator,
     Tuple,
 )
+# from uuid import uuid4
+
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 
@@ -169,6 +171,8 @@ def is_exception(e):
 
 class IterQueue(queue.Queue):
     DEFAULT_MAXSIZE = 256
+    GET_SLEEP = 0.0013
+    PUT_SLEEP = 0.0014
 
     def __init__(self, maxsize: int = None, to_shutdown: threading.Event = None):
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
@@ -199,7 +203,7 @@ class IterQueue(queue.Queue):
                 break
             except queue.Full:
                 if block:
-                    sleep(0.0015)
+                    sleep(self.PUT_SLEEP)
                 else:
                     raise
 
@@ -219,7 +223,7 @@ class IterQueue(queue.Queue):
                 return z
             except queue.Empty:
                 if block:
-                    sleep(0.0012)
+                    sleep(self.GET_SLEEP)
                 else:
                     raise
 
@@ -234,10 +238,56 @@ class IterQueue(queue.Queue):
                     raise StopIteration
                 return z
             except queue.Empty:
-                sleep(0.003)
+                sleep(self.GET_SLEEP)
 
     def __iter__(self):
         return self
+
+
+class MyThread(threading.Thread):
+    def __init__(self, target, q_in: Iterable, q_out: IterQueue, *args, **kwargs):
+        super().__init__()
+        self.target = target
+        self.q_in = q_in
+        self.q_out = q_out
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        try:
+            self.target(self.q_in, self.q_out, *self.args, **self.kwargs)
+            self.q_out.put_end()
+        except Exception as e:
+            self.q_out.put_exception(e)
+
+
+# class MyProcess(multiprocessing.Process):
+#     def __init__(self, target, q_in: multiprocessing.Queue, q_out: IterQueue,
+#                  *args, lock: multiprocessing.Lock, **kwargs):
+#         super().__init__()
+#         self.target = target
+#         self.q_in, self.q_out = q_in, q_out
+#         self.lock = lock
+#         self.args = args
+#         self.kwargs = kwargs
+#         self._futures = {}
+
+#     def put_future(self):
+#         id_ = str(uuid4())
+#         fut = concurrent.futures.Future()
+#         self.q_out.put(fut)
+#         self._futures[id_] = fut
+#         return id_
+
+#     def put_exception(self, e):
+#         self.q_out.put_exception(e)
+
+#     def set_result(self, id_, value):
+#         self._futures[id_].set_result(value)
+#         del self._futures[id_]
+
+#     def run(self):
+#         pass
 
 
 def stream(x: Iterable, maxsize: int = None) -> IterQueue:
@@ -257,15 +307,11 @@ def stream(x: Iterable, maxsize: int = None) -> IterQueue:
             raise TypeError('`x` is not iterable')
 
     def enqueue(q_in, q_out):
-        try:
-            for v in q_in:
-                q_out.put(v)
-            q_out.put_end()
-        except Exception as e:
-            q_out.put_exception(e)
+        for v in q_in:
+            q_out.put(v)
 
     q = IterQueue(maxsize)
-    t = threading.Thread(target=enqueue, args=(x, q))
+    t = MyThread(enqueue, x, q)
     t.start()
 
     return q
@@ -284,32 +330,24 @@ def batch(q_in: IterQueue, q_out: IterQueue, batch_size: int) -> None:
     assert 0 < batch_size <= 10000
     batch_ = []
     n = 0
-    try:
-        for x in q_in:
-            batch_.append(x)
-            n += 1
-            if n >= batch_size:
-                q_out.put(batch_)
-                batch_ = []
-                n = 0
-        if n:
+    for x in q_in:
+        batch_.append(x)
+        n += 1
+        if n >= batch_size:
             q_out.put(batch_)
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+            batch_ = []
+            n = 0
+    if n:
+        q_out.put(batch_)
 
 
 def unbatch(q_in: IterQueue, q_out: IterQueue) -> None:
     '''Reverse of "batch", turning a stream of batches into
     a stream of individual elements.
     '''
-    try:
-        for batch in q_in:
-            for x in batch:
-                q_out.put(x)
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for batch in q_in:
+        for x in batch:
+            q_out.put(x)
 
 
 def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
@@ -322,55 +360,39 @@ def buffer(q_in: IterQueue, q_out: IterQueue) -> None:
     data. The buffer evens out unstabilities in the speeds of upstream
     production and downstream consumption.
     '''
-    try:
-        for x in q_in:
-            q_out.put(x)
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for x in q_in:
+        q_out.put(x)
 
 
 def drop_if(q_in: IterQueue, q_out: IterQueue,
             func: Callable[[int, T], bool]) -> None:
     n = 0
-    try:
-        for x in q_in:
-            if func(n, x):
-                n += 1
-                continue
-            q_out.put(x)
+    for x in q_in:
+        if func(n, x):
             n += 1
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+            continue
+        q_out.put(x)
+        n += 1
 
 
 def keep_if(q_in: IterQueue,
             q_out: IterQueue,
             func: Callable[[int, T], bool]) -> None:
     n = 0
-    try:
-        for x in q_in:
-            if func(n, x):
-                q_out.put(x)
-            n += 1
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for x in q_in:
+        if func(n, x):
+            q_out.put(x)
+        n += 1
 
 
 def keep_first_n(q_in, q_out, n: int):
     assert n > 0
     k = 0
-    try:
-        for x in q_in:
-            k += 1
-            if k > n:
-                break
-            q_out.put(x)
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for x in q_in:
+        k += 1
+        if k > n:
+            break
+        q_out.put(x)
 
 
 def _default_peek_func(i, x):
@@ -395,14 +417,10 @@ def peek(q_in: IterQueue,
         peek_func = _default_peek_func
 
     n = 0
-    try:
-        for x in q_in:
-            peek_func(n, x)
-            q_out.put(x)
-            n += 1
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for x in q_in:
+        peek_func(n, x)
+        q_out.put(x)
+        n += 1
 
 
 def log_exceptions(q_in: IterQueue,
@@ -411,70 +429,27 @@ def log_exceptions(q_in: IterQueue,
                    drop: bool = False):
     flog = getattr(logger, level)
 
-    try:
-        for x in q_in:
-            if is_exception(x):
-                flog(x)
-                if drop:
-                    continue
-            q_out.put(x)
-        q_out.put_end()
-    except Exception as e:
-        q_out.put_exception(e)
+    for x in q_in:
+        if is_exception(x):
+            flog(x)
+            if drop:
+                continue
+        q_out.put(x)
 
 
-def transform(q_in: IterQueue,
-              q_out: IterQueue,
-              func: Callable[[T], TT],
-              *,
-              workers: Optional[Union[int, str]] = None,
-              return_exceptions: bool = False,
-              **func_args,
-              ) -> None:
-    '''Apply a transformation on each element of the data stream,
-    producing a stream of corresponding results.
-
-    `func`: a sync function that takes a single input item
-    as the first positional argument and produces a result.
-    Additional keyword args can be passed in via `func_args`.
-
-    The outputs are in the order of the input elements in `in_stream`.
-
-    The main point of `func` does not have to be the output.
-    It could rather be some side effect. For example,
-    saving data in a database. In that case, the output may be
-    `None`. Regardless, the output is yielded to be consumed by the next
-    operator in the pipeline. A stream of `None`s could be used
-    in counting, for example. The output stream may also contain
-    Exception objects (if `return_exceptions` is `True`), which may be
-    counted, logged, or handled in other ways.
-
-    `workers`: max number of concurrent calls to `func`. By default
-    this is 1, i.e. there is no concurrency.
-    '''
-    if workers is None:
-        workers = 1
-    elif isinstance(workers, str):
-        assert workers == 'max'
-        workers = MAX_THREADS
-    else:
-        workers > 0
-
+def _transform_thread(q_in, q_out, func, *,
+                      workers, return_exceptions,
+                      **func_args):
     if workers == 1:
-        try:
-            for x in q_in:
-                try:
-                    z = func(x, **func_args)
-                    q_out.put(z)
-                except Exception as e:
-                    if return_exceptions:
-                        q_out.put(e)
-                    else:
-                        q_out.put_exception(e)
-                        return  # No need to process subsequent data.
-            q_out.put_end()
-        except Exception as e:
-            q_out.put_exception(e)
+        for x in q_in:
+            try:
+                z = func(x, **func_args)
+                q_out.put(z)
+            except Exception as e:
+                if return_exceptions:
+                    q_out.put(e)
+                else:
+                    raise e
         return
 
     def _process(in_stream, out_stream, func, lock, finished):
@@ -537,13 +512,56 @@ def transform(q_in: IterQueue,
         for fut in out_stream:
             z = fut.result()
             q_out.put(z)
-        q_out.put_end()
+    finally:
+        finished.set()
+        for t in t_workers:
+            t.join()
 
-    except Exception as e:
-        q_out.put_exception(e)
-    finished.set()
-    for t in t_workers:
-        t.join()
+
+def transform(q_in: IterQueue,
+              q_out: IterQueue,
+              func: Callable[[T], TT],
+              *,
+              workers: Optional[Union[int, str]] = None,
+              return_exceptions: bool = False,
+              mp: bool = False,
+              **func_args,
+              ) -> None:
+    '''Apply a transformation on each element of the data stream,
+    producing a stream of corresponding results.
+
+    `func`: a sync function that takes a single input item
+    as the first positional argument and produces a result.
+    Additional keyword args can be passed in via `func_args`.
+
+    The outputs are in the order of the input elements in `in_stream`.
+
+    The main point of `func` does not have to be the output.
+    It could rather be some side effect. For example,
+    saving data in a database. In that case, the output may be
+    `None`. Regardless, the output is yielded to be consumed by the next
+    operator in the pipeline. A stream of `None`s could be used
+    in counting, for example. The output stream may also contain
+    Exception objects (if `return_exceptions` is `True`), which may be
+    counted, logged, or handled in other ways.
+
+    `workers`: max number of concurrent calls to `func`. By default
+    this is 1, i.e. there is no concurrency.
+    '''
+    if workers is None:
+        workers = 1
+    elif isinstance(workers, str):
+        assert workers == 'max'
+        workers = MAX_THREADS
+    else:
+        workers > 0
+
+    if not mp:
+        return _transform_thread(
+            q_in, q_out, func,
+            workers=workers, return_exceptions=return_exceptions,
+            **func_args,
+        )
 
 
 def drain(q_in: IterQueue) -> Union[int, Tuple[int, int]]:
@@ -650,9 +668,7 @@ class Stream(StreamMixin):
 
         def _internal(maxsize, in_stream, *args, **kwargs):
             q_out = IterQueue(maxsize, in_stream._to_shutdown)
-            t = threading.Thread(target=func,
-                                 args=(in_stream, q_out, *args),
-                                 kwargs=kwargs)
+            t = MyThread(func, in_stream, q_out, *args, **kwargs)
             t.start()
             return cls(q_out)
 
