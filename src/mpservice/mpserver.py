@@ -8,12 +8,13 @@ import threading
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
-from typing import List, Type, Tuple, Sequence, Dict, Union
+from typing import List, Type, Tuple, Sequence, Union
 
 import psutil  # type: ignore
 
 from .mperror import MPError
-from .streamer import IterQueue, MyThread as StreamerThread
+from . import streamer
+from . import async_streamer
 
 
 logger = logging.getLogger(__name__)
@@ -323,12 +324,12 @@ class Server:
 
             time.sleep(0.0013)
 
-    async def a_call(self,
-                     x,
-                     *,
-                     enqueue_timeout: Union[int, float] = None,
-                     total_timeout: Union[int, float] = None,
-                     ):
+    async def async_call(self,
+                         x,
+                         *,
+                         enqueue_timeout: Union[int, float] = None,
+                         total_timeout: Union[int, float] = None,
+                         ):
         if enqueue_timeout is None:
             enqueue_timeout = 1
         elif enqueue_timeout < 0:
@@ -378,6 +379,7 @@ class Server:
             return fut.result()
 
     async def __call__(self, x, **kwargs):
+        # To be deprecated.
         return await self.async_call(x, **kwargs)
 
     def call(self,
@@ -422,7 +424,7 @@ class Server:
 
         try:
             z = fut.result(timeout=time2 - time.perf_counter())
-        except (asyncio.TimeoutError, concurrent.futures.futures.TimeoutError):
+        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
             # `fut` is now cancelled.
             if uid in self._uid_to_futures:
                 # `uid` could have been deleted by
@@ -437,6 +439,11 @@ class Server:
                return_exceptions: bool = False,
                output_buffer_size: int = 1024,
                ):
+        # What this method does can be achieved by a Streamer
+        # using `self.call` as a "transformer".
+        # However, this method is expected to achieve optimal
+        # performance, whereas the efficiency achieved by
+        # "transfomer" depends on the "workers" parameter.
         def _enqueue(input_stream, future_stream):
             q_in = self._q_in_out[0]
             for x in input_stream:
@@ -446,19 +453,28 @@ class Server:
                 self._uid_to_futures[uid] = fut
                 future_stream.put(fut)
 
-        q_fut = IterQueue(output_buffer_size)
-        t_enqueue = StreamerThread(_enqueue, data_stream, q_fut)
-        t_enqueue.start()
+        if not isinstance(data_stream, streamer.Stream):
+            data_stream = streamer.Stream(data_stream)
+        q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
+        _ = streamer.streamer_thread(
+            data_stream.in_stream, q_fut, _enqueue)
 
-        for fut in q_fut:
-            try:
-                z = fut.result()
-                yield z
-            except Exception as e:
-                if return_exceptions:
-                    yield e
-                else:
-                    raise e
+        def _dequeue(q_fut, q_out, return_exceptions):
+            for fut in q_fut:
+                try:
+                    z = fut.result()
+                    q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        q_out.put(e)
+                    else:
+                        raise e
+
+        q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
+        _ = streamer.streamer_thread(
+            q_fut, q_out, _dequeue, return_exceptions)
+
+        return streamer.Stream(q_out)
 
     def __enter__(self):
         self.start()
