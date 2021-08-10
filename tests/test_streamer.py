@@ -89,7 +89,7 @@ def test_keep():
     s = Stream(data)
     ss = s.keep_random(0.5).collect()
     print(ss)
-    assert 0 <= len(ss) < len(data)
+    assert 0 <= len(ss) <= len(data)
 
 
 def test_peek():

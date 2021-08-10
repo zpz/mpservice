@@ -135,6 +135,11 @@ then the result could be `None`, which is not a problem. The returned
 
 # Async generator returns an async iterator.
 
+from __future__ import annotations
+# Enable using a class in type annotations in the code
+# that defines that class itself.
+# https://stackoverflow.com/a/49872353
+# Will no longer be needed in Python 3.10.
 
 import concurrent.futures
 import functools
@@ -150,12 +155,12 @@ from typing import (
     Iterable, Iterator,
     Tuple,
 )
-# from uuid import uuid4
 
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
+# This default is suitable for I/O bound operations.
+# For others, user may want to specify a smaller value.
 
-NO_MORE_DATA = object()
 
 logger = logging.getLogger(__name__)
 
@@ -173,19 +178,21 @@ class IterQueue(queue.Queue):
     DEFAULT_MAXSIZE = 256
     GET_SLEEP = 0.0013
     PUT_SLEEP = 0.0014
+    NO_MORE_DATA = object()
 
-    def __init__(self, maxsize: int = None, to_shutdown: threading.Event = None):
+    def __init__(self, maxsize: int = None, upstream: Optional[IterQueue] = None):
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
         self.exception = None
         self._closed = False
         self._exhausted = False
-        if to_shutdown is None:
-            to_shutdown = threading.Event()
-        self._to_shutdown = to_shutdown
+        if upstream is None:
+            self._to_shutdown = threading.Event()
+        else:
+            self._to_shutdown = upstream._to_shutdown
 
     def put_end(self):
         assert not self._closed
-        self.put(NO_MORE_DATA)
+        self.put(self.NO_MORE_DATA)
         self._closed = True
 
     def put_exception(self, e):
@@ -216,9 +223,9 @@ class IterQueue(queue.Queue):
                 if self.exception is not None:
                     raise self.exception
                 if self._exhausted:
-                    return NO_MORE_DATA
+                    return self.NO_MORE_DATA
                 z = super().get(block=False)
-                if z is NO_MORE_DATA:
+                if z is self.NO_MORE_DATA:
                     self._exhausted = True
                 return z
             except queue.Empty:
@@ -234,7 +241,7 @@ class IterQueue(queue.Queue):
         while True:
             try:
                 z = self.get_nowait()
-                if z is NO_MORE_DATA:
+                if z is self.NO_MORE_DATA:
                     raise StopIteration
                 return z
             except queue.Empty:
@@ -244,53 +251,23 @@ class IterQueue(queue.Queue):
         return self
 
 
-class MyThread(threading.Thread):
-    def __init__(self, target, q_in: Iterable, q_out: IterQueue, *args, **kwargs):
-        super().__init__()
-        self.target = target
-        self.q_in = q_in
-        self.q_out = q_out
-        self.args = args
-        self.kwargs = kwargs
-
-    def run(self):
+def streamer_thread(q_in: Iterable, q_out: IterQueue,
+                    func: Callable[..., None], *args, **kwargs):
+    def foo(q_in, q_out, func, *args, **kwargs):
         try:
-            self.target(self.q_in, self.q_out, *self.args, **self.kwargs)
-            self.q_out.put_end()
+            func(q_in, q_out, *args, **kwargs)
+            q_out.put_end()
         except Exception as e:
-            self.q_out.put_exception(e)
+            q_out.put_exception(e)
+
+    t = threading.Thread(
+        target=foo, args=(q_in, q_out, func, *args), kwargs=kwargs
+    )
+    t.start()
+    return t
 
 
-# class MyProcess(multiprocessing.Process):
-#     def __init__(self, target, q_in: multiprocessing.Queue, q_out: IterQueue,
-#                  *args, lock: multiprocessing.Lock, **kwargs):
-#         super().__init__()
-#         self.target = target
-#         self.q_in, self.q_out = q_in, q_out
-#         self.lock = lock
-#         self.args = args
-#         self.kwargs = kwargs
-#         self._futures = {}
-
-#     def put_future(self):
-#         id_ = str(uuid4())
-#         fut = concurrent.futures.Future()
-#         self.q_out.put(fut)
-#         self._futures[id_] = fut
-#         return id_
-
-#     def put_exception(self, e):
-#         self.q_out.put_exception(e)
-
-#     def set_result(self, id_, value):
-#         self._futures[id_].set_result(value)
-#         del self._futures[id_]
-
-#     def run(self):
-#         pass
-
-
-def stream(x: Iterable, maxsize: int = None) -> IterQueue:
+def stream(x: Union[Iterable, Iterator], maxsize: int = None) -> IterQueue:
     if isinstance(x, IterQueue):
         return x
 
@@ -311,8 +288,7 @@ def stream(x: Iterable, maxsize: int = None) -> IterQueue:
             q_out.put(v)
 
     q = IterQueue(maxsize)
-    t = MyThread(enqueue, x, q)
-    t.start()
+    _ = streamer_thread(x, q, enqueue)
 
     return q
 
@@ -375,8 +351,7 @@ def drop_if(q_in: IterQueue, q_out: IterQueue,
         n += 1
 
 
-def keep_if(q_in: IterQueue,
-            q_out: IterQueue,
+def keep_if(q_in: IterQueue, q_out: IterQueue,
             func: Callable[[int, T], bool]) -> None:
     n = 0
     for x in q_in:
@@ -385,7 +360,7 @@ def keep_if(q_in: IterQueue,
         n += 1
 
 
-def keep_first_n(q_in, q_out, n: int):
+def keep_first_n(q_in: IterQueue, q_out: IterQueue, n: int) -> None:
     assert n > 0
     k = 0
     for x in q_in:
@@ -401,10 +376,8 @@ def _default_peek_func(i, x):
     print(x)
 
 
-def peek(q_in: IterQueue,
-         q_out: IterQueue,
-         peek_func: Callable[[int, T], None] = None,
-         ) -> None:
+def peek(q_in: IterQueue, q_out: IterQueue,
+         peek_func: Callable[[int, T], None] = None) -> None:
     '''Take a peek at the data element *before* it is sent
     on for processing.
 
@@ -423,10 +396,8 @@ def peek(q_in: IterQueue,
         n += 1
 
 
-def log_exceptions(q_in: IterQueue,
-                   q_out: IterQueue,
-                   level: str = 'error',
-                   drop: bool = False):
+def log_exceptions(q_in: IterQueue, q_out: IterQueue,
+                   level: str = 'error', drop: bool = False) -> None:
     flog = getattr(logger, level)
 
     for x in q_in:
@@ -490,7 +461,7 @@ def _transform_thread(q_in, q_out, func, *,
 
     out_stream = IterQueue(max(q_in.maxsize, workers * 8))
     lock = threading.Lock()
-    func = functools.wraps(func)(func, **func_args)
+    func = functools.wraps(func)(functools.partial(func, **func_args))
     finished = threading.Event()
 
     t_workers = [
@@ -524,7 +495,6 @@ def transform(q_in: IterQueue,
               *,
               workers: Optional[Union[int, str]] = None,
               return_exceptions: bool = False,
-              mp: bool = False,
               **func_args,
               ) -> None:
     '''Apply a transformation on each element of the data stream,
@@ -556,12 +526,11 @@ def transform(q_in: IterQueue,
     else:
         workers > 0
 
-    if not mp:
-        return _transform_thread(
-            q_in, q_out, func,
-            workers=workers, return_exceptions=return_exceptions,
-            **func_args,
-        )
+    return _transform_thread(
+        q_in, q_out, func,
+        workers=workers, return_exceptions=return_exceptions,
+        **func_args,
+    )
 
 
 def drain(q_in: IterQueue) -> Union[int, Tuple[int, int]]:
@@ -635,7 +604,7 @@ class StreamMixin:
 
 
 class Stream(StreamMixin):
-    @classmethod
+    @ classmethod
     def registerapi(cls,
                     func: Callable[..., None],
                     *,
@@ -667,26 +636,25 @@ class Stream(StreamMixin):
             name = func.__name__
 
         def _internal(maxsize, in_stream, *args, **kwargs):
-            q_out = IterQueue(maxsize, in_stream._to_shutdown)
-            t = MyThread(func, in_stream, q_out, *args, **kwargs)
-            t.start()
+            q_out = IterQueue(maxsize, in_stream)
+            _ = streamer_thread(in_stream, q_out, func, *args, **kwargs)
             return cls(q_out)
 
         if maxsize:
             if maxsize_first:
-                @functools.wraps(func)
+                @ functools.wraps(func)
                 def wrapped(self, maxsize: int = None, **kwargs):
                     if maxsize is None:
                         maxsize = self.in_stream.maxsize
                     return _internal(maxsize, self.in_stream, **kwargs)
             else:
-                @functools.wraps(func)
+                @ functools.wraps(func)
                 def wrapped(self, *args, maxsize: int = None, **kwargs):
                     if maxsize is None:
                         maxsize = self.in_stream.maxsize
                     return _internal(maxsize, self.in_stream, *args, **kwargs)
         else:
-            @functools.wraps(func)
+            @ functools.wraps(func)
             def wrapped(self, *args, **kwargs):
                 return _internal(self.in_stream.maxsize,
                                  self.in_stream, *args, **kwargs)
