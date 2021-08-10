@@ -1,4 +1,4 @@
-__version__ = '0.8.7'
+__version__ = '0.8.8'
 
 # NOTE: these imports will be removed in a future release.
 # Please import them from the relevant modules directly.

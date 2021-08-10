@@ -1,3 +1,10 @@
+Release 0.8.8
+=============
+
+- `mpserver.Server` gets a sync API, in addition to the existing async API.
+- `mpserver.Server` gets sync and async stream methods.
+
+
 Release 0.8.7
 =============
 

@@ -107,10 +107,14 @@ should not modify the data element.
 about it, and returns a value. For example, modify the element and return
 a new value, or call an external service with the data element as part of
 the payload. Each input element will produce a new elment, becoming the
-resultant stream. If the operation is mainly for the side effect, e.g.
+resultant stream. This method can not "drop" a data element (i.e do not
+produce a result corresponding to an input element), neither can it produce
+multiple results for a single input element (if it produces a list, say,
+that list would be the result for the single input.)
+If the operation is mainly for the side effect, e.g.
 saving data in files or a database, hence there isn't much useful result,
-then the result could be `None`, which is not a problem. The returned
-`None`s will still become the resultant stream.
+then the result could be `None`, which is not a problem. Regardless,
+the returned `None`s will still become the resultant stream.
 '''
 
 # Iterable vs iterator
@@ -663,8 +667,9 @@ class Stream(StreamMixin):
 
     def __init__(self,
                  in_stream: Union[Iterable, Iterator, IterQueue],
+                 *,
                  maxsize: int = None):
-        self.in_stream = stream(in_stream, maxsize)
+        self.in_stream = stream(in_stream, maxsize=maxsize)
 
     def __next__(self):
         return self.in_stream.__next__()

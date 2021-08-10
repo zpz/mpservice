@@ -487,8 +487,8 @@ class Stream(_sync_streamer.StreamMixin):
 
         setattr(cls, name or func.__name__, wrapped)
 
-    def __init__(self, in_stream):
-        self.in_stream = stream(in_stream)
+    def __init__(self, in_stream, *, maxsize: int = None):
+        self.in_stream = stream(in_stream, maxsize=maxsize)
 
     def __anext__(self):
         return self.in_stream.__anext__()

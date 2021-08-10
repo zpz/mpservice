@@ -8,6 +8,7 @@ from mpservice.mpserver import (
     EnqueueTimeout, TotalTimeout,
 )
 from mpservice.streamer import Stream
+from mpservice.async_streamer import Stream as AsyncStream
 
 
 class Scale(Servlet):
@@ -135,6 +136,19 @@ def test_timeout():
 
         with pytest.raises(TotalTimeout):
             z = service.call(8, enqueue_timeout=0, total_timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_stream_async():
+    service = Server(cpus=[0])
+    service.add_servlet(Square, cpus=[1, 2, 3])
+    with service:
+        data = range(100)
+        ss = service.async_stream(data)
+        assert await ss.collect() == [v*v for v in data]
+
+        ss = AsyncStream(data).transform(service.async_call, workers=10)
+        assert await ss.collect() == [v*v for v in data]
 
 
 def test_stream():

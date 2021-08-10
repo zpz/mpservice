@@ -4,6 +4,7 @@ import concurrent.futures
 import logging
 import multiprocessing as mp
 import queue
+from sys import maxsize
 import threading
 import time
 from abc import ABCMeta, abstractmethod
@@ -435,6 +436,54 @@ class Server:
         else:
             return z
 
+    def async_stream(self, data_stream, *,
+                     return_exceptions: bool = False,
+                     output_buffer_size: int = 1024,
+                     ):
+        # What this method does can be achieved by a Streamer
+        # using `self.async_call` as a "transformer".
+        # However, this method is expected to achieve optimal
+        # performance, whereas the efficiency achieved by
+        # "transfomer" depends on the "workers" parameter.
+        async def _enqueue(input_stream, future_stream):
+            loop = asyncio.get_running_loop()
+            q_in = self._q_in_out[0]
+            async for x in input_stream:
+                fut = loop.create_future()
+                uid = id(fut)
+                while True:
+                    try:
+                        q_in.put_nowait((uid, x))
+                        break
+                    except queue.Full:
+                        await asyncio.sleep(0.0013)
+                self._uid_to_futures[uid] = fut
+                await future_stream.put(fut)
+
+        if not isinstance(data_stream, async_streamer.Stream):
+            data_stream = async_streamer.Stream(data_stream)
+        q_fut = async_streamer.IterQueue(
+            output_buffer_size, data_stream.in_stream)
+        _ = async_streamer.streamer_task(
+            data_stream.in_stream, q_fut, _enqueue)
+
+        async def _dequeue(q_fut, q_out, return_exceptions):
+            async for fut in q_fut:
+                try:
+                    z = await fut
+                    await q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        await q_out.put(e)
+                    else:
+                        raise e
+
+        q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
+        _ = async_streamer.streamer_task(
+            q_fut, q_out, _dequeue, return_exceptions)
+
+        return async_streamer.Stream(q_out)
+
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                output_buffer_size: int = 1024,
@@ -454,7 +503,8 @@ class Server:
                 future_stream.put(fut)
 
         if not isinstance(data_stream, streamer.Stream):
-            data_stream = streamer.Stream(data_stream)
+            data_stream = streamer.Stream(
+                data_stream, maxsize=output_buffer_size)
         q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
         _ = streamer.streamer_thread(
             data_stream.in_stream, q_fut, _enqueue)
