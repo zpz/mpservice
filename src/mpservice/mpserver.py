@@ -4,7 +4,6 @@ import concurrent.futures
 import logging
 import multiprocessing as mp
 import queue
-from sys import maxsize
 import threading
 import time
 from abc import ABCMeta, abstractmethod
