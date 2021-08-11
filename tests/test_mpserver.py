@@ -4,7 +4,7 @@ import time
 import pytest
 
 from mpservice.mpserver import (
-    Servlet, Server,
+    Servlet, Server, SimpleServer,
     EnqueueTimeout, TotalTimeout,
 )
 from mpservice.streamer import Stream
@@ -161,3 +161,23 @@ def test_stream():
 
         ss = Stream(data).transform(service.call, workers=10)
         assert ss.collect() == [v*v for v in data]
+
+
+def test_simple_server():
+    def func(x, shift):
+        return x + shift
+
+    server = SimpleServer(func, shift=3)
+    with server:
+        data = range(1000)
+        ss = server.stream(data)
+        assert ss.collect() == [x + 3 for x in range(1000)]
+
+    def func2(x, shift):
+        return [_ + shift for _ in x]
+
+    server = SimpleServer(func2, batch_size=99, shift=5)
+    with server:
+        data = range(1000)
+        ss = server.stream(data)
+        assert ss.collect() == [x + 5 for x in range(1000)]

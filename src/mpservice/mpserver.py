@@ -8,7 +8,7 @@ import threading
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
-from typing import List, Type, Tuple, Sequence, Union
+from typing import List, Type, Tuple, Sequence, Union, Callable
 
 import psutil  # type: ignore
 
@@ -34,7 +34,7 @@ class TotalTimeout(TimeoutError):
 
 class Servlet(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
-    # `__init__` and implement `process`.
+    # `__init__` and implement `__call__`.
 
     @classmethod
     def run(cls, *,
@@ -69,7 +69,7 @@ class Servlet(metaclass=ABCMeta):
             uid, x = q_in.get()
             try:
                 if batch_size:
-                    y = self([x])[0]
+                    y = self.__call__([x])[0]
                 else:
                     y = self(x)
                 q_out.put((uid, y))
@@ -129,7 +129,7 @@ class Servlet(metaclass=ABCMeta):
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
             try:
-                results = self(batch)
+                results = self.__call__(batch)
             except Exception as e:
                 if not silent_errors or not isinstance(e, silent_errors):
                     logger.info(e)
@@ -151,12 +151,27 @@ class Servlet(metaclass=ABCMeta):
 
     @abstractmethod
     def __call__(self, x):
-        # `x`: a single element if `self.batch_size == 0`;
-        # else, a list of elements.
-        # When `batch_size == 0`, hence `x` is a single element,
-        # return corresponding result.
-        # When `batch_size > 0`, return list of results
-        # corresponding to elements in `x`.
+        # If `self.batch_size == 0`, then `x` is a single
+        # element, and this method returns result for `x`.
+        #
+        # If `self.batch_size > 0` (including 1), then
+        # `x` is a list of input data elements, and this
+        # method returns a list of results corresponding
+        # to the elements in `x`.
+        # However, the service will split the result list
+        # into single results for individual elements of `x`.
+        # This is *vectorized* computation, or *batching*,
+        # handled by this service pipeline. The number of
+        # elements in `x` varies depending on the supply
+        # of data.
+        #
+        # Distinguish this from the case where a single
+        # input is naturally a list. Whatever is the result
+        # for it, it is still the result corresponding to
+        # the single input `x`. User should make sure
+        # the input stream of data consists of values of
+        # the correct type, which in this case are lists.
+        # There is no batching in this situation.
         raise NotImplementedError
 
 
@@ -172,6 +187,10 @@ class Server:
                  max_queue_size: int = None,
                  cpus: Sequence[int] = None,
                  ):
+        '''
+        `cpus`: specifies the cpu for the "main process",
+        i.e. the process in which this server objects resides.
+        '''
         self.max_queue_size = max_queue_size or 1024
         self._q_in_out: List[mp.Queue] = [
             self.MP_CLASS.Queue(self.max_queue_size)]
@@ -206,30 +225,39 @@ class Server:
 
         n_cpus = psutil.cpu_count(logical=True)
 
+        # Either `workers` or `cpus`, but not both.
+        # can be specified.
         if workers:
             # Number of workers is specified.
-            # `cpus` specifies the cores for each worker;
-            # can be `None` or `List[int]`.
-            assert workers > 0
-            cpus = [cpus for _ in range(workers)]
+            # Create this many processes, each pinned
+            # to one core. One core will host mulitple
+            # processes if `workers` exceeds the number
+            # of cores.
+            assert not cpus
+            assert 0 < workers <= n_cpus * 4
+            cpus = list(reversed(range(n_cpus))) * 4
+            cpus = sorted(cpus[:workers])
+        elif cpus:
+            assert isinstance(cpus, list)
+            # Create as many processes as the length of `cpus`.
+            # Each element of `cpus` specifies cpu pinning for
+            # one process. `cpus` could contain repeat numbers,
+            # meaning multiple processes can be pinned to the same
+            # cpu.
+            # This provides the ultimate flexibility, e.g.
+            #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
         else:
-            if cpus is None:
-                # Create one worker, not pinned to any core.
-                cpus = [None]
-            else:
-                assert isinstance(cpus, list)
-                # Create as many processes as the length of `cpus`.
-                # Each element of `cpus` specifies cpu pinning for
-                # one process. `cpus` could contain repeat numbers,
-                # meaning multiple processes can be pinned to the same
-                # cpu.
-                # This provides the ultimate flexibility, e.g.
-                #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], None]
+            # Create as many processes as there are cores,
+            # one process pinned to one core.
+            cpus = list(range(n_cpus))
 
         for cpu in cpus:
             if cpu is None:
+                # Not pinned to any core.
                 logger.info('adding servlet %s', servlet.__name__)
             else:
+                # Pinned to the specified cpu core.
+                # A single number or a list of numbers.
                 if isinstance(cpu, int):
                     cpu = [cpu]
                 assert all(0 <= c < n_cpus for c in cpu)
@@ -531,3 +559,33 @@ class Server:
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         self.stop()
+
+
+class SimpleServer(Server):
+    def __init__(self,
+                 func: Callable,
+                 *,
+                 max_queue_size: int = None,
+                 workers: int = None,
+                 batch_size: int = 0,
+                 **kwargs
+                 ):
+        '''
+        `func`: a function that takes an input value,
+        which will be the value provided in calls to the server,
+        plus `kwargs`.
+        '''
+        super().__init__(max_queue_size=max_queue_size)
+
+        class SimpleServlet(Servlet):
+            def __init__(self, *, batch_size: int = None, **kwargs):
+                super().__init__(batch_size=batch_size)
+                self._kwargs = kwargs
+
+            def __call__(self, x):
+                return func(x, **self._kwargs)
+
+        self.add_servlet(SimpleServlet,
+                         workers=workers,
+                         batch_size=batch_size,
+                         **kwargs)
