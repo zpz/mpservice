@@ -5,9 +5,9 @@ The target use case is that one or more operations is I/O bound,
 hence can benefit from multi-thread concurrency.
 These operations are triggered via `transform`.
 
-The other operations are light weight and supportive of the main (concurrent)
-operation. These operations perform batching, unbatching, buffering,
-filtering, logging, etc.
+The other operations are typically light weight and supportive
+of the main (concurrent) operation. These operations perform batching,
+unbatching, buffering, filtering, logging, etc.
 
 ===========
 Basic usage
@@ -24,7 +24,7 @@ its methods in a "chained" fashion:
         .unbatch()
         )
 
-After this setup, there are four ways to use the object `pipeline`.
+After this setup, there are five ways to use the object `pipeline`.
 
     1. Since `pipeline` is an Iterable and an Iterator, we can use it as such.
        Most naturally, iterate over it and process each element however
@@ -48,6 +48,18 @@ After this setup, there are four ways to use the object `pipeline`.
     4. We can continue to add more operations to the pipeline, for example,
 
             pipeline = pipeline.transform(another_op, workers=3)
+
+    5. Connect `pipeline` with a `mpservice.mpserver.Server` object,
+       which represents a CPU-bound operation. The `Server.call` can serve
+       as an I/O-bound operation to be passed into `pipeline.transform`.
+       However, it's more convenient (and likely more efficient) to use
+       the `Server`'s `stream` method:
+
+            server = Server(...)
+            with server:
+                pipeline = ...
+                pipeline = server.stream(pipeline)
+                pipeline = pipeline.transform(yet_another_io_op)
 
 ======================
 Handling of exceptions

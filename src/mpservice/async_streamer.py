@@ -1,21 +1,9 @@
 '''Utilities for processing a continuous stream of data in an async context.
 
-There is an input stream, which is an AsyncIterator.
-This stream goes through a series of async operations, each of which
-takes an AsyncIterator, and returns another AsyncIterator.
-Thanks to this consistency of input/output, the operations can be "chained".
-
-If the input is not an AsyncIterator, but rather some other (sync or async)
-iterable, then the function `stream` will turn it into an AsyncIterator.
-
 The target use case is that one or more operations is I/O bound,
 hence can benefit from async or multi-thread concurrency.
 These operations (which are sync or async functions) are triggered
 via `transform`.
-
-The other operations are light weight and supportive of the main (concurrent)
-operation. These operations perform batching, unbatching, buffering,
-filtering, logging, etc.
 
 In a typical use, one starts with a `Stream` object and calls its methods
 in a "chained" fashion:
@@ -28,7 +16,7 @@ in a "chained" fashion:
         .unbatch()
         )
 
-Then use `pipeline` in onf the the following ways:
+Then use `pipeline` in on of the following ways:
 
     async for elem in pipeline:
         ...
@@ -38,8 +26,9 @@ Then use `pipeline` in onf the the following ways:
     await pipeline.drain()
 
 Although the primary or initial target use is concurrent I/O-bound
-operations, CPU-bound operations could be performed concurrently
-in a `mpservice.Server` and registered by `transform`.
+operations, CPU-bound operations could be part of the stream via
+a `mpservice.mpserver.Server` object's `async_call` or `async_stream`
+method.
 
 Reference for an early version: https://zpz.github.io/blog/stream-processing/
 

@@ -566,6 +566,7 @@ class SimpleServer(Server):
                  func: Callable,
                  *,
                  max_queue_size: int = None,
+                 cpus: list = None,
                  workers: int = None,
                  batch_size: int = 0,
                  **kwargs
@@ -586,6 +587,7 @@ class SimpleServer(Server):
                 return func(x, **self._kwargs)
 
         self.add_servlet(SimpleServlet,
+                         cpus=cpus,
                          workers=workers,
                          batch_size=batch_size,
                          **kwargs)
