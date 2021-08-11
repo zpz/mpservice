@@ -275,24 +275,22 @@ def stream(x: Union[Iterable, Iterator], maxsize: int = None) -> IterQueue:
     if isinstance(x, IterQueue):
         return x
 
-    if not hasattr(x, '__iter__'):
-        if hasattr(x, '__next__'):
-            def f(x):
-                while True:
-                    try:
-                        yield x.__next__()
-                    except StopIteration:
-                        break
-            x = f(x)
+    def _enqueue(q_in, q_out):
+        if hasattr(q_in, '__iter__'):
+            for v in q_in:
+                q_out.put(v)
+        elif hasattr(q_in, '__next__'):
+            while True:
+                try:
+                    v = q_in.__next__()
+                    q_out.put(v)
+                except StopIteration:
+                    break
         else:
-            raise TypeError('`x` is not iterable')
-
-    def enqueue(q_in, q_out):
-        for v in q_in:
-            q_out.put(v)
+            raise TypeError('`q_in` is not iterable')
 
     q = IterQueue(maxsize)
-    _ = streamer_thread(x, q, enqueue)
+    _ = streamer_thread(x, q, _enqueue)
 
     return q
 
@@ -669,6 +667,11 @@ class Stream(StreamMixin):
                  in_stream: Union[Iterable, Iterator, IterQueue],
                  *,
                  maxsize: int = None):
+        '''
+        Besides making sure the input stream is converted to the desired
+        format if needed, this also creates a buffer, whose size
+        is `maxsize`.
+        '''
         self.in_stream = stream(in_stream, maxsize=maxsize)
 
     def __next__(self):

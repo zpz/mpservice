@@ -163,43 +163,29 @@ def stream(x: Union[Iterable, AsyncIterable, Iterator, AsyncIterator],
     if isinstance(x, IterQueue):
         return x
 
-    async def f1(data):
-        async for v in data:
-            yield v
-
-    async def f2(data):
-        while True:
-            try:
-                yield await data.__anext__()
-            except StopAsyncIteration:
-                break
-
-    async def f3(data):
-        for v in data:
-            yield v
-
-    async def f4(data):
-        while True:
-            try:
-                yield data.__next__()
-            except StopIteration:
-                break
-
-    if hasattr(x, '__aiter__'):
-        if not hasattr(x, '__anext__'):
-            x = f1(x)
-    elif hasattr(x, '__anext__'):
-        x = f2(x)
-    elif hasattr(x, '__iter__'):
-        x = f3(x)
-    elif hasattr(x, '__next__'):
-        x = f4(x)
-    else:
-        raise TypeError("`x` is neither iterable nor async iterable")
-
     async def _enqueue(q_in, q_out):
-        async for v in q_in:
-            await q_out.put(v)
+        if hasattr(q_in, '__aiter__'):
+            async for v in q_in:
+                await q_out.put(v)
+        elif hasattr(q_in, '__anext__'):
+            while True:
+                try:
+                    v = await q_in.__anext__()
+                    await q_out.put(v)
+                except StopAsyncIteration:
+                    break
+        elif hasattr(q_in, '__iter__'):
+            for v in q_in:
+                await q_out.put(v)
+        elif hasattr(q_in, '__next__'):
+            while True:
+                try:
+                    v = q_in.__next__()
+                    await q_out.put(v)
+                except StopIteration:
+                    break
+        else:
+            raise TypeError("`q_in` is neither iterable nor async iterable")
 
     q_out = IterQueue(maxsize=maxsize)
     _ = streamer_task(x, q_out, _enqueue)
