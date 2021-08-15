@@ -60,12 +60,12 @@ class Servlet(metaclass=ABCMeta):
         `batch_size`: max batch size; see `__call__`.
 
         `batch_wait_time`: seconds, may be 0; the total time span
-            to wait for one batch.
+            to wait for one batch after the first item has arrived.
 
         To leverage batching, it is recommended to set `batch_wait_time`
         to a small positive value. If it is 0, worker will never wait
-        when another item is not already there in the pipeline.
-        In other words, batching happens only for items that are already
+        when another item is not already there in the pipeline;
+        in other words, batching happens only for items that are already
         "piled up" at the moment.
 
         When `batch_wait_time > 0`, it will hurt performance during
@@ -120,13 +120,15 @@ class Servlet(metaclass=ABCMeta):
             with q_in_lock:
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
-
-                wait_until = perf_counter() + batch_wait_time
-
                 uid, x = q_in.get()
                 batch.append(x)
                 uids.append(uid)
                 n += 1
+
+                wait_until = perf_counter() + batch_wait_time
+                # Wait time starts after getting the first item,
+                # because however long the first item takes to come
+                # is not the worker's fault.
 
                 while n < batch_size:
                     time_left = wait_until - perf_counter()
