@@ -237,7 +237,7 @@ class Server:
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
 
-        self._started = False
+        self.started = 0
         self._cancelled = False
 
     def add_servlet(self,
@@ -247,7 +247,7 @@ class Server:
                     workers: int = None,
                     **init_kwargs):
         # `servlet` is the class object, not instance.
-        assert not self._started
+        assert not self.started
         q_in = self._q_in_out[-1]
         q_in_lock = self.MP_CLASS.Lock()
         self._q_in_lock.append(q_in_lock)
@@ -313,7 +313,11 @@ class Server:
 
     def start(self):
         assert self._servlets
-        assert not self._started
+        if self.started > 0:
+            # Re-entry.
+            self.started += 1
+            return
+
         n = 0
         for m in self._servlets:
             m.start()
@@ -328,19 +332,21 @@ class Server:
         self._t_gather_results = threading.Thread(
             target=self._gather_results)
         self._t_gather_results.start()
-        self._started = True
+        self.started += 1
 
     def stop(self):
-        if not self._started:
+        assert self.started > 0
+        self.started -= 1
+        if self.started > 0:
+            # Existing one nested level.
             return
-        self._cancelled = True
+
         self._t_gather_results.join()
         self._t_gather_results = None
         for m in self._servlets:
             # if m.is_alive():
             m.terminate()
             m.join()
-        self._started = False
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -360,7 +366,7 @@ class Server:
         q_err = self._q_err
         futures = self._uid_to_futures
         while True:
-            if self._cancelled:
+            if not self.started:
                 return
 
             while not q_out.empty():
