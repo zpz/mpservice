@@ -22,3 +22,6 @@ def test_exception():
     y = q.get()
     assert isinstance(y, MPError)
     assert str(y) == 'wrong value!'
+
+    print("traceback")
+    print(y.trace_back)

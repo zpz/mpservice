@@ -56,7 +56,26 @@ class Servlet(metaclass=ABCMeta):
                  batch_size: int = None,
                  batch_wait_time: float = None,
                  silent_errors: Tuple[Type[Exception], ...] = None):
-        # `batch_wait_time`: seconds, may be 0.
+        '''
+        `batch_size`: max batch size; see `__call__`.
+
+        `batch_wait_time`: seconds, may be 0; the total time span
+            to wait for one batch.
+
+        To leverage batching, it is recommended to set `batch_wait_time`
+        to a small positive value. If it is 0, worker will never wait
+        when another item is not already there in the pipeline.
+        In other words, batching happens only for items that are already
+        "piled up" at the moment.
+
+        When `batch_wait_time > 0`, it will hurt performance during
+        sequential calls to the service, because worker will always
+        wait for this long for additional items to come and form a batch,
+        while additional item will never come during sequential use.
+        However, when batching is enabled, sequential use is not
+        the intended use; it would be the use case only for certain
+        benchmarks. So beware of this in benchmarking.
+        '''
         self.batch_size = batch_size or 0
         self.batch_wait_time = batch_wait_time or 0
         self.name = f'{self.__class__.__name__}--{mp.current_process().name}'
@@ -91,7 +110,7 @@ class Servlet(metaclass=ABCMeta):
 
         batch_size_max = -1
         batch_size_min = 1000000
-        batch_size_total = 0
+        batch_size_mean = 0.0
         n_batches = 0
 
         while True:
@@ -99,15 +118,26 @@ class Servlet(metaclass=ABCMeta):
             uids = []
             n = 0
             with q_in_lock:
+                # Hold the lock to let one worker get as many
+                # as possible in order to leverage batching.
+
+                wait_until = perf_counter() + batch_wait_time
+
                 uid, x = q_in.get()
                 batch.append(x)
                 uids.append(uid)
                 n += 1
 
-                wait_until = perf_counter() + batch_wait_time
                 while n < batch_size:
                     time_left = wait_until - perf_counter()
                     try:
+                        # If there is remaining time, wait up to
+                        # that long.
+                        # Otherwise, get the next item it is there
+                        # right now (i.e. no waiting) even if we
+                        # are already over time. That is, if supply
+                        # has piled up, then will get up to the
+                        # batch capacity.
                         if time_left > 0:
                             uid, x = q_in.get(timeout=time_left)
                         else:
@@ -119,12 +149,12 @@ class Servlet(metaclass=ABCMeta):
                     uids.append(uid)
                     n += 1
 
+            n_batches += 1
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
-            batch_size_total += n
-            n_batches += 1
+            batch_size_mean = (batch_size_mean *
+                               (n_batches - 1) + n) / n_batches
             if n_batches % 1000 == 0:
-                batch_size_mean = batch_size_total / n_batches
                 logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
@@ -316,6 +346,13 @@ class Server:
     def __del__(self):
         self.stop()
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.stop()
+
     def _gather_results(self):
         q_out = self._q_in_out[-1]
         q_err = self._q_err
@@ -344,6 +381,7 @@ class Server:
                         'got error for an already-cancelled task: %r', err)
                     continue
                 try:
+                    # `err` is a MPError object.
                     fut.set_exception(err)
                 except asyncio.InvalidStateError:
                     if fut.cancelled():
@@ -395,6 +433,7 @@ class Server:
 
         try:
             await asyncio.wait_for(fut, timeout=time2 - loop.time())
+            # This could raise MPError.
         except asyncio.TimeoutError:
             # `fut` is now cancelled.
             if uid in self._uid_to_futures:
@@ -405,10 +444,6 @@ class Server:
             raise TotalTimeout(f'waited {loop.time() - time0} seconds')
         else:
             return fut.result()
-
-    async def __call__(self, x, **kwargs):
-        # To be deprecated.
-        return await self.async_call(x, **kwargs)
 
     def call(self,
              x,
@@ -452,6 +487,7 @@ class Server:
 
         try:
             z = fut.result(timeout=time2 - time.perf_counter())
+            # This could raise MPError.
         except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
             # `fut` is now cancelled.
             if uid in self._uid_to_futures:
@@ -553,13 +589,6 @@ class Server:
 
         return streamer.Stream(q_out)
 
-    def __enter__(self):
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        self.stop()
-
 
 class SimpleServer(Server):
     def __init__(self,
@@ -591,3 +620,60 @@ class SimpleServer(Server):
                          workers=workers,
                          batch_size=batch_size,
                          **kwargs)
+
+
+class ComboServer:
+    def __init__(self):
+        self.members = []
+
+    def add_member(self):
+        pass
+
+    def start(self):
+        for m in self.members:
+            m.start()
+
+    def stop(self):
+        for m in self.members:
+            m.stop()
+
+    def __del__(self):
+        self.stop()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.stop()
+
+    def combine(self, results):
+        pass
+
+    async def async_combine(self, results):
+        return self.combine(results)
+
+    async def async_call(self, x):
+        tasks = [
+            m.async_call(x)
+            for m in self.members
+        ]
+        results = await asyncio.gather(*tasks)
+        return await self.async_combine(results)
+
+    def call(self, x):
+        n_members = len(self.members)
+        with concurrent.futures.ThreadPoolExecutor(n_members) as pool:
+            tasks = [
+                pool.submit(target=m.call, args=(x,))
+                for m in self.n_members
+            ]
+            concurrent.futures.wait(tasks)
+            results = [t.result() for t in tasks]
+            return self.combine(results)
+
+    async def async_stream(self, x_stream):
+        pass
+
+    def stream(self, x_stream):
+        pass
