@@ -313,9 +313,9 @@ class Server:
 
     def start(self):
         assert self._servlets
-        if self.started > 0:
+        self.started += 1
+        if self.started > 1:
             # Re-entry.
-            self.started += 1
             return
 
         n = 0
@@ -332,13 +332,12 @@ class Server:
         self._t_gather_results = threading.Thread(
             target=self._gather_results)
         self._t_gather_results.start()
-        self.started += 1
 
     def stop(self):
         assert self.started > 0
         self.started -= 1
         if self.started > 0:
-            # Existing one nested level.
+            # Exiting one nested level.
             return
 
         self._t_gather_results.join()
@@ -352,7 +351,8 @@ class Server:
         psutil.Process().cpu_affinity(cpus=[])
 
     def __del__(self):
-        self.stop()
+        if self.started:
+            self.stop()
 
     def __enter__(self):
         self.start()
@@ -379,6 +379,8 @@ class Server:
                 except asyncio.InvalidStateError:
                     if fut.cancelled():
                         logger.warning('Future object is already cancelled')
+                    else:
+                        raise
                 # No sleep. Get results out of the queue as quickly as possible.
 
             while not q_err.empty():
@@ -394,6 +396,8 @@ class Server:
                 except asyncio.InvalidStateError:
                     if fut.cancelled():
                         logger.warning('Future object is already cancelled')
+                    else:
+                        raise
                 # No sleep. Get results out of the queue as quickly as possible.
 
             time.sleep(0.0013)
@@ -418,6 +422,8 @@ class Server:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         uid = id(fut)
+        # How much is the risk of reusing an ID after a prev `fut`
+        # was cancelled? Should we use a `uuid` string id?
         self._uid_to_futures[uid] = fut
         q_in = self._q_in_out[0]
 
