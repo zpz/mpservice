@@ -492,6 +492,75 @@ class _Server(metaclass=ABCMeta):
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
 
+    @abstractmethod
+    def _gather_output(self):
+        raise NotImplementedError
+
+    def _gather_error(self):
+        q_err = self._q_err
+        futures = self._uid_to_futures
+        while not q_err.empty():
+            uid, err = q_err.get_nowait()
+            fut = futures.pop(uid, None)
+            if fut is None:  # timed-out in `__call__`
+                logger.info(
+                    'got error for an already-cancelled task: %r', err)
+                continue
+            try:
+                # `err` is a MPError object.
+                fut['fut'].set_exception(err)
+            except asyncio.InvalidStateError as e:
+                if fut['fut'].cancelled():
+                    logger.warning('Future object is already cancelled')
+                else:
+                    logger.exception(e)
+                    raise
+            # No sleep. Get results out of the queue as quickly as possible.
+
+    def _gather_results(self):
+        while True:
+            if not self.started:
+                return
+            self._gather_output()
+            self._gather_error()
+            time.sleep(0.0013)
+
+    async def _async_call_enqueue(self, *, x, uid, fut, qs, t0, enqueue_timeout, loop):
+        t1 = t0 + enqueue_timeout
+        for iq, q in enumerate(qs):
+            while True:
+                try:
+                    q.put_nowait((uid, x))
+                except queue.Full:
+                    timenow = loop.time()
+                    if timenow < t1:
+                        await asyncio.sleep(0.00089)
+                    else:
+                        fut.cancel()
+                        del self._uid_to_futures[uid]
+                        raise EnqueueTimeout(
+                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                else:
+                    break
+
+    async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout, loop):
+        try:
+            await asyncio.wait_for(fut, timeout=t0 + total_timeout - loop.time())
+            # This could raise MPError.
+        except asyncio.TimeoutError:
+            # `fut` is now cancelled.
+            if uid in self._uid_to_futures:
+                # `uid` could have been deleted by
+                # `_gather_results` during very subtle
+                # timing coincidence.
+                del self._uid_to_futures[uid]
+            raise TotalTimeout(f'waited {loop.time() - t0} seconds')
+        except MPError as e:
+            logger.error(e.trace_back)
+            raise
+        else:
+            return fut.result()
+
 
 class LongServer(_Server):
 
@@ -521,49 +590,25 @@ class LongServer(_Server):
             **kwargs,
         )
 
-    def _gather_results(self):
+    def _gather_output(self):
         q_out = self._q_in_out[-1]
-        q_err = self._q_err
         futures = self._uid_to_futures
-        while True:
-            if not self.started:
-                return
 
-            while not q_out.empty():
-                uid, y = q_out.get_nowait()
-                fut = futures.pop(uid, None)
-                if fut is None:
-                    # timed-out in `async_call` or `call`.
-                    continue
-                try:
-                    fut.set_result(y)
-                except asyncio.InvalidStateError as e:
-                    if fut.cancelled():
-                        logger.warning('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
-                # No sleep. Get results out of the queue as quickly as possible.
-
-            while not q_err.empty():
-                uid, err = q_err.get_nowait()
-                fut = futures.pop(uid, None)
-                if fut is None:  # timed-out in `__call__`
-                    logger.info(
-                        'got error for an already-cancelled task: %r', err)
-                    continue
-                try:
-                    # `err` is a MPError object.
-                    fut.set_exception(err)
-                except asyncio.InvalidStateError as e:
-                    if fut.cancelled():
-                        logger.warning('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
-                # No sleep. Get results out of the queue as quickly as possible.
-
-            time.sleep(0.0013)
+        while not q_out.empty():
+            uid, y = q_out.get_nowait()
+            fut = futures.pop(uid, None)
+            if fut is None:
+                # timed-out in `async_call` or `call`.
+                continue
+            try:
+                fut['fut'].set_result(y)
+            except asyncio.InvalidStateError as e:
+                if fut.cancelled():
+                    logger.warning('Future object is already cancelled')
+                else:
+                    logger.exception(e)
+                    raise
+            # No sleep. Get results out of the queue as quickly as possible.
 
     async def async_call(self,
                          x,
@@ -580,34 +625,17 @@ class LongServer(_Server):
         uid = id(fut)
         # How much is the risk of reusing an ID after a prev `fut`
         # was cancelled? Should we use a `uuid` string id?
-        self._uid_to_futures[uid] = fut
+        self._uid_to_futures[uid] = {'fut': fut}
 
         time0 = loop.time()
 
-        try:
-            await _a_put_in_queue(self._q_in_out[0], (uid, x), enqueue_timeout, loop)
-        except TimeoutError as e:
-            fut.cancel()
-            del self._uid_to_futures[uid]
-            raise EnqueueTimeout(f'waited {e.args[0]} seconds') from e
+        await self._async_call_enqueue(
+            x=x, uid=uid, fut=fut, qs=self._q_in_out[:1],
+            t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
 
-        try:
-            await asyncio.wait_for(fut,
-                                   timeout=time0 + total_timeout - loop.time())
-            # This could raise MPError.
-        except asyncio.TimeoutError:
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
-                # `uid` could have been deleted by
-                # `_gather_results` during very subtle
-                # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {loop.time() - time0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
-        else:
-            return fut.result()
+        return await self._async_call_wait_for_result(
+            uid=uid, fut=fut,
+            t0=time0, total_timeout=total_timeout, loop=loop)
 
     def call(self,
              x,
@@ -621,7 +649,7 @@ class LongServer(_Server):
 
         fut = concurrent.futures.Future()
         uid = id(fut)
-        self._uid_to_futures[uid] = fut
+        self._uid_to_futures[uid] = {'fut': fut}
 
         time0 = time.perf_counter()
 
@@ -671,7 +699,7 @@ class LongServer(_Server):
                         break
                     except queue.Full:
                         await asyncio.sleep(0.0013)
-                self._uid_to_futures[uid] = fut
+                self._uid_to_futures[uid] = {'fut': fut}
                 if return_x:
                     await future_stream.put((x, fut))
                 else:
@@ -706,7 +734,7 @@ class LongServer(_Server):
                 fut = concurrent.futures.Future()
                 uid = id(fut)
                 q_in.put((uid, x))
-                self._uid_to_futures[uid] = fut
+                self._uid_to_futures[uid] = {'fut': fut}
                 if return_x:
                     future_stream.put((x, fut))
                 else:
@@ -757,59 +785,35 @@ class WideServer(_Server):
             **kwargs,
         )
 
-    def _gather_results(self):
-        q_err = self._q_err
+    def _gather_output(self):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
-        while True:
-            if not self.started:
-                return
 
-            for idx, q_out in enumerate(self._q_out):
-                while not q_out.empty():
-                    uid, y = q_out.get_nowait()
-                    fut = futures.get(uid)
-                    if fut is None:
-                        # timed-out in `async_call` or `call`.
-                        continue
-
-                    fut['results'][idx] = y
-                    fut['n_results'] += 1
-                    if fut['n_results'] == n_results_needed:
-                        del futures[uid]
-                        try:
-                            z = self.ensemble(fut['x'], fut['results'])
-                            fut['future'].set_result(z)
-                        except asyncio.InvalidStateError as e:
-                            if fut['future'].cancelled():
-                                logger.warning(
-                                    'Future object is already cancelled')
-                            else:
-                                logger.exception(e)
-                                raise
-                        except Exception as e:
-                            fut['future'].set_exception(e)
-                    # No sleep. Get results out of the queue as quickly as possible.
-
-            while not q_err.empty():
-                uid, err = q_err.get_nowait()
-                fut = futures.pop(uid, None)
-                if fut is None:  # timed-out in `__call__`
-                    logger.info(
-                        'got error for an already-cancelled task: %r', err)
+        for idx, q_out in enumerate(self._q_out):
+            while not q_out.empty():
+                uid, y = q_out.get_nowait()
+                fut = futures.get(uid)
+                if fut is None:
+                    # timed-out in `async_call` or `call`.
                     continue
-                try:
-                    # `err` is a MPError object.
-                    fut['future'].set_exception(err)
-                except asyncio.InvalidStateError as e:
-                    if fut['future'].cancelled():
-                        logger.warning('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
-                # No sleep. Get results out of the queue as quickly as possible.
 
-            time.sleep(0.0013)
+                fut['res'][idx] = y
+                fut['n'] += 1
+                if fut['n'] == n_results_needed:
+                    del futures[uid]
+                    try:
+                        z = self.ensemble(fut['x'], fut['res'])
+                        fut['fut'].set_result(z)
+                    except asyncio.InvalidStateError as e:
+                        if fut['fut'].cancelled():
+                            logger.warning(
+                                'Future object is already cancelled')
+                        else:
+                            logger.exception(e)
+                            raise
+                    except Exception as e:
+                        fut['fut'].set_exception(e)
+                # No sleep. Get results out of the queue as quickly as possible.
 
     @abstractmethod
     def ensemble(self, x, results: list):
@@ -836,53 +840,20 @@ class WideServer(_Server):
         # was cancelled? Should we use a `uuid` string id?
         self._uid_to_futures[uid] = {
             'x': x,
-            'future': fut,
-            'results': [None] * len(self._q_out),
-            'n_results': 0
+            'fut': fut,
+            'res': [None] * len(self._q_out),
+            'n': 0
         }
 
         time0 = loop.time()
 
-        tt = [
-            asyncio.create_task(
-                _a_put_in_queue(q, (uid, x), enqueue_timeout, loop))
-            for q in self._q_in
-        ]
-        timeouts = []
-        try:
-            await asyncio.gather(*tt)
-        except TimeoutError:
-            for i, t in enumerate(tt):
-                if not t.done():
-                    t.cancel()
-                try:
-                    await t
-                except TimeoutError as e:
-                    timeouts.append((i, e))
-                except asyncio.CancelledError:
-                    pass
-            fut.cancel()
-            del self._uid_to_futures[uid]
-            raise EnqueueTimeout(
-                'waited %s seconds in members %s',
-                [e.args[0] for i, e in timeouts],
-                [i for i, e in timeouts])
-        try:
-            await asyncio.wait_for(fut, timeout=time0 + total_timeout - loop.time())
-            # This could raise MPError.
-        except asyncio.TimeoutError:
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
-                # `uid` could have been deleted by
-                # `_gather_results` during very subtle
-                # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {loop.time() - time0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
-        else:
-            return fut.result()
+        await self._async_call_enqueue(
+            x=x, uid=uid, fut=fut, qs=self._q_in,
+            t0=time0, timeout=enqueue_timeout, loop=loop)
+
+        return await self._async_call_wait_for_result(
+            uid=uid, fut=fut,
+            t0=time0, total_timeout=total_timeout, loop=loop)
 
     def call(self,
              x,
@@ -898,9 +869,9 @@ class WideServer(_Server):
         uid = id(fut)
         self._uid_to_futures[uid] = {
             'x': x,
-            'future': fut,
-            'results': [None] * len(self._q_out),
-            'n_results': 0
+            'fut': fut,
+            'res': [None] * len(self._q_out),
+            'n': 0
         }
 
         time0 = time.perf_counter()
@@ -968,9 +939,9 @@ class WideServer(_Server):
 
                 self._uid_to_futures[uid] = {
                     'x': x,
-                    'future': fut,
-                    'results': [None] * n_out,
-                    'n_results': 0
+                    'fut': fut,
+                    'res': [None] * n_out,
+                    'n': 0
                 }
                 if return_x:
                     await future_stream.put((x, fut))
@@ -1005,9 +976,9 @@ class WideServer(_Server):
                     q.put((uid, x))
                 self._uid_to_futures[uid] = {
                     'x': x,
-                    'future': fut,
-                    'results': [None] * n_out,
-                    'n_results': 0
+                    'fut': fut,
+                    'res': [None] * n_out,
+                    'n': 0
                 }
 
                 if return_x:
