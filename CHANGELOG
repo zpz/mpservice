@@ -1,3 +1,11 @@
+Release 0.8.9
+=============
+
+- Add `mpserver.WideServer` to implement ensembles; rename `Server` to `LongServer`.
+- Add `mpserver.SimpleServer`.
+- Revise `cpu` specification in `mpserver`.
+
+
 Release 0.8.8
 =============
 
