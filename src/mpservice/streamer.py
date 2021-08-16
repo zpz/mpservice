@@ -5,9 +5,9 @@ The target use case is that one or more operations is I/O bound,
 hence can benefit from multi-thread concurrency.
 These operations are triggered via `transform`.
 
-The other operations are light weight and supportive of the main (concurrent)
-operation. These operations perform batching, unbatching, buffering,
-filtering, logging, etc.
+The other operations are typically light weight and supportive
+of the main (concurrent) operation. These operations perform batching,
+unbatching, buffering, filtering, logging, etc.
 
 ===========
 Basic usage
@@ -24,7 +24,7 @@ its methods in a "chained" fashion:
         .unbatch()
         )
 
-After this setup, there are four ways to use the object `pipeline`.
+After this setup, there are five ways to use the object `pipeline`.
 
     1. Since `pipeline` is an Iterable and an Iterator, we can use it as such.
        Most naturally, iterate over it and process each element however
@@ -48,6 +48,18 @@ After this setup, there are four ways to use the object `pipeline`.
     4. We can continue to add more operations to the pipeline, for example,
 
             pipeline = pipeline.transform(another_op, workers=3)
+
+    5. Connect `pipeline` with a `mpservice.mpserver.Server` object,
+       which represents a CPU-bound operation. The `Server.call` can serve
+       as an I/O-bound operation to be passed into `pipeline.transform`.
+       However, it's more convenient (and likely more efficient) to use
+       the `Server`'s `stream` method:
+
+            server = Server(...)
+            with server:
+                pipeline = ...
+                pipeline = server.stream(pipeline)
+                pipeline = pipeline.transform(yet_another_io_op)
 
 ======================
 Handling of exceptions
@@ -275,24 +287,22 @@ def stream(x: Union[Iterable, Iterator], maxsize: int = None) -> IterQueue:
     if isinstance(x, IterQueue):
         return x
 
-    if not hasattr(x, '__iter__'):
-        if hasattr(x, '__next__'):
-            def f(x):
-                while True:
-                    try:
-                        yield x.__next__()
-                    except StopIteration:
-                        break
-            x = f(x)
+    def _enqueue(q_in, q_out):
+        if hasattr(q_in, '__iter__'):
+            for v in q_in:
+                q_out.put(v)
+        elif hasattr(q_in, '__next__'):
+            while True:
+                try:
+                    v = q_in.__next__()
+                    q_out.put(v)
+                except StopIteration:
+                    break
         else:
-            raise TypeError('`x` is not iterable')
-
-    def enqueue(q_in, q_out):
-        for v in q_in:
-            q_out.put(v)
+            raise TypeError('`q_in` is not iterable')
 
     q = IterQueue(maxsize)
-    _ = streamer_thread(x, q, enqueue)
+    _ = streamer_thread(x, q, _enqueue)
 
     return q
 
@@ -669,6 +679,11 @@ class Stream(StreamMixin):
                  in_stream: Union[Iterable, Iterator, IterQueue],
                  *,
                  maxsize: int = None):
+        '''
+        Besides making sure the input stream is converted to the desired
+        format if needed, this also creates a buffer, whose size
+        is `maxsize`.
+        '''
         self.in_stream = stream(in_stream, maxsize=maxsize)
 
     def __next__(self):

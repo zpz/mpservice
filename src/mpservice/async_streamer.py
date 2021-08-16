@@ -1,21 +1,9 @@
 '''Utilities for processing a continuous stream of data in an async context.
 
-There is an input stream, which is an AsyncIterator.
-This stream goes through a series of async operations, each of which
-takes an AsyncIterator, and returns another AsyncIterator.
-Thanks to this consistency of input/output, the operations can be "chained".
-
-If the input is not an AsyncIterator, but rather some other (sync or async)
-iterable, then the function `stream` will turn it into an AsyncIterator.
-
 The target use case is that one or more operations is I/O bound,
 hence can benefit from async or multi-thread concurrency.
 These operations (which are sync or async functions) are triggered
 via `transform`.
-
-The other operations are light weight and supportive of the main (concurrent)
-operation. These operations perform batching, unbatching, buffering,
-filtering, logging, etc.
 
 In a typical use, one starts with a `Stream` object and calls its methods
 in a "chained" fashion:
@@ -28,7 +16,7 @@ in a "chained" fashion:
         .unbatch()
         )
 
-Then use `pipeline` in onf the the following ways:
+Then use `pipeline` in on of the following ways:
 
     async for elem in pipeline:
         ...
@@ -38,8 +26,9 @@ Then use `pipeline` in onf the the following ways:
     await pipeline.drain()
 
 Although the primary or initial target use is concurrent I/O-bound
-operations, CPU-bound operations could be performed concurrently
-in a `mpservice.Server` and registered by `transform`.
+operations, CPU-bound operations could be part of the stream via
+a `mpservice.mpserver.Server` object's `async_call` or `async_stream`
+method.
 
 Reference for an early version: https://zpz.github.io/blog/stream-processing/
 
@@ -163,43 +152,29 @@ def stream(x: Union[Iterable, AsyncIterable, Iterator, AsyncIterator],
     if isinstance(x, IterQueue):
         return x
 
-    async def f1(data):
-        async for v in data:
-            yield v
-
-    async def f2(data):
-        while True:
-            try:
-                yield await data.__anext__()
-            except StopAsyncIteration:
-                break
-
-    async def f3(data):
-        for v in data:
-            yield v
-
-    async def f4(data):
-        while True:
-            try:
-                yield data.__next__()
-            except StopIteration:
-                break
-
-    if hasattr(x, '__aiter__'):
-        if not hasattr(x, '__anext__'):
-            x = f1(x)
-    elif hasattr(x, '__anext__'):
-        x = f2(x)
-    elif hasattr(x, '__iter__'):
-        x = f3(x)
-    elif hasattr(x, '__next__'):
-        x = f4(x)
-    else:
-        raise TypeError("`x` is neither iterable nor async iterable")
-
     async def _enqueue(q_in, q_out):
-        async for v in q_in:
-            await q_out.put(v)
+        if hasattr(q_in, '__aiter__'):
+            async for v in q_in:
+                await q_out.put(v)
+        elif hasattr(q_in, '__anext__'):
+            while True:
+                try:
+                    v = await q_in.__anext__()
+                    await q_out.put(v)
+                except StopAsyncIteration:
+                    break
+        elif hasattr(q_in, '__iter__'):
+            for v in q_in:
+                await q_out.put(v)
+        elif hasattr(q_in, '__next__'):
+            while True:
+                try:
+                    v = q_in.__next__()
+                    await q_out.put(v)
+                except StopIteration:
+                    break
+        else:
+            raise TypeError("`q_in` is neither iterable nor async iterable")
 
     q_out = IterQueue(maxsize=maxsize)
     _ = streamer_task(x, q_out, _enqueue)
