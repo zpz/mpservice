@@ -207,38 +207,6 @@ class Servlet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-def _put_in_queue(q, x, wait):
-    t0 = time.perf_counter()
-    t1 = t0 + wait
-    while True:
-        try:
-            q.put_nowait(x)
-        except queue.Full:
-            timenow = time.perf_counter()
-            if timenow < t1:
-                time.sleep(0.00089)
-            else:
-                raise TimeoutError(timenow - t0)
-        else:
-            break
-
-
-async def _a_put_in_queue(q, x, wait, loop):
-    t0 = loop.time()
-    t1 = t0 + wait
-    while True:
-        try:
-            q.put_nowait(x)
-        except queue.Full:
-            timenow = loop.time()
-            if timenow < t1:
-                await asyncio.sleep(0.00089)
-            else:
-                raise TimeoutError(timenow - t0)
-        else:
-            break
-
-
 async def _async_stream_dequeue(q_fut, q_out, return_exceptions, return_x):
     if return_x:
         async for x, fut in q_fut:
@@ -345,8 +313,7 @@ class _Server(metaclass=ABCMeta):
             k += 1
             logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_results = threading.Thread(
-            target=self._gather_results)
+        self._t_gather_results = threading.Thread(target=self.gather_results)
         self._t_gather_results.start()
 
     def stop(self):
@@ -367,38 +334,145 @@ class _Server(metaclass=ABCMeta):
         psutil.Process().cpu_affinity(cpus=[])
 
     @abstractmethod
+    def _init_future_struct(self, x, fut):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _get_input_queues(self):
+        raise NotImplementedError
+
     async def async_call(self,
                          x,
                          *,
                          enqueue_timeout: Union[int, float] = None,
                          total_timeout: Union[int, float] = None,
                          ):
-        raise NotImplementedError
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
+        )
 
-    @abstractmethod
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        uid = id(fut)
+        # How much is the risk of reusing an ID after a prev `fut`
+        # was cancelled? Should we use a `uuid` string id?
+        self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+
+        time0 = loop.time()
+
+        await self._async_call_enqueue(
+            x=x, uid=uid, fut=fut, qs=self._get_input_queues(),
+            t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
+
+        return await self._async_call_wait_for_result(
+            uid=uid, fut=fut,
+            t0=time0, total_timeout=total_timeout, loop=loop)
+
     def call(self,
              x,
              *,
              enqueue_timeout: Union[int, float] = None,
              total_timeout: Union[int, float] = None,
              ):
-        raise NotImplementedError
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
+        )
 
-    @abstractmethod
+        fut = concurrent.futures.Future()
+        uid = id(fut)
+        self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+
+        time0 = time.perf_counter()
+
+        self._call_enqueue(x=x, uid=uid, fut=fut, qs=self._get_input_queues(),
+                           t0=time0, enqueue_timeout=enqueue_timeout)
+
+        return self._call_wait_for_result(
+            uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
+
     def async_stream(self, data_stream, *,
                      return_exceptions: bool = False,
                      output_buffer_size: int = 1024,
                      return_x: bool = False,
                      ):
-        raise NotImplementedError
+        # What this method does can be achieved by a Streamer
+        # using `self.async_call` as a "transformer".
+        # However, this method is expected to achieve optimal
+        # performance, whereas the efficiency achieved by
+        # "transfomer" depends on the "workers" parameter.
+        async def _enqueue(input_stream, future_stream, return_x):
+            loop = asyncio.get_running_loop()
+            q_ins = self._get_input_queues()
+            async for x in input_stream:
+                fut = loop.create_future()
+                uid = id(fut)
 
-    @abstractmethod
+                # If one input queue is full, then the corresponding
+                # worker is slow. It does not help to enqueue this data
+                # into faster workers sooner. Hence we just enqueue
+                # for the workers one by one.
+                for q in q_ins:
+                    while True:
+                        try:
+                            q.put_nowait((uid, x))
+                            break
+                        except queue.Full:
+                            await asyncio.sleep(0.0013)
+
+                self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+                if return_x:
+                    await future_stream.put((x, fut))
+                else:
+                    await future_stream.put(fut)
+
+        if not isinstance(data_stream, async_streamer.Stream):
+            data_stream = async_streamer.Stream(data_stream)
+        q_fut = async_streamer.IterQueue(
+            output_buffer_size, data_stream.in_stream)
+        _ = async_streamer.streamer_task(
+            data_stream.in_stream, q_fut, _enqueue, return_x)
+
+        q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
+        _ = async_streamer.streamer_task(
+            q_fut, q_out, _async_stream_dequeue, return_exceptions, return_x)
+
+        return async_streamer.Stream(q_out)
+
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                output_buffer_size: int = 1024,
                return_x: bool = False,
                ):
-        raise NotImplementedError
+        # What this method does can be achieved by a Streamer
+        # using `self.call` as a "transformer".
+        # However, this method is expected to achieve optimal
+        # performance, whereas the efficiency achieved by
+        # "transfomer" depends on the "workers" parameter.
+        def _enqueue(input_stream, future_stream, return_x):
+            q_ins = self._get_input_queues()
+            for x in input_stream:
+                fut = concurrent.futures.Future()
+                uid = id(fut)
+                for q in q_ins:
+                    q.put((uid, x))
+                self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+                if return_x:
+                    future_stream.put((x, fut))
+                else:
+                    future_stream.put(fut)
+
+        if not isinstance(data_stream, streamer.Stream):
+            data_stream = streamer.Stream(
+                data_stream, maxsize=output_buffer_size)
+        q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
+        _ = streamer.streamer_thread(
+            data_stream.in_stream, q_fut, _enqueue, return_x)
+
+        q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
+        _ = streamer.streamer_thread(
+            q_fut, q_out, _stream_dequeue, return_exceptions, return_x)
+
+        return streamer.Stream(q_out)
 
     def _resolve_cpus(self, *, cpus: list = None, workers: int = None):
         n_cpus = psutil.cpu_count(logical=True)
@@ -517,7 +591,10 @@ class _Server(metaclass=ABCMeta):
                     raise
             # No sleep. Get results out of the queue as quickly as possible.
 
-    def _gather_results(self):
+    def gather_results(self):
+        # This is not a "public" method in that end-user
+        # should not call this method. But this is an important
+        # top-level method.
         while True:
             if not self.started:
                 return
@@ -551,7 +628,7 @@ class _Server(metaclass=ABCMeta):
             # `fut` is now cancelled.
             if uid in self._uid_to_futures:
                 # `uid` could have been deleted by
-                # `_gather_results` during very subtle
+                # `gather_results` during very subtle
                 # timing coincidence.
                 del self._uid_to_futures[uid]
             raise TotalTimeout(f'waited {loop.time() - t0} seconds')
@@ -561,8 +638,44 @@ class _Server(metaclass=ABCMeta):
         else:
             return fut.result()
 
+    def _call_enqueue(self, *, x, uid, fut, qs, t0, enqueue_timeout):
+        t1 = t0 + enqueue_timeout
+        for iq, q in enumerate(qs):
+            while True:
+                try:
+                    q.put_nowait((uid, x))
+                except queue.Full:
+                    timenow = time.perf_counter()
+                    if timenow < t1:
+                        time.sleep(0.00089)
+                    else:
+                        fut.cancel()
+                        del self._uid_to_futures[uid]
+                        raise EnqueueTimeout(
+                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                else:
+                    break
 
-class LongServer(_Server):
+    def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
+        try:
+            z = fut.result(timeout=t0 + total_timeout - time.perf_counter())
+            # This could raise MPError.
+        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
+            # `fut` is now cancelled.
+            if uid in self._uid_to_futures:
+                # `uid` could have been deleted by
+                # `gather_results` during very subtle
+                # timing coincidence.
+                del self._uid_to_futures[uid]
+            raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
+        except MPError as e:
+            logger.error(e.trace_back)
+            raise
+        else:
+            return z
+
+
+class SequentialServer(_Server):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -610,155 +723,18 @@ class LongServer(_Server):
                     raise
             # No sleep. Get results out of the queue as quickly as possible.
 
-    async def async_call(self,
-                         x,
-                         *,
-                         enqueue_timeout: Union[int, float] = None,
-                         total_timeout: Union[int, float] = None,
-                         ):
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
+    def _init_future_struct(self, x, fut):
+        return {'fut': fut}
 
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        uid = id(fut)
-        # How much is the risk of reusing an ID after a prev `fut`
-        # was cancelled? Should we use a `uuid` string id?
-        self._uid_to_futures[uid] = {'fut': fut}
-
-        time0 = loop.time()
-
-        await self._async_call_enqueue(
-            x=x, uid=uid, fut=fut, qs=self._q_in_out[:1],
-            t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
-
-        return await self._async_call_wait_for_result(
-            uid=uid, fut=fut,
-            t0=time0, total_timeout=total_timeout, loop=loop)
-
-    def call(self,
-             x,
-             *,
-             enqueue_timeout: Union[int, float] = None,
-             total_timeout: Union[int, float] = None,
-             ):
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
-
-        fut = concurrent.futures.Future()
-        uid = id(fut)
-        self._uid_to_futures[uid] = {'fut': fut}
-
-        time0 = time.perf_counter()
-
-        try:
-            _put_in_queue(self._q_in_out[0], (uid, x), enqueue_timeout)
-        except TimeoutError as e:
-            fut.cancel()
-            del self._uid_to_futures[uid]
-            raise EnqueueTimeout(f'waited {e.args[0]} seconds')
-
-        try:
-            z = fut.result(timeout=time0 + total_timeout - time.perf_counter())
-            # This could raise MPError.
-        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
-                # `uid` could have been deleted by
-                # `_gather_results` during very subtle
-                # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {time.perf_counter() - time0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
-        else:
-            return z
-
-    def async_stream(self, data_stream, *,
-                     return_exceptions: bool = False,
-                     output_buffer_size: int = 1024,
-                     return_x: bool = False,
-                     ):
-        # What this method does can be achieved by a Streamer
-        # using `self.async_call` as a "transformer".
-        # However, this method is expected to achieve optimal
-        # performance, whereas the efficiency achieved by
-        # "transfomer" depends on the "workers" parameter.
-        async def _enqueue(input_stream, future_stream, return_x):
-            loop = asyncio.get_running_loop()
-            q_in = self._q_in_out[0]
-            async for x in input_stream:
-                fut = loop.create_future()
-                uid = id(fut)
-                while True:
-                    try:
-                        q_in.put_nowait((uid, x))
-                        break
-                    except queue.Full:
-                        await asyncio.sleep(0.0013)
-                self._uid_to_futures[uid] = {'fut': fut}
-                if return_x:
-                    await future_stream.put((x, fut))
-                else:
-                    await future_stream.put(fut)
-
-        if not isinstance(data_stream, async_streamer.Stream):
-            data_stream = async_streamer.Stream(data_stream)
-        q_fut = async_streamer.IterQueue(
-            output_buffer_size, data_stream.in_stream)
-        _ = async_streamer.streamer_task(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
-
-        q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = async_streamer.streamer_task(
-            q_fut, q_out, _async_stream_dequeue, return_exceptions, return_x)
-
-        return async_streamer.Stream(q_out)
-
-    def stream(self, data_stream, *,
-               return_exceptions: bool = False,
-               output_buffer_size: int = 1024,
-               return_x: bool = False,
-               ):
-        # What this method does can be achieved by a Streamer
-        # using `self.call` as a "transformer".
-        # However, this method is expected to achieve optimal
-        # performance, whereas the efficiency achieved by
-        # "transfomer" depends on the "workers" parameter.
-        def _enqueue(input_stream, future_stream, return_x):
-            q_in = self._q_in_out[0]
-            for x in input_stream:
-                fut = concurrent.futures.Future()
-                uid = id(fut)
-                q_in.put((uid, x))
-                self._uid_to_futures[uid] = {'fut': fut}
-                if return_x:
-                    future_stream.put((x, fut))
-                else:
-                    future_stream.put(fut)
-
-        if not isinstance(data_stream, streamer.Stream):
-            data_stream = streamer.Stream(
-                data_stream, maxsize=output_buffer_size)
-        q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
-        _ = streamer.streamer_thread(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
-
-        q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = streamer.streamer_thread(
-            q_fut, q_out, _stream_dequeue, return_exceptions, return_x)
-
-        return streamer.Stream(q_out)
+    def _get_input_queues(self):
+        return self._q_in_out[:1]
 
 
-Server = LongServer
+Server = SequentialServer
 # For back compat. Will remove.
 
 
-class WideServer(_Server):
+class EnsembleServer(_Server):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -823,184 +799,19 @@ class WideServer(_Server):
         # If this is not true, some optimization is needed.
         raise NotImplementedError
 
-    async def async_call(self,
-                         x,
-                         *,
-                         enqueue_timeout: Union[int, float] = None,
-                         total_timeout: Union[int, float] = None,
-                         ):
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
-
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        uid = id(fut)
-        # How much is the risk of reusing an ID after a prev `fut`
-        # was cancelled? Should we use a `uuid` string id?
-        self._uid_to_futures[uid] = {
+    def _init_future_struct(self, x, fut):
+        return {
             'x': x,
             'fut': fut,
             'res': [None] * len(self._q_out),
             'n': 0
         }
 
-        time0 = loop.time()
-
-        await self._async_call_enqueue(
-            x=x, uid=uid, fut=fut, qs=self._q_in,
-            t0=time0, timeout=enqueue_timeout, loop=loop)
-
-        return await self._async_call_wait_for_result(
-            uid=uid, fut=fut,
-            t0=time0, total_timeout=total_timeout, loop=loop)
-
-    def call(self,
-             x,
-             *,
-             enqueue_timeout: Union[int, float] = None,
-             total_timeout: Union[int, float] = None,
-             ):
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
-
-        fut = concurrent.futures.Future()
-        uid = id(fut)
-        self._uid_to_futures[uid] = {
-            'x': x,
-            'fut': fut,
-            'res': [None] * len(self._q_out),
-            'n': 0
-        }
-
-        time0 = time.perf_counter()
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            tt = [
-                pool.submit(_put_in_queue, q, (uid, x), enqueue_timeout)
-                for q in self._q_in
-            ]
-            concurrent.futures.wait(tt)
-            timeouts = []
-            for i, t in enumerate(tt):
-                try:
-                    _ = t.result()
-                except TimeoutError as e:
-                    timeouts.append((i, e))
-            if timeouts:
-                fut.cancel()
-                del self._uid_to_futures[uid]
-                raise EnqueueTimeout(
-                    'waited %s seconds in members %s',
-                    [e.args[0] for i, e in timeouts],
-                    [i for i, e in timeouts])
-
-        try:
-            z = fut.result(timeout=time0 + total_timeout - time.perf_counter())
-            # This could raise MPError.
-        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
-                # `uid` could have been deleted by
-                # `_gather_results` during very subtle
-                # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {time.perf_counter() - time0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
-        else:
-            return z
-
-    def async_stream(self, data_stream, *,
-                     return_exceptions: bool = False,
-                     output_buffer_size: int = 1024,
-                     return_x: bool = False,
-                     ):
-        async def _enqueue(input_stream, future_stream, return_x):
-            loop = asyncio.get_running_loop()
-            n_out = len(self._q_out)
-            async for x in input_stream:
-                fut = loop.create_future()
-                uid = id(fut)
-
-                # If one input queue is full, then the corresponding
-                # worker is slow. It does not help to enqueue this data
-                # into faster workers sooner. Hence we just enqueue
-                # for the workers one by one.
-                for q in self._q_in:
-                    while True:
-                        try:
-                            q.put_nowait((uid, x))
-                            break
-                        except queue.Full:
-                            await asyncio.sleep(0.0013)
-
-                self._uid_to_futures[uid] = {
-                    'x': x,
-                    'fut': fut,
-                    'res': [None] * n_out,
-                    'n': 0
-                }
-                if return_x:
-                    await future_stream.put((x, fut))
-                else:
-                    await future_stream.put(fut)
-
-        if not isinstance(data_stream, async_streamer.Stream):
-            data_stream = async_streamer.Stream(data_stream)
-        q_fut = async_streamer.IterQueue(
-            output_buffer_size, data_stream.in_stream)
-        _ = async_streamer.streamer_task(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
-
-        q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = async_streamer.streamer_task(
-            q_fut, q_out, _async_stream_dequeue, return_exceptions, return_x)
-
-        return async_streamer.Stream(q_out)
-
-    def stream(self, data_stream, *,
-               return_exceptions: bool = False,
-               output_buffer_size: int = 1024,
-               return_x: bool = False,
-               ):
-        def _enqueue(input_stream, future_stream, return_x):
-            n_out = len(self._q_out)
-            for x in input_stream:
-                fut = concurrent.futures.Future()
-                uid = id(fut)
-
-                for q in self._q_in:
-                    q.put((uid, x))
-                self._uid_to_futures[uid] = {
-                    'x': x,
-                    'fut': fut,
-                    'res': [None] * n_out,
-                    'n': 0
-                }
-
-                if return_x:
-                    future_stream.put((x, fut))
-                else:
-                    future_stream.put(fut)
-
-        if not isinstance(data_stream, streamer.Stream):
-            data_stream = streamer.Stream(
-                data_stream, maxsize=output_buffer_size)
-        q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
-        _ = streamer.streamer_thread(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
-
-        q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = streamer.streamer_thread(
-            q_fut, q_out, _stream_dequeue, return_exceptions, return_x)
-
-        return streamer.Stream(q_out)
+    def _get_input_queues(self):
+        return self._q_in
 
 
-class SimpleServer(LongServer):
+class SimpleServer(SequentialServer):
     def __init__(self,
                  func: Callable,
                  *,
