@@ -1,3 +1,26 @@
+'''Service using multiprocessing to perform CPU-bound operations
+making use of multiple CPUs (i.e. cores) on the machine.
+
+Each "worker" runs in a separate process. There can be multiple
+workers forming a sequence or an ensemble. Exact CPU allocation---which
+CPUs are used by which workers---can be controlled by parameters
+to achieve high efficiency.
+
+The "interface" to the service resides in the "main process".
+Two usage patterns are supported, namely (concurrent) individual
+calls to the service to get individual results, or flowing
+a (potentially unlimited) stream of data through the service
+and consuming the outcoming stream of results. Each usage
+supports a async API and an async API.
+
+The user's main work is implementing the worker operations.
+These are conventional sync functions. Another work of trial and error
+is experimenting with CPU allocations among workers to achieve
+best performance (throughput and latency).
+
+In contrast, the interface and scheduling code in the main process
+is all provided, and usually does not need much customization.
+'''
 
 import asyncio
 import concurrent.futures
@@ -8,7 +31,8 @@ import threading
 import time
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize
-from typing import List, Type, Tuple, Sequence, Union, Callable
+from typing import List, Type, Sequence, Union, Callable
+from uuid import uuid4
 
 import psutil  # type: ignore
 
@@ -44,6 +68,10 @@ class Servlet(metaclass=ABCMeta):
             q_in_lock: synchronize.Lock,
             cpus: Sequence[int] = None,
             **init_kwargs):
+        '''
+        This classmethod runs in the target process to construct
+        the object and start its processing loop.
+        '''
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
         obj = cls(**init_kwargs)
@@ -54,8 +82,7 @@ class Servlet(metaclass=ABCMeta):
 
     def __init__(self, *,
                  batch_size: int = None,
-                 batch_wait_time: float = None,
-                 silent_errors: Tuple[Type[Exception], ...] = None):
+                 batch_wait_time: float = None):
         '''
         `batch_size`: max batch size; see `__call__`.
 
@@ -75,27 +102,26 @@ class Servlet(metaclass=ABCMeta):
         However, when batching is enabled, sequential use is not
         the intended use; it would be the use case only for certain
         benchmarks. So beware of this in benchmarking.
+
+        Remember to pass in `batch_size` in accordance with the implementation
+        of `__call__`.
         '''
         self.batch_size = batch_size or 0
         self.batch_wait_time = batch_wait_time or 0
         self.name = f'{self.__class__.__name__}--{mp.current_process().name}'
-        self.silent_errors = silent_errors
 
     def _start_single(self, *, q_in, q_out, q_err):
         batch_size = self.batch_size
-        silent_errors = self.silent_errors
         while True:
             uid, x = q_in.get()
             try:
                 if batch_size:
                     y = self.__call__([x])[0]
                 else:
-                    y = self(x)
+                    y = self.__call__(x)
                 q_out.put((uid, y))
 
             except Exception as e:
-                if not silent_errors or not isinstance(e, silent_errors):
-                    logger.info(e)
                 # There are opportunities to print traceback
                 # and details later using the `MPError`
                 # object. Be brief on the logging here.
@@ -105,7 +131,6 @@ class Servlet(metaclass=ABCMeta):
     def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
         batch_size = self.batch_size
         batch_wait_time = self.batch_wait_time
-        silent_errors = self.silent_errors
         perf_counter = time.perf_counter
 
         batch_size_max = -1
@@ -163,8 +188,6 @@ class Servlet(metaclass=ABCMeta):
             try:
                 results = self.__call__(batch)
             except Exception as e:
-                if not silent_errors or not isinstance(e, silent_errors):
-                    logger.info(e)
                 err = MPError(e)
                 for uid in uids:
                     q_err.put((uid, err))
@@ -204,59 +227,12 @@ class Servlet(metaclass=ABCMeta):
         # the input stream of data consists of values of
         # the correct type, which in this case are lists.
         # There is no batching in this situation.
+        #
+        # If this implementation can handle batching and non-batching,
+        # hence `__init__` does not have requirement on `batch_size`,
+        # then this method needs to test the value of `batch_size`
+        # and handle input/output format accordingly.
         raise NotImplementedError
-
-
-async def _async_stream_dequeue(q_fut, q_out, return_exceptions, return_x):
-    if return_x:
-        async for x, fut in q_fut:
-            try:
-                z = await fut
-                await q_out.put((x, z))
-            except Exception as e:
-                if return_exceptions:
-                    await q_out.put((x, e))
-                else:
-                    raise e
-    else:
-        async for fut in q_fut:
-            try:
-                z = await fut
-                await q_out.put(z)
-            except Exception as e:
-                if return_exceptions:
-                    await q_out.put(e)
-                else:
-                    if isinstance(e, MPError):
-                        logger.error(e.trace_back)
-                    raise e
-
-
-def _stream_dequeue(q_fut, q_out, return_exceptions, return_x):
-    if return_x:
-        for x, fut in q_fut:
-            try:
-                z = fut.result()
-                q_out.put((x, z))
-            except Exception as e:
-                if return_exceptions:
-                    q_out.put((x, e))
-                else:
-                    if isinstance(e, MPError):
-                        logger.error(e.trace_back)
-                    raise e
-    else:
-        for fut in q_fut:
-            try:
-                z = fut.result()
-                q_out.put(z)
-            except Exception as e:
-                if return_exceptions:
-                    q_out.put(e)
-                else:
-                    if isinstance(e, MPError):
-                        logger.error(e.trace_back)
-                    raise e
 
 
 class _Server(metaclass=ABCMeta):
@@ -276,11 +252,13 @@ class _Server(metaclass=ABCMeta):
         i.e. the process in which this server objects resides.
         '''
         self.max_queue_size = max_queue_size or 1024
+        self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._t_gather_results: threading.Thread = None  # type: ignore
         self._servlets: List[mp.Process] = []
-        self.started = 0
+        self._uid_to_futures = {}
 
+        self.started = 0
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
 
@@ -333,13 +311,16 @@ class _Server(metaclass=ABCMeta):
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
 
-    @abstractmethod
-    def _init_future_struct(self, x, fut):
-        raise NotImplementedError
-
-    @abstractmethod
-    def _get_input_queues(self):
-        raise NotImplementedError
+    def gather_results(self):
+        # This is not a "public" method in that end-user
+        # should not call this method. But this is an important
+        # top-level method.
+        while True:
+            if not self.started:
+                return
+            self._gather_output()
+            self._gather_error()
+            time.sleep(0.0013)
 
     async def async_call(self,
                          x,
@@ -353,15 +334,12 @@ class _Server(metaclass=ABCMeta):
 
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
-        uid = id(fut)
-        # How much is the risk of reusing an ID after a prev `fut`
-        # was cancelled? Should we use a `uuid` string id?
-        self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+        uid = self._enqueue_future(x, fut)
 
         time0 = loop.time()
 
         await self._async_call_enqueue(
-            x=x, uid=uid, fut=fut, qs=self._get_input_queues(),
+            x=x, uid=uid, fut=fut, qs=self._input_queues(),
             t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
 
         return await self._async_call_wait_for_result(
@@ -379,12 +357,11 @@ class _Server(metaclass=ABCMeta):
         )
 
         fut = concurrent.futures.Future()
-        uid = id(fut)
-        self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+        uid = self._enqueue_future(x, fut)
 
         time0 = time.perf_counter()
 
-        self._call_enqueue(x=x, uid=uid, fut=fut, qs=self._get_input_queues(),
+        self._call_enqueue(x=x, uid=uid, fut=fut, qs=self._input_queues(),
                            t0=time0, enqueue_timeout=enqueue_timeout)
 
         return self._call_wait_for_result(
@@ -402,10 +379,10 @@ class _Server(metaclass=ABCMeta):
         # "transfomer" depends on the "workers" parameter.
         async def _enqueue(input_stream, future_stream, return_x):
             loop = asyncio.get_running_loop()
-            q_ins = self._get_input_queues()
+            q_ins = self._input_queues()
             async for x in input_stream:
                 fut = loop.create_future()
-                uid = id(fut)
+                uid = self._enqueue_future(x, fut)
 
                 # If one input queue is full, then the corresponding
                 # worker is slow. It does not help to enqueue this data
@@ -413,13 +390,14 @@ class _Server(metaclass=ABCMeta):
                 # for the workers one by one.
                 for q in q_ins:
                     while True:
+                        if not self.started:
+                            return
                         try:
                             q.put_nowait((uid, x))
                             break
                         except queue.Full:
                             await asyncio.sleep(0.0013)
 
-                self._uid_to_futures[uid] = self._init_future_struct(x, fut)
                 if return_x:
                     await future_stream.put((x, fut))
                 else:
@@ -434,7 +412,7 @@ class _Server(metaclass=ABCMeta):
 
         q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
         _ = async_streamer.streamer_task(
-            q_fut, q_out, _async_stream_dequeue, return_exceptions, return_x)
+            q_fut, q_out, self._async_stream_dequeue, return_exceptions, return_x)
 
         return async_streamer.Stream(q_out)
 
@@ -449,13 +427,14 @@ class _Server(metaclass=ABCMeta):
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on the "workers" parameter.
         def _enqueue(input_stream, future_stream, return_x):
-            q_ins = self._get_input_queues()
+            q_ins = self._input_queues()
             for x in input_stream:
                 fut = concurrent.futures.Future()
-                uid = id(fut)
+                uid = self._enqueue_future(x, fut)
                 for q in q_ins:
+                    if not self.started:
+                        return
                     q.put((uid, x))
-                self._uid_to_futures[uid] = self._init_future_struct(x, fut)
                 if return_x:
                     future_stream.put((x, fut))
                 else:
@@ -470,9 +449,50 @@ class _Server(metaclass=ABCMeta):
 
         q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
         _ = streamer.streamer_thread(
-            q_fut, q_out, _stream_dequeue, return_exceptions, return_x)
+            q_fut, q_out, self._stream_dequeue, return_exceptions, return_x)
 
         return streamer.Stream(q_out)
+
+    def _add_servlet(self,
+                     servlet: Type[Servlet],
+                     *,
+                     q_in,
+                     q_out,
+                     cpus: list = None,
+                     workers: int = None,
+                     **init_kwargs):
+        # `servlet` is the class object, not instance.
+        assert not self.started
+
+        q_in_lock = self.MP_CLASS.Lock()
+        self._q_in_lock.append(q_in_lock)
+        q_err = self._q_err
+
+        cpus = self._resolve_cpus(cpus=cpus, workers=workers)
+
+        for cpu in cpus:
+            if cpu is None:
+                # Not pinned to any core.
+                logger.info('adding servlet %s', servlet.__name__)
+            else:
+                # Pinned to the specified cpu core.
+                logger.info('adding servlet %s at CPU %s',
+                            servlet.__name__, cpu)
+
+            self._servlets.append(
+                self.MP_CLASS.Process(
+                    target=servlet.run,
+                    name=f'servlet-{cpu}',
+                    kwargs={
+                        'q_in': q_in,
+                        'q_out': q_out,
+                        'q_err': q_err,
+                        'cpus': cpu,
+                        'q_in_lock': q_in_lock,
+                        **init_kwargs,
+                    },
+                )
+            )
 
     def _resolve_cpus(self, *, cpus: list = None, workers: int = None):
         n_cpus = psutil.cpu_count(logical=True)
@@ -511,45 +531,6 @@ class _Server(metaclass=ABCMeta):
 
         return cpus
 
-    def _add_servlet(self,
-                     servlet: Type[Servlet],
-                     *,
-                     q_in,
-                     q_out,
-                     q_err,
-                     q_in_lock,
-                     cpus: list = None,
-                     workers: int = None,
-                     **init_kwargs):
-        # `servlet` is the class object, not instance.
-        assert not self.started
-
-        cpus = self._resolve_cpus(cpus=cpus, workers=workers)
-
-        for cpu in cpus:
-            if cpu is None:
-                # Not pinned to any core.
-                logger.info('adding servlet %s', servlet.__name__)
-            else:
-                # Pinned to the specified cpu core.
-                logger.info('adding servlet %s at CPU %s',
-                            servlet.__name__, cpu)
-
-            self._servlets.append(
-                self.MP_CLASS.Process(
-                    target=servlet.run,
-                    name=f'servlet-{cpu}',
-                    kwargs={
-                        'q_in': q_in,
-                        'q_out': q_out,
-                        'q_err': q_err,
-                        'cpus': cpu,
-                        'q_in_lock': q_in_lock,
-                        **init_kwargs,
-                    },
-                )
-            )
-
     def _resolve_timeout(self, *,
                          enqueue_timeout: float = None,
                          total_timeout: float = None):
@@ -565,6 +546,22 @@ class _Server(metaclass=ABCMeta):
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
+
+    @abstractmethod
+    def _init_future_struct(self, x, fut):
+        raise NotImplementedError
+
+    def _enqueue_future(self, x, fut):
+        while True:
+            uid = str(uuid4())
+            if uid in self._uid_to_futures:
+                continue
+            self._uid_to_futures[uid] = self._init_future_struct(x, fut)
+            return uid
+
+    @abstractmethod
+    def _input_queues(self):
+        raise NotImplementedError
 
     @abstractmethod
     def _gather_output(self):
@@ -591,23 +588,15 @@ class _Server(metaclass=ABCMeta):
                     raise
             # No sleep. Get results out of the queue as quickly as possible.
 
-    def gather_results(self):
-        # This is not a "public" method in that end-user
-        # should not call this method. But this is an important
-        # top-level method.
-        while True:
-            if not self.started:
-                return
-            self._gather_output()
-            self._gather_error()
-            time.sleep(0.0013)
-
     async def _async_call_enqueue(self, *, x, uid, fut, qs, t0, enqueue_timeout, loop):
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
+                if not self.started:
+                    return
                 try:
                     q.put_nowait((uid, x))
+                    break
                 except queue.Full:
                     timenow = loop.time()
                     if timenow < t1:
@@ -617,8 +606,6 @@ class _Server(metaclass=ABCMeta):
                         del self._uid_to_futures[uid]
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
-                else:
-                    break
 
     async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout, loop):
         try:
@@ -632,9 +619,6 @@ class _Server(metaclass=ABCMeta):
                 # timing coincidence.
                 del self._uid_to_futures[uid]
             raise TotalTimeout(f'waited {loop.time() - t0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
         else:
             return fut.result()
 
@@ -642,8 +626,11 @@ class _Server(metaclass=ABCMeta):
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
+                if not self.started:
+                    return
                 try:
                     q.put_nowait((uid, x))
+                    break
                 except queue.Full:
                     timenow = time.perf_counter()
                     if timenow < t1:
@@ -653,8 +640,6 @@ class _Server(metaclass=ABCMeta):
                         del self._uid_to_futures[uid]
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
-                else:
-                    break
 
     def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
         try:
@@ -668,38 +653,81 @@ class _Server(metaclass=ABCMeta):
                 # timing coincidence.
                 del self._uid_to_futures[uid]
             raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
-        except MPError as e:
-            logger.error(e.trace_back)
-            raise
         else:
             return z
 
+    async def _async_stream_dequeue(self, q_fut, q_out, return_exceptions, return_x):
+        if return_x:
+            async for x, fut in q_fut:
+                try:
+                    z = await fut
+                    await q_out.put((x, z))
+                except Exception as e:
+                    if return_exceptions:
+                        await q_out.put((x, e))
+                    else:
+                        raise e
+        else:
+            async for fut in q_fut:
+                try:
+                    z = await fut
+                    await q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        await q_out.put(e)
+                    else:
+                        if isinstance(e, MPError):
+                            logger.error(e.trace_back)
+                        raise e
+
+    def _stream_dequeue(self, q_fut, q_out, return_exceptions, return_x):
+        if return_x:
+            for x, fut in q_fut:
+                try:
+                    z = fut.result()
+                    q_out.put((x, z))
+                except Exception as e:
+                    if return_exceptions:
+                        q_out.put((x, e))
+                    else:
+                        if isinstance(e, MPError):
+                            logger.error(e.trace_back)
+                        raise e
+        else:
+            for fut in q_fut:
+                try:
+                    z = fut.result()
+                    q_out.put(z)
+                except Exception as e:
+                    if return_exceptions:
+                        q_out.put(e)
+                    else:
+                        if isinstance(e, MPError):
+                            logger.error(e.trace_back)
+                        raise e
+
 
 class SequentialServer(_Server):
+    '''
+    A sequence of operations performed in order,
+    the previous op's result becoming the subsequent
+    op's input.
+    '''
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
         self._q_in_out: List[mp.Queue] = [
             self.MP_CLASS.Queue(self.max_queue_size)]
-        self._q_in_lock: List[synchronize.Lock] = []
-
-        self._uid_to_futures = {}
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = self._q_in_out[-1]
-        q_in_lock = self.MP_CLASS.Lock()
         q_out: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
-
-        self._q_in_lock.append(q_in_lock)
         self._q_in_out.append(q_out)
 
         self._add_servlet(
             servlet,
             q_in=q_in,
             q_out=q_out,
-            q_err=self._q_err,
-            q_in_lock=q_in_lock,
             **kwargs,
         )
 
@@ -726,7 +754,7 @@ class SequentialServer(_Server):
     def _init_future_struct(self, x, fut):
         return {'fut': fut}
 
-    def _get_input_queues(self):
+    def _input_queues(self):
         return self._q_in_out[:1]
 
 
@@ -735,31 +763,42 @@ Server = SequentialServer
 
 
 class EnsembleServer(_Server):
+    '''
+    A number of operations performed on the same input
+    in parallel, the list of results gathered and combined
+    to form a final result.
+    '''
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
         self._q_in: List[mp.Queue] = []
         self._q_out: List[mp.Queue] = []
-        self._q_in_lock: List[synchronize.Lock] = []
-
-        self._uid_to_futures = {}
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
         q_out: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
-        q_in_lock = self.MP_CLASS.Lock()
         self._q_in.append(q_in)
         self._q_out.append(q_out)
-        self._q_in_lock.append(q_in_lock)
 
         self._add_servlet(
             servlet,
             q_in=q_in,
             q_out=q_out,
-            q_err=self._q_err,
-            q_in_lock=q_in_lock,
             **kwargs,
         )
+
+    @abstractmethod
+    def ensemble(self, x, results: list):
+        '''
+        Take results of all components and return a final result
+        by combining the individual results in some way.
+        It is assumed here that this function is quick and cheap.
+        If this is not true, some optimization is needed.
+
+        `results`: results of the servlets in the order they were
+        added by `add_servlet`.
+        '''
+        raise NotImplementedError
 
     def _gather_output(self):
         futures = self._uid_to_futures
@@ -791,14 +830,6 @@ class EnsembleServer(_Server):
                         fut['fut'].set_exception(e)
                 # No sleep. Get results out of the queue as quickly as possible.
 
-    @abstractmethod
-    def ensemble(self, x, results: list):
-        # Take results of all components and return a final result
-        # by combining the individual results in some way.
-        # It is assumed here that this function is quick and cheap.
-        # If this is not true, some optimization is needed.
-        raise NotImplementedError
-
     def _init_future_struct(self, x, fut):
         return {
             'x': x,
@@ -807,7 +838,7 @@ class EnsembleServer(_Server):
             'n': 0
         }
 
-    def _get_input_queues(self):
+    def _input_queues(self):
         return self._q_in
 
 

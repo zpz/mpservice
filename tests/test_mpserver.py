@@ -91,7 +91,7 @@ async def test_long_timeout_async():
         z = await service.async_call(3)
         assert z == 3
 
-        tasks = [asyncio.create_task(service.async_call(2, enqueue_timeout=10))
+        tasks = [asyncio.create_task(service.async_call(2, enqueue_timeout=6))
                  for _ in range(queue_size*2)]
         await asyncio.sleep(0.5)
 
@@ -115,7 +115,7 @@ def test_long_timeout():
         z = service.call(3)
         assert z == 3
 
-        tasks = [pool.submit(service.call, 2, enqueue_timeout=10)
+        tasks = [pool.submit(service.call, 2, enqueue_timeout=6)
                  for _ in range(queue_size*2)]
         time.sleep(0.5)
 
@@ -224,14 +224,14 @@ class YourWideServer(EnsembleServer):
 
 @pytest.mark.asyncio
 async def test_wide_timeout_async():
-    queue_size = 4
+    queue_size = 2
 
     service = YourWideServer(cpus=[0], max_queue_size=queue_size)
     with service:
         z = await service.async_call(2)
         assert z == 2 + 3 + 2 + 2
 
-        tasks = [asyncio.create_task(service.async_call(2, enqueue_timeout=10))
+        tasks = [asyncio.create_task(service.async_call(2, enqueue_timeout=6))
                  for _ in range(queue_size*2)]
         await asyncio.sleep(0.5)
 
@@ -247,15 +247,15 @@ async def test_wide_timeout_async():
 
 
 def test_wide_timeout():
-    queue_size = 4
+    queue_size = 2
 
     service = YourWideServer(cpus=[0], max_queue_size=queue_size)
     with service, concurrent.futures.ThreadPoolExecutor(10) as pool:
         z = service.call(2)
         assert z == 2 + 3 + 2 + 2
 
-        tasks = [pool.submit(service.call, 2, enqueue_timeout=10)
-                 for _ in range(queue_size*2)]
+        tasks = [pool.submit(service.call, 3, enqueue_timeout=6)
+                 for _ in range(queue_size * 2)]
         time.sleep(0.5)
 
         with pytest.raises(EnqueueTimeout):
