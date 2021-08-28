@@ -25,15 +25,10 @@ Then use `pipeline` in on of the following ways:
 
     await pipeline.drain()
 
-Although the primary or initial target use is concurrent I/O-bound
-operations, CPU-bound operations could be part of the stream via
-a `mpservice.mpserver.Server` object's `async_call` or `async_stream`
-method.
-
-Reference for an early version: https://zpz.github.io/blog/stream-processing/
-
 Please refer to the sync counterpart in the module `mpservice.streamer`
 for additional info and doc.
+
+Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
 '''
 
 from __future__ import annotations

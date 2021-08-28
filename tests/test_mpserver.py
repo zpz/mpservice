@@ -12,7 +12,7 @@ from mpservice.async_streamer import Stream as AsyncStream
 
 
 class Scale(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         return x * 2
 
 
@@ -21,7 +21,7 @@ class Shift(Servlet):
         super().__init__(**kwargs)
         self._stepsize = stepsize
 
-    def __call__(self, x):
+    def call(self, x):
         if self.batch_size == 0:
             return x + self._stepsize
         return [_ + self._stepsize for _ in x]
@@ -31,12 +31,12 @@ class Square(Servlet):
     def __init__(self):
         super().__init__(batch_size=4)
 
-    def __call__(self, x):
+    def call(self, x):
         return [v*v for v in x]
 
 
 class Delay(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         time.sleep(x)
         return x
 
@@ -156,17 +156,17 @@ def test_sequential_stream():
 
 
 class GetHead(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         return x[0]
 
 
 class GetTail(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         return x[-1]
 
 
 class GetLen(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         return len(x)
 
 
@@ -208,7 +208,7 @@ def test_ensemble_server():
 
 
 class AddThree(Servlet):
-    def __call__(self, x):
+    def call(self, x):
         return x + 3
 
 

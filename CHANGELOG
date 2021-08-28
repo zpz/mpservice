@@ -2,6 +2,7 @@ Release 0.9.0
 =============
 
 - Bug fix.
+- `mpservice.mpserver.Servlet.__call__` is renamed to `call`.
 
 
 Release 0.8.9

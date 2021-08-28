@@ -1,10 +1,21 @@
 # mpservice
 
-Serving with asyncio, multiprocessing, and batching.
+Utilities for Python concurrency, including
 
-One use case is machine learning model serving, although the code is generic and not restricted to any particular use case.
+- Serving with multiprocessing to make full use of multiple cores,
+  and batching to take advantage of vectorized computation if some
+  components of the service has that capability.
 
-Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/). This article describes roughly version 0.7.2.
+  One use case is machine learning model serving, although the code is generic and not restricted to this particular use case.
+
+- Stream processing, i.e. processing a long, possibly infinite stream
+  of input data, with multiple operators in the pipeline. A main use case
+  if that one or more of the operators is I/O bound (think: calling an external
+  service), hence can benefit from concurrency. Both sync and async interfaces
+  are provided.
+  
+The serving and streaming utilities can be combined because a `mpservice.mpserver.MPServer` instance, while doing heavy-lifting in other processes, acts as an
+I/O bound operator in the main process. Indeed, `mpservice.mpserver.MPServer` provides methods `stream` and `async_stream` for using the server to process data streams.
 
 The package also contains some other related utilities.
 

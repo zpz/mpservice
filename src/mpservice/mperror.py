@@ -1,3 +1,8 @@
+'''
+An Exception subclass that carries traceback info to be transported
+in multiprocessing code, surviving pickling.
+'''
+
 import sys
 from traceback import format_exc
 
