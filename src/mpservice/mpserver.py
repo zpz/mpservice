@@ -3,7 +3,7 @@ making use of multiple CPUs (i.e. cores) on the machine.
 
 Each "worker" runs in a separate process. There can be multiple
 workers forming a sequence or an ensemble. Exact CPU allocation---which
-CPUs are used by which workers---can be controlled by parameters
+CPUs are used by which workers---can be controlled
 to achieve high efficiency.
 
 The "interface" to the service resides in the "main process".
@@ -20,6 +20,38 @@ best performance (throughput and latency).
 
 In contrast, the interface and scheduling code in the main process
 is all provided, and usually does not need much customization.
+
+Typical usage:
+
+    class MyServlet1(Servlet):
+        def __init_(self, ..):
+            ...
+
+        def call(self, x):
+            ...
+
+    class MyServlet2(Servlet):
+        def __init__(self, ...):
+            ...
+
+        def call(self, x):
+            ...
+
+    class MyServer(SequentialServer):
+        def __init__(self, ...):
+            ...
+            self.add_servlet(MyServlet1, ...)
+            self.add_servlet(MyServlet2, ...)
+
+    with MyServer(...) as server:
+        y = server.call(x)
+
+        output = server.stream(data)
+        for y in output:
+            ...
+
+Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/).
+This article describes roughly version 0.7.2.
 '''
 
 import asyncio
@@ -58,7 +90,7 @@ class TotalTimeout(TimeoutError):
 
 class Servlet(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
-    # `__init__` and implement `__call__`.
+    # `__init__` and implement `call`.
 
     @classmethod
     def run(cls, *,
@@ -84,7 +116,7 @@ class Servlet(metaclass=ABCMeta):
                  batch_size: int = None,
                  batch_wait_time: float = None):
         '''
-        `batch_size`: max batch size; see `__call__`.
+        `batch_size`: max batch size; see `call`.
 
         `batch_wait_time`: seconds, may be 0; the total time span
             to wait for one batch after the first item has arrived.
@@ -104,7 +136,7 @@ class Servlet(metaclass=ABCMeta):
         benchmarks. So beware of this in benchmarking.
 
         Remember to pass in `batch_size` in accordance with the implementation
-        of `__call__`.
+        of `call`.
         '''
         self.batch_size = batch_size or 0
         self.batch_wait_time = batch_wait_time or 0
@@ -116,9 +148,9 @@ class Servlet(metaclass=ABCMeta):
             uid, x = q_in.get()
             try:
                 if batch_size:
-                    y = self.__call__([x])[0]
+                    y = self.call([x])[0]
                 else:
-                    y = self.__call__(x)
+                    y = self.call(x)
                 q_out.put((uid, y))
 
             except Exception as e:
@@ -186,7 +218,7 @@ class Servlet(metaclass=ABCMeta):
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
             try:
-                results = self.__call__(batch)
+                results = self.call(batch)
             except Exception as e:
                 err = MPError(e)
                 for uid in uids:
@@ -205,7 +237,7 @@ class Servlet(metaclass=ABCMeta):
             self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
 
     @abstractmethod
-    def __call__(self, x):
+    def call(self, x):
         # If `self.batch_size == 0`, then `x` is a single
         # element, and this method returns result for `x`.
         #
@@ -352,6 +384,14 @@ class MPServer(metaclass=ABCMeta):
              enqueue_timeout: Union[int, float] = None,
              total_timeout: Union[int, float] = None,
              ):
+        '''
+        Sometimes a subclass may want to override this method
+        to add preprocessing of the input and postprocessing of
+        the output, while calling `super().call(...)` in the middle.
+
+        However, be careful to maintain consistency between the
+        `call`/`async_call` methods and the `stream`/`async_stream` methods.
+        '''
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
         )
@@ -573,7 +613,7 @@ class MPServer(metaclass=ABCMeta):
         while not q_err.empty():
             uid, err = q_err.get_nowait()
             fut = futures.pop(uid, None)
-            if fut is None:  # timed-out in `__call__`
+            if fut is None:  # timed-out in `call` or `async_call`
                 logger.info(
                     'got error for an already-cancelled task: %r', err)
                 continue
@@ -860,7 +900,7 @@ class SimpleServer(SequentialServer):
                 super().__init__(batch_size=batch_size)
                 self._kwargs = kwargs
 
-            def __call__(self, x):
+            def call(self, x):
                 return func(x, **self._kwargs)
 
         self.add_servlet(SimpleServlet,
