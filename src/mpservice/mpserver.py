@@ -235,7 +235,7 @@ class Servlet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class _Server(metaclass=ABCMeta):
+class MPServer(metaclass=ABCMeta):
     MP_CLASS = mp
     # This class attribute is provided because in some cases
     # one may want to use `torch.multiprocessing`, which is
@@ -707,7 +707,7 @@ class _Server(metaclass=ABCMeta):
                         raise e
 
 
-class SequentialServer(_Server):
+class SequentialServer(MPServer):
     '''
     A sequence of operations performed in order,
     the previous op's result becoming the subsequent
@@ -758,11 +758,7 @@ class SequentialServer(_Server):
         return self._q_in_out[:1]
 
 
-Server = SequentialServer
-# For back compat. Will remove.
-
-
-class EnsembleServer(_Server):
+class EnsembleServer(MPServer):
     '''
     A number of operations performed on the same input
     in parallel, the list of results gathered and combined

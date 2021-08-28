@@ -42,7 +42,7 @@ class Delay(Servlet):
 
 
 @pytest.mark.asyncio
-async def test_long_server_async():
+async def test_sequential_server_async():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Scale, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -56,7 +56,7 @@ async def test_long_server_async():
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_long_server():
+def test_sequential_server():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Scale, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -69,7 +69,7 @@ def test_long_server():
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_long_batch():
+def test_sequential_batch():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
@@ -82,7 +82,7 @@ def test_long_batch():
 
 
 @pytest.mark.asyncio
-async def test_long_timeout_async():
+async def test_sequential_timeout_async():
     queue_size = 4
 
     service = SequentialServer(cpus=[0], max_queue_size=queue_size)
@@ -106,7 +106,7 @@ async def test_long_timeout_async():
             z = await service.async_call(8, enqueue_timeout=0, total_timeout=2)
 
 
-def test_long_timeout():
+def test_sequential_timeout():
     queue_size = 4
 
     service = SequentialServer(cpus=[0], max_queue_size=queue_size)
@@ -131,7 +131,7 @@ def test_long_timeout():
 
 
 @pytest.mark.asyncio
-async def test_long_stream_async():
+async def test_sequential_stream_async():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
@@ -143,7 +143,7 @@ async def test_long_stream_async():
         assert await ss.collect() == [v*v for v in data]
 
 
-def test_long_stream():
+def test_sequential_stream():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
@@ -182,7 +182,7 @@ class MyWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_wide_server_async():
+async def test_ensemble_server_async():
     service = MyWideServer(cpus=[0])
 
     with service:
@@ -195,7 +195,7 @@ async def test_wide_server_async():
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
-def test_wide_server():
+def test_ensemble_server():
     service = MyWideServer(cpus=[0])
 
     with service:
@@ -223,7 +223,7 @@ class YourWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_wide_timeout_async():
+async def test_ensemble_timeout_async():
     queue_size = 2
 
     service = YourWideServer(cpus=[0], max_queue_size=queue_size)
@@ -246,7 +246,7 @@ async def test_wide_timeout_async():
             z = await service.async_call(8, enqueue_timeout=0, total_timeout=2)
 
 
-def test_wide_timeout():
+def test_ensemble_timeout():
     queue_size = 2
 
     service = YourWideServer(cpus=[0], max_queue_size=queue_size)
@@ -282,7 +282,7 @@ class HisWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_wide_stream_async():
+async def test_ensemble_stream_async():
     service = HisWideServer(cpus=[0])
     with service:
         data = range(100)
@@ -293,7 +293,7 @@ async def test_wide_stream_async():
         assert await ss.collect() == [[v + 1, v + 7] for v in data]
 
 
-def test_wide_stream():
+def test_ensemble_stream():
     service = HisWideServer(cpus=[0])
     with service:
         data = range(100)

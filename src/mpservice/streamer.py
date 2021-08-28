@@ -212,7 +212,6 @@ class IterQueue(queue.Queue):
         self._closed = True
 
     def put_exception(self, e):
-        assert not self._closed
         self.exception = e
         self._to_shutdown.set()
 
