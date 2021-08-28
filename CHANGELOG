@@ -8,7 +8,7 @@ Release 0.9.0
 Release 0.8.9
 =============
 
-- Add `mpserver.WideServer` to implement ensembles; rename `Server` to `LongServer`.
+- Add `mpserver.EnsembleServer` to implement ensembles; rename `Server` to `SequentialServer`.
 - Add `mpserver.SimpleServer`.
 - Revise `cpu` specification in `mpserver`.
 
