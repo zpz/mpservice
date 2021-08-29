@@ -4,7 +4,7 @@ Utilities for Python concurrency, including
 
 - Serving with multiprocessing to make full use of multiple cores,
   and batching to take advantage of vectorized computation if some
-  components of the service has that capability.
+  components of the service have that capability.
 
   One use case is machine learning model serving, although the code is generic and not restricted to this particular use case.
 
