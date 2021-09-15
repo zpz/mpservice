@@ -192,13 +192,14 @@ class Servlet(metaclass=ABCMeta):
                     try:
                         # If there is remaining time, wait up to
                         # that long.
-                        # Otherwise, get the next item it is there
+                        # Otherwise, get the next item if it is there
                         # right now (i.e. no waiting) even if we
                         # are already over time. That is, if supply
                         # has piled up, then will get up to the
                         # batch capacity.
                         if time_left > 0:
-                            uid, x = q_in.get(timeout=time_left)
+                            # Or should we do `if time_left > 0.001`?
+                            uid, x = q_in.get(timeout=max(0.001, time_left))
                         else:
                             uid, x = q_in.get_nowait()
                     except queue.Empty:
