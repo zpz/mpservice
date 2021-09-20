@@ -60,7 +60,7 @@ T = TypeVar('T')
 TT = TypeVar('TT')
 
 
-class IterQueue(asyncio.Queue):
+class IterQueue(asyncio.Queue, AsyncIterator):
     DEFAULT_MAXSIZE = 256
     GET_SLEEP = 0.0013
     PUT_SLEEP = 0.0014

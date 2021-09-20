@@ -190,13 +190,26 @@ def is_exception(e):
     )
 
 
-class IterQueue(queue.Queue):
+class IterQueue(queue.Queue, Iterator):
+    '''
+    A queue that supports iteration over its elements.
+
+    In order to support iteration, it adds a special value
+    to indicate end of data, which is inserted by calling
+    the method `put_end`.
+    '''
     DEFAULT_MAXSIZE = 256
-    GET_SLEEP = 0.0013
-    PUT_SLEEP = 0.0014
+    GET_SLEEP = 0.00056
+    PUT_SLEEP = 0.00045
     NO_MORE_DATA = object()
 
     def __init__(self, maxsize: int = None, upstream: Optional[IterQueue] = None):
+        '''
+        `upstream`: an upstream `IterQueue` object, usually the data stream that
+        feeds into the current queue. This parameter allows this object and
+        the upstream share an `Event` object that indicates either queue
+        has stopped working, either deliberately or by exception.
+        '''
         super().__init__(maxsize or self.DEFAULT_MAXSIZE)
         self.exception = None
         self._closed = False
