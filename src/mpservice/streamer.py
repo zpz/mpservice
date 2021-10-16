@@ -295,6 +295,35 @@ def streamer_thread(q_in: Iterable, q_out: IterQueue,
     return t
 
 
+class LightStream(Iterator):  # temporary name
+    def __init__(self, stream_in: Union[Iterable, Iterator, 'LightStream']):
+        if isinstance(stream_in, LightStream):
+            self._to_shutdown = stream_in._to_shutdown
+            self._instream = stream_in
+        else:
+            self._to_shutdown = threading.Event()
+            if hasattr(stream_in, '__next__'):
+                self._instream = stream_in
+            else:
+                if not hasattr(stream_in, '__iter__'):
+                    raise TypeError('`stream_in` is not iterable')
+                self._instream = iter(stream_in)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            if self._to_shutdown.is_set():
+                raise StopIteration
+            return next(self._instream)
+        except StopIteration as e:
+            raise e
+        except:
+            self._to_shutdown.set()
+            raise
+
+
 def stream(x: Union[Iterable, Iterator], maxsize: int = None) -> IterQueue:
     if isinstance(x, IterQueue):
         return x

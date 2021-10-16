@@ -3,7 +3,7 @@ import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
-from mpservice.http_server import SHUTDOWN_MSG, run_local_app, run_app
+from mpservice.http_server import SHUTDOWN_MSG, stop_starlette_server, run_local_app, run_app
 
 
 @pytest.fixture()
@@ -18,6 +18,7 @@ def app():
     a = Starlette()
     a.add_route('/simple1', simple1, ['GET', 'POST'])
     a.add_route('/simple2', simple2, ['GET', 'POST'])
+    a.add_route('/stop', stop_starlette_server, ['POST'])
     return a
 
 

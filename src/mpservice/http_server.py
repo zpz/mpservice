@@ -50,7 +50,7 @@ class ShutdownMiddleware:
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets
 
 
-async def stop_app(request):
+async def stop_starlette_server(request):
     return SHUTDOWN_RESPONSE
 
 
@@ -64,7 +64,6 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='none',
-        shutdown_path='/stop',
         **kwargs,
 ):
     '''
@@ -115,16 +114,6 @@ def make_server(
         config.load()
 
     config.loaded_app = ShutdownMiddleware(config.loaded_app, server)
-
-    if shutdown_path is not None:
-        # Add the `stop` endpoint.
-        a = config.loaded_app
-        while not isinstance(a, Starlette):
-            a = a.app
-        for r in a.router.routes:
-            if r.path == shutdown_path:
-                raise Exception(f"path '{shutdown_path}' is alreayd used")
-        a.add_route(shutdown_path, stop_app, ['GET', 'POST'])
 
     if (config.reload or config.workers > 1) and not isinstance(app, str):
         logging.getLogger('uvicorn.error').warning(
