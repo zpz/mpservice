@@ -95,7 +95,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
         return self
 
     async def _get_next(self):
-        return self._instream.__anext__()
+        return await self._instream.__anext__()
 
     async def __anext__(self):
         try:
@@ -212,7 +212,7 @@ class Dropper(Stream):
 
     async def _get_next(self):
         while True:
-            z = self._instream.__anext__()
+            z = await self._instream.__anext__()
             if self.func(self.index, z):
                 self.index += 1
                 continue
@@ -438,6 +438,7 @@ class ConcurrentTransformer(Stream):
     def _stop(self):
         for t in self._tasks:
             _ = t.result()
+        self._tasks = []
 
     def __del__(self):
         self._stop()
@@ -455,7 +456,7 @@ class ConcurrentTransformer(Stream):
                         z = self._outstream.get_nowait()
                         if z is _sync_streamer.IterQueue.NO_MORE_DATA:
                             raise StopAsyncIteration
-                        return z
+                        return z.result()
                     except queue.Empty:
                         await asyncio.sleep(_sync_streamer.IterQueue.GET_SLEEP)
         except:
