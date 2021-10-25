@@ -198,84 +198,7 @@ def _default_peek_func(i, x):
     print(x)
 
 
-class Stream(collections.abc.Iterator):
-    @classmethod
-    def register(cls, class_: Type[Stream], name: str):
-        def f(self, *args, **kwargs):
-            return class_(self, *args, **kwargs)
-
-        setattr(cls, name, f)
-
-    def __init__(self, instream: Union[Stream, Iterator, Iterable]):
-        if isinstance(instream, Stream):
-            self._to_shutdown = instream._to_shutdown
-            self._instream = instream
-        else:
-            self._to_shutdown = threading.Event()
-            if hasattr(instream, '__next__'):
-                self._instream = instream
-            else:
-                self._instream = iter(instream)
-        self.index = 0
-        # Index of the upcoming element; 0 based.
-        # This is also the count of finished elements.
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        try:
-            z = next(self._instream)
-            self.index += 1
-            return z
-        except StopIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
-
-    def collect(self) -> list:
-        return list(self)
-
-    def drain(self) -> Union[int, Tuple[int, int]]:
-        '''Drain off the stream.
-
-        Return the number of elements processed.
-        When there are exceptions, return the total number of elements
-        as well as the number of exceptions.
-        '''
-        n = 0
-        nexc = 0
-        for v in self:
-            n += 1
-            if is_exception(v):
-                nexc += 1
-        if nexc:
-            return n, nexc
-        return n
-
-    def batch(self, batch_size: int) -> Batcher:
-        '''Take elements from an input stream,
-        and bundle them up into batches up to a size limit,
-        and produce the batches in an iterable.
-
-        The output batches are all of the specified size, except possibly the final batch.
-        There is no 'timeout' logic to produce a smaller batch.
-        For efficiency, this requires the input stream to have a steady supply.
-        If that is a concern, having a `buffer` on the input stream may help.
-        '''
-
-        return Batcher(self, batch_size)
-
-    def unbatch(self) -> Unbatcher:
-        '''Reverse of "batch", turning a stream of batches into
-        a stream of individual elements.
-        '''
-        return Unbatcher(self)
-
-    def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
-        return Dropper(self, func)
-
+class StreamMixin:
     def drop_exceptions(self):
         return self.drop_if(lambda i, x: is_exception(x))
 
@@ -283,8 +206,8 @@ class Stream(collections.abc.Iterator):
         assert n >= 0
         return self.drop_if(lambda i, x: i < n)
 
-    def keep_if(self, func: Callable[[int, T], bool]) -> Keeper:
-        return Keeper(self, func)
+    def keep_if(self, func: Callable[[int, T], bool]):
+        return self.drop_if(lambda i, x: not func(i, x))
 
     def keep_every_nth(self, nth: int):
         assert nth > 0
@@ -294,22 +217,6 @@ class Stream(collections.abc.Iterator):
         assert 0 < frac <= 1
         rand = random.random
         return self.keep_if(lambda i, x: rand() < frac)
-
-    def keep_first_n(self, n: int):
-        return Stream(itertools.islice(self, n))
-
-    def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
-        '''Take a peek at the data element *before* it is sent
-        on for processing.
-
-        The function `func` takes the data index (0-based)
-        and the data element. Typical actions include print out
-        info or save the data for later inspection. Usually this
-        function should not modify the data element in the stream.
-        '''
-        if func is None:
-            func = _default_peek_func
-        return Peeker(self, func)
 
     def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None):
         assert nth > 0
@@ -354,6 +261,103 @@ class Stream(collections.abc.Iterator):
 
         return self.peek(func)
 
+
+class Stream(collections.abc.Iterator, StreamMixin):
+    @classmethod
+    def register(cls, class_: Type[Stream], name: str):
+        def f(self, *args, **kwargs):
+            return class_(self, *args, **kwargs)
+
+        setattr(cls, name, f)
+
+    def __init__(self, instream: Union[Stream, Iterator, Iterable]):
+        if isinstance(instream, Stream):
+            self._to_shutdown = instream._to_shutdown
+            self._instream = instream
+        else:
+            self._to_shutdown = threading.Event()
+            if hasattr(instream, '__next__'):
+                self._instream = instream
+            else:
+                self._instream = iter(instream)
+        self.index = 0
+        # Index of the upcoming element; 0 based.
+        # This is also the count of finished elements.
+
+    def __iter__(self):
+        return self
+
+    def _get_next(self):
+        return next(self._instream)
+
+    def __next__(self):
+        try:
+            z = self._get_next()
+            self.index += 1
+            return z
+        except StopIteration:
+            raise
+        except:
+            self._to_shutdown.set()
+            raise
+
+    def collect(self) -> list:
+        return list(self)
+
+    def drain(self) -> Union[int, Tuple[int, int]]:
+        '''Drain off the stream.
+
+        Return the number of elements processed.
+        When there are exceptions, return the total number of elements
+        as well as the number of exceptions.
+        '''
+        n = 0
+        nexc = 0
+        for v in self:
+            n += 1
+            if is_exception(v):
+                nexc += 1
+        if nexc:
+            return n, nexc
+        return n
+
+    def batch(self, batch_size: int) -> Batcher:
+        '''Take elements from an input stream,
+        and bundle them up into batches up to a size limit,
+        and produce the batches in an iterable.
+
+        The output batches are all of the specified size, except possibly the final batch.
+        There is no 'timeout' logic to produce a smaller batch.
+        For efficiency, this requires the input stream to have a steady supply.
+        If that is a concern, having a `buffer` on the input stream may help.
+        '''
+        return Batcher(self, batch_size)
+
+    def unbatch(self) -> Unbatcher:
+        '''Reverse of "batch", turning a stream of batches into
+        a stream of individual elements.
+        '''
+        return Unbatcher(self)
+
+    def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
+        return Dropper(self, func)
+
+    def keep_first_n(self, n: int):
+        return Stream(itertools.islice(self, n))
+
+    def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
+        '''Take a peek at the data element *before* it is sent
+        on for processing.
+
+        The function `func` takes the data index (0-based)
+        and the data element. Typical actions include print out
+        info or save the data for later inspection. Usually this
+        function should not modify the data element in the stream.
+        '''
+        if func is None:
+            func = _default_peek_func
+        return Peeker(self, func)
+
     def buffer(self, maxsize: int = None) -> Buffer:
         '''Buffer is used to stabilize and improve the speed of data flow.
 
@@ -364,15 +368,16 @@ class Stream(collections.abc.Iterator):
         data. The buffer evens out unstabilities in the speeds of upstream
         production and downstream consumption.
         '''
-
         if maxsize is None:
             maxsize = 256
+        else:
+            assert 1 <= maxsize <= 10_000
         return Buffer(self, maxsize)
 
     def transform(self,
                   func: Callable[[T], TT],
                   *,
-                  workers: Optional[Union[int, str]] = 0,
+                  workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
         '''Apply a transformation on each element of the data stream,
@@ -395,11 +400,14 @@ class Stream(collections.abc.Iterator):
 
         `workers`: max number of concurrent calls to `func`. By default
         this is 0, i.e. there is no concurrency.
+
+        `workers=0` and `workers=1` are different. The latter runs the
+        transformer in a separate thread whereas the former runs "inline".
         '''
         if func_args:
             func = functools.partial(func, **func_args)
 
-        if workers == 0:
+        if workers is None or workers == 0:
             return Transformer(self, func, return_exceptions=return_exceptions)
 
         if workers == 'max':
@@ -412,46 +420,33 @@ class Stream(collections.abc.Iterator):
 
 
 class Batcher(Stream):
-
     def __init__(self, instream: Stream, batch_size: int):
         super().__init__(instream)
+        assert 1 < batch_size <= 10_000
         self.batch_size = batch_size
 
-    def __next__(self):
+    def _get_next(self):
         batch = []
         for _ in range(self.batch_size):
             try:
                 batch.append(next(self._instream))
             except StopIteration:
                 break
-            except:
-                self._to_shutdown.set()
-                raise
         if batch:
-            self.index += 1
             return batch
         raise StopIteration
 
 
 class Unbatcher(Stream):
-
     def __init__(self, instream: Stream):
         super().__init__(instream)
         self._batch = None
 
-    def __next__(self):
+    def _get_next(self):
         if self._batch:
-            z = self._batch.pop(0)
-            self.index += 1
-            return z
-        try:
-            self._batch = next(self._instream)
-        except StopIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
-        return self.__next__()
+            return self._batch.pop(0)
+        self._batch = next(self._instream)
+        return self._get_next()
 
 
 class Dropper(Stream):
@@ -459,49 +454,27 @@ class Dropper(Stream):
         super().__init__(instream)
         self.func = func
 
-    def __next__(self):
+    def _get_next(self):
         while True:
-            try:
-                z = next(self._instream)
-                if self.func(self.index, z):
-                    self.index += 1
-                    continue
+            z = next(self._instream)
+            if self.func(self.index, z):
                 self.index += 1
-                return z
-            except StopIteration:
-                raise
-            except:
-                self._to_shutdown.set()
-                raise
-
-
-class Keeper(Dropper):
-    def __init__(self, instream: Stream, func: Callable[[int, T], bool]):
-        def f(idx, x):
-            return not func(idx, x)
-        super().__init__(instream, f)
+                continue
+            return z
 
 
 class Peeker(Stream):
-
     def __init__(self, instream: Stream, func: Callable[[int, T], None]):
         super().__init__(instream)
         self.func = func
 
-    def __next__(self):
-        try:
-            z = next(self._instream)
-            self.func(self.index, z)
-            self.index += 1
-            return z
-        except StopIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
+    def _get_next(self):
+        z = next(self._instream)
+        self.func(self.index, z)
+        return z
 
 
-class IterQueue(queue.Queue, Iterator):
+class IterQueue(queue.Queue, collections.abc.Iterator):
     '''
     A queue that supports iteration over its elements.
 
@@ -521,56 +494,23 @@ class IterQueue(queue.Queue, Iterator):
         has stopped working, either deliberately or by exception.
         '''
         super().__init__(maxsize)
-        self.exception = None
-        self._closed = False
-        self._exhausted = False
         self._to_shutdown = to_shutdown
 
     def put_end(self):
-        assert not self._closed
         self.put(self.NO_MORE_DATA)
-        self._closed = True
-
-    def put_exception(self, e):
-        self.exception = e
-        self._to_shutdown.set()
 
     def put(self, x, block=True):
         while True:
-            if self._to_shutdown.is_set():
-                return
-            assert not self._closed
             try:
                 super().put(x, block=False)
                 break
             except queue.Full:
+                if self._to_shutdown.is_set():
+                    return
                 if block:
                     sleep(self.PUT_SLEEP)
                 else:
                     raise
-
-    def put_nowait(self, x):
-        self.put(x, block=False)
-
-    def get(self, block=True):
-        while True:
-            try:
-                if self.exception is not None:
-                    raise self.exception
-                if self._exhausted:
-                    return self.NO_MORE_DATA
-                z = super().get(block=False)
-                if z is self.NO_MORE_DATA:
-                    self._exhausted = True
-                return z
-            except queue.Empty:
-                if block:
-                    sleep(self.GET_SLEEP)
-                else:
-                    raise
-
-    def get_nowait(self):
-        return self.get(block=False)
 
     def __next__(self):
         while True:
@@ -582,52 +522,46 @@ class IterQueue(queue.Queue, Iterator):
             except queue.Empty:
                 sleep(self.GET_SLEEP)
 
-    def __iter__(self):
-        return self
-
 
 class Buffer(Stream):
-
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
         assert 1 <= 10_000
         self.maxsize = maxsize
-        self._task = None
+        self._q = IterQueue(maxsize, self._to_shutdown)
+        self._err = None
+        self._thread = None
         self._start()
 
     def _start(self):
-        def foo():
+        def foo(instream, q):
             try:
-                for v in self._instream:
-                    self._q.put(v)
-                self._q.put_end()
+                for v in instream:
+                    q.put(v)
+                q.put_end()
             except Exception as e:
-                self._q.put_exception(e)
+                # This should be exception while
+                # getting data from `instream`,
+                # not exception in the current object.
+                self._err = e
 
-        self._q = IterQueue(self.maxsize, self._to_shutdown)
-        self._thread = threading.Thread(target=foo)
-        self._task = self._thread.start()
+        self._thread = threading.Thread(
+            target=foo, args=(self._instream, self._q))
+        self._thread.start()
 
     def _stop(self):
-        if self._task is not None:
-            self._task.join()
-            self._task = None
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
 
     def __del__(self):
         self._stop()
 
-    def __next__(self):
-        try:
-            if self._to_shutdown.is_set():
-                raise self._q.exception
-            z = next(self._q)
-            self.index += 1
-            return z
-        except StopIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
+    def _get_next(self):
+        if self._err is not None:
+            self._stop()
+            raise self._err
+        return next(self._q)
 
 
 class Transformer(Stream):
@@ -642,22 +576,66 @@ class Transformer(Stream):
         self.return_exceptions = return_exceptions
 
     def __next__(self):
+        z = next(self._instream)
         try:
-            z = next(self._instream)
+            return self.func(z)
+        except Exception as e:
+            if self.return_exceptions:
+                return e
+            raise
+
+
+def transform(in_stream: Iterator, out_stream: IterQueue,
+              func, workers, return_exceptions, err):
+    def _process(in_stream, out_stream, func,
+                 lock, finished, return_exceptions):
+        Future = concurrent.futures.Future
+        while not finished.is_set():
+            with lock:
+                # This locked block ensures that
+                # input is read in order and their corresponding
+                # result placeholders (Future objects) are
+                # put in the output stream in order.
+                if finished.is_set():
+                    return
+                try:
+                    x = next(in_stream)
+                    fut = Future()
+                    out_stream.put(fut)
+                except StopIteration:
+                    finished.set()
+                    out_stream.put_end()
+                    return
+                except Exception as e:
+                    finished.set()
+                    err.append(e)
+                    return
+
             try:
-                zz = self.func(z)
+                y = func(x)
+                fut.set_result(y)
             except Exception as e:
-                if self.return_exceptions:
-                    zz = e
+                if return_exceptions:
+                    fut.set_result(e)
                 else:
-                    raise
-            self.index += 1
-            return zz
-        except StopIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
+                    fut.set_exception(e)
+                    finished.set()
+                    return
+
+    lock = threading.Lock()
+    finished = threading.Event()
+
+    tasks = [
+        threading.Thread(
+            target=_process,
+            args=(in_stream, out_stream, func, lock,
+                  finished, return_exceptions),
+        )
+        for _ in range(workers)
+    ]
+    for t in tasks:
+        t.start()
+    return tasks
 
 
 class ConcurrentTransformer(Stream):
@@ -674,65 +652,14 @@ class ConcurrentTransformer(Stream):
         self.workers = workers
         self.return_exceptions = return_exceptions
         self._outstream = IterQueue(workers * 8, self._to_shutdown)
+        self._err = []
         self._tasks = []
         self._start()
 
     def _start(self):
-        def _process(in_stream, out_stream, func,
-                     lock, finished, return_exceptions):
-            Future = concurrent.futures.Future
-            while not finished.is_set():
-                with lock:
-                    # This locked block ensures that
-                    # input is read in order and their corresponding
-                    # result placeholders (Future objects) are
-                    # put in the output stream in order.
-                    if finished.is_set():
-                        return
-                    try:
-                        x = in_stream.__next__()
-                        fut = Future()
-                        out_stream.put(fut)
-                    except StopIteration:
-                        finished.set()
-                        out_stream.put_end()
-                        return
-                    except Exception as e:
-                        # `in_stream.exception` is not None.
-                        # Propagate.
-                        finished.set()
-                        out_stream.put_exception(e)
-                        return
-
-                try:
-                    y = func(x)
-                    fut.set_result(y)
-                except Exception as e:
-                    if return_exceptions:
-                        fut.set_result(e)
-                    else:
-                        fut.set_exception(e)
-                        finished.set()
-                        return
-
-        lock = threading.Lock()
-        finished = threading.Event()
-
-        self._tasks = [
-            threading.Thread(target=_process,
-                             args=(
-                                 self._instream,
-                                 self._outstream,
-                                 self.func,
-                                 lock,
-                                 finished,
-                                 self.return_exceptions,
-                             ),
-                             )
-            for _ in range(self.workers)
-        ]
-        for t in self._tasks:
-            t.start()
+        self._tasks = transform(
+            self._instream, self._outstream, self.func,
+            self.workers, self.return_exceptions, self._err)
 
     def _stop(self):
         for t in self._tasks:
@@ -741,14 +668,12 @@ class ConcurrentTransformer(Stream):
     def __del__(self):
         self._stop()
 
-    def __next__(self):
+    def _get_next(self):
         try:
+            if self._err:
+                raise self._err[0]
             fut = next(self._outstream)
-            z = fut.result()
-            return z
-        except StopIteration:
+            return fut.result()
+        except:
             self._stop()
-            raise
-        except Exception as e:
-            self._to_shutdown.set()
             raise

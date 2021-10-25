@@ -215,10 +215,10 @@ def test_chain():
         z = Stream(corrupt_data()).transform(process1, workers=2)
         z.drain()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(maxsize=3)
+             .buffer(3)
              .transform(process2, workers=3)
              )
         z.drain()
@@ -226,14 +226,14 @@ def test_chain():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(maxsize=2)
+             .buffer(2)
              .transform(process2, workers=3)
              )
         z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(maxsize=3)
+         .buffer(3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(z.collect())
@@ -241,7 +241,7 @@ def test_chain():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(maxsize=3)
+         .buffer(3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()
