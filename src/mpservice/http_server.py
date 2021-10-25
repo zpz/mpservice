@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import sys
 from typing import Union
 
 import uvicorn  # type: ignore
@@ -64,6 +63,7 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='none',
+        workers=1,
         **kwargs,
 ):
     '''
@@ -84,7 +84,7 @@ def make_server(
     '''
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()
-    assert log_level in ('debug', 'info', 'warning')
+    assert log_level in ('debug', 'info', 'warning', 'error')
 
     if debug is None:
         debug = log_level == 'debug'
@@ -96,6 +96,8 @@ def make_server(
     else:
         access_log = bool(access_log)
 
+    assert workers == 1
+
     config = uvicorn.Config(
         app,
         host='0.0.0.0',
@@ -105,7 +107,7 @@ def make_server(
         debug=debug,
         log_level=log_level,
         loop=loop,
-        workers=1,  # Fix at 1 for the `mpservice` usage.
+        workers=workers,
         reload=debug and isinstance(app, str),
         **kwargs)
     server = uvicorn.Server(config=config)
@@ -115,12 +117,11 @@ def make_server(
 
     config.loaded_app = ShutdownMiddleware(config.loaded_app, server)
 
-    if (config.reload or config.workers > 1) and not isinstance(app, str):
-        logging.getLogger('uvicorn.error').warning(
-            'You must pass the application as an import string to enable '
-            '"reload" or "workers"'
-        )
-        sys.exit(1)
+    # if config.reload and not isinstance(app, str):
+    #     logging.getLogger('uvicorn.error').warning(
+    #         'You must pass the application as an import string to enable "reload"'
+    #     )
+    #     sys.exit(1)
 
     # `workers > 1` is not used in my use case and
     # is likely broken.
