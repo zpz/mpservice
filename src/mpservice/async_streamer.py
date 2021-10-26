@@ -77,16 +77,34 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
             self._to_shutdown = threading.Event()
             if hasattr(instream, '__anext__'):
                 self._instream = instream
-            elif hasattr(instream, '__aiter__'):
-                async def foo():
-                    async for x in instream:
-                        yield x
-                self._instream = foo()
             else:
-                async def foo():
-                    for x in instream:
-                        yield x
-                self._instream = foo()
+                if hasattr(instream, '__aiter__'):
+
+                    async def foo(instream):
+                        async for x in instream:
+                            yield x
+
+                    self._instream = foo()
+                    # TODO: if `.head()` is called on the current object,
+                    # which stops the iteration before the stream is exhausted,
+                    # it might cause the "Task was destroyed but it is pending"
+                    # warning. How can we get a `__anext__` method given
+                    # that the input is an oject that has `__aiter__` but
+                    # not `__anext__`?
+                else:
+                    if not hasattr(instream, '__next__'):
+                        assert hasattr(instream, '__iter__')
+                        instream = iter(instream)
+
+                    class MyStream:
+                        async def __anext__(self):
+                            try:
+                                return next(instream)
+                            except StopIteration:
+                                raise StopAsyncIteration
+
+                    self._instream = MyStream()
+
         self.index = 0
         # Index of the upcoming element; 0 based.
         # This is also the count of finished elements.
@@ -102,7 +120,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
             z = await self._get_next()
             self.index += 1
             return z
-        except StopIteration:
+        except StopAsyncIteration:
             raise
         except:
             self._to_shutdown.set()
@@ -131,16 +149,8 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
     def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
         return Dropper(self, func)
 
-    def keep_first_n(self, n: int):
-        async def foo(n, instream):
-            i = 0
-            async for x in instream:
-                yield x
-                i += 1
-                if i == n:
-                    break
-
-        return Stream(foo(n, self._instream))
+    def head(self, n: int) -> Head:
+        return Head(self, n)
 
     def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
         if func is None:
@@ -217,6 +227,18 @@ class Dropper(Stream):
                 self.index += 1
                 continue
             return z
+
+
+class Head(Stream):
+    def __init__(self, instream: Stream, n: int):
+        super().__init__(instream)
+        assert n >= 0
+        self.n = n
+
+    async def _get_next(self):
+        if self.index >= self.n:
+            raise StopAsyncIteration
+        return await self._instream.__anext__()
 
 
 class Peeker(Stream):
@@ -305,6 +327,14 @@ class Buffer(Stream):
         return await self._q.__anext__()
 
 
+def is_async(func):
+    return inspect.iscoroutinefunction(func) or (
+        not inspect.isfunction(func)
+        and hasattr(func, '__call__')
+        and inspect.iscoroutinefunction(func.__call__)
+    )
+
+
 class Transformer(Stream):
     def __init__(self,
                  instream: Stream,
@@ -315,11 +345,15 @@ class Transformer(Stream):
         super().__init__(instream)
         self.func = func
         self.return_exceptions = return_exceptions
+        self._async = is_async(func)
 
-    async def __next__(self):
+    async def _get_next(self):
         z = await self._instream.__anext__()
         try:
-            return self.func(z)
+            if self._async:
+                return await self.func(z)
+            else:
+                return self.func(z)
         except Exception as e:
             if self.return_exceptions:
                 return e
@@ -342,11 +376,7 @@ class ConcurrentTransformer(Stream):
         self._err = []
         self._tasks = []
 
-        if inspect.iscoroutinefunction(func) or (
-            not inspect.isfunction(func)
-            and hasattr(func, '__call__')
-            and inspect.iscoroutinefunction(func.__call__)
-        ):
+        if is_async(func):
             self._async = True
             self._outstream = IterQueue(workers * 8, self._to_shutdown)
             self._start_async()
@@ -407,32 +437,28 @@ class ConcurrentTransformer(Stream):
         ]
 
     def _start_sync(self):
-        def _put_input_in_queue(q_in, q_out):
+        async def _put_input_in_queue(q_in, q_out):
             try:
+                async for x in q_in:
+                    while True:
+                        try:
+                            q_out.put(x, block=False)
+                        except queue.Full:
+                            await asyncio.sleep(q_out.PUT_SLEEP)
                 while True:
                     try:
-                        x = q_in.get_nowait()
-                        if x is q_in.NO_MORE_DATA:
-                            break
-                        q_out.put(x)
-                    except asyncio.QueueEmpty:
-                        time.sleep(q_in.GET_SLEEP)
-                q_out.put_end()
+                        q_out.put_end(block=False)
+                    except queue.Full:
+                        await asyncio.sleep(q_out.PUT_SLEEP)
             except Exception as e:
                 self._err.append(e)
 
-        def _put_output_in_queue(q_in, q_out):
-            return _sync_streamer.transform(
-                q_in, q_out, self.func,
-                self.workers, self.return_exceptions, self._err)
-
-        loop = asyncio.get_running_loop()
         q_in_out = _sync_streamer.IterQueue(
             self.workers * 8, self._to_shutdown)
-        t1 = loop.run_in_executor(None, _put_input_in_queue,
-                                  self._instream, q_in_out)
-        t2 = loop.run_in_executor(None, _put_output_in_queue,
-                                  q_in_out, self._outstream)
+        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in_out))
+        t2 = _sync_streamer.transform(
+            q_in_out, self._outstream, self.func,
+            self.workers, self.return_exceptions, self._err)
         self._tasks = [t1] + t2
 
     def _stop(self):
@@ -448,17 +474,19 @@ class ConcurrentTransformer(Stream):
             if self._err:
                 raise self._err[0]
             if self._async:
-                fut = self._outstream.__anext__()
+                fut = await self._outstream.__anext__()
                 return await fut
             else:
                 while True:
                     try:
                         z = self._outstream.get_nowait()
-                        if z is _sync_streamer.IterQueue.NO_MORE_DATA:
+                        if z is self._outstream.NO_MORE_DATA:
                             raise StopAsyncIteration
                         return z.result()
                     except queue.Empty:
-                        await asyncio.sleep(_sync_streamer.IterQueue.GET_SLEEP)
+                        await asyncio.sleep(self._outstream.GET_SLEEP)
+        except StopAsyncIteration:
+            raise
         except:
             self._stop()
             raise

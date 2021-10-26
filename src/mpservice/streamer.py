@@ -342,8 +342,8 @@ class Stream(collections.abc.Iterator, StreamMixin):
     def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
         return Dropper(self, func)
 
-    def keep_first_n(self, n: int):
-        return Stream(itertools.islice(self, n))
+    def head(self, n: int) -> Head:
+        return Head(self, n)
 
     def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
         '''Take a peek at the data element *before* it is sent
@@ -463,6 +463,18 @@ class Dropper(Stream):
             return z
 
 
+class Head(Stream):
+    def __init__(self, instream: Stream, n: int):
+        super().__init__(instream)
+        assert n >= 0
+        self.n = n
+
+    def _get_next(self):
+        if self.index >= self.n:
+            raise StopIteration
+        return self._instream.__next__()
+
+
 class Peeker(Stream):
     def __init__(self, instream: Stream, func: Callable[[int, T], None]):
         super().__init__(instream)
@@ -496,8 +508,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         super().__init__(maxsize)
         self._to_shutdown = to_shutdown
 
-    def put_end(self):
-        self.put(self.NO_MORE_DATA)
+    def put_end(self, block=True):
+        self.put(self.NO_MORE_DATA, block=block)
 
     def put(self, x, block=True):
         while True:
@@ -575,7 +587,7 @@ class Transformer(Stream):
         self.func = func
         self.return_exceptions = return_exceptions
 
-    def __next__(self):
+    def _get_next(self):
         z = next(self._instream)
         try:
             return self.func(z)

@@ -63,7 +63,6 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='none',
-        workers=1,
         **kwargs,
 ):
     '''
@@ -96,7 +95,7 @@ def make_server(
     else:
         access_log = bool(access_log)
 
-    assert workers == 1
+    workers = 1
 
     config = uvicorn.Config(
         app,
@@ -132,12 +131,6 @@ def make_server(
         supervisor = uvicorn.supervisors.ChangeReload(
             config, target=server.run, sockets=[sock])
         return supervisor
-
-    # if config.workers > 1:
-    #     sock = config.bind_socket()
-    #     supervisor = uvicorn.supervisors.Multiprocess(
-    #         config, target=server.run, sockets=[sock])
-    #     return supervisor
 
     return server
 
