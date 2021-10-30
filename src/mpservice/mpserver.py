@@ -293,6 +293,7 @@ class MPServer(metaclass=ABCMeta):
 
         self.started = 0
         if cpus:
+            # Pin this coordinating thread to the specified CPUs.
             psutil.Process().cpu_affinity(cpus=cpus)
 
     def __del__(self):
@@ -410,7 +411,6 @@ class MPServer(metaclass=ABCMeta):
 
     def async_stream(self, data_stream, *,
                      return_exceptions: bool = False,
-                     output_buffer_size: int = 1024,
                      return_x: bool = False,
                      ):
         # What this method does can be achieved by a Streamer
@@ -418,48 +418,49 @@ class MPServer(metaclass=ABCMeta):
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on the "workers" parameter.
-        async def _enqueue(input_stream, future_stream, return_x):
-            loop = asyncio.get_running_loop()
-            q_ins = self._input_queues()
-            async for x in input_stream:
-                fut = loop.create_future()
-                uid = self._enqueue_future(x, fut)
-
-                # If one input queue is full, then the corresponding
-                # worker is slow. It does not help to enqueue this data
-                # into faster workers sooner. Hence we just enqueue
-                # for the workers one by one.
-                for q in q_ins:
-                    while True:
-                        if not self.started:
-                            return
-                        try:
-                            q.put_nowait((uid, x))
-                            break
-                        except queue.Full:
-                            await asyncio.sleep(0.0013)
-
-                if return_x:
-                    await future_stream.put((x, fut))
-                else:
-                    await future_stream.put(fut)
-
+        assert self.started
         if not isinstance(data_stream, async_streamer.Stream):
             data_stream = async_streamer.Stream(data_stream)
-        q_fut = async_streamer.IterQueue(
-            output_buffer_size, data_stream.in_stream)
-        _ = async_streamer.streamer_task(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
 
-        q_out = async_streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = async_streamer.streamer_task(
-            q_fut, q_out, self._async_stream_dequeue, return_exceptions, return_x)
+        async def _enqueue(x, return_x):
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            uid = self._enqueue_future(x, fut)
 
-        return async_streamer.Stream(q_out)
+            # If one input queue is full, then the corresponding
+            # worker is slow. It does not help to enqueue this data
+            # into faster workers sooner. Hence we just enqueue
+            # for the workers one by one.
+            for q in self._input_queues():
+                while True:
+                    try:
+                        q.put_nowait((uid, x))
+                        break
+                    except queue.Full:
+                        await asyncio.sleep(0.0013)
+
+            if return_x:
+                return x, fut
+            return fut
+
+        futures = data_stream.transform(_enqueue, return_x=return_x,
+                                        return_exceptions=return_exceptions)
+
+        async def _dequeue(x, return_x):
+            if return_x:
+                x, fut = x
+            else:
+                fut = x
+            z = await fut
+            if return_x:
+                return x, z
+            return z
+
+        return futures.transform(_dequeue, return_x=return_x,
+                                 return_exceptions=return_exceptions)
 
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
-               output_buffer_size: int = 1024,
                return_x: bool = False,
                ):
         # What this method does can be achieved by a Streamer
@@ -467,32 +468,40 @@ class MPServer(metaclass=ABCMeta):
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on the "workers" parameter.
-        def _enqueue(input_stream, future_stream, return_x):
-            q_ins = self._input_queues()
-            for x in input_stream:
-                fut = concurrent.futures.Future()
-                uid = self._enqueue_future(x, fut)
-                for q in q_ins:
-                    if not self.started:
-                        return
-                    q.put((uid, x))
-                if return_x:
-                    future_stream.put((x, fut))
-                else:
-                    future_stream.put(fut)
-
+        assert self.started
         if not isinstance(data_stream, streamer.Stream):
-            data_stream = streamer.Stream(
-                data_stream, maxsize=output_buffer_size)
-        q_fut = streamer.IterQueue(output_buffer_size, data_stream.in_stream)
-        _ = streamer.streamer_thread(
-            data_stream.in_stream, q_fut, _enqueue, return_x)
+            data_stream = streamer.Stream(data_stream)
 
-        q_out = streamer.IterQueue(q_fut.maxsize, q_fut)
-        _ = streamer.streamer_thread(
-            q_fut, q_out, self._stream_dequeue, return_exceptions, return_x)
+        def _enqueue(x, return_x):
+            fut = concurrent.futures.Future()
+            uid = self._enqueue_future(x, fut)
+            for q in self._input_queues():
+                while True:
+                    try:
+                        q.put_nowait((uid, x))
+                        break
+                    except queue.Full:
+                        time.sleep(0.0013)
+            if return_x:
+                return x, fut
+            else:
+                return fut
 
-        return streamer.Stream(q_out)
+        futures = data_stream.transform(_enqueue, return_x=return_x,
+                                        return_exceptions=return_exceptions)
+
+        def _dequeue(x, return_x):
+            if return_x:
+                x, fut = x
+            else:
+                fut = x
+            z = fut.result()
+            if return_x:
+                return x, z
+            return z
+
+        return futures.transform(_dequeue, return_x=return_x,
+                                 return_exceptions=return_exceptions)
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -696,56 +705,6 @@ class MPServer(metaclass=ABCMeta):
             raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
         else:
             return z
-
-    async def _async_stream_dequeue(self, q_fut, q_out, return_exceptions, return_x):
-        if return_x:
-            async for x, fut in q_fut:
-                try:
-                    z = await fut
-                    await q_out.put((x, z))
-                except Exception as e:
-                    if return_exceptions:
-                        await q_out.put((x, e))
-                    else:
-                        raise e
-        else:
-            async for fut in q_fut:
-                try:
-                    z = await fut
-                    await q_out.put(z)
-                except Exception as e:
-                    if return_exceptions:
-                        await q_out.put(e)
-                    else:
-                        if isinstance(e, MPError):
-                            logger.error(e.trace_back)
-                        raise e
-
-    def _stream_dequeue(self, q_fut, q_out, return_exceptions, return_x):
-        if return_x:
-            for x, fut in q_fut:
-                try:
-                    z = fut.result()
-                    q_out.put((x, z))
-                except Exception as e:
-                    if return_exceptions:
-                        q_out.put((x, e))
-                    else:
-                        if isinstance(e, MPError):
-                            logger.error(e.trace_back)
-                        raise e
-        else:
-            for fut in q_fut:
-                try:
-                    z = fut.result()
-                    q_out.put(z)
-                except Exception as e:
-                    if return_exceptions:
-                        q_out.put(e)
-                    else:
-                        if isinstance(e, MPError):
-                            logger.error(e.trace_back)
-                        raise e
 
 
 class SequentialServer(MPServer):

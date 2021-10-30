@@ -157,6 +157,7 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 
+import asyncio
 import collections.abc
 import concurrent.futures
 import functools
@@ -508,10 +509,10 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         super().__init__(maxsize)
         self._to_shutdown = to_shutdown
 
-    def put_end(self, block=True):
+    def put_end(self, block: bool = True):
         self.put(self.NO_MORE_DATA, block=block)
 
-    def put(self, x, block=True):
+    def put(self, x, block: bool = True):
         while True:
             try:
                 super().put(x, block=False)
@@ -533,6 +534,17 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                 return z
             except queue.Empty:
                 sleep(self.GET_SLEEP)
+
+    async def __anext__(self):
+        # This is used by `async_streamer`.
+        while True:
+            try:
+                z = self.get_nowait()
+                if z is self.NO_MORE_DATA:
+                    raise StopAsyncIteration
+                return z
+            except queue.Empty:
+                await asyncio.sleep(self.GET_SLEEP)
 
 
 class Buffer(Stream):
@@ -609,6 +621,8 @@ def transform(in_stream: Iterator, out_stream: IterQueue,
                 # result placeholders (Future objects) are
                 # put in the output stream in order.
                 if finished.is_set():
+                    return
+                if err:
                     return
                 try:
                     x = next(in_stream)

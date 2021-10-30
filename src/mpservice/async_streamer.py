@@ -84,7 +84,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
                         async for x in instream:
                             yield x
 
-                    self._instream = foo()
+                    self._instream = foo(instream)
                     # TODO: if `.head()` is called on the current object,
                     # which stops the iteration before the stream is exhausted,
                     # it might cause the "Task was destroyed but it is pending"
@@ -264,7 +264,7 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
     async def put_end(self):
         await self.put(self.NO_MORE_DATA)
 
-    async def put(self, x, block=True):
+    async def put(self, x):
         while True:
             try:
                 super().put_nowait(x)
@@ -272,10 +272,7 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
             except asyncio.QueueFull:
                 if self._to_shutdown.is_set():
                     return
-                if block:
-                    await asyncio.sleep(self.PUT_SLEEP)
-                else:
-                    raise
+                await asyncio.sleep(self.PUT_SLEEP)
 
     async def __anext__(self):
         while True:
@@ -397,6 +394,8 @@ class ConcurrentTransformer(Stream):
                     # put in the output stream in order.
                     if finished.is_set():
                         return
+                    if self._err:
+                        return
                     try:
                         x = await in_stream.__anext__()
                         fut = asyncio.Future()
@@ -443,50 +442,48 @@ class ConcurrentTransformer(Stream):
                     while True:
                         try:
                             q_out.put(x, block=False)
+                            break
                         except queue.Full:
                             await asyncio.sleep(q_out.PUT_SLEEP)
                 while True:
                     try:
                         q_out.put_end(block=False)
+                        break
                     except queue.Full:
                         await asyncio.sleep(q_out.PUT_SLEEP)
             except Exception as e:
                 self._err.append(e)
 
-        q_in_out = _sync_streamer.IterQueue(
-            self.workers * 8, self._to_shutdown)
-        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in_out))
+        q_in = _sync_streamer.IterQueue(self.workers * 8, self._to_shutdown)
+        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in))
         t2 = _sync_streamer.transform(
-            q_in_out, self._outstream, self.func,
+            q_in, self._outstream, self.func,
             self.workers, self.return_exceptions, self._err)
         self._tasks = [t1] + t2
 
-    def _stop(self):
-        for t in self._tasks:
-            _ = t.result()
+    async def _astop(self):
+        if not self._tasks:
+            return
+        if self._async:
+            for t in self._tasks:
+                await t
+        else:
+            await self._tasks[0]
+            for t in self._tasks[1:]:
+                t.join()
         self._tasks = []
-
-    def __del__(self):
-        self._stop()
 
     async def _get_next(self):
         try:
             if self._err:
                 raise self._err[0]
+            fut = await self._outstream.__anext__()
             if self._async:
-                fut = await self._outstream.__anext__()
                 return await fut
             else:
-                while True:
-                    try:
-                        z = self._outstream.get_nowait()
-                        if z is self._outstream.NO_MORE_DATA:
-                            raise StopAsyncIteration
-                        return z.result()
-                    except queue.Empty:
-                        await asyncio.sleep(self._outstream.GET_SLEEP)
-        except StopAsyncIteration:
-            raise
+                while not fut.done():
+                    await asyncio.sleep(IterQueue.GET_SLEEP)
+                return fut.result()
         except:
-            self._stop()
+            await self._astop()
             raise
