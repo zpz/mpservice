@@ -49,8 +49,8 @@ from typing import (
     Iterable, Iterator,
     Tuple, Type)
 
-from . import streamer as _sync_streamer
-from .streamer import is_exception, _default_peek_func, MAX_THREADS
+from . import _streamer as _sync_streamer
+from ._streamer import is_exception, _default_peek_func, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
