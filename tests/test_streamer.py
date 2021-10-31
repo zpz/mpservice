@@ -78,13 +78,13 @@ def test_keep():
     assert s.keep_every_nth(2).collect() == [0, 2, 'a']
 
     s = Stream(data)
-    assert s.keep_first_n(3).collect() == [0, 1, 2]
+    assert s.head(3).collect() == [0, 1, 2]
 
     s = Stream(data)
-    assert s.keep_first_n(4).drop_first_n(3).collect() == [3]
+    assert s.head(4).drop_first_n(3).collect() == [3]
 
     s = Stream(data)
-    assert s.drop_first_n(3).keep_first_n(1).collect() == [3]
+    assert s.drop_first_n(3).head(1).collect() == [3]
 
     s = Stream(data)
     ss = s.keep_random(0.5).collect()
@@ -215,10 +215,10 @@ def test_chain():
         z = Stream(corrupt_data()).transform(process1, workers=2)
         z.drain()
 
-    with pytest.raises(TypeError):
+    with pytest.raises((TypeError, ValueError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
-             .buffer(maxsize=3)
+             .buffer(3)
              .transform(process2, workers=3)
              )
         z.drain()
@@ -226,14 +226,14 @@ def test_chain():
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
-             .buffer(maxsize=2)
+             .buffer(2)
              .transform(process2, workers=3)
              )
         z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
-         .buffer(maxsize=3)
+         .buffer(3)
          .transform(process2, workers=3, return_exceptions=True)
          .peek_every_nth(1))
     print(z.collect())
@@ -241,7 +241,7 @@ def test_chain():
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
-         .buffer(maxsize=3)
+         .buffer(3)
          .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()

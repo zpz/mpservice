@@ -101,13 +101,13 @@ async def test_keep():
     assert await s.keep_every_nth(2).collect() == [0, 2, 'a']
 
     s = Stream(data)
-    assert await s.keep_first_n(3).collect() == [0, 1, 2]
+    assert await s.head(3).collect() == [0, 1, 2]
 
     s = Stream(data)
-    assert await s.keep_first_n(4).drop_first_n(3).collect() == [3]
+    assert await s.head(4).drop_first_n(3).collect() == [3]
 
     s = Stream(data)
-    assert await s.drop_first_n(3).keep_first_n(1).collect() == [3]
+    assert await s.drop_first_n(3).head(1).collect() == [3]
 
     s = Stream(data)
     ss = await s.keep_random(0.5).collect()
@@ -155,6 +155,78 @@ async def test_drain():
 async def test_transform():
 
     async def f1(x):
+        return x + 3.8
+
+    async def f2(x):
+        return x*2
+
+    SYNC_INPUT = list(range(278))
+
+    expected = [v + 3.8 for v in SYNC_INPUT]
+    s = Stream(SYNC_INPUT).transform(f1).collect()
+    assert await s == expected
+
+    expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
+    s = Stream(SYNC_INPUT).transform(f1).transform(f2)
+    assert await s.collect() == expected
+
+    class MySink:
+        def __init__(self):
+            self.result = 0
+
+        async def __call__(self, x):
+            self.result += x * 3
+
+    mysink = MySink()
+    s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
+    n = await s.drain()
+    assert n == len(SYNC_INPUT)
+
+    got = mysink.result
+    expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
+    assert math.isclose(got, expected)
+
+
+@pytest.mark.asyncio
+async def test_transform_sync():
+
+    def f1(x):
+        return x + 3.8
+
+    def f2(x):
+        return x*2
+
+    SYNC_INPUT = list(range(278))
+
+    expected = [v + 3.8 for v in SYNC_INPUT]
+    s = Stream(SYNC_INPUT).transform(f1).collect()
+    assert await s == expected
+
+    expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
+    s = Stream(SYNC_INPUT).transform(f1).transform(f2)
+    assert await s.collect() == expected
+
+    class MySink:
+        def __init__(self):
+            self.result = 0
+
+        def __call__(self, x):
+            self.result += x * 3
+
+    mysink = MySink()
+    s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
+    n = await s.drain()
+    assert n == len(SYNC_INPUT)
+
+    got = mysink.result
+    expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
+    assert math.isclose(got, expected)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_transform():
+
+    async def f1(x):
         await asyncio.sleep(random.random() * 0.01)
         return x + 3.8
 
@@ -198,8 +270,7 @@ async def test_transform():
 
 
 @pytest.mark.asyncio
-async def test_transform_sync():
-
+async def test_concurrent_transform_sync():
     def f1(x):
         time.sleep(random.random() * 0.01)
         return x + 3.8
@@ -244,7 +315,7 @@ async def test_transform_sync():
 
 
 @pytest.mark.asyncio
-async def test_transform_with_error():
+async def test_concurrent_transform_with_error():
     data = [1, 2, 3, 4, 5, 'a', 6, 7]
 
     async def corrupt_data():
@@ -291,7 +362,7 @@ async def test_chain():
         z = Stream(corrupt_data()).transform(process1, workers=2)
         await z.drain()
 
-    with pytest.raises(TypeError):
+    with pytest.raises((TypeError, ValueError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
              .buffer(maxsize=3)
@@ -345,7 +416,7 @@ async def test_chain_sync():
         z = Stream(corrupt_data()).transform(process1, workers=2)
         await z.drain()
 
-    with pytest.raises(TypeError):
+    with pytest.raises((ValueError, TypeError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
              .buffer(maxsize=3)

@@ -28,6 +28,8 @@ def full_class_name(cls):
 #   https://stackoverflow.com/questions/6126007/python-getting-a-traceback-from-a-multiprocessing-process
 # about pickling Exceptions with tracebacks.
 
+# See also: boltons.tbutils
+
 
 class MPError(Exception):
     # An object of this class can be properly pickled

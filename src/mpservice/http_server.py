@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import sys
 from typing import Union
 
 import uvicorn  # type: ignore
@@ -50,7 +49,7 @@ class ShutdownMiddleware:
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets
 
 
-async def stop_app(request):
+async def stop_starlette_server(request):
     return SHUTDOWN_RESPONSE
 
 
@@ -64,7 +63,6 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='none',
-        shutdown_path='/stop',
         **kwargs,
 ):
     '''
@@ -85,7 +83,7 @@ def make_server(
     '''
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()
-    assert log_level in ('debug', 'info', 'warning')
+    assert log_level in ('debug', 'info', 'warning', 'error')
 
     if debug is None:
         debug = log_level == 'debug'
@@ -97,6 +95,8 @@ def make_server(
     else:
         access_log = bool(access_log)
 
+    workers = 1
+
     config = uvicorn.Config(
         app,
         host='0.0.0.0',
@@ -106,7 +106,7 @@ def make_server(
         debug=debug,
         log_level=log_level,
         loop=loop,
-        workers=1,  # Fix at 1 for the `mpservice` usage.
+        workers=workers,
         reload=debug and isinstance(app, str),
         **kwargs)
     server = uvicorn.Server(config=config)
@@ -116,22 +116,11 @@ def make_server(
 
     config.loaded_app = ShutdownMiddleware(config.loaded_app, server)
 
-    if shutdown_path is not None:
-        # Add the `stop` endpoint.
-        a = config.loaded_app
-        while not isinstance(a, Starlette):
-            a = a.app
-        for r in a.router.routes:
-            if r.path == shutdown_path:
-                raise Exception(f"path '{shutdown_path}' is alreayd used")
-        a.add_route(shutdown_path, stop_app, ['GET', 'POST'])
-
-    if (config.reload or config.workers > 1) and not isinstance(app, str):
-        logging.getLogger('uvicorn.error').warning(
-            'You must pass the application as an import string to enable '
-            '"reload" or "workers"'
-        )
-        sys.exit(1)
+    # if config.reload and not isinstance(app, str):
+    #     logging.getLogger('uvicorn.error').warning(
+    #         'You must pass the application as an import string to enable "reload"'
+    #     )
+    #     sys.exit(1)
 
     # `workers > 1` is not used in my use case and
     # is likely broken.
@@ -142,12 +131,6 @@ def make_server(
         supervisor = uvicorn.supervisors.ChangeReload(
             config, target=server.run, sockets=[sock])
         return supervisor
-
-    # if config.workers > 1:
-    #     sock = config.bind_socket()
-    #     supervisor = uvicorn.supervisors.Multiprocess(
-    #         config, target=server.run, sockets=[sock])
-    #     return supervisor
 
     return server
 
