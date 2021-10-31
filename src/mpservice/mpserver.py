@@ -291,7 +291,9 @@ class MPServer(metaclass=ABCMeta):
         self.max_queue_size = max_queue_size or 1024
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+
         self._t_gather_results: threading.Thread = None  # type: ignore
+
         self._servlets: List[mp.Process] = []
         self._uid_to_futures = {}
 
@@ -341,6 +343,7 @@ class MPServer(metaclass=ABCMeta):
 
         self._t_gather_results.join()
         self._t_gather_results = None
+
         for m in self._servlets:
             # if m.is_alive():
             m.terminate()
@@ -664,7 +667,7 @@ class MPServer(metaclass=ABCMeta):
                 raise TotalTimeout(
                     f'waited {time.perf_counter() - t0} seconds')
             await asyncio.sleep(self.SLEEP_DEQUEUE)
-        # await asyncio.wait_for(fut, timeout=t0 + total_timeout - loop.time())
+        # await asyncio.wait_for(fut, timeout=t0 + total_timeout - time.perf_counter())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
         return fut.result()

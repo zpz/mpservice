@@ -4,6 +4,7 @@ Release 0.9.1
 - Rewrite `streamer` and `async_streamer` to avoid queues in simple "pass-through" ops, such as `drop_if`, `log_exceptions`.
 - Minor improvements to `http_server`.
 - Possible bug fix related to `total_timeout`.
+- Added new module `background_task`.
 
 
 Release 0.9.0
