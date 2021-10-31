@@ -162,7 +162,6 @@ import collections.abc
 import concurrent.futures
 import functools
 import inspect
-import itertools
 import logging
 import multiprocessing
 import queue
@@ -202,6 +201,9 @@ def _default_peek_func(i, x):
 class StreamMixin:
     def drop_exceptions(self):
         return self.drop_if(lambda i, x: is_exception(x))
+
+    def drop_nones(self):
+        return self.drop_if(lambda i, x: x is None)
 
     def drop_first_n(self, n: int):
         assert n >= 0

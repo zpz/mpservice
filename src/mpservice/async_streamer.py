@@ -44,9 +44,8 @@ import inspect
 import logging
 import queue
 import threading
-import time
 from typing import (
-    Callable, TypeVar, Optional, Union,
+    Awaitable, Callable, TypeVar, Optional, Union,
     Iterable, Iterator,
     Tuple, Type)
 
@@ -165,7 +164,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
         return Buffer(self, maxsize)
 
     def transform(self,
-                  func: Callable[[T], TT],
+                  func: Callable[[T], Union[TT, Awaitable[TT]]],
                   *,
                   workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
@@ -325,6 +324,8 @@ class Buffer(Stream):
 
 
 def is_async(func):
+    while isinstance(func, functools.partial):
+        func = func.func
     return inspect.iscoroutinefunction(func) or (
         not inspect.isfunction(func)
         and hasattr(func, '__call__')

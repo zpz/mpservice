@@ -3,6 +3,7 @@ import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
+from starlette.testclient import TestClient
 from mpservice.http_server import SHUTDOWN_MSG, stop_starlette_server, run_local_app, run_app
 
 
@@ -49,7 +50,7 @@ async def test_shutdown(app):
             assert response.status_code == 202
             print('server state tasks:', server.server_state.tasks)
 
-            response = await client.get(url + '/stop')
+            response = await client.post(url + '/stop')
             assert response.status_code == 200
             assert response.text == SHUTDOWN_MSG
             print('server state tasks:', server.server_state.tasks)
@@ -57,6 +58,16 @@ async def test_shutdown(app):
             with pytest.raises(httpx.ConnectError):
                 response = await client.get(url + '/simple1')
                 assert response.status_code == 201
+
+
+def test_testclient(app):
+    with TestClient(app) as client:
+        response = client.get('/simple1')
+        assert response.status_code == 201
+        assert response.text == '1'
+        response = client.get('/simple2')
+        assert response.status_code == 202
+        assert response.json() == {'result': 2}
 
 
 @pytest.mark.asyncio
@@ -75,14 +86,12 @@ async def test_mp(app):
         assert response.status_code == 202
         assert response.json() == {'result': 2}
 
-        response = await client.get(url + '/stop')
+        response = await client.post(url + '/stop')
         assert response.status_code == 200
         assert response.text == SHUTDOWN_MSG
 
-        # TODO: 'Future exception was never retrieved' error
-        # during `make-release`.
-        # with pytest.raises(httpx.ConnectError):
-        #     response = await client.get(url + '/simple1')
-        #     assert response.status_code == 201
+        with pytest.raises(httpx.ConnectError):
+            response = await client.get(url + '/simple1')
+            assert response.status_code == 201
 
         process.join()
