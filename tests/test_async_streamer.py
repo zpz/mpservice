@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from mpservice.async_streamer import Stream
-from mpservice.streamer import _default_peek_func
+from mpservice._async_streamer import Stream
+from mpservice._streamer import _default_peek_func
 
 
 @pytest.mark.asyncio

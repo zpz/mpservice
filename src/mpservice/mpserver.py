@@ -70,7 +70,6 @@ import psutil  # type: ignore
 
 from .mperror import MPError
 from . import streamer
-from . import async_streamer
 
 
 logger = logging.getLogger(__name__)
@@ -276,6 +275,11 @@ class MPServer(metaclass=ABCMeta):
     # with some enhancements related to data sharing between
     # processes.
 
+    SLEEP_ENQUEUE = 0.00015
+    SLEEP_DEQUEUE = 0.00011
+    TIMEOUT_ENQUEUE = 1
+    TIMEOUT_TOTAL = 10
+
     def __init__(self, *,
                  max_queue_size: int = None,
                  cpus: Sequence[int] = None,
@@ -287,7 +291,9 @@ class MPServer(metaclass=ABCMeta):
         self.max_queue_size = max_queue_size or 1024
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+
         self._t_gather_results: threading.Thread = None  # type: ignore
+
         self._servlets: List[mp.Process] = []
         self._uid_to_futures = {}
 
@@ -325,7 +331,7 @@ class MPServer(metaclass=ABCMeta):
             k += 1
             logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_results = threading.Thread(target=self.gather_results)
+        self._t_gather_results = threading.Thread(target=self._gather_results)
         self._t_gather_results.start()
 
     def stop(self):
@@ -337,6 +343,7 @@ class MPServer(metaclass=ABCMeta):
 
         self._t_gather_results.join()
         self._t_gather_results = None
+
         for m in self._servlets:
             # if m.is_alive():
             m.terminate()
@@ -344,17 +351,6 @@ class MPServer(metaclass=ABCMeta):
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
-
-    def gather_results(self):
-        # This is not a "public" method in that end-user
-        # should not call this method. But this is an important
-        # top-level method.
-        while True:
-            if not self.started:
-                return
-            self._gather_output()
-            self._gather_error()
-            time.sleep(0.0013)
 
     async def async_call(self,
                          x,
@@ -365,20 +361,13 @@ class MPServer(metaclass=ABCMeta):
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
         )
-
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        uid = self._enqueue_future(x, fut)
-
-        time0 = loop.time()
-
-        await self._async_call_enqueue(
-            x=x, uid=uid, fut=fut, qs=self._input_queues(),
-            t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
-
+        time0 = time.perf_counter()
+        uid, fut = await self._async_call_enqueue(
+            x, qs=self._input_queues(),
+            t0=time0, enqueue_timeout=enqueue_timeout)
         return await self._async_call_wait_for_result(
             uid=uid, fut=fut,
-            t0=time0, total_timeout=total_timeout, loop=loop)
+            t0=time0, total_timeout=total_timeout)
 
     def call(self,
              x,
@@ -398,40 +387,30 @@ class MPServer(metaclass=ABCMeta):
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
         )
 
-        fut = concurrent.futures.Future()
-        uid = self._enqueue_future(x, fut)
-
         time0 = time.perf_counter()
-
-        self._call_enqueue(x=x, uid=uid, fut=fut, qs=self._input_queues(),
-                           t0=time0, enqueue_timeout=enqueue_timeout)
-
+        uid, fut = self._call_enqueue(
+            x, qs=self._input_queues(),
+            t0=time0, enqueue_timeout=enqueue_timeout)
         return self._call_wait_for_result(
             uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
 
     def async_stream(self, data_stream, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
-                     enqueue_timeout=None,
-                     total_timeout=None,
                      ):
         # What this method does can be achieved by a Streamer
         # using `self.async_call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on the "workers" parameter.
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
+
+        enqueue_timeout, total_timeout = self._resolve_timeout()
 
         async def _enqueue(x, return_x):
-            loop = asyncio.get_running_loop()
-            fut = loop.create_future()
-            uid = self._enqueue_future(x, fut)
             time0 = time.perf_counter()
-            await self._async_call_enqueue(
-                x=x, uid=uid, fut=fut, qs=self._input_queues(),
-                t0=time0, enqueue_timeout=enqueue_timeout, loop=loop)
+            uid, fut = await self._async_call_enqueue(
+                x, qs=self._input_queues(),
+                t0=time0, enqueue_timeout=enqueue_timeout)
             if return_x:
                 return x, fut, uid
             else:
@@ -442,17 +421,16 @@ class MPServer(metaclass=ABCMeta):
                 x, fut, uid = x
             else:
                 fut, uid = x
-            loop = asyncio.get_running_loop()
             time0 = time.perf_counter()
             z = await self._async_call_wait_for_result(
                 uid=uid, fut=fut,
-                t0=time0, total_timeout=total_timeout, loop=loop)
+                t0=time0, total_timeout=total_timeout)
             if return_x:
                 return x, z
             return z
 
-        if not isinstance(data_stream, async_streamer.Stream):
-            data_stream = async_streamer.Stream(data_stream)
+        if not isinstance(data_stream, streamer.AsyncStream):
+            data_stream = streamer.AsyncStream(data_stream)
 
         return data_stream.transform(
             _enqueue, return_x=return_x,
@@ -463,34 +441,35 @@ class MPServer(metaclass=ABCMeta):
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                return_x: bool = False,
-               enqueue_timeout=None,
-               total_timeout=None,
                ):
         # What this method does can be achieved by a Streamer
         # using `self.call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on the "workers" parameter.
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
-        )
+
+        enqueue_timeout, total_timeout = self._resolve_timeout()
 
         def _enqueue(x, return_x):
             fut = concurrent.futures.Future()
-            uid = self._enqueue_future(x, fut)
             time0 = time.perf_counter()
-            self._call_enqueue(x=x, uid=uid, fut=fut, qs=self._input_queues(),
-                               t0=time0, enqueue_timeout=enqueue_timeout)
+            uid, fut = self._call_enqueue(
+                x, qs=self._input_queues(),
+                t0=time0, enqueue_timeout=enqueue_timeout)
             if return_x:
-                return x, fut
+                return x, uid, fut
             else:
-                return fut
+                return uid, fut
 
         def _dequeue(x, return_x):
             if return_x:
-                x, fut = x
+                x, uid, fut = x
             else:
-                fut = x
+                uid, fut = x
+            time0 = time.perf_counter()
+            z = self._call_wait_for_result(
+                uid=uid, fut=fut,
+                t0=time0, total_timeout=total_timeout)
             z = fut.result()
             if return_x:
                 return x, z
@@ -588,11 +567,11 @@ class MPServer(metaclass=ABCMeta):
                          total_timeout: float = None):
 
         if enqueue_timeout is None:
-            enqueue_timeout = 1
+            enqueue_timeout = self.TIMEOUT_ENQUEUE
         elif enqueue_timeout < 0:
             enqueue_timeout = 0
         if total_timeout is None:
-            total_timeout = max(10, enqueue_timeout * 10)
+            total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
         else:
             assert total_timeout > 0, "total_timeout must be > 0"
         if enqueue_timeout > total_timeout:
@@ -613,6 +592,17 @@ class MPServer(metaclass=ABCMeta):
     @abstractmethod
     def _input_queues(self):
         raise NotImplementedError
+
+    def _gather_results(self):
+        # This is not a "public" method in that end-user
+        # should not call this method. But this is an important
+        # top-level method.
+        while True:
+            if not self.started:
+                return
+            self._gather_output()
+            self._gather_error()
+            time.sleep(self.SLEEP_DEQUEUE)
 
     @abstractmethod
     def _gather_output(self):
@@ -641,47 +631,11 @@ class MPServer(metaclass=ABCMeta):
                     raise
             # No sleep. Get results out of the queue as quickly as possible.
 
-    async def _async_call_enqueue(self, *, x, uid, fut, qs, t0, enqueue_timeout, loop):
-        t1 = t0 + enqueue_timeout
-        for iq, q in enumerate(qs):
-            while True:
-                if not self.started:
-                    return
-                try:
-                    q.put_nowait((uid, x))
-                    break
-                except queue.Full:
-                    timenow = loop.time()
-                    if timenow < t1:
-                        await asyncio.sleep(0.0001)
-                    else:
-                        fut.cancel()
-                        del self._uid_to_futures[uid]
-                        raise EnqueueTimeout(
-                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+    async def _async_call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        uid = self._enqueue_future(x, fut)
 
-    async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout, loop):
-        try:
-            t1 = t0 + total_timeout
-            while not fut.done():
-                if loop.time() > t1:
-                    raise asyncio.TimeoutError
-                await asyncio.sleep(0.0001)
-            # await asyncio.wait_for(fut, timeout=t0 + total_timeout - loop.time())
-            # NOTE: `asyncio.wait_for` seems to be blocking for the
-            # `timeout` even after result is available.
-            return fut.result()
-            # This could raise MPError.
-        except asyncio.TimeoutError:
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
-                # `uid` could have been deleted by
-                # `gather_results` during very subtle
-                # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {loop.time() - t0} seconds')
-
-    def _call_enqueue(self, *, x, uid, fut, qs, t0, enqueue_timeout):
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
@@ -693,27 +647,68 @@ class MPServer(metaclass=ABCMeta):
                 except queue.Full:
                     timenow = time.perf_counter()
                     if timenow < t1:
-                        time.sleep(0.00089)
+                        await asyncio.sleep(self.SLEEP_ENQUEUE)
                     else:
                         fut.cancel()
                         del self._uid_to_futures[uid]
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
+        return uid, fut
 
-    def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
-        try:
-            z = fut.result(timeout=t0 + total_timeout - time.perf_counter())
-            # This could raise MPError.
-        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
-            # `fut` is now cancelled.
-            if uid in self._uid_to_futures:
+    async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout):
+        t1 = t0 + total_timeout
+        while not fut.done():
+            if time.perf_counter() > t1:
+                fut.cancel()
+                self._uid_to_futures.pop(uid, None)
                 # `uid` could have been deleted by
                 # `gather_results` during very subtle
                 # timing coincidence.
-                del self._uid_to_futures[uid]
-            raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
-        else:
-            return z
+                raise TotalTimeout(
+                    f'waited {time.perf_counter() - t0} seconds')
+            await asyncio.sleep(self.SLEEP_DEQUEUE)
+        # await asyncio.wait_for(fut, timeout=t0 + total_timeout - time.perf_counter())
+        # NOTE: `asyncio.wait_for` seems to be blocking for the
+        # `timeout` even after result is available.
+        return fut.result()
+        # This could raise MPError.
+
+    def _call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+        fut = concurrent.futures.Future()
+        uid = self._enqueue_future(x, fut)
+
+        t1 = t0 + enqueue_timeout
+        for iq, q in enumerate(qs):
+            while True:
+                if not self.started:
+                    return
+                try:
+                    q.put_nowait((uid, x))
+                    break
+                except queue.Full:
+                    timenow = time.perf_counter()
+                    if timenow < t1:
+                        time.sleep(self.SLEEP_ENQUEUE)
+                    else:
+                        fut.cancel()
+                        del self._uid_to_futures[uid]
+                        raise EnqueueTimeout(
+                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+        return uid, fut
+
+    def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
+        t1 = t0 + total_timeout
+        while not fut.done():
+            if time.perf_counter() > t1:
+                fut.cancel()
+                self._uid_to_futures.pop(uid, None)
+                # `uid` could have been deleted by
+                # `gather_results` during very subtle
+                # timing coincidence.
+                raise TotalTimeout(
+                    f'waited {time.perf_counter() - t0} seconds')
+            time.sleep(self.SLEEP_DEQUEUE)
+        return fut.result()
 
 
 class SequentialServer(MPServer):

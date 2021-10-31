@@ -7,8 +7,7 @@ from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout,
 )
-from mpservice.streamer import Stream
-from mpservice.async_streamer import Stream as AsyncStream
+from mpservice.streamer import Stream, AsyncStream
 
 
 class Scale(Servlet):
