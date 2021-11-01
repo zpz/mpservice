@@ -53,10 +53,16 @@ class Task:
 
 class BackgroundTask(ABC):
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
+        self._own_executor = False
         if executor is None:
             executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
+            self._own_executor = True
         self._executor = executor
         self._tasks = {}
+
+    def __del__(self):
+        if self._own_executor:
+            self._own_executor.shutdown()
 
     @classmethod
     @abstractmethod
