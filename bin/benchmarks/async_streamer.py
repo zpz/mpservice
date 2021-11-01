@@ -1,6 +1,6 @@
 import asyncio
 import time
-from mpservice.async_streamer import Stream
+from mpservice.streamer import AsyncStream as Stream
 
 NX = 100
 
@@ -57,7 +57,7 @@ async def chained(workers, f1, f2):
     s = (
         Stream(data())
         .transform(f1, workers=workers)
-        .buffer(maxsize=30)
+        .buffer(30)
         .transform(f2, workers=workers)
     )
 

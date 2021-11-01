@@ -398,7 +398,7 @@ class MPServer(metaclass=ABCMeta):
                      return_exceptions: bool = False,
                      return_x: bool = False,
                      ):
-        # What this method does can be achieved by a Streamer
+        # What this method does can be achieved by a streamer.AsyncStream
         # using `self.async_call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
@@ -442,7 +442,7 @@ class MPServer(metaclass=ABCMeta):
                return_exceptions: bool = False,
                return_x: bool = False,
                ):
-        # What this method does can be achieved by a Streamer
+        # What this method does can be achieved by a streamer.Stream
         # using `self.call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
