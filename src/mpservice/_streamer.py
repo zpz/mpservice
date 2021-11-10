@@ -535,8 +535,6 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopIteration
                 return z
             except queue.Empty:
-                if self._to_shutdown.is_set():
-                    return
                 sleep(self.GET_SLEEP)
 
     async def __anext__(self):
@@ -548,8 +546,6 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopAsyncIteration
                 return z
             except queue.Empty:
-                if self._to_shutdown.is_set():
-                    return
                 await asyncio.sleep(self.GET_SLEEP)
 
 
@@ -569,14 +565,14 @@ class Buffer(Stream):
                 for v in instream:
                     q.put(v)
                     if self._to_shutdown.is_set():
-                        return
+                        break
                 q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
-                self._to_shutdown.set()
                 self._err = e
+                self._to_shutdown.set()
 
         self._thread = threading.Thread(
             target=foo, args=(self._instream, self._q))
@@ -594,8 +590,6 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
-        if self._to_shutdown.is_set():
-            return
         return next(self._q)
 
 

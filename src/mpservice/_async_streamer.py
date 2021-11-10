@@ -281,8 +281,6 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
                     raise StopAsyncIteration
                 return z
             except asyncio.QueueEmpty:
-                if self._to_shutdown.is_set():
-                    return
                 await asyncio.sleep(self.GET_SLEEP)
 
 
@@ -302,14 +300,14 @@ class Buffer(Stream):
                 async for v in instream:
                     await q.put(v)
                     if self._to_shutdown.is_set():
-                        return
+                        break
                 await q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
-                self._to_shutdown.set()
                 self._err = e
+                self._to_shutdown.set()
 
         self._task = asyncio.create_task(foo(self._instream, self._q))
 
@@ -325,8 +323,6 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
-        if self._to_shutdown.is_set():
-            return
         return await self._q.__anext__()
 
 
