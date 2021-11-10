@@ -25,6 +25,9 @@ class Task:
     def done(self) -> bool:
         return self._task_info['fut'].done()
 
+    def cancelled(self) -> bool:
+        return self._task_info['fut'].cancelled()
+
     def result(self):
         if self._task_info['fut'].done():
             self._task_info['callers'] -= 1

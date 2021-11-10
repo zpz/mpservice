@@ -12,7 +12,7 @@ in a "chained" fashion:
     pipeline = (
         Stream(data)
         .batch(10)
-        .transform(my_op_that_takes_stream_of_batches, workers=4)
+        .transform(my_op_that_takes_a_batch, workers=4)
         .unbatch()
         )
 
@@ -281,13 +281,15 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
                     raise StopAsyncIteration
                 return z
             except asyncio.QueueEmpty:
+                if self._to_shutdown.is_set():
+                    return
                 await asyncio.sleep(self.GET_SLEEP)
 
 
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
-        assert 1 <= 10_000
+        assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = IterQueue(maxsize, self._to_shutdown)
         self._err = None
@@ -299,11 +301,14 @@ class Buffer(Stream):
             try:
                 async for v in instream:
                     await q.put(v)
+                    if self._to_shutdown.is_set():
+                        return
                 await q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
+                self._to_shutdown.set()
                 self._err = e
 
         self._task = asyncio.create_task(foo(self._instream, self._q))
@@ -320,6 +325,8 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
+        if self._to_shutdown.is_set():
+            return
         return await self._q.__anext__()
 
 

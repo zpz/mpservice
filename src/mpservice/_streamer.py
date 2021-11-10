@@ -20,7 +20,7 @@ its methods in a "chained" fashion:
     pipeline = (
         Stream(data)
         .batch(10)
-        .transform(my_op_that_takes_stream_of_batches, workers=4)
+        .transform(my_op_that_takes_a_batch, workers=4)
         .unbatch()
         )
 
@@ -508,7 +508,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         the upstream share an `Event` object that indicates either queue
         has stopped working, either deliberately or by exception.
         '''
-        super().__init__(maxsize)
+        super().__init__(maxsize + 1)
         self._to_shutdown = to_shutdown
 
     def put_end(self, block: bool = True):
@@ -535,6 +535,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopIteration
                 return z
             except queue.Empty:
+                if self._to_shutdown.is_set():
+                    return
                 sleep(self.GET_SLEEP)
 
     async def __anext__(self):
@@ -546,13 +548,15 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopAsyncIteration
                 return z
             except queue.Empty:
+                if self._to_shutdown.is_set():
+                    return
                 await asyncio.sleep(self.GET_SLEEP)
 
 
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
-        assert 1 <= 10_000
+        assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = IterQueue(maxsize, self._to_shutdown)
         self._err = None
@@ -564,11 +568,14 @@ class Buffer(Stream):
             try:
                 for v in instream:
                     q.put(v)
+                    if self._to_shutdown.is_set():
+                        return
                 q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
+                self._to_shutdown.set()
                 self._err = e
 
         self._thread = threading.Thread(
@@ -587,6 +594,8 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
+        if self._to_shutdown.is_set():
+            return
         return next(self._q)
 
 
