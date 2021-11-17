@@ -12,7 +12,7 @@ in a "chained" fashion:
     pipeline = (
         Stream(data)
         .batch(10)
-        .transform(my_op_that_takes_stream_of_batches, workers=4)
+        .transform(my_op_that_takes_a_batch, workers=4)
         .unbatch()
         )
 
@@ -169,6 +169,11 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
                   workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
+        '''
+        When `workers = N > 0`, the worker threads (if `func` is sync)
+        or tasks (if `func` is async) are named 'transformer-0',
+        'transformer-1',..., 'transformer-<N-1>'.
+        '''
         if func_args:
             func = functools.partial(func, **func_args)
 
@@ -189,13 +194,17 @@ class Batcher(Stream):
         super().__init__(instream)
         assert 1 < batch_size <= 10_000
         self.batch_size = batch_size
+        self._done = False
 
     async def _get_next(self):
+        if self._done:
+            raise StopAsyncIteration
         batch = []
         for _ in range(self.batch_size):
             try:
                 batch.append(await self._instream.__anext__())
             except StopAsyncIteration:
+                self._done = True
                 break
         if batch:
             return batch
@@ -287,7 +296,7 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
-        assert 1 <= 10_000
+        assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = IterQueue(maxsize, self._to_shutdown)
         self._err = None
@@ -299,12 +308,15 @@ class Buffer(Stream):
             try:
                 async for v in instream:
                     await q.put(v)
+                    if self._to_shutdown.is_set():
+                        break
                 await q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
                 self._err = e
+                self._to_shutdown.set()
 
         self._task = asyncio.create_task(foo(self._instream, self._q))
 
@@ -425,15 +437,17 @@ class ConcurrentTransformer(Stream):
         finished = asyncio.Event()
 
         self._tasks = [
-            asyncio.create_task(_process(
-                self._instream,
-                self._outstream,
-                self.func,
-                lock,
-                finished,
-                self.return_exceptions,
-            ))
-            for _ in range(self.workers)
+            asyncio.create_task(
+                _process(
+                    self._instream,
+                    self._outstream,
+                    self.func,
+                    lock,
+                    finished,
+                    self.return_exceptions),
+                name=f'transformer-{i}',
+            )
+            for i in range(self.workers)
         ]
 
     def _start_sync(self):

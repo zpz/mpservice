@@ -10,7 +10,7 @@ Utilities for Python concurrency, including
 
 - Stream processing, i.e. processing a long, possibly infinite stream
   of input data, with multiple operators in the pipeline. A main use case
-  if that one or more of the operators is I/O bound (think: calling an external
+  is that one or more of the operators is I/O bound (think: calling an external
   service), hence can benefit from concurrency. Both sync and async interfaces
   are provided.
   

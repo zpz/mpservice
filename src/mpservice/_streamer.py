@@ -20,7 +20,7 @@ its methods in a "chained" fashion:
     pipeline = (
         Stream(data)
         .batch(10)
-        .transform(my_op_that_takes_stream_of_batches, workers=4)
+        .transform(my_op_that_takes_a_batch, workers=4)
         .unbatch()
         )
 
@@ -406,6 +406,9 @@ class Stream(collections.abc.Iterator, StreamMixin):
 
         `workers=0` and `workers=1` are different. The latter runs the
         transformer in a separate thread whereas the former runs "inline".
+
+        When `workers = N > 0`, the worker threads are named 'transformer-0',
+        'transformer-1',..., 'transformer-<N-1>'.
         '''
         if func_args:
             func = functools.partial(func, **func_args)
@@ -427,13 +430,17 @@ class Batcher(Stream):
         super().__init__(instream)
         assert 1 < batch_size <= 10_000
         self.batch_size = batch_size
+        self._done = False
 
     def _get_next(self):
+        if self._done:
+            raise StopIteration
         batch = []
         for _ in range(self.batch_size):
             try:
                 batch.append(next(self._instream))
             except StopIteration:
+                self._done = True
                 break
         if batch:
             return batch
@@ -508,7 +515,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         the upstream share an `Event` object that indicates either queue
         has stopped working, either deliberately or by exception.
         '''
-        super().__init__(maxsize)
+        super().__init__(maxsize + 1)
         self._to_shutdown = to_shutdown
 
     def put_end(self, block: bool = True):
@@ -552,7 +559,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
-        assert 1 <= 10_000
+        assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = IterQueue(maxsize, self._to_shutdown)
         self._err = None
@@ -564,12 +571,15 @@ class Buffer(Stream):
             try:
                 for v in instream:
                     q.put(v)
+                    if self._to_shutdown.is_set():
+                        break
                 q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
                 self._err = e
+                self._to_shutdown.set()
 
         self._thread = threading.Thread(
             target=foo, args=(self._instream, self._q))
@@ -587,7 +597,8 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
-        return next(self._q)
+        z = next(self._q)
+        return z
 
 
 class Transformer(Stream):
@@ -656,10 +667,11 @@ def transform(in_stream: Iterator, out_stream: IterQueue,
     tasks = [
         threading.Thread(
             target=_process,
+            name=f'transformer-{i}',
             args=(in_stream, out_stream, func, lock,
                   finished, return_exceptions),
         )
-        for _ in range(workers)
+        for i in range(workers)
     ]
     for t in tasks:
         t.start()

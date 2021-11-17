@@ -25,6 +25,9 @@ class Task:
     def done(self) -> bool:
         return self._task_info['fut'].done()
 
+    def cancelled(self) -> bool:
+        return self._task_info['fut'].cancelled()
+
     def result(self):
         if self._task_info['fut'].done():
             self._task_info['callers'] -= 1
@@ -53,10 +56,16 @@ class Task:
 
 class BackgroundTask(ABC):
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
+        self._own_executor = False
         if executor is None:
             executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
+            self._own_executor = True
         self._executor = executor
         self._tasks = {}
+
+    def __del__(self):
+        if self._own_executor:
+            self._executor.shutdown()
 
     @classmethod
     @abstractmethod

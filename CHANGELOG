@@ -1,3 +1,11 @@
+Release 0.9.3
+=============
+
+- Bug fix in `streamer.{Stream, AsyncStream}.batch`.
+- Change Python version requirement from 3.7 to 3.8, due to the use of
+  parameter `name` in `asyncio.create_task`.
+
+
 Release 0.9.2
 =============
 

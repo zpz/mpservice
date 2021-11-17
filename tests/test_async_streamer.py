@@ -71,6 +71,13 @@ async def test_buffer():
 
 
 @pytest.mark.asyncio
+async def test_buffer_batch():
+    s = Stream(range(19)).buffer(10).batch(5)
+    n = await s.unbatch().log_every_nth(1).drain()
+    assert n == 19
+
+
+@pytest.mark.asyncio
 async def test_drop():
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
 
