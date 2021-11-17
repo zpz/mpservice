@@ -406,6 +406,9 @@ class Stream(collections.abc.Iterator, StreamMixin):
 
         `workers=0` and `workers=1` are different. The latter runs the
         transformer in a separate thread whereas the former runs "inline".
+
+        When `workers = N > 0`, the worker threads are named 'transformer-0',
+        'transformer-1',..., 'transformer-<N-1>'.
         '''
         if func_args:
             func = functools.partial(func, **func_args)
@@ -427,13 +430,17 @@ class Batcher(Stream):
         super().__init__(instream)
         assert 1 < batch_size <= 10_000
         self.batch_size = batch_size
+        self._done = False
 
     def _get_next(self):
+        if self._done:
+            raise StopIteration
         batch = []
         for _ in range(self.batch_size):
             try:
                 batch.append(next(self._instream))
             except StopIteration:
+                self._done = True
                 break
         if batch:
             return batch
@@ -590,7 +597,8 @@ class Buffer(Stream):
         if self._err is not None:
             self._stop()
             raise self._err
-        return next(self._q)
+        z = next(self._q)
+        return z
 
 
 class Transformer(Stream):
@@ -659,10 +667,11 @@ def transform(in_stream: Iterator, out_stream: IterQueue,
     tasks = [
         threading.Thread(
             target=_process,
+            name=f'transformer-{i}',
             args=(in_stream, out_stream, func, lock,
                   finished, return_exceptions),
         )
-        for _ in range(workers)
+        for i in range(workers)
     ]
     for t in tasks:
         t.start()

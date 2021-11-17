@@ -136,10 +136,6 @@ def make_server(
 
 
 def run_app(app, **kwargs):
-    # For tests, run this in a subprocess and call the service
-    # from the main or another process using server address
-    # 'http://127.0.0.1:<port>'.
-
     server = make_server(app, **kwargs)
     server.config.setup_event_loop()
     loop = asyncio.get_event_loop()

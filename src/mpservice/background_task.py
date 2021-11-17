@@ -65,7 +65,7 @@ class BackgroundTask(ABC):
 
     def __del__(self):
         if self._own_executor:
-            self._own_executor.shutdown()
+            self._executor.shutdown()
 
     @classmethod
     @abstractmethod

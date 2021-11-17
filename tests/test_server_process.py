@@ -74,6 +74,8 @@ def test_data_server():
     pp = [p.name for p in active_children()]
     print('all active processes:', pp)
     assert len(pp) == 5
+    # This failed when run in `./run-tests`
+    # but succeeded within container.
 
     p1.join()
     p2.join()
