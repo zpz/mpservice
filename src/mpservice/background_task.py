@@ -77,8 +77,28 @@ class BackgroundTask(ABC):
     @classmethod
     @abstractmethod
     def get_task_id(cls, *args, **kwargs) -> Hashable:
-        # The parameter list should be identical to that
-        # of `run`.
+        '''
+        Determine an ID for the task based on the input parameters.
+        Next time when a task is submitted, if its task ID
+        turns out to be identical to an in-progress task,
+        it will not be re-submitted; rather, it will just
+        wait for the result of the in-progress task.
+
+        There are some caveats in determination of this task ID.
+        For example, if one of the input parameter is a large list,
+        do we use the full content of the list to determine the ID?
+
+        For another example, if the task takes the path of an input
+        file, and the path is hard-coded and never changes, then
+        this parameter value never changes; but does this mean
+        the content of the file does not change?
+        If we assume the file content could change anytime,
+        we may consider each submission to constitute a unique task.
+        Then, simply return a random task ID.
+
+        The parameter list should be identical to that
+        of `run`.
+        '''
         raise NotImplementedError
 
     def submit(self, *args, loop=None, **kwargs) -> Task:
@@ -109,7 +129,7 @@ class BackgroundTask(ABC):
 
     def _cb_remove_once_done(self, fut) -> None:
         t = None
-        for task_id, task_info in self._tasks.item():
+        for task_id, task_info in self._tasks.items():
             if task_info['fut'] is fut:
                 t = task_id
                 break
