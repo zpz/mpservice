@@ -136,10 +136,22 @@ class Servlet(metaclass=ABCMeta):
 
         Remember to pass in `batch_size` in accordance with the implementation
         of `call`.
+
+        The `__init__` of a subclass may define additional input parameters;
+        they can be passed in through `run`.
         '''
         self.batch_size = batch_size or 0
         self.batch_wait_time = batch_wait_time or 0
         self.name = f'{self.__class__.__name__}--{mp.current_process().name}'
+
+    def start(self, *, q_in, q_out, q_err, q_in_lock):
+        q_err.put('ready')
+        logger.info('%s started', self.name)
+        if self.batch_size > 1:
+            self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
+                              q_in_lock=q_in_lock)
+        else:
+            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
 
     def _start_single(self, *, q_in, q_out, q_err):
         batch_size = self.batch_size
@@ -227,15 +239,6 @@ class Servlet(metaclass=ABCMeta):
                 for uid, y in zip(uids, results):
                     q_out.put((uid, y))
 
-    def start(self, *, q_in, q_out, q_err, q_in_lock):
-        q_err.put('ready')
-        logger.info('%s started', self.name)
-        if self.batch_size > 1:
-            self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
-                              q_in_lock=q_in_lock)
-        else:
-            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
-
     @abstractmethod
     def call(self, x):
         # If `self.batch_size == 0`, then `x` is a single
@@ -313,23 +316,39 @@ class MPServer(metaclass=ABCMeta):
     def __exit__(self, exc_type, exc_value, exc_traceback):
         self.stop()
 
-    def start(self):
+    def start(self, sequential: bool = True):
         assert self._servlets
         self.started += 1
         if self.started > 1:
             # Re-entry.
             return
 
-        n = 0
-        for m in self._servlets:
-            m.start()
-            n += 1
-        k = 0
-        while k < n:
-            z = self._q_err.get()
-            assert z == 'ready'
-            k += 1
-            logger.info(f"servlet processes ready: {k}/{n}")
+        if sequential:
+            # Start the servlets one by one.
+            n = len(self._servlets)
+            k = 0
+            for m in self._servlets:
+                m.start()
+                z = self._q_err.get()
+                assert z == 'ready'
+                k += 1
+                logger.info(f"servlet processes ready: {k}/{n}")
+        else:
+            # Start the servlets concurrently.
+            # In some situations, concurrent servlet launch
+            # may have issues, e.g. all servlets read the same
+            # large file on startup, or all servlets download
+            # the same dataset on startup.
+            n = 0
+            for m in self._servlets:
+                m.start()
+                n += 1
+            k = 0
+            while k < n:
+                z = self._q_err.get()
+                assert z == 'ready'
+                k += 1
+                logger.info(f"servlet processes ready: {k}/{n}")
 
         self._t_gather_results = threading.Thread(target=self._gather_results)
         self._t_gather_results.start()
@@ -398,11 +417,15 @@ class MPServer(metaclass=ABCMeta):
                      return_exceptions: bool = False,
                      return_x: bool = False,
                      ):
+        # The order of elements in the stream is preserved, i.e.,
+        # elements in the output stream corresponds to elements
+        # in the input stream in the same order.
+
         # What this method does can be achieved by a streamer.AsyncStream
         # using `self.async_call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
-        # "transfomer" depends on the "workers" parameter.
+        # "transfomer" depends on tweaking the "workers" parameter.
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
@@ -432,21 +455,29 @@ class MPServer(metaclass=ABCMeta):
         if not isinstance(data_stream, streamer.AsyncStream):
             data_stream = streamer.AsyncStream(data_stream)
 
-        return data_stream.transform(
-            _enqueue, return_x=return_x,
-            return_exceptions=return_exceptions).transform(
-                _dequeue, return_x=return_x,
+        return (
+            data_stream
+            .transform(
+                _enqueue, workers=1, return_x=return_x,
                 return_exceptions=return_exceptions)
+            .transform(
+                _dequeue, workers=1, return_x=return_x,
+                return_exceptions=return_exceptions)
+        )
 
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                return_x: bool = False,
                ):
+        # The order of elements in the stream is preserved, i.e.,
+        # elements in the output stream corresponds to elements
+        # in the input stream in the same order.
+
         # What this method does can be achieved by a streamer.Stream
         # using `self.call` as a "transformer".
         # However, this method is expected to achieve optimal
         # performance, whereas the efficiency achieved by
-        # "transfomer" depends on the "workers" parameter.
+        # "transfomer" depends on tweaking the "workers" parameter.
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
@@ -478,11 +509,14 @@ class MPServer(metaclass=ABCMeta):
         if not isinstance(data_stream, streamer.Stream):
             data_stream = streamer.Stream(data_stream)
 
-        return data_stream.transform(
-            _enqueue, workers=1, return_x=return_x,
-            return_exceptions=return_exceptions).transform(
-                _dequeue, workers=1, return_x=return_x,
-                return_exceptions=return_exceptions)
+        return (data_stream
+                .transform(
+                    _enqueue, workers=1, return_x=return_x,
+                    return_exceptions=return_exceptions)
+                .transform(
+                    _dequeue, workers=1, return_x=return_x,
+                    return_exceptions=return_exceptions)
+                )
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -843,6 +877,11 @@ class EnsembleServer(MPServer):
 
 
 class SimpleServer(SequentialServer):
+    '''
+    One worker process per CPU core, each worker running
+    the specified function.
+    '''
+
     def __init__(self,
                  func: Callable,
                  *,

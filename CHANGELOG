@@ -1,3 +1,9 @@
+Release 0.9.4
+=============
+
+- `MPServer.start` starts the servlets sequentially by default.
+
+
 Release 0.9.3
 =============
 

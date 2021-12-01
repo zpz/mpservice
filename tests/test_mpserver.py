@@ -5,12 +5,12 @@ import pytest
 
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    EnqueueTimeout, TotalTimeout,
+    EnqueueTimeout, TotalTimeout, MPError
 )
 from mpservice.streamer import Stream, AsyncStream
 
 
-class Scale(Servlet):
+class Double(Servlet):
     def call(self, x):
         return x * 2
 
@@ -43,7 +43,7 @@ class Delay(Servlet):
 @pytest.mark.asyncio
 async def test_sequential_server_async():
     service = SequentialServer(cpus=[0])
-    service.add_servlet(Scale, cpus=[1, 2])
+    service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
         z = await service.async_call(3)
@@ -57,7 +57,7 @@ async def test_sequential_server_async():
 
 def test_sequential_server():
     service = SequentialServer(cpus=[0])
-    service.add_servlet(Scale, cpus=[1, 2])
+    service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
         z = service.call(3)
@@ -70,14 +70,26 @@ def test_sequential_server():
 
 def test_sequential_batch():
     service = SequentialServer(cpus=[0])
-    service.add_servlet(Square, cpus=[1, 2, 3])
+    service.add_servlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
     with service:
         z = service.call(3)
-        assert z == 3 * 3
+        assert z == 3 + 4
 
-        x = list(range(100))
+        x = list(range(111))
         y = [service.call(v) for v in x]
-        assert y == [v * v for v in x]
+        assert y == [v + 4 for v in x]
+
+
+def test_sequential_error():
+    service = SequentialServer(cpus=[0])
+    service.add_servlet(Double, cpus=[1, 2])
+    service.add_servlet(Shift, cpus=[3], stepsize=4)
+    with service:
+        z = service.call(3)
+        assert z == 3 * 2 + 4
+
+        with pytest.raises(MPError):
+            z = service.call('a')
 
 
 @pytest.mark.asyncio
@@ -271,8 +283,8 @@ def test_ensemble_timeout():
 class HisWideServer(EnsembleServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.add_servlet(Shift, stepsize=1, cpus=[1])
-        self.add_servlet(Shift, stepsize=3, cpus=[1, 2])
+        self.add_servlet(Shift, stepsize=1, cpus=[1], batch_size=0)
+        self.add_servlet(Shift, stepsize=3, cpus=[1, 2], batch_size=1)
         self.add_servlet(Shift, stepsize=5, cpus=[0, 3], batch_size=4)
         self.add_servlet(Shift, stepsize=7, cpus=[2])
 
