@@ -6,20 +6,20 @@ workers forming a sequence or an ensemble. Exact CPU allocation---which
 CPUs are used by which workers---can be controlled
 to achieve high efficiency.
 
-The "interface" to the service resides in the "main process".
-Two usage patterns are supported, namely (concurrent) individual
+The "interface" between the service and the outside world
+resides in the "main process".
+Two usage patterns are supported, namely making (concurrent) individual
 calls to the service to get individual results, or flowing
-a (potentially unlimited) stream of data through the service
-and consuming the outcoming stream of results. Each usage
-supports a async API and an async API.
+a potentially unlimited stream of data through the service
+to get a stream of results. Each usage supports a sync API and an async API.
 
-The user's main work is implementing the worker operations.
-These are conventional sync functions. Another work of trial and error
-is experimenting with CPU allocations among workers to achieve
-best performance (throughput and latency).
-
-In contrast, the interface and scheduling code in the main process
+The interface and scheduling code in the main process
 is all provided, and usually does not need much customization.
+One task of trial and error by the user is experimenting with
+CPU allocations among workers to achieve best performance.
+
+The user's main work is implementing the operations in the "workers".
+These are conventional sync functions.
 
 Typical usage:
 
@@ -100,8 +100,14 @@ class Servlet(metaclass=ABCMeta):
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
-        This classmethod runs in the target process to construct
-        the object and start its processing loop.
+        This classmethod runs in the worker process to construct
+        the worker object and start its processing loop.
+
+        This function is the parameter `target` to `multiprocessing.Process`
+        called by `MPServer` in the main process. As such, elements
+        in `init_kwargs` go through pickling, hence they should consist
+        mainly of small, native types such as string, number,small dict.
+        Be careful about passing custom class objects in `init_kwargs`.
         '''
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
@@ -117,7 +123,7 @@ class Servlet(metaclass=ABCMeta):
         '''
         `batch_size`: max batch size; see `call`.
 
-        `batch_wait_time`: seconds, may be 0; the total time span
+        `batch_wait_time`: seconds, may be 0; the total duration
             to wait for one batch after the first item has arrived.
 
         To leverage batching, it is recommended to set `batch_wait_time`
@@ -130,12 +136,15 @@ class Servlet(metaclass=ABCMeta):
         sequential calls to the service, because worker will always
         wait for this long for additional items to come and form a batch,
         while additional item will never come during sequential use.
-        However, when batching is enabled, sequential use is not
-        the intended use; it would be the use case only for certain
-        benchmarks. So beware of this in benchmarking.
+        However, when batching is enabled, sequential calls are not
+        the intended use case. Beware of this in benchmarking.
 
         Remember to pass in `batch_size` in accordance with the implementation
         of `call`.
+
+        If the algorithm can not vectorize the computation, then there is
+        no advantage in enabling batching. In that case, the subclass should
+        simple fix `batch_size` to 0 in their `__init__`.
 
         The `__init__` of a subclass may define additional input parameters;
         they can be passed in through `run`.
@@ -248,25 +257,29 @@ class Servlet(metaclass=ABCMeta):
         # `x` is a list of input data elements, and this
         # method returns a list of results corresponding
         # to the elements in `x`.
-        # However, the service will split the result list
+        # However, the service (see near the end of `_start_batch`)
+        # will split the resultant list
         # into single results for individual elements of `x`.
         # This is *vectorized* computation, or *batching*,
-        # handled by this service pipeline. The number of
-        # elements in `x` varies depending on the supply
-        # of data.
+        # handled by this service pipeline.
         #
-        # Distinguish this from the case where a single
-        # input is naturally a list. Whatever is the result
-        # for it, it is still the result corresponding to
-        # the single input `x`. User should make sure
-        # the input stream of data consists of values of
-        # the correct type, which in this case are lists.
-        # There is no batching in this situation.
+        # When batching is enabled, the number of
+        # elements in `x` varies between calls depending on the supply
+        # of data. The list `x` does not have a fixed length.
         #
-        # If this implementation can handle batching and non-batching,
-        # hence `__init__` does not have requirement on `batch_size`,
-        # then this method needs to test the value of `batch_size`
-        # and handle input/output format accordingly.
+        # Be sure to distinguish this from the case where a single
+        # input is naturally a list. In that case, the output of
+        # the current method is the result corresponding to
+        # the single input `x`. The result could be anything---it
+        # may or may not be a list.
+        #
+        # If a subclass fixes `batch_size` in its `__init__` to be
+        # 0 or nonzero, make sure the current method is implemented
+        # accordingly. If `__init__` has no requirement on the value
+        # of `batch_size`, then the current method needs to check
+        # `self.batch_size` and act accordingly, because it is up to
+        # the uer in `MPServer` to specify a zero or nonzero `batch_size`
+        # for this worker.
         raise NotImplementedError
 
 
@@ -599,7 +612,22 @@ class MPServer(metaclass=ABCMeta):
     def _resolve_timeout(self, *,
                          enqueue_timeout: float = None,
                          total_timeout: float = None):
+        '''
+        `enqueue_timeout` is the max waittime for entering
+        the queue of this service. Unpon entering `call`
+        or `async_call`, if the data queue to workers of the service
+        (see `self._input_queues`) is full, it will wait up to
+        this long before timeout.
 
+        `total_timeout` is the max total time spent in `call`
+        or `async_call` before timeout. Upon entering `call`
+        or `async_call`, the input is placed in a queue (timeout
+        if that can't be doen within `enqueue_timeout`), then
+        we'll wait for the result. If result does not come within
+        `total_timeout`, it will timeout. This waittime is counted
+        starting from the beginning of `call` or `async_call`, not
+        starting after the input has been placed in the queue.
+        '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
         elif enqueue_timeout < 0:
