@@ -21,42 +21,53 @@ class Task:
                  future: concurrent.futures.Future,
                  callers: int,
                  cancelled: threading.Event,
-                 status: Union[queue.Queue, multiprocessing.Queue],
+                 info: Union[queue.Queue, multiprocessing.Queue],
                  task_catalog: dict):
         self.task_id = task_id
         self.future = future
         self.callers = callers
         self._cancelled = cancelled
-        self._status = status
+        self._cancelled_ = False
+        self._info = info
+        self._info_ = None
         self._task_catalog = task_catalog
         self._result_retrieved = 0
 
     def __del__(self):
-        if not self.done():
+        if not self.done() and not self.cancelled():
             self.cancel()
 
-    def status(self):
-        s = None
+    def info(self):
         while True:
             # Get the last entry in the queue.
             try:
-                s = self._status.get_nowait()
+                self._info_ = self._info.get_nowait()
             except queue.Empty:
                 break
-        return s
+        return self._info_
 
-    def cancel(self) -> bool:
+    def cancel(self, wait: bool = True) -> bool:
         self.callers -= 1
         if self.callers > 0:
             return False
         self._cancelled.set()
-        return self.future.cancel()
+        z = self.future.cancel()
+        if not z:
+            # Task has started execution, hence
+            # `Future.cancel` can do nothing to stop it.
+            # Now it relies on the user code in `BackgroundTask.run`
+            # to check `_cancelled` and return accordingly.
+            if wait:
+                concurrent.futures.wait([self.future])
+            self._cancelled_ = True
+        del self._task_catalog[self.task_id]
+        return True
 
     def done(self) -> bool:
         return self.future.done()
 
     def cancelled(self) -> bool:
-        return self.future.cancelled()
+        return self.future.cancelled() or self._cancelled_
 
     def result(self):
         result = self.future.result()
@@ -104,7 +115,7 @@ class BackgroundTask(ABC):
     def run(cls,
             *args,
             _cancelled: threading.Event,
-            _status: Union[queue.Queue, multiprocessing.Queue],
+            _info: Union[queue.Queue, multiprocessing.Queue],
             **kwargs):
         '''
         This method contains the operations of the user task.
@@ -116,23 +127,29 @@ class BackgroundTask(ABC):
         Subclass implementation may want to make the parameter listing
         more specific.
 
-        The parameters `_cancelled` and `_status` are provided by
+        The parameters `_cancelled` and `_info` are provided by
         the background-task mechanism rather than the user task itself,
         but are to be used by the user task.
 
-        If the task tends to take
-        long, and wants to support cancellation, then it should check
-        `_cancelled.is_set()` periodically, and stops if the flag is set.
+        If the task tends to take long, and wants to support cancellation,
+        then it should check `_cancelled.is_set()` periodically (preferrably
+        rather frequently), and stops if the flag is set.
+        Note that `concurrent.futures.Future.cancel`
+        can only cancel the execution of a scheduled task if it has not started
+        running yet. Once the task is ongoing, `Future.cancel` can't stop
+        the execution. Therefore user code needs to be proactive, using
+        `_cancelled` to detect the cancellation request and act accordingly.
 
-        `_status` is used to report progress periodically. Because
-        there is no guarantee that these reports are retrieved timely
-        or at all, user code should ensure this queue contains only
-        one single element, that is, before pushing an element onto
-        the queue, it should pop any existing elements. A report is
-        typically a small dict.
+        The queue `_info` is used to pass info to the caller, e.g. periodic
+        progress reports. Because there is no guarantee that this queue
+        is being checked by the caller timely or at all,
+        we can't let it have unlimited capacity and keep elements in it.
+        In fact, it has length 1. Before pushing an element onto
+        the queue, the user code should pop any existing elements.
+        An element in this queue is typically a small dict.
 
         It is not mandatory that the user task code makes use of
-        `_cancelled` and `_status`.
+        `_cancelled` and `_info`.
         '''
         raise NotImplementedError
 
@@ -185,20 +202,20 @@ class BackgroundTask(ABC):
 
         if isinstance(self._executor, concurrent.futures.ThreadPoolExecutor):
             cancelled = threading.Event()
-            status = queue.Queue(1)
+            info = queue.Queue(1)
         else:
             cancelled = multiprocessing.Event()
-            status = multiprocessing.Queue(1)
+            info = multiprocessing.Queue(1)
 
         func = functools.partial(self.run, *args, **kwargs)
-        fut = self._executor.submit(func, _cancelled=cancelled, _status=status)
+        fut = self._executor.submit(func, _cancelled=cancelled, _info=info)
         fut.task_id = task_id
         task = Task(
             task_id=task_id,
             future=fut,
             callers=1,
             cancelled=cancelled,
-            status=status,
+            info=info,
             task_catalog=self._tasks,
         )
         self._tasks[task_id] = task
