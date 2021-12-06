@@ -1,11 +1,23 @@
+import concurrent.futures
 import time
 from mpservice.background_task import BackgroundTask
 
 
 class MyTask(BackgroundTask):
     @classmethod
-    def run(cls, x, y, *, _cancelled, _status, wait=1.2):
-        time.sleep(wait)
+    def run(cls, x, y, *, _cancelled, _info, wait=1.2):
+        waited = 0
+        while True:
+            time.sleep(0.01)
+            waited += 0.01
+            if waited >= wait:
+                break
+            if _cancelled.is_set():
+                raise concurrent.futures.CancelledError(
+                    'cancelled per request')
+            if not _info.empty():
+                _ = _info.get_nowait()
+            _info.put_nowait({'x': x, 'y': y, 'time_waited': waited})
         return x + y
 
     @classmethod
@@ -29,8 +41,28 @@ def test_task():
     assert task.callers == 2
 
     assert tasks._tasks
-    assert 1.5 - 0.01 < t1 - t0 < 1.5 + 0.01
+    assert 1.5 - 0.1 < t1 - t0 < 1.5 + 0.1
     assert task.result() == 7
     assert task.task_id in tasks
     assert task2.result() == 7
     assert task2.task_id not in tasks
+
+
+def test_cancel():
+    tasks = MyTask()
+    task = tasks.submit(3, 4, wait=4)
+    print(task.info())
+    for _ in range(10):
+        time.sleep(0.2)
+        print(task.info())
+
+    assert task.task_id in tasks
+
+    assert not task.cancelled()
+    assert not task.done()
+    z = task.cancel()
+    print('cancelled:', z)
+
+    assert task.cancelled()
+    assert task.done()
+    assert task.task_id not in tasks
