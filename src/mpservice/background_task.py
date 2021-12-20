@@ -1,3 +1,4 @@
+import asyncio
 import concurrent.futures
 import functools
 import multiprocessing
@@ -27,7 +28,6 @@ class Task:
         self.future = future
         self.callers = callers
         self._cancelled = cancelled
-        self._cancelled_ = False
         self._info = info
         self._info_ = None
         self._task_catalog = task_catalog
@@ -47,44 +47,110 @@ class Task:
         return self._info_
 
     def cancel(self, wait: bool = True) -> bool:
+        if self.cancelled():
+            return True
+
         self.callers -= 1
         if self.callers > 0:
             return False
+
+        if self.future.done():
+            return False
+
         self._cancelled.set()
         z = self.future.cancel()
         if not z:
             # Task has started execution, hence
             # `Future.cancel` can do nothing to stop it.
             # Now it relies on the user code in `BackgroundTask.run`
-            # to check `_cancelled` and return accordingly.
+            # to check `_cancelled` and stop execution proactively.
             if wait:
                 concurrent.futures.wait([self.future])
-            self._cancelled_ = True
         del self._task_catalog[self.task_id]
         return True
+
+    async def a_cancel(self, wait: bool = True) -> bool:
+        z = self.cancel(False)
+        if z and wait:
+            while not self.future.done():
+                await asyncio.sleep(0.0123)
+        return z
 
     def done(self) -> bool:
         return self.future.done()
 
     def cancelled(self) -> bool:
-        return self.future.cancelled() or self._cancelled_
+        return self._cancelled.is_set()
 
-    def result(self):
-        result = self.future.result()
-        # If result is not available, hence the above
-        # raises exception, the following will not
-        # happen.
+    def result(self, timeout=None):
+        if self.cancelled():
+            raise concurrent.futures.CancelledError()
+
+        err = None
+        try:
+            result = self.future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise
+        except Exception as e:
+            err = e
 
         self._result_retrieved += 1
         if self._result_retrieved >= self.callers:
-            # Remove from the manager if very stakeholder
+            # Remove from the manager if every stakeholder
             # has retrieved the result.
-            del self._task_catalog[self.task_id]
+            try:
+                del self._task_catalog[self.task_id]
+            except KeyError:
+                pass
+        if err is not None:
+            raise err
         return result
 
+    async def a_result(self, timeout=None):
+        try:
+            return self.result(timeout=0)
+        except concurrent.futures.TimeoutError:
+            if timeout == 0:
+                raise
+            if timeout is None:
+                timeout = 3600 * 24
+            while not self.future.done():
+                if timeout <= 0:
+                    raise concurrent.futures.TimeoutError()
+                await asyncio.sleep(0.0123)
+                timeout -= 0.0123
+
+            self._result_retrieved += 1
+            if self._result_retrieved >= self.callers:
+                # Remove from the manager if every stakeholder
+                # has retrieved the result.
+                try:
+                    del self._task_catalog[self.task_id]
+                except KeyError:
+                    pass
+            return self.future.result(0)
+
+    def __await__(self):
+        return self.a_result().__await__()
+
     def exception(self):
-        return self.future.exception()
-        # This returns `None` if no exception was raised.
+        '''
+        Returns `None` if task is not yet completed
+        or has completed successfully.
+
+        Raises `CancelledError` if the task was cancelled.
+
+        If the task raised an exception, this method will
+        raise the same exception.
+        '''
+        if self.cancelled():
+            raise concurrent.futures.CancelledError()
+
+        try:
+            return self.future.exception(timeout=0)
+            # This returns `None` if no exception was raised.
+        except concurrent.futures.TimeoutError:
+            return None
 
 
 class BackgroundTask(ABC):
