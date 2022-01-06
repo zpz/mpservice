@@ -25,9 +25,3 @@ def test_exception():
 
     print('')
     y.print()
-    print('')
-
-    raise y
-
-
-test_exception()
