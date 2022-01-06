@@ -70,12 +70,15 @@ class MPError(Exception):
 
     @property
     def stack(self):
-        return self.tb_exc_value.stack  # traceback.StackSummary object
+        # Return a `traceback.StackSummary` object
+        return self.tb_exc_value.stack
 
     def format(self, *, chain=True):
         '''
         The returned string is like the output of
         `traceback.format_exc()`.
+        If one needs further control over the format of printing,
+        one may want to use `self.tb_exc_value.format` directly.
         '''
         return ''.join(self.tb_exc_value.format(chain=chain))
 
