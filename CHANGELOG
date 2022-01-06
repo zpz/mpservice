@@ -1,3 +1,9 @@
+Release 0.9.6 (forthcoming)
+=============
+
+- Refactor the `MPError` class.
+
+
 Release 0.9.5.post3
 ===================
 
