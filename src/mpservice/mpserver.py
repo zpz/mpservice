@@ -429,7 +429,7 @@ class MPServer(metaclass=ABCMeta):
     def async_stream(self, data_stream, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
-                     ):
+                     ) -> streamer.AsyncStream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.
@@ -481,7 +481,7 @@ class MPServer(metaclass=ABCMeta):
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                return_x: bool = False,
-               ):
+               ) -> streamer.Stream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.

@@ -153,6 +153,9 @@ async def run_local_app(app, **kwargs):
     # Call the service by other aysnc functions using server address
     # 'http://127.0.0.1:<port>'.
     # Refer to tests in `uvicorn`.
+    #
+    # TODO: re-consider the usefulness and usecases of this function.
+
     server = make_server(app, **kwargs)
     handle = asyncio.ensure_future(server.serve(sockets=None))
 
