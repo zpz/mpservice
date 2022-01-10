@@ -9,8 +9,8 @@ def goo(x, q):
             q.put(x)
         else:
             raise ValueError('wrong value!')
-    except Exception as e:
-        q.put(MPError(e))
+    except:
+        q.put(MPError())
 
 
 def test_exception():
@@ -23,5 +23,5 @@ def test_exception():
     assert isinstance(y, MPError)
     assert str(y) == 'wrong value!'
 
-    print("traceback")
-    print(y.trace_back)
+    print('')
+    y.print()

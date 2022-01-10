@@ -7,3 +7,5 @@ pytest
 pytest-asyncio
 pytest-cov
 radon
+requests
+

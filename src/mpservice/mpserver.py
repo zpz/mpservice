@@ -173,11 +173,11 @@ class Servlet(metaclass=ABCMeta):
                     y = self.call(x)
                 q_out.put((uid, y))
 
-            except Exception as e:
+            except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `MPError`
                 # object. Be brief on the logging here.
-                err = MPError(e)
+                err = MPError()
                 q_err.put((uid, err))
 
     def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
@@ -240,8 +240,8 @@ class Servlet(metaclass=ABCMeta):
 
             try:
                 results = self.call(batch)
-            except Exception as e:
-                err = MPError(e)
+            except Exception:
+                err = MPError()
                 for uid in uids:
                     q_err.put((uid, err))
             else:
@@ -429,7 +429,7 @@ class MPServer(metaclass=ABCMeta):
     def async_stream(self, data_stream, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
-                     ):
+                     ) -> streamer.AsyncStream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.
@@ -481,7 +481,7 @@ class MPServer(metaclass=ABCMeta):
     def stream(self, data_stream, *,
                return_exceptions: bool = False,
                return_x: bool = False,
-               ):
+               ) -> streamer.Stream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.

@@ -24,11 +24,22 @@ its methods in a "chained" fashion:
         .unbatch()
         )
 
-After this setup, there are five ways to use the object `pipeline`.
+After this setup, there are several ways to use the object `pipeline`.
 
     1. Since `pipeline` is an Iterable and an Iterator, we can use it as such.
        Most naturally, iterate over it and process each element however
        we like.
+
+       We can of couse also provide `pipeline` as a parameter where an iterable
+       or iterator is expected. For example, the `mpservice.mpserver.Server`
+       class has a method `stream` that expects an iterable, hence
+       we can do things like
+
+            server = Server(...)
+            with server:
+                pipeline = ...
+                pipeline = server.stream(pipeline)
+                pipeline = pipeline.transform(yet_another_io_op)
 
     2. If the stream is not too long (not "big data"), we can convert it to
        a list by the method `collect`:
@@ -48,18 +59,6 @@ After this setup, there are five ways to use the object `pipeline`.
     4. We can continue to add more operations to the pipeline, for example,
 
             pipeline = pipeline.transform(another_op, workers=3)
-
-    5. Connect `pipeline` with a `mpservice.mpserver.Server` object,
-       which represents a CPU-bound operation. The `Server.call` can serve
-       as an I/O-bound operation to be passed into `pipeline.transform`.
-       However, it's more convenient (and likely more efficient) to use
-       the `Server`'s `stream` method:
-
-            server = Server(...)
-            with server:
-                pipeline = ...
-                pipeline = server.stream(pipeline)
-                pipeline = pipeline.transform(yet_another_io_op)
 
 ======================
 Handling of exceptions

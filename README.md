@@ -17,6 +17,8 @@ Utilities for Python concurrency, including
 The serving and streaming utilities can be combined because a `mpservice.mpserver.MPServer` instance, while doing heavy-lifting in other processes, acts as an
 I/O bound operator in the main process. Indeed, `mpservice.mpserver.MPServer` provides methods `stream` and `async_stream` for using the server to process data streams.
 
+A `MPServer` object could be used either in "embedded" mode or to back a HTTP service. In the latter case, the `starlette` package is a viable choice for providing async service. A few utilities in `mpservice.http_server` assist with this use case.
+
 The package also contains some other related utilities.
 
 To install, do `pip install mpservice`.

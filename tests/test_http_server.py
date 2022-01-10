@@ -3,7 +3,9 @@ import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.testclient import TestClient
-from mpservice.http_server import SHUTDOWN_MSG, stop_starlette_server, run_local_app
+from mpservice.http_server import SHUTDOWN_MSG, SHUTDOWN_STATUS
+from mpservice.http_server import stop_starlette_server
+from mpservice.http_server import run_local_app
 
 
 @pytest.fixture()
@@ -64,9 +66,20 @@ def test_testclient(app):
         response = client.get('/simple1')
         assert response.status_code == 201
         assert response.text == '1'
+
         response = client.get('/simple2')
         assert response.status_code == 202
         assert response.json() == {'result': 2}
+
+        # This approach does not run middleware,
+        # hence the 'shutdown' mechanism does not have an effect.
+
+        response = client.post('/stop')
+        assert response.status_code == SHUTDOWN_STATUS
+        assert response.text == SHUTDOWN_MSG
+
+        response = client.get('/simple1')
+        assert response.status_code == 201
 
 
 # This failed in `./run-tests` and succeeded when run
