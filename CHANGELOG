@@ -1,3 +1,9 @@
+Release 0.9.7
+=============
+
+- Refactor the `MPError` class, with a renaming to `RemoteException`.
+
+
 Release 0.9.6
 =============
 

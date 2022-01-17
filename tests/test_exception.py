@@ -1,6 +1,6 @@
 from multiprocessing import Process, Queue
 
-from mpservice.mperror import MPError
+from mpservice.exception import RemoteException
 
 
 def goo(x, q):
@@ -10,7 +10,7 @@ def goo(x, q):
         else:
             raise ValueError('wrong value!')
     except:
-        q.put(MPError())
+        q.put(RemoteException())
 
 
 def test_exception():
@@ -20,8 +20,8 @@ def test_exception():
     p.join()
 
     y = q.get()
-    assert isinstance(y, MPError)
-    assert str(y) == 'wrong value!'
+    assert isinstance(y, RemoteException)
+    assert str(y) == 'ValueError: wrong value!'
 
     print('')
     y.print()
