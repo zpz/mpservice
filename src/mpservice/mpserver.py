@@ -68,7 +68,7 @@ from uuid import uuid4
 
 import psutil  # type: ignore
 
-from .mperror import MPError
+from .exception import RemoteException
 from . import streamer
 
 
@@ -175,9 +175,9 @@ class Servlet(metaclass=ABCMeta):
 
             except Exception:
                 # There are opportunities to print traceback
-                # and details later using the `MPError`
+                # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
-                err = MPError()
+                err = RemoteException()
                 q_err.put((uid, err))
 
     def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
@@ -241,7 +241,7 @@ class Servlet(metaclass=ABCMeta):
             try:
                 results = self.call(batch)
             except Exception:
-                err = MPError()
+                err = RemoteException()
                 for uid in uids:
                     q_err.put((uid, err))
             else:
@@ -683,7 +683,7 @@ class MPServer(metaclass=ABCMeta):
                     'got error for an already-cancelled task: %r', err)
                 continue
             try:
-                # `err` is a MPError object.
+                # `err` is a RemoteException object.
                 fut['fut'].set_exception(err)
             except asyncio.InvalidStateError as e:
                 if fut['fut'].cancelled():
@@ -733,7 +733,7 @@ class MPServer(metaclass=ABCMeta):
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
         return fut.result()
-        # This could raise MPError.
+        # This could raise RemoteException.
 
     def _call_enqueue(self, x, *, qs, t0, enqueue_timeout):
         fut = concurrent.futures.Future()

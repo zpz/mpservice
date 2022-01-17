@@ -1,11 +1,12 @@
 import asyncio
 import concurrent.futures
 import time
+from mpservice.exception import RemoteException
 import pytest
 
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    EnqueueTimeout, TotalTimeout, MPError
+    EnqueueTimeout, TotalTimeout, RemoteException
 )
 from mpservice.streamer import Stream, AsyncStream
 
@@ -88,7 +89,7 @@ def test_sequential_error():
         z = service.call(3)
         assert z == 3 * 2 + 4
 
-        with pytest.raises(MPError):
+        with pytest.raises(RemoteException):
             z = service.call('a')
 
 
