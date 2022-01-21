@@ -584,6 +584,7 @@ class MPServer(metaclass=ABCMeta):
                      q_out,
                      cpus: list = None,
                      workers: int = None,
+                     name: str = None,
                      **init_kwargs):
         # `servlet` is the class object, not instance.
         assert not self.started
@@ -593,6 +594,8 @@ class MPServer(metaclass=ABCMeta):
         q_err = self._q_err
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
+
+        name = name or 'servlet'
 
         for cpu in cpus:
             if cpu is None:
@@ -606,7 +609,7 @@ class MPServer(metaclass=ABCMeta):
             self._servlets.append(
                 self.MP_CLASS.Process(
                     target=servlet.run,
-                    name=f'servlet-{cpu}',
+                    name=f'{name}-{cpu}',
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,

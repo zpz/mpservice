@@ -1,3 +1,10 @@
+Release 0.9.8b1
+===============
+
+- Corner-case bug fixes in `MPServer`.
+- Increase queue size in `ConcurrentTransformer`.
+
+
 Release 0.9.7
 =============
 

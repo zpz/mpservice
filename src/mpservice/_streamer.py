@@ -690,7 +690,7 @@ class ConcurrentTransformer(Stream):
         self.func = func
         self.workers = workers
         self.return_exceptions = return_exceptions
-        self._outstream = IterQueue(workers * 8, self._to_shutdown)
+        self._outstream = IterQueue(1024, self._to_shutdown)
         self._err = []
         self._tasks = []
         self._start()
