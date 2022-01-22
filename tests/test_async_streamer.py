@@ -119,7 +119,7 @@ async def test_keep():
     s = Stream(data)
     ss = await s.keep_random(0.5).collect()
     print(ss)
-    assert 0 <= len(ss) < len(data)
+    assert 0 <= len(ss) <= len(data)
 
 
 @pytest.mark.asyncio

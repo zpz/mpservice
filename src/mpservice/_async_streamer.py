@@ -392,8 +392,7 @@ class ConcurrentTransformer(Stream):
             self._start_async()
         else:
             self._async = False
-            self._outstream = _sync_streamer.IterQueue(
-                workers * 8, self._to_shutdown)
+            self._outstream = _sync_streamer.IterQueue(1024, self._to_shutdown)
             self._start_sync()
 
     def _start_async(self):

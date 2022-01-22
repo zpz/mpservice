@@ -149,8 +149,25 @@ class Servlet(metaclass=ABCMeta):
         The `__init__` of a subclass may define additional input parameters;
         they can be passed in through `run`.
         '''
-        self.batch_size = batch_size or 0
-        self.batch_wait_time = batch_wait_time or 0
+        if batch_size is None or batch_size == 0:
+            batch_size = 0
+            if batch_wait_time is None:
+                batch_wait_time = 0
+            else:
+                assert batch_wait_time == 0
+        elif batch_size == 1:
+            if batch_wait_time is None:
+                batch_wait_time = 0
+            else:
+                assert batch_wait_time == 0
+        else:
+            if batch_wait_time is None:
+                batch_wait_time = 0.01
+            else:
+                assert batch_wait_time > 0
+
+        self.batch_size = batch_size
+        self.batch_wait_time = batch_wait_time
         self.name = f'{self.__class__.__name__}--{mp.current_process().name}'
 
     def start(self, *, q_in, q_out, q_err, q_in_lock):
@@ -444,26 +461,41 @@ class MPServer(metaclass=ABCMeta):
 
         async def _enqueue(x, return_x):
             time0 = time.perf_counter()
-            uid, fut = await self._async_call_enqueue(
-                x, qs=self._input_queues(),
-                t0=time0, enqueue_timeout=enqueue_timeout)
-            if return_x:
-                return x, fut, uid
-            else:
-                return fut, uid
+            try:
+                uid, fut = await self._async_call_enqueue(
+                    x, qs=self._input_queues(),
+                    t0=time0, enqueue_timeout=enqueue_timeout)
+                if return_x:
+                    return x, uid, fut
+                else:
+                    return uid, fut
+            except Exception as e:
+                if return_x and return_exceptions:
+                    return x, None, e
+                raise
 
         async def _dequeue(x, return_x):
             if return_x:
-                x, fut, uid = x
+                x, uid, fut = x
+                if return_exceptions and isinstance(fut, Exception):
+                    return x, fut
             else:
-                fut, uid = x
+                if return_exceptions and isinstance(x, Exception):
+                    return x
+                uid, fut = x
+
             time0 = time.perf_counter()
-            z = await self._async_call_wait_for_result(
-                uid=uid, fut=fut,
-                t0=time0, total_timeout=total_timeout)
-            if return_x:
-                return x, z
-            return z
+            try:
+                z = await self._async_call_wait_for_result(
+                    uid=uid, fut=fut,
+                    t0=time0, total_timeout=total_timeout)
+                if return_x:
+                    return x, z
+                return z
+            except Exception as e:
+                if return_x and return_exceptions:
+                    return x, e
+                raise
 
         if not isinstance(data_stream, streamer.AsyncStream):
             data_stream = streamer.AsyncStream(data_stream)
@@ -497,27 +529,41 @@ class MPServer(metaclass=ABCMeta):
         def _enqueue(x, return_x):
             fut = concurrent.futures.Future()
             time0 = time.perf_counter()
-            uid, fut = self._call_enqueue(
-                x, qs=self._input_queues(),
-                t0=time0, enqueue_timeout=enqueue_timeout)
-            if return_x:
-                return x, uid, fut
-            else:
-                return uid, fut
+            try:
+                uid, fut = self._call_enqueue(
+                    x, qs=self._input_queues(),
+                    t0=time0, enqueue_timeout=enqueue_timeout)
+                if return_x:
+                    return x, uid, fut
+                else:
+                    return uid, fut
+            except Exception as e:
+                if return_x and return_exceptions:
+                    return x, None, e
+                raise
 
         def _dequeue(x, return_x):
             if return_x:
                 x, uid, fut = x
+                if return_exceptions and isinstance(fut, Exception):
+                    return x, fut
             else:
+                if return_exceptions and isinstance(x, Exception):
+                    return x
                 uid, fut = x
+
             time0 = time.perf_counter()
-            z = self._call_wait_for_result(
-                uid=uid, fut=fut,
-                t0=time0, total_timeout=total_timeout)
-            z = fut.result()
-            if return_x:
-                return x, z
-            return z
+            try:
+                z = self._call_wait_for_result(
+                    uid=uid, fut=fut,
+                    t0=time0, total_timeout=total_timeout)
+                if return_x:
+                    return x, z
+                return z
+            except Exception as e:
+                if return_x and return_exceptions:
+                    return x, e
+                raise
 
         if not isinstance(data_stream, streamer.Stream):
             data_stream = streamer.Stream(data_stream)
@@ -538,6 +584,7 @@ class MPServer(metaclass=ABCMeta):
                      q_out,
                      cpus: list = None,
                      workers: int = None,
+                     name: str = None,
                      **init_kwargs):
         # `servlet` is the class object, not instance.
         assert not self.started
@@ -547,6 +594,8 @@ class MPServer(metaclass=ABCMeta):
         q_err = self._q_err
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
+
+        name = name or 'servlet'
 
         for cpu in cpus:
             if cpu is None:
@@ -560,7 +609,7 @@ class MPServer(metaclass=ABCMeta):
             self._servlets.append(
                 self.MP_CLASS.Process(
                     target=servlet.run,
-                    name=f'servlet-{cpu}',
+                    name=f'{name}-{cpu}',
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
