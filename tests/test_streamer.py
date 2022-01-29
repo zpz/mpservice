@@ -210,40 +210,58 @@ def test_chain():
             yield x
 
     def process1(x):
-        try:
-            return x + 2
-        except Exception as e:
-            print('in process 1,', x, ',', e, ',', repr(e))
-            raise
+        return x + 2
 
     def process2(x):
-        try:
-            if x > 8:
-                raise ValueError(x)
-            return x - 2
-        except Exception as e:
-            print('in process 2,', x, ',', e)
-            raise
+        if x > 8:
+            raise ValueError(x)
+        return x - 2
 
-    print('1')
+    print('\n0\n')
     with pytest.raises(TypeError):
         z = Stream(corrupt_data()).transform(process1, workers=2)
         z.drain()
 
-    print('2')
+    print('\n1\n')
+    with pytest.raises((ValueError, TypeError)):
+        z = Stream(corrupt_data()).transform(process2, workers=3)
+        z.drain()
+
+    print('\n2\n')
+    with pytest.raises((ValueError, TypeError)):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2, return_exceptions=True)
+             .transform(process2, workers=4)
+            )
+        z.drain()
+
+    print('\n3\n')
+    with pytest.raises(TypeError):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2)
+             .transform(process2, workers=4, return_exceptions=True)
+            )
+        z.drain()
+
+    print('\n4\n')
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .transform(process2, workers=4, return_exceptions=True)
+        )
+    z.drain()
+
+    print('\n5\n')
     with pytest.raises((TypeError, ValueError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
              .buffer(3)
              .transform(process2, workers=3)
              )
-        #z.drain()
-        print('')
-        print(z.collect())
+        z.drain()
 
-    print('3')
+    print('\n6\n')
 
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, TypeError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
              .buffer(2)
@@ -263,10 +281,10 @@ def test_chain():
 
     print('c')
     z = (Stream(corrupt_data())
-         .transform(process1, workers=2, return_exceptions=True)
+         .transform(process1, workers=2, return_exceptions=True, keep_order=True)
          .drop_exceptions()
          .buffer(3)
-         .transform(process2, workers=3, return_exceptions=True)
+         .transform(process2, workers=3, return_exceptions=True, keep_order=True)
          .log_exceptions()
          .drop_exceptions()
          )
