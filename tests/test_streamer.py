@@ -147,10 +147,10 @@ def test_transform():
     got = [v for v in s]
     assert got == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers=10, keep_order=True).collect()
     assert s == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers='max', keep_order=True).collect()
     assert s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
@@ -210,24 +210,38 @@ def test_chain():
             yield x
 
     def process1(x):
-        return x + 2
+        try:
+            return x + 2
+        except Exception as e:
+            print('in process 1,', x, ',', e, ',', repr(e))
+            raise
 
     def process2(x):
-        if x > 8:
-            raise ValueError(x)
-        return x - 2
+        try:
+            if x > 8:
+                raise ValueError(x)
+            return x - 2
+        except Exception as e:
+            print('in process 2,', x, ',', e)
+            raise
 
+    print('1')
     with pytest.raises(TypeError):
         z = Stream(corrupt_data()).transform(process1, workers=2)
         z.drain()
 
+    print('2')
     with pytest.raises((TypeError, ValueError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
              .buffer(3)
              .transform(process2, workers=3)
              )
-        z.drain()
+        #z.drain()
+        print('')
+        print(z.collect())
+
+    print('3')
 
     with pytest.raises(ValueError):
         z = (Stream(corrupt_data())
@@ -235,7 +249,10 @@ def test_chain():
              .buffer(2)
              .transform(process2, workers=3)
              )
-        z.drain()
+        #z.drain()
+        print('')
+        print(z.collect())
+    print('4')
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
@@ -244,6 +261,7 @@ def test_chain():
          .peek_every_nth(1))
     print(z.collect())
 
+    print('c')
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
@@ -252,4 +270,5 @@ def test_chain():
          .log_exceptions()
          .drop_exceptions()
          )
+    print('d')
     assert z.collect() == [1, 2, 3, 4, 5, 6]

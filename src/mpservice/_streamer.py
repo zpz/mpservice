@@ -166,7 +166,7 @@ import multiprocessing
 import queue
 import random
 import threading
-from time import sleep
+import time
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
@@ -537,7 +537,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                 if self._to_shutdown.is_set():
                     return
                 if block:
-                    sleep(self.PUT_SLEEP)
+                    time.sleep(self.PUT_SLEEP)
                 else:
                     raise
 
@@ -549,7 +549,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopIteration
                 return z
             except queue.Empty:
-                sleep(self.GET_SLEEP)
+                time.sleep(self.GET_SLEEP)
 
     async def __anext__(self):
         # This is used by `async_streamer`.
@@ -630,16 +630,18 @@ class Transformer(Stream):
 
 
 def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
-        workers, return_exceptions, keep_order, err):
+        workers, return_exceptions, keep_order, to_shutdown):
 
-    def _process(in_stream, out_stream, func,
-                 lock, finished, return_exceptions, keep_order):
+    def _process(in_stream, out_stream, func, lock, finished, keep_order):
         Future = concurrent.futures.Future
-        while not finished.is_set():
+        while not finished.is_set() and not to_shutdown.is_set():
             with lock:
                 if finished.is_set():
                     return
-                if err:
+                if to_shutdown.is_set():
+                    out_stream.put_end()
+                    # Finish up the queue, in case `to_shutdown`
+                    # is set by other transformers.
                     return
 
                 try:
@@ -652,8 +654,13 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                     out_stream.put_end()
                     return
                 except Exception as e:
-                    finished.set()
-                    err.append(e)
+                    if keep_order:
+                        fut = Future()
+                        out_stream.put(fut)
+                        fut.set_exception(e)
+                    else:
+                        out_stream.put(e)
+                    to_shutdown.set()
                     return
 
             if keep_order:
@@ -661,23 +668,25 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                     y = func(x)
                 except Exception as e:
                     if return_exceptions:
-                        y = e
+                        fut.set_result(e)
                     else:
                         fut.set_exception(e)
-                        finished.set()
+                        to_shutdown.set()
                         return
-                fut.set_result(y)
+                else:
+                    fut.set_result(y)
             else:
                 try:
+                    print(threading.current_thread().name, func.__name__, x)
                     y = func(x)
                 except Exception as e:
-                    if return_exceptions:
-                        y = e
-                    else:
-                        err.append(e)
-                        finished.set()
+                    out_stream.put(e)
+                    if not return_exceptions:
+                        print('xxxx', repr(e))
+                        to_shutdown.set()
                         return
-                out_stream.put(y)
+                else:
+                    out_stream.put(y)
 
     finished = threading.Event()
     lock = threading.Lock()
@@ -685,8 +694,7 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
         threading.Thread(
             target=_process,
             name=f'transformer-{i}',
-            args=(in_stream, out_stream, func, lock,
-                  finished, return_exceptions, keep_order),
+            args=(in_stream, out_stream, func, lock, finished, keep_order),
         )
         for i in range(workers)
     ]
@@ -712,7 +720,6 @@ class ConcurrentTransformer(Stream):
         self.return_exceptions = return_exceptions
         self.keep_order = workers > 1 and keep_order
         self._outstream = IterQueue(1024, self._to_shutdown)
-        self._err = []
         self._tasks = []
         self._start()
 
@@ -724,7 +731,8 @@ class ConcurrentTransformer(Stream):
             workers=self.workers,
             return_exceptions=self.return_exceptions,
             keep_order=self.keep_order,
-            err=self._err)
+            to_shutdown=self._to_shutdown,
+            )
 
     def _stop(self):
         for t in self._tasks:
@@ -735,12 +743,13 @@ class ConcurrentTransformer(Stream):
 
     def _get_next(self):
         try:
-            if self._err:
-                raise self._err[0]
             y = next(self._outstream)
             if self.keep_order:
                 return y.result()
+            if isinstance(y, Exception) and not self.return_exceptions:
+                raise y
             return y
         except:
             self._stop()
             raise
+            # Could be `StopIteration`.

@@ -325,7 +325,8 @@ class MPServer(metaclass=ABCMeta):
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
 
-        self._t_gather_results: threading.Thread = None  # type: ignore
+        self._t_gather_output: threading.Thread = None  # type: ignore
+        self._t_gather_error: threading.Thread = None  # type: ignore
 
         self._servlets: List[mp.Process] = []
         self._uid_to_futures = {}
@@ -380,8 +381,10 @@ class MPServer(metaclass=ABCMeta):
                 k += 1
                 logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_results = threading.Thread(target=self._gather_results)
-        self._t_gather_results.start()
+        self._t_gather_output = threading.Thread(target=self._gather_output)
+        self._t_gather_output.start()
+        self._t_gather_error = threading.Thread(target=self._gather_error)
+        self._t_gather_error.start()
 
     def stop(self):
         assert self.started > 0
@@ -390,8 +393,10 @@ class MPServer(metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
-        self._t_gather_results.join()
-        self._t_gather_results = None
+        self._t_gather_output.join()
+        self._t_gather_output = None
+        self._t_gather_error.join()
+        self._t_gather_error = None
 
         for m in self._servlets:
             # if m.is_alive():
@@ -716,17 +721,6 @@ class MPServer(metaclass=ABCMeta):
     def _input_queues(self):
         raise NotImplementedError
 
-    def _gather_results(self):
-        # This is not a "public" method in that end-user
-        # should not call this method. But this is an important
-        # top-level method.
-        while True:
-            if not self.started:
-                return
-            self._gather_output()
-            self._gather_error()
-            time.sleep(self.SLEEP_DEQUEUE)
-
     @abstractmethod
     def _gather_output(self):
         # Subclass implementation of this function is responsible
@@ -736,23 +730,26 @@ class MPServer(metaclass=ABCMeta):
     def _gather_error(self):
         q_err = self._q_err
         futures = self._uid_to_futures
-        while not q_err.empty():
-            uid, err = q_err.get_nowait()
-            fut = futures.pop(uid, None)
-            if fut is None:  # timed-out in `call` or `async_call`
-                logger.info(
-                    'got error for an already-cancelled task: %r', err)
-                continue
+        while self.started:
             try:
-                # `err` is a RemoteException object.
-                fut['fut'].set_exception(err)
-            except asyncio.InvalidStateError as e:
-                if fut['fut'].cancelled():
-                    logger.warning('Future object is already cancelled')
-                else:
-                    logger.exception(e)
-                    raise
-            # No sleep. Get results out of the queue as quickly as possible.
+                uid, err = q_err.get(timeout=1)
+            except queue.Empty:
+                continue
+            else:
+                fut = futures.pop(uid, None)
+                if fut is None:  # timed-out in `call` or `async_call`
+                    logger.info(
+                        'got error for an already-cancelled task: %r', err)
+                    continue
+                try:
+                    # `err` is a RemoteException object.
+                    fut['fut'].set_exception(err)
+                except asyncio.InvalidStateError as e:
+                    if fut['fut'].cancelled():
+                        logger.warning('Future object is already cancelled')
+                    else:
+                        logger.exception(e)
+                        raise
 
     async def _async_call_enqueue(self, x, *, t0, enqueue_timeout) -> tuple:
         loop = asyncio.get_running_loop()
@@ -804,36 +801,31 @@ class MPServer(metaclass=ABCMeta):
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            while True:
-                if not self.started:
-                    return
-                try:
-                    q.put_nowait((uid, x))
-                    break
-                except queue.Full:
-                    timenow = time.perf_counter()
-                    if timenow < t1:
-                        time.sleep(self.SLEEP_ENQUEUE)
-                    else:
-                        fut.cancel()
-                        del self._uid_to_futures[uid]
-                        raise EnqueueTimeout(
-                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+            if not self.started:
+                return
+            try:
+                q.put((uid, x), timeout=t1 - time.perf_counter())
+            except queue.Full:
+                timenow = time.perf_counter()
+                fut.cancel()
+                del self._uid_to_futures[uid]
+                raise EnqueueTimeout(
+                    f'waited {timenow - t0} seconds; timeout at queue {iq}')
+
         return uid, fut
 
     def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
         t1 = t0 + total_timeout
-        while not fut.done():
-            if time.perf_counter() > t1:
-                fut.cancel()
-                self._uid_to_futures.pop(uid, None)
-                # `uid` could have been deleted by
-                # `gather_results` during very subtle
-                # timing coincidence.
-                raise TotalTimeout(
-                    f'waited {time.perf_counter() - t0} seconds')
-            time.sleep(self.SLEEP_DEQUEUE)
-        return fut.result()
+        try:
+            return fut.result(timeout=t1 - time.perf_counter())
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            self._uid_to_futures.pop(uid, None)
+            # `uid` could have been deleted by
+            # `gather_results` during very subtle
+            # timing coincidence.
+            raise TotalTimeout(
+                f'waited {time.perf_counter() - t0} seconds')
 
 
 class SequentialServer(MPServer):
@@ -864,21 +856,24 @@ class SequentialServer(MPServer):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
 
-        while not q_out.empty():
-            uid, y = q_out.get_nowait()
-            fut = futures.pop(uid, None)
-            if fut is None:
-                # timed-out in `async_call` or `call`.
-                continue
+        while self.started:
             try:
-                fut['fut'].set_result(y)
-            except asyncio.InvalidStateError as e:
-                if fut.cancelled():
-                    logger.warning('Future object is already cancelled')
-                else:
-                    logger.exception(e)
-                    raise
-            # No sleep. Get results out of the queue as quickly as possible.
+                uid, y = q_out.get(timeout=1)
+            except queue.Empty:
+                continue
+            else:
+                fut = futures.pop(uid, None)
+                if fut is None:
+                    # timed-out in `async_call` or `call`.
+                    continue
+                try:
+                    fut['fut'].set_result(y)
+                except asyncio.InvalidStateError as e:
+                    if fut.cancelled():
+                        logger.warning('Future object is already cancelled')
+                    else:
+                        logger.exception(e)
+                        raise
 
     def _init_future_struct(self, x, fut):
         return {'fut': fut}
@@ -929,31 +924,35 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
-        for idx, q_out in enumerate(self._q_out):
-            while not q_out.empty():
-                uid, y = q_out.get_nowait()
-                fut = futures.get(uid)
-                if fut is None:
-                    # timed-out in `async_call` or `call`.
-                    continue
+        while self.started:
+            # TODO: need improvement; refer to other `_gather_output`.
+            # How to make waiting more efficient?
+            for idx, q_out in enumerate(self._q_out):
+                while not q_out.empty():
+                    uid, y = q_out.get_nowait()
+                    fut = futures.get(uid)
+                    if fut is None:
+                        # timed-out in `async_call` or `call`.
+                        continue
 
-                fut['res'][idx] = y
-                fut['n'] += 1
-                if fut['n'] == n_results_needed:
-                    del futures[uid]
-                    try:
-                        z = self.ensemble(fut['x'], fut['res'])
-                        fut['fut'].set_result(z)
-                    except asyncio.InvalidStateError as e:
-                        if fut['fut'].cancelled():
-                            logger.warning(
-                                'Future object is already cancelled')
-                        else:
-                            logger.exception(e)
-                            raise
-                    except Exception as e:
-                        fut['fut'].set_exception(e)
-                # No sleep. Get results out of the queue as quickly as possible.
+                    fut['res'][idx] = y
+                    fut['n'] += 1
+                    if fut['n'] == n_results_needed:
+                        del futures[uid]
+                        try:
+                            z = self.ensemble(fut['x'], fut['res'])
+                            fut['fut'].set_result(z)
+                        except asyncio.InvalidStateError as e:
+                            if fut['fut'].cancelled():
+                                logger.warning(
+                                    'Future object is already cancelled')
+                            else:
+                                logger.exception(e)
+                                raise
+                        except Exception as e:
+                            fut['fut'].set_exception(e)
+                    # No sleep. Get results out of the queue as quickly as possible.
+            time.sleep(self.SLEEP_DEQUEUE)
 
     def _init_future_struct(self, x, fut):
         return {
