@@ -168,6 +168,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
                   *,
                   workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
+                  keep_order: bool = None,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
         '''
         When `workers = N > 0`, the worker threads (if `func` is sync)
@@ -186,7 +187,9 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
             1 <= workers <= 100
         return ConcurrentTransformer(
             self, func, workers=workers,
-            return_exceptions=return_exceptions)
+            return_exceptions=return_exceptions,
+            keep_order=keep_order,
+            )
 
 
 class Batcher(Stream):
@@ -377,18 +380,20 @@ class ConcurrentTransformer(Stream):
                  *,
                  workers: int,
                  return_exceptions: bool = False,
+                 keep_order: bool = False,
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
         self.workers = workers
         self.return_exceptions = return_exceptions
+        self.keep_order = workers > 1 and keep_order
         self._err = []
         self._tasks = []
 
         if is_async(func):
             self._async = True
-            self._outstream = IterQueue(workers * 8, self._to_shutdown)
+            self._outstream = IterQueue(workers * 1024, self._to_shutdown)
             self._start_async()
         else:
             self._async = False
@@ -397,7 +402,8 @@ class ConcurrentTransformer(Stream):
 
     def _start_async(self):
         async def _process(in_stream, out_stream, func,
-                           lock, finished, return_exceptions):
+                           lock, finished, return_exceptions, keep_order):
+            Future = asyncio.Future
             while not finished.is_set():
                 async with lock:
                     # This locked block ensures that
@@ -410,8 +416,9 @@ class ConcurrentTransformer(Stream):
                         return
                     try:
                         x = await in_stream.__anext__()
-                        fut = asyncio.Future()
-                        await out_stream.put(fut)
+                        if keep_order:
+                            fut = Future()
+                            await out_stream.put(fut)
                     except StopAsyncIteration:
                         finished.set()
                         await out_stream.put_end()
@@ -421,16 +428,28 @@ class ConcurrentTransformer(Stream):
                         self._err.append(e)
                         return
 
-                try:
-                    y = await func(x)
+                if keep_order:
+                    try:
+                        y = await func(x)
+                    except Exception as e:
+                        if return_exceptions:
+                            y = e
+                        else:
+                            fut.set_exception(e)
+                            finished.set()
+                            return
                     fut.set_result(y)
-                except Exception as e:
-                    if return_exceptions:
-                        fut.set_result(e)
-                    else:
-                        fut.set_exception(e)
-                        finished.set()
-                        return
+                else:
+                    try:
+                        y = await func(x)
+                    except Exception as e:
+                        if return_exceptions:
+                            y = e
+                        else:
+                            self._err.append(e)
+                            finished.set()
+                            return
+                    await out_stream.put(y)
 
         lock = asyncio.Lock()
         finished = asyncio.Event()
@@ -443,7 +462,8 @@ class ConcurrentTransformer(Stream):
                     self.func,
                     lock,
                     finished,
-                    self.return_exceptions),
+                    self.return_exceptions,
+                    self.keep_order),
                 name=f'transformer-{i}',
             )
             for i in range(self.workers)
@@ -468,11 +488,16 @@ class ConcurrentTransformer(Stream):
             except Exception as e:
                 self._err.append(e)
 
-        q_in = _sync_streamer.IterQueue(self.workers * 8, self._to_shutdown)
+        q_in = _sync_streamer.IterQueue(1024, self._to_shutdown)
         t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in))
         t2 = _sync_streamer.transform(
-            q_in, self._outstream, self.func,
-            self.workers, self.return_exceptions, self._err)
+            q_in,
+            self._outstream,
+            self.func,
+            workers=self.workers,
+            return_exceptions=self.return_exceptions,
+            keep_order=self.keep_order,
+            err=self._err)
         self._tasks = [t1] + t2
 
     async def _astop(self):
@@ -491,13 +516,16 @@ class ConcurrentTransformer(Stream):
         try:
             if self._err:
                 raise self._err[0]
-            fut = await self._outstream.__anext__()
-            if self._async:
-                return await fut
+            y = await self._outstream.__anext__()
+            if self.keep_order:
+                if self._async:
+                    return await y
+                else:
+                    while not y.done():
+                        await asyncio.sleep(IterQueue.GET_SLEEP)
+                    return y.result()
             else:
-                while not fut.done():
-                    await asyncio.sleep(IterQueue.GET_SLEEP)
-                return fut.result()
+                return y
         except:
             await self._astop()
             raise

@@ -381,6 +381,7 @@ class Stream(collections.abc.Iterator, StreamMixin):
                   *,
                   workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
+                  keep_order: bool = None,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
         '''Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
@@ -408,6 +409,11 @@ class Stream(collections.abc.Iterator, StreamMixin):
 
         When `workers = N > 0`, the worker threads are named 'transformer-0',
         'transformer-1',..., 'transformer-<N-1>'.
+
+        `keep_order`: whether the output elements should be ordered the same
+            as the corresponding input elements.
+            This is ignored when `workers` is `None` or 0 or 1, because
+            in those cases order is always preserved.
         '''
         if func_args:
             func = functools.partial(func, **func_args)
@@ -421,7 +427,9 @@ class Stream(collections.abc.Iterator, StreamMixin):
             1 <= workers <= 100
         return ConcurrentTransformer(
             self, func, workers=workers,
-            return_exceptions=return_exceptions)
+            return_exceptions=return_exceptions,
+            keep_order=keep_order,
+            )
 
 
 class Batcher(Stream):
@@ -621,25 +629,24 @@ class Transformer(Stream):
             raise
 
 
-def transform(in_stream: Iterator, out_stream: IterQueue,
-              func, workers, return_exceptions, err):
+def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
+        workers, return_exceptions, keep_order, err):
+
     def _process(in_stream, out_stream, func,
-                 lock, finished, return_exceptions):
+                 lock, finished, return_exceptions, keep_order):
         Future = concurrent.futures.Future
         while not finished.is_set():
             with lock:
-                # This locked block ensures that
-                # input is read in order and their corresponding
-                # result placeholders (Future objects) are
-                # put in the output stream in order.
                 if finished.is_set():
                     return
                 if err:
                     return
+
                 try:
                     x = next(in_stream)
-                    fut = Future()
-                    out_stream.put(fut)
+                    if keep_order:
+                        fut = Future()
+                        out_stream.put(fut)
                 except StopIteration:
                     finished.set()
                     out_stream.put_end()
@@ -649,29 +656,41 @@ def transform(in_stream: Iterator, out_stream: IterQueue,
                     err.append(e)
                     return
 
-            try:
-                y = func(x)
+            if keep_order:
+                try:
+                    y = func(x)
+                except Exception as e:
+                    if return_exceptions:
+                        y = e
+                    else:
+                        fut.set_exception(e)
+                        finished.set()
+                        return
                 fut.set_result(y)
-            except Exception as e:
-                if return_exceptions:
-                    fut.set_result(e)
-                else:
-                    fut.set_exception(e)
-                    finished.set()
-                    return
+            else:
+                try:
+                    y = func(x)
+                except Exception as e:
+                    if return_exceptions:
+                        y = e
+                    else:
+                        err.append(e)
+                        finished.set()
+                        return
+                out_stream.put(y)
 
-    lock = threading.Lock()
     finished = threading.Event()
-
+    lock = threading.Lock()
     tasks = [
         threading.Thread(
             target=_process,
             name=f'transformer-{i}',
             args=(in_stream, out_stream, func, lock,
-                  finished, return_exceptions),
+                  finished, return_exceptions, keep_order),
         )
         for i in range(workers)
     ]
+
     for t in tasks:
         t.start()
     return tasks
@@ -684,12 +703,14 @@ class ConcurrentTransformer(Stream):
                  *,
                  workers: int,
                  return_exceptions: bool = False,
+                 keep_order: bool = False,
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
         self.workers = workers
         self.return_exceptions = return_exceptions
+        self.keep_order = workers > 1 and keep_order
         self._outstream = IterQueue(1024, self._to_shutdown)
         self._err = []
         self._tasks = []
@@ -697,8 +718,13 @@ class ConcurrentTransformer(Stream):
 
     def _start(self):
         self._tasks = transform(
-            self._instream, self._outstream, self.func,
-            self.workers, self.return_exceptions, self._err)
+            self._instream,
+            self._outstream,
+            self.func,
+            workers=self.workers,
+            return_exceptions=self.return_exceptions,
+            keep_order=self.keep_order,
+            err=self._err)
 
     def _stop(self):
         for t in self._tasks:
@@ -711,8 +737,10 @@ class ConcurrentTransformer(Stream):
         try:
             if self._err:
                 raise self._err[0]
-            fut = next(self._outstream)
-            return fut.result()
+            y = next(self._outstream)
+            if self.keep_order:
+                return y.result()
+            return y
         except:
             self._stop()
             raise

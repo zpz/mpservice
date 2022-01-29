@@ -412,8 +412,7 @@ class MPServer(metaclass=ABCMeta):
         )
         time0 = time.perf_counter()
         uid, fut = await self._async_call_enqueue(
-            x, qs=self._input_queues(),
-            t0=time0, enqueue_timeout=enqueue_timeout)
+            x, t0=time0, enqueue_timeout=enqueue_timeout)
         return await self._async_call_wait_for_result(
             uid=uid, fut=fut,
             t0=time0, total_timeout=total_timeout)
@@ -438,8 +437,7 @@ class MPServer(metaclass=ABCMeta):
 
         time0 = time.perf_counter()
         uid, fut = self._call_enqueue(
-            x, qs=self._input_queues(),
-            t0=time0, enqueue_timeout=enqueue_timeout)
+            x, t0=time0, enqueue_timeout=enqueue_timeout)
         return self._call_wait_for_result(
             uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
 
@@ -459,41 +457,39 @@ class MPServer(metaclass=ABCMeta):
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
-        async def _enqueue(x, return_x):
+        async def _enqueue(x, *, return_x, return_exc, timeout):
             time0 = time.perf_counter()
             try:
                 uid, fut = await self._async_call_enqueue(
-                    x, qs=self._input_queues(),
-                    t0=time0, enqueue_timeout=enqueue_timeout)
+                    x, t0=time0, enqueue_timeout=timeout)
                 if return_x:
-                    return x, uid, fut
+                    return x, time0, uid, fut
                 else:
-                    return uid, fut
+                    return time0, uid, fut
             except Exception as e:
-                if return_x and return_exceptions:
-                    return x, None, e
+                if return_x and return_exc:
+                    return x, time0, None, e
                 raise
 
-        async def _dequeue(x, return_x):
+        async def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
-                x, uid, fut = x
-                if return_exceptions and isinstance(fut, Exception):
+                x, time0, uid, fut = x
+                if return_exc and isinstance(fut, Exception):
                     return x, fut
             else:
-                if return_exceptions and isinstance(x, Exception):
+                if return_exc and isinstance(x, Exception):
                     return x
-                uid, fut = x
+                time0, uid, fut = x
 
-            time0 = time.perf_counter()
             try:
                 z = await self._async_call_wait_for_result(
                     uid=uid, fut=fut,
-                    t0=time0, total_timeout=total_timeout)
+                    t0=time0, total_timeout=timeout)
                 if return_x:
                     return x, z
                 return z
             except Exception as e:
-                if return_x and return_exceptions:
+                if return_x and return_exc:
                     return x, e
                 raise
 
@@ -503,11 +499,19 @@ class MPServer(metaclass=ABCMeta):
         return (
             data_stream
             .transform(
-                _enqueue, workers=1, return_x=return_x,
-                return_exceptions=return_exceptions)
+                _enqueue, workers=1,
+                return_exceptions=return_exceptions,
+                return_x=return_x,
+                return_exc=return_exceptions,
+                timeout=enqueue_timeout,
+                )
             .transform(
-                _dequeue, workers=1, return_x=return_x,
-                return_exceptions=return_exceptions)
+                _dequeue, workers=1,
+                return_exceptions=return_exceptions,
+                return_x=return_x,
+                return_exc=return_exceptions,
+                timeout=total_timeout,
+                )
         )
 
     def stream(self, data_stream, *,
@@ -526,42 +530,40 @@ class MPServer(metaclass=ABCMeta):
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
-        def _enqueue(x, return_x):
+        def _enqueue(x, *, return_x, return_exc, timeout):
             fut = concurrent.futures.Future()
             time0 = time.perf_counter()
             try:
                 uid, fut = self._call_enqueue(
-                    x, qs=self._input_queues(),
-                    t0=time0, enqueue_timeout=enqueue_timeout)
+                    x, t0=time0, enqueue_timeout=timeout)
                 if return_x:
-                    return x, uid, fut
+                    return x, time0, uid, fut
                 else:
-                    return uid, fut
+                    return time0, uid, fut
             except Exception as e:
-                if return_x and return_exceptions:
-                    return x, None, e
+                if return_x and return_exc:
+                    return x, time0, None, e
                 raise
 
-        def _dequeue(x, return_x):
+        def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
-                x, uid, fut = x
-                if return_exceptions and isinstance(fut, Exception):
+                x, time0, uid, fut = x
+                if return_exc and isinstance(fut, Exception):
                     return x, fut
             else:
-                if return_exceptions and isinstance(x, Exception):
+                if return_exc and isinstance(x, Exception):
                     return x
-                uid, fut = x
+                time0, uid, fut = x
 
-            time0 = time.perf_counter()
             try:
                 z = self._call_wait_for_result(
                     uid=uid, fut=fut,
-                    t0=time0, total_timeout=total_timeout)
+                    t0=time0, total_timeout=timeout)
                 if return_x:
                     return x, z
                 return z
             except Exception as e:
-                if return_x and return_exceptions:
+                if return_x and return_exc:
                     return x, e
                 raise
 
@@ -570,11 +572,21 @@ class MPServer(metaclass=ABCMeta):
 
         return (data_stream
                 .transform(
-                    _enqueue, workers=1, return_x=return_x,
-                    return_exceptions=return_exceptions)
+                    _enqueue,
+                    workers=1,
+                    return_exceptions=return_exceptions,
+                    return_x=return_x,
+                    return_exc=return_exceptions,
+                    timeout=enqueue_timeout,
+                    )
                 .transform(
-                    _dequeue, workers=1, return_x=return_x,
-                    return_exceptions=return_exceptions)
+                    _dequeue,
+                    workers=1,
+                    return_exceptions=return_exceptions,
+                    return_x=return_x,
+                    return_exc=return_exceptions,
+                    timeout=total_timeout,
+                    )
                 )
 
     def _add_servlet(self,
@@ -742,11 +754,12 @@ class MPServer(metaclass=ABCMeta):
                     raise
             # No sleep. Get results out of the queue as quickly as possible.
 
-    async def _async_call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+    async def _async_call_enqueue(self, x, *, t0, enqueue_timeout) -> tuple:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         uid = self._enqueue_future(x, fut)
 
+        qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
@@ -784,10 +797,11 @@ class MPServer(metaclass=ABCMeta):
         return fut.result()
         # This could raise RemoteException.
 
-    def _call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+    def _call_enqueue(self, x, *, t0, enqueue_timeout) -> tuple:
         fut = concurrent.futures.Future()
         uid = self._enqueue_future(x, fut)
 
+        qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
