@@ -1,7 +1,7 @@
 import asyncio
 import concurrent.futures
 import time
-from mpservice.exception import RemoteException
+from mpservice.remote_exception import RemoteException
 import pytest
 
 from mpservice.mpserver import (
