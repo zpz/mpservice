@@ -2,6 +2,7 @@ Release 0.9.8
 =============
 
 - Reworked error propagation in streamer; fixed bugs therein.
+- Renamed `mpservice.exception` to `mpservice.exceptions`.
 
 
 Release 0.9.8b1
