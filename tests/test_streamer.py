@@ -217,17 +217,14 @@ def test_chain():
             raise ValueError(x)
         return x - 2
 
-    print('\n0\n')
     with pytest.raises(TypeError):
         z = Stream(corrupt_data()).transform(process1, workers=2)
         z.drain()
 
-    print('\n1\n')
     with pytest.raises((ValueError, TypeError)):
         z = Stream(corrupt_data()).transform(process2, workers=3)
         z.drain()
 
-    print('\n2\n')
     with pytest.raises((ValueError, TypeError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2, return_exceptions=True)
@@ -235,7 +232,6 @@ def test_chain():
             )
         z.drain()
 
-    print('\n3\n')
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
@@ -243,14 +239,12 @@ def test_chain():
             )
         z.drain()
 
-    print('\n4\n')
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .transform(process2, workers=4, return_exceptions=True)
         )
     z.drain()
 
-    print('\n5\n')
     with pytest.raises((TypeError, ValueError)):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
@@ -259,34 +253,29 @@ def test_chain():
              )
         z.drain()
 
-#     print('\n6\n')
-# 
-#     with pytest.raises((ValueError, TypeError)):
-#         z = (Stream(corrupt_data())
-#              .transform(process1, workers=2, return_exceptions=True)
-#              .buffer(2)
-#              .transform(process2, workers=3)
-#              )
-#         #z.drain()
-#         print('')
-#         print(z.collect())
-#     print('4')
-# 
-#     z = (Stream(corrupt_data())
-#          .transform(process1, workers=2, return_exceptions=True)
-#          .buffer(3)
-#          .transform(process2, workers=3, return_exceptions=True)
-#          .peek_every_nth(1))
-#     print(z.collect())
-# 
-#     print('c')
-#     z = (Stream(corrupt_data())
-#          .transform(process1, workers=2, return_exceptions=True, keep_order=True)
-#          .drop_exceptions()
-#          .buffer(3)
-#          .transform(process2, workers=3, return_exceptions=True, keep_order=True)
-#          .log_exceptions()
-#          .drop_exceptions()
-#          )
-#     print('d')
-#     assert z.collect() == [1, 2, 3, 4, 5, 6]
+    with pytest.raises((ValueError, TypeError)):
+        z = (Stream(corrupt_data())
+             .transform(process1, workers=2, return_exceptions=True)
+             .buffer(2)
+             .transform(process2, workers=3)
+             )
+        #z.drain()
+        print('')
+        print(z.collect())
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True)
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True)
+         .peek_every_nth(1))
+    print(z.collect())
+
+    z = (Stream(corrupt_data())
+         .transform(process1, workers=2, return_exceptions=True, keep_order=True)
+         .drop_exceptions()
+         .buffer(3)
+         .transform(process2, workers=3, return_exceptions=True, keep_order=True)
+         .log_exceptions()
+         .drop_exceptions()
+         )
+    assert z.collect() == [1, 2, 3, 4, 5, 6]

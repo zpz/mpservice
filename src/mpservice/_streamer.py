@@ -381,7 +381,7 @@ class Stream(collections.abc.Iterator, StreamMixin):
         production and downstream consumption.
         '''
         if maxsize is None:
-            maxsize = 256
+            maxsize = 1024
         else:
             assert 1 <= maxsize <= 10_000
         return Buffer(self, maxsize)
@@ -525,7 +525,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
     PUT_SLEEP = 0.00045
     NO_MORE_DATA = object()
 
-    def __init__(self, maxsize: int):
+    def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer):
         '''
         `upstream`: an upstream `IterQueue` object, usually the data stream that
         feeds into the current queue. This parameter allows this object and
@@ -533,6 +533,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         has stopped working, either deliberately or by exception.
         '''
         super().__init__(maxsize + 1)
+        self._downstream_crashed = downstream_crashed
 
     def put_end(self, block: bool = True):
         self.put(self.NO_MORE_DATA, block=block)
@@ -543,6 +544,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                 super().put(x, block=False)
                 break
             except queue.Full:
+                if self._downstream_crashed.is_set():
+                    return
                 if block:
                     time.sleep(self.PUT_SLEEP)
                 else:
@@ -556,6 +559,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopIteration
                 return z
             except queue.Empty:
+                if self._downstream_crashed.is_set():
+                    raise StopIteration
                 time.sleep(self.GET_SLEEP)
 
     async def __anext__(self):
@@ -567,6 +572,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                     raise StopAsyncIteration
                 return z
             except queue.Empty:
+                if self._downstream_crashed.is_set():
+                    raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
 
 
@@ -575,7 +582,7 @@ class Buffer(Stream):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = IterQueue(maxsize)
+        self._q = IterQueue(maxsize, self._crashed)
         self._upstream_err = None
         self._thread = None
         self._start()
@@ -608,8 +615,6 @@ class Buffer(Stream):
         self._stop()
 
     def _get_next(self):
-        if self._upstream_err is not None:
-            raise self._upstream_err
         try:
             z = next(self._q)
             return z
@@ -665,7 +670,6 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                 if finished.is_set():
                     set_finish()
                     return
-
                 if crashed.is_set():
                     set_finish()
                     return
@@ -703,12 +707,10 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                     fut.set_result(y)
             else:
                 try:
-                    print(threading.current_thread().name, func.__name__, x)
                     y = func(x)
                 except Exception as e:
                     out_stream.put(e)
                     if not return_exceptions:
-                        print('xxxx', threading.current_thread().name, func.__name__, repr(e))
                         crashed.set()
                         set_finish()
                         #time.sleep(0.01)
@@ -740,15 +742,15 @@ class ConcurrentTransformer(Stream):
                  *,
                  workers: int,
                  return_exceptions: bool = False,
-                 keep_order: bool = False,
+                 keep_order: bool = None,  # default True
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
         self.workers = workers
         self.return_exceptions = return_exceptions
-        self.keep_order = workers > 1 and keep_order
-        self._outstream = IterQueue(1024)
+        self.keep_order = workers > 1 and (keep_order is None or keep_order)
+        self._outstream = IterQueue(1024, self._crashed)
         self._tasks = []
         self._upstream_err = []
         self._start()

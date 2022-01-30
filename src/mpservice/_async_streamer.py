@@ -48,9 +48,10 @@ from typing import (
     Awaitable, Callable, TypeVar, Optional, Union,
     Iterable, Iterator,
     Tuple, Type)
+from uuid import RESERVED_FUTURE
 
 from . import _streamer as _sync_streamer
-from ._streamer import is_exception, _default_peek_func, MAX_THREADS
+from ._streamer import is_exception, _default_peek_func, EventUpstreamer, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
@@ -70,10 +71,10 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
 
     def __init__(self, instream: Union[Stream, Iterator, Iterable]):
         if isinstance(instream, Stream):
-            self._to_shutdown = instream._to_shutdown
+            self._crashed = instream._crashed
             self._instream = instream
         else:
-            self._to_shutdown = threading.Event()
+            self._crashed = EventUpstreamer()
             if hasattr(instream, '__anext__'):
                 self._instream = instream
             else:
@@ -115,15 +116,9 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
         return await self._instream.__anext__()
 
     async def __anext__(self):
-        try:
-            z = await self._get_next()
-            self.index += 1
-            return z
-        except StopAsyncIteration:
-            raise
-        except:
-            self._to_shutdown.set()
-            raise
+        z = await self._get_next()
+        self.index += 1
+        return z
 
     async def collect(self) -> list:
         return [v async for v in self]
@@ -268,9 +263,9 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
     PUT_SLEEP = 0.00045
     NO_MORE_DATA = object()
 
-    def __init__(self, maxsize: int, to_shutdown: threading.Event):
+    def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer):
         super().__init__(maxsize)
-        self._to_shutdown = to_shutdown
+        self._downstream_crashed = downstream_crashed
 
     async def put_end(self):
         await self.put(self.NO_MORE_DATA)
@@ -281,7 +276,7 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
                 super().put_nowait(x)
                 break
             except asyncio.QueueFull:
-                if self._to_shutdown.is_set():
+                if self._downstream_crashed.is_set():
                     return
                 await asyncio.sleep(self.PUT_SLEEP)
 
@@ -293,6 +288,8 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
                     raise StopAsyncIteration
                 return z
             except asyncio.QueueEmpty:
+                if self._downstream_crashed.is_set():
+                    raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
 
 
@@ -301,27 +298,27 @@ class Buffer(Stream):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = IterQueue(maxsize, self._to_shutdown)
-        self._err = None
+        self._q = IterQueue(maxsize, self._crashed)
+        self._upstream_err = None
         self._task = None
         self._start()
 
     def _start(self):
-        async def foo(instream, q):
+        async def foo(instream, q, crashed):
             try:
                 async for v in instream:
-                    await q.put(v)
-                    if self._to_shutdown.is_set():
+                    if self._crashed.is_set():
                         break
+                    await q.put(v)
                 await q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
-                self._err = e
-                self._to_shutdown.set()
+                self._upstream_err = e
+                q.put_end()
 
-        self._task = asyncio.create_task(foo(self._instream, self._q))
+        self._task = asyncio.create_task(foo(self._instream, self._q, self._crashed))
 
     def _stop(self):
         if self._task is not None:
@@ -332,10 +329,12 @@ class Buffer(Stream):
         self._stop()
 
     async def _get_next(self):
-        if self._err is not None:
-            self._stop()
-            raise self._err
-        return await self._q.__anext__()
+        try:
+            return await self._q.__anext__()
+        except StopAsyncIteration:
+            if self._upstream_err is not None:
+                raise self._upstream_err
+            raise
 
 
 def is_async(func):
@@ -370,6 +369,7 @@ class Transformer(Stream):
         except Exception as e:
             if self.return_exceptions:
                 return e
+            self._crashed.set()
             raise
 
 
@@ -380,53 +380,60 @@ class ConcurrentTransformer(Stream):
                  *,
                  workers: int,
                  return_exceptions: bool = False,
-                 keep_order: bool = False,
+                 keep_order: bool = None,
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
         self.workers = workers
         self.return_exceptions = return_exceptions
-        self.keep_order = workers > 1 and keep_order
-        self._err = []
+        self.keep_order = workers > 1 and (keep_order is None or keep_order)
+        self._upstream_err = []
         self._tasks = []
 
         if is_async(func):
             self._async = True
-            self._outstream = IterQueue(workers * 1024, self._to_shutdown)
+            self._outstream = IterQueue(workers * 1024, self._crashed)
             self._start_async()
         else:
             self._async = False
-            self._outstream = _sync_streamer.IterQueue(1024, self._to_shutdown)
+            self._outstream = _sync_streamer.IterQueue(1024, self._crashed)
             self._start_sync()
 
     def _start_async(self):
-        async def _process(in_stream, out_stream, func,
-                           lock, finished, return_exceptions, keep_order):
+        async def _process(in_stream, out_stream, func, lock, finished, keep_order):
+
+            async def set_finish():
+                active_tasks.pop()
+                if not active_tasks:
+                    # This thread is the last active one
+                    # for the current transformer.
+                    await out_stream.put_end()
+                finished.set()
+
             Future = asyncio.Future
-            while not finished.is_set():
+            while True:
                 async with lock:
-                    # This locked block ensures that
-                    # input is read in order and their corresponding
-                    # result placeholders (Future objects) are
-                    # put in the output stream in order.
                     if finished.is_set():
+                        await set_finish()
                         return
-                    if self._err:
+                    if crashed.is_set():
+                        await set_finish()
                         return
+
                     try:
                         x = await in_stream.__anext__()
+                    except StopAsyncIteration:
+                        await set_finish()
+                        return
+                    except Exception as e:
+                        self._upstream_err.append(e)
+                        await set_finish()
+                        return
+                    else:
                         if keep_order:
                             fut = Future()
                             await out_stream.put(fut)
-                    except StopAsyncIteration:
-                        finished.set()
-                        await out_stream.put_end()
-                        return
-                    except Exception as e:
-                        finished.set()
-                        self._err.append(e)
-                        return
 
                 if keep_order:
                     try:
@@ -436,24 +443,26 @@ class ConcurrentTransformer(Stream):
                             y = e
                         else:
                             fut.set_exception(e)
-                            finished.set()
+                            self._crashed.set()
+                            await set_finish()
                             return
                     fut.set_result(y)
                 else:
                     try:
                         y = await func(x)
                     except Exception as e:
-                        if return_exceptions:
-                            y = e
-                        else:
-                            self._err.append(e)
-                            finished.set()
+                        await out_stream.put(e)
+                        if not self.return_exceptions:
+                            self._crashed.set()
+                            await set_finish()
                             return
-                    await out_stream.put(y)
+                    else:
+                        await out_stream.put(y)
 
         lock = asyncio.Lock()
         finished = asyncio.Event()
 
+        active_tasks = list(range(self.workers))
         self._tasks = [
             asyncio.create_task(
                 _process(
@@ -462,7 +471,6 @@ class ConcurrentTransformer(Stream):
                     self.func,
                     lock,
                     finished,
-                    self.return_exceptions,
                     self.keep_order),
                 name=f'transformer-{i}',
             )
@@ -470,7 +478,15 @@ class ConcurrentTransformer(Stream):
         ]
 
     def _start_sync(self):
-        async def _put_input_in_queue(q_in, q_out):
+        async def _put_input_in_queue(q_in, q_out, crashed):
+            async def put_end():
+                while True:
+                    try:
+                        q_out.put_end(block=False)
+                        return
+                    except queue.Full:
+                        await asyncio.sleep(q_out.PUT_SLEEP)
+
             try:
                 async for x in q_in:
                     while True:
@@ -478,18 +494,17 @@ class ConcurrentTransformer(Stream):
                             q_out.put(x, block=False)
                             break
                         except queue.Full:
-                            await asyncio.sleep(q_out.PUT_SLEEP)
-                while True:
-                    try:
-                        q_out.put_end(block=False)
-                        break
-                    except queue.Full:
+                            if crashed.is_set():
+                                await put_end()
+                                return
                         await asyncio.sleep(q_out.PUT_SLEEP)
             except Exception as e:
-                self._err.append(e)
+                self._upstream_err.append(e)
+                await put_end()
+                return
 
-        q_in = _sync_streamer.IterQueue(1024, self._to_shutdown)
-        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in))
+        q_in = _sync_streamer.IterQueue(1024, self._crashed)
+        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in, self._crashed))
         t2 = _sync_streamer.transform(
             q_in,
             self._outstream,
@@ -497,7 +512,9 @@ class ConcurrentTransformer(Stream):
             workers=self.workers,
             return_exceptions=self.return_exceptions,
             keep_order=self.keep_order,
-            err=self._err)
+            crashed=self._crashed,
+            upstream_err=self._upstream_err,
+            )
         self._tasks = [t1] + t2
 
     async def _astop(self):
@@ -514,8 +531,6 @@ class ConcurrentTransformer(Stream):
 
     async def _get_next(self):
         try:
-            if self._err:
-                raise self._err[0]
             y = await self._outstream.__anext__()
             if self.keep_order:
                 if self._async:
@@ -529,3 +544,33 @@ class ConcurrentTransformer(Stream):
         except:
             await self._astop()
             raise
+
+
+    async def _get_next(self):
+        if self._upstream_err:
+            raise self._upstream_err[0]
+        try:
+            y = await self._outstream.__anext__()
+        except StopAsyncIteration:
+            if self._upstream_err:
+                raise self._upstream_err[0]
+            raise
+        if self.keep_order:
+            if self._async:
+                try:
+                    return await y
+                except:
+                    self._crashed.set()
+                    raise
+            else:
+                while not y.done():
+                    await asyncio.sleep(IterQueue.GET_SLEEP)
+                try:
+                    return y.result()
+                except:
+                    self._crashed.set()
+                    raise
+        if isinstance(y, Exception) and not self.return_exceptions:
+            self._crashed.set()
+            raise y
+        return y
