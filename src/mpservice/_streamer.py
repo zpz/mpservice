@@ -646,29 +646,38 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
         upstream_err):
 
     def _process(in_stream, out_stream, func, lock, finished, crashed, keep_order):
-        Future = concurrent.futures.Future
-        while not finished.is_set():
-            if crashed.is_set():
+        # `finished`: finished by one of these workers, either due to
+        # exhaustion of input, or error in processing.
+        # `crashed`: some downstream transformer failed, while the current
+        # may be all fine.
+
+        def set_finish():
+            active_tasks.pop()
+            if not active_tasks:
+                # This thread is the last active one
+                # for the current transformer.
                 out_stream.put_end()
-                return
+            finished.set()
 
-            #time.sleep(0.0001)
-
+        Future = concurrent.futures.Future
+        while True:
             with lock:
                 if finished.is_set():
+                    set_finish()
+                    return
+
+                if crashed.is_set():
+                    set_finish()
                     return
 
                 try:
                     x = next(in_stream)
                 except StopIteration:
-                    finished.set()
-                    out_stream.put_end()
+                    set_finish()
                     return
                 except Exception as e:
                     upstream_err.append(e)
-                    finished.set()
-                    out_stream.put_end()
-                    #time.sleep(0.01)
+                    set_finish()
                     return
                 else:
                     if keep_order:
@@ -686,8 +695,8 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                         fut.set_result(e)
                     else:
                         fut.set_exception(e)
-                        finished.set()
                         crashed.set()
+                        set_finish()
                         #time.sleep(0.01)
                         return
                 else:
@@ -700,8 +709,8 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                     out_stream.put(e)
                     if not return_exceptions:
                         print('xxxx', threading.current_thread().name, func.__name__, repr(e))
-                        finished.set()
                         crashed.set()
+                        set_finish()
                         #time.sleep(0.01)
                         return
                 else:
@@ -717,6 +726,7 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
         )
         for i in range(workers)
     ]
+    active_tasks = list(range(workers))
 
     for t in tasks:
         t.start()
