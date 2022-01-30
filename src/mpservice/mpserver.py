@@ -68,7 +68,7 @@ from uuid import uuid4
 
 import psutil  # type: ignore
 
-from .exception import RemoteException
+from .remote_exception import RemoteException
 from . import streamer
 
 
@@ -325,7 +325,8 @@ class MPServer(metaclass=ABCMeta):
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
 
-        self._t_gather_results: threading.Thread = None  # type: ignore
+        self._t_gather_output: threading.Thread = None  # type: ignore
+        self._t_gather_error: threading.Thread = None  # type: ignore
 
         self._servlets: List[mp.Process] = []
         self._uid_to_futures = {}
@@ -380,8 +381,10 @@ class MPServer(metaclass=ABCMeta):
                 k += 1
                 logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_results = threading.Thread(target=self._gather_results)
-        self._t_gather_results.start()
+        self._t_gather_output = threading.Thread(target=self._gather_output)
+        self._t_gather_output.start()
+        self._t_gather_error = threading.Thread(target=self._gather_error)
+        self._t_gather_error.start()
 
     def stop(self):
         assert self.started > 0
@@ -390,8 +393,10 @@ class MPServer(metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
-        self._t_gather_results.join()
-        self._t_gather_results = None
+        self._t_gather_output.join()
+        self._t_gather_output = None
+        self._t_gather_error.join()
+        self._t_gather_error = None
 
         for m in self._servlets:
             # if m.is_alive():
@@ -412,8 +417,7 @@ class MPServer(metaclass=ABCMeta):
         )
         time0 = time.perf_counter()
         uid, fut = await self._async_call_enqueue(
-            x, qs=self._input_queues(),
-            t0=time0, enqueue_timeout=enqueue_timeout)
+            x, t0=time0, enqueue_timeout=enqueue_timeout)
         return await self._async_call_wait_for_result(
             uid=uid, fut=fut,
             t0=time0, total_timeout=total_timeout)
@@ -438,8 +442,7 @@ class MPServer(metaclass=ABCMeta):
 
         time0 = time.perf_counter()
         uid, fut = self._call_enqueue(
-            x, qs=self._input_queues(),
-            t0=time0, enqueue_timeout=enqueue_timeout)
+            x, t0=time0, enqueue_timeout=enqueue_timeout)
         return self._call_wait_for_result(
             uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
 
@@ -459,41 +462,39 @@ class MPServer(metaclass=ABCMeta):
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
-        async def _enqueue(x, return_x):
+        async def _enqueue(x, *, return_x, return_exc, timeout):
             time0 = time.perf_counter()
             try:
                 uid, fut = await self._async_call_enqueue(
-                    x, qs=self._input_queues(),
-                    t0=time0, enqueue_timeout=enqueue_timeout)
+                    x, t0=time0, enqueue_timeout=timeout)
                 if return_x:
-                    return x, uid, fut
+                    return x, time0, uid, fut
                 else:
-                    return uid, fut
+                    return time0, uid, fut
             except Exception as e:
-                if return_x and return_exceptions:
-                    return x, None, e
+                if return_x and return_exc:
+                    return x, time0, None, e
                 raise
 
-        async def _dequeue(x, return_x):
+        async def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
-                x, uid, fut = x
-                if return_exceptions and isinstance(fut, Exception):
+                x, time0, uid, fut = x
+                if return_exc and isinstance(fut, Exception):
                     return x, fut
             else:
-                if return_exceptions and isinstance(x, Exception):
+                if return_exc and isinstance(x, Exception):
                     return x
-                uid, fut = x
+                time0, uid, fut = x
 
-            time0 = time.perf_counter()
             try:
                 z = await self._async_call_wait_for_result(
                     uid=uid, fut=fut,
-                    t0=time0, total_timeout=total_timeout)
+                    t0=time0, total_timeout=timeout)
                 if return_x:
                     return x, z
                 return z
             except Exception as e:
-                if return_x and return_exceptions:
+                if return_x and return_exc:
                     return x, e
                 raise
 
@@ -503,11 +504,19 @@ class MPServer(metaclass=ABCMeta):
         return (
             data_stream
             .transform(
-                _enqueue, workers=1, return_x=return_x,
-                return_exceptions=return_exceptions)
+                _enqueue, workers=1,
+                return_exceptions=return_exceptions,
+                return_x=return_x,
+                return_exc=return_exceptions,
+                timeout=enqueue_timeout,
+            )
             .transform(
-                _dequeue, workers=1, return_x=return_x,
-                return_exceptions=return_exceptions)
+                _dequeue, workers=1,
+                return_exceptions=return_exceptions,
+                return_x=return_x,
+                return_exc=return_exceptions,
+                timeout=total_timeout,
+            )
         )
 
     def stream(self, data_stream, *,
@@ -526,42 +535,40 @@ class MPServer(metaclass=ABCMeta):
 
         enqueue_timeout, total_timeout = self._resolve_timeout()
 
-        def _enqueue(x, return_x):
+        def _enqueue(x, *, return_x, return_exc, timeout):
             fut = concurrent.futures.Future()
             time0 = time.perf_counter()
             try:
                 uid, fut = self._call_enqueue(
-                    x, qs=self._input_queues(),
-                    t0=time0, enqueue_timeout=enqueue_timeout)
+                    x, t0=time0, enqueue_timeout=timeout)
                 if return_x:
-                    return x, uid, fut
+                    return x, time0, uid, fut
                 else:
-                    return uid, fut
+                    return time0, uid, fut
             except Exception as e:
-                if return_x and return_exceptions:
-                    return x, None, e
+                if return_x and return_exc:
+                    return x, time0, None, e
                 raise
 
-        def _dequeue(x, return_x):
+        def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
-                x, uid, fut = x
-                if return_exceptions and isinstance(fut, Exception):
+                x, time0, uid, fut = x
+                if return_exc and isinstance(fut, Exception):
                     return x, fut
             else:
-                if return_exceptions and isinstance(x, Exception):
+                if return_exc and isinstance(x, Exception):
                     return x
-                uid, fut = x
+                time0, uid, fut = x
 
-            time0 = time.perf_counter()
             try:
                 z = self._call_wait_for_result(
                     uid=uid, fut=fut,
-                    t0=time0, total_timeout=total_timeout)
+                    t0=time0, total_timeout=timeout)
                 if return_x:
                     return x, z
                 return z
             except Exception as e:
-                if return_x and return_exceptions:
+                if return_x and return_exc:
                     return x, e
                 raise
 
@@ -570,11 +577,21 @@ class MPServer(metaclass=ABCMeta):
 
         return (data_stream
                 .transform(
-                    _enqueue, workers=1, return_x=return_x,
-                    return_exceptions=return_exceptions)
+                    _enqueue,
+                    workers=1,
+                    return_exceptions=return_exceptions,
+                    return_x=return_x,
+                    return_exc=return_exceptions,
+                    timeout=enqueue_timeout,
+                )
                 .transform(
-                    _dequeue, workers=1, return_x=return_x,
-                    return_exceptions=return_exceptions)
+                    _dequeue,
+                    workers=1,
+                    return_exceptions=return_exceptions,
+                    return_x=return_x,
+                    return_exc=return_exceptions,
+                    timeout=total_timeout,
+                )
                 )
 
     def _add_servlet(self,
@@ -704,17 +721,6 @@ class MPServer(metaclass=ABCMeta):
     def _input_queues(self):
         raise NotImplementedError
 
-    def _gather_results(self):
-        # This is not a "public" method in that end-user
-        # should not call this method. But this is an important
-        # top-level method.
-        while True:
-            if not self.started:
-                return
-            self._gather_output()
-            self._gather_error()
-            time.sleep(self.SLEEP_DEQUEUE)
-
     @abstractmethod
     def _gather_output(self):
         # Subclass implementation of this function is responsible
@@ -724,29 +730,33 @@ class MPServer(metaclass=ABCMeta):
     def _gather_error(self):
         q_err = self._q_err
         futures = self._uid_to_futures
-        while not q_err.empty():
-            uid, err = q_err.get_nowait()
-            fut = futures.pop(uid, None)
-            if fut is None:  # timed-out in `call` or `async_call`
-                logger.info(
-                    'got error for an already-cancelled task: %r', err)
-                continue
+        while self.started:
             try:
-                # `err` is a RemoteException object.
-                fut['fut'].set_exception(err)
-            except asyncio.InvalidStateError as e:
-                if fut['fut'].cancelled():
-                    logger.warning('Future object is already cancelled')
-                else:
-                    logger.exception(e)
-                    raise
-            # No sleep. Get results out of the queue as quickly as possible.
+                uid, err = q_err.get(timeout=1)
+            except queue.Empty:
+                continue
+            else:
+                fut = futures.pop(uid, None)
+                if fut is None:  # timed-out in `call` or `async_call`
+                    logger.info(
+                        'got error for an already-cancelled task: %r', err)
+                    continue
+                try:
+                    # `err` is a RemoteException object.
+                    fut['fut'].set_exception(err)
+                except asyncio.InvalidStateError as e:
+                    if fut['fut'].cancelled():
+                        logger.warning('Future object is already cancelled')
+                    else:
+                        logger.exception(e)
+                        raise
 
-    async def _async_call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+    async def _async_call_enqueue(self, x, *, t0, enqueue_timeout) -> tuple:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         uid = self._enqueue_future(x, fut)
 
+        qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
@@ -784,42 +794,38 @@ class MPServer(metaclass=ABCMeta):
         return fut.result()
         # This could raise RemoteException.
 
-    def _call_enqueue(self, x, *, qs, t0, enqueue_timeout):
+    def _call_enqueue(self, x, *, t0, enqueue_timeout) -> tuple:
         fut = concurrent.futures.Future()
         uid = self._enqueue_future(x, fut)
 
+        qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            while True:
-                if not self.started:
-                    return
-                try:
-                    q.put_nowait((uid, x))
-                    break
-                except queue.Full:
-                    timenow = time.perf_counter()
-                    if timenow < t1:
-                        time.sleep(self.SLEEP_ENQUEUE)
-                    else:
-                        fut.cancel()
-                        del self._uid_to_futures[uid]
-                        raise EnqueueTimeout(
-                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+            if not self.started:
+                return
+            try:
+                q.put((uid, x), timeout=t1 - time.perf_counter())
+            except queue.Full:
+                timenow = time.perf_counter()
+                fut.cancel()
+                del self._uid_to_futures[uid]
+                raise EnqueueTimeout(
+                    f'waited {timenow - t0} seconds; timeout at queue {iq}')
+
         return uid, fut
 
     def _call_wait_for_result(self, *, uid, fut, t0, total_timeout):
         t1 = t0 + total_timeout
-        while not fut.done():
-            if time.perf_counter() > t1:
-                fut.cancel()
-                self._uid_to_futures.pop(uid, None)
-                # `uid` could have been deleted by
-                # `gather_results` during very subtle
-                # timing coincidence.
-                raise TotalTimeout(
-                    f'waited {time.perf_counter() - t0} seconds')
-            time.sleep(self.SLEEP_DEQUEUE)
-        return fut.result()
+        try:
+            return fut.result(timeout=t1 - time.perf_counter())
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            self._uid_to_futures.pop(uid, None)
+            # `uid` could have been deleted by
+            # `gather_results` during very subtle
+            # timing coincidence.
+            raise TotalTimeout(
+                f'waited {time.perf_counter() - t0} seconds')
 
 
 class SequentialServer(MPServer):
@@ -850,21 +856,24 @@ class SequentialServer(MPServer):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
 
-        while not q_out.empty():
-            uid, y = q_out.get_nowait()
-            fut = futures.pop(uid, None)
-            if fut is None:
-                # timed-out in `async_call` or `call`.
-                continue
+        while self.started:
             try:
-                fut['fut'].set_result(y)
-            except asyncio.InvalidStateError as e:
-                if fut.cancelled():
-                    logger.warning('Future object is already cancelled')
-                else:
-                    logger.exception(e)
-                    raise
-            # No sleep. Get results out of the queue as quickly as possible.
+                uid, y = q_out.get(timeout=1)
+            except queue.Empty:
+                continue
+            else:
+                fut = futures.pop(uid, None)
+                if fut is None:
+                    # timed-out in `async_call` or `call`.
+                    continue
+                try:
+                    fut['fut'].set_result(y)
+                except asyncio.InvalidStateError as e:
+                    if fut.cancelled():
+                        logger.warning('Future object is already cancelled')
+                    else:
+                        logger.exception(e)
+                        raise
 
     def _init_future_struct(self, x, fut):
         return {'fut': fut}
@@ -915,31 +924,35 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
-        for idx, q_out in enumerate(self._q_out):
-            while not q_out.empty():
-                uid, y = q_out.get_nowait()
-                fut = futures.get(uid)
-                if fut is None:
-                    # timed-out in `async_call` or `call`.
-                    continue
+        while self.started:
+            # TODO: need improvement; refer to other `_gather_output`.
+            # How to make waiting more efficient?
+            for idx, q_out in enumerate(self._q_out):
+                while not q_out.empty():
+                    uid, y = q_out.get_nowait()
+                    fut = futures.get(uid)
+                    if fut is None:
+                        # timed-out in `async_call` or `call`.
+                        continue
 
-                fut['res'][idx] = y
-                fut['n'] += 1
-                if fut['n'] == n_results_needed:
-                    del futures[uid]
-                    try:
-                        z = self.ensemble(fut['x'], fut['res'])
-                        fut['fut'].set_result(z)
-                    except asyncio.InvalidStateError as e:
-                        if fut['fut'].cancelled():
-                            logger.warning(
-                                'Future object is already cancelled')
-                        else:
-                            logger.exception(e)
-                            raise
-                    except Exception as e:
-                        fut['fut'].set_exception(e)
-                # No sleep. Get results out of the queue as quickly as possible.
+                    fut['res'][idx] = y
+                    fut['n'] += 1
+                    if fut['n'] == n_results_needed:
+                        del futures[uid]
+                        try:
+                            z = self.ensemble(fut['x'], fut['res'])
+                            fut['fut'].set_result(z)
+                        except asyncio.InvalidStateError as e:
+                            if fut['fut'].cancelled():
+                                logger.warning(
+                                    'Future object is already cancelled')
+                            else:
+                                logger.exception(e)
+                                raise
+                        except Exception as e:
+                            fut['fut'].set_exception(e)
+                    # No sleep. Get results out of the queue as quickly as possible.
+            time.sleep(self.SLEEP_DEQUEUE)
 
     def _init_future_struct(self, x, fut):
         return {

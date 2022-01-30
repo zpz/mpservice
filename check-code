@@ -12,11 +12,9 @@ bandit -r -lll ${SRC} || exit 1
 bandit -r -lll ${TESTS} || exit 1
 
 echo
-echo --- running pyflakes ---
+echo --- running flake8 ---
 echo
-python -m pyflakes ${SRC} || exit 1
-echo
-python -m pyflakes ${TESTS} || exit 1
+python -m flake8 --ignore E501,W503,W504 ${SRC} || exit 1
 
 echo
 echo --- running mypy ---

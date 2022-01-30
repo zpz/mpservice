@@ -161,7 +161,7 @@ class BackgroundTask(ABC):
     existing task (i.e. a task with the same ID) will simply get
     access to the existing task rather than making a new submission.
 
-    Facilities are provided to check task status, and cancel an ongoing task. 
+    Facilities are provided to check task status, and cancel an ongoing task.
     '''
 
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):

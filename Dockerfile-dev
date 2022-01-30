@@ -1,25 +1,14 @@
-FROM python:3.8-slim
+FROM zppz/py3:22.01.26
 USER root
 
 ARG PROJ
 
-RUN groupadd --gid 1234 docker-user \
-    && mkdir -p /home/docker-user \
-    && useradd --uid 1234 --gid docker-user --no-user-group --home /home/docker-user --shell /bin/bash docker-user \
-    && chown -R docker-user:docker-user /home/docker-user \
-    && chmod -R u=rwx,g=rwx,o=r /home/docker-user
-# Giving 'g=rwx' to /home/docker-user is a hack around mapped-volume permission issues.
+COPY . /src/
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends --no-upgrade -y curl \
-    && curl -skL https://raw.githubusercontent.com/zpz/linux/master/bash/bashrc -o /etc/bash.bashrc
-
-COPY . /tmp/
-
-RUN cd /tmp \
+RUN cd /src \
     && python -m pip install -e . \
     && python -m pip uninstall -y ${PROJ}  \
-    && python -m pip install -r /tmp/requirements-test.txt
+    && python -m pip install -r /src/requirements-test.txt
 
 
 USER docker-user

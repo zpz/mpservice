@@ -1,7 +1,7 @@
 bandit
 httpx
 mypy
-pyflakes
+flake8
 pylint
 pytest
 pytest-asyncio
