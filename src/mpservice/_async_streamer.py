@@ -417,7 +417,7 @@ class ConcurrentTransformer(Stream):
                     if finished.is_set():
                         await set_finish()
                         return
-                    if crashed.is_set():
+                    if self._crashed.is_set():
                         await set_finish()
                         return
 

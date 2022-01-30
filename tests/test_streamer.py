@@ -259,9 +259,7 @@ def test_chain():
              .buffer(2)
              .transform(process2, workers=3)
              )
-        #z.drain()
-        print('')
-        print(z.collect())
+        z.drain()
 
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
