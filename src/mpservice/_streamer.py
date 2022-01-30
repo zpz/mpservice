@@ -439,7 +439,7 @@ class Stream(collections.abc.Iterator, StreamMixin):
             self, func, workers=workers,
             return_exceptions=return_exceptions,
             keep_order=keep_order,
-            )
+        )
 
 
 class Batcher(Stream):
@@ -646,9 +646,10 @@ class Transformer(Stream):
             raise
 
 
-def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
+def transform(
+        in_stream: Iterator, out_stream: IterQueue, func, *,
         workers, return_exceptions, keep_order, crashed,
-        upstream_err):
+        upstream_err, finished=None):
 
     def _process(in_stream, out_stream, func, lock, finished, crashed, keep_order):
         # `finished`: finished by one of these workers, either due to
@@ -701,7 +702,6 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                         fut.set_exception(e)
                         crashed.set()
                         set_finish()
-                        #time.sleep(0.01)
                         return
                 else:
                     fut.set_result(y)
@@ -713,12 +713,12 @@ def transform(in_stream: Iterator, out_stream: IterQueue, func, *,
                     if not return_exceptions:
                         crashed.set()
                         set_finish()
-                        #time.sleep(0.01)
                         return
                 else:
                     out_stream.put(y)
 
-    finished = threading.Event()
+    if finished is None:
+        finished = threading.Event()
     lock = threading.Lock()
     tasks = [
         threading.Thread(
@@ -765,7 +765,7 @@ class ConcurrentTransformer(Stream):
             keep_order=self.keep_order,
             crashed=self._crashed,
             upstream_err=self._upstream_err,
-            )
+        )
 
     def _stop(self):
         for t in self._tasks:
@@ -786,7 +786,7 @@ class ConcurrentTransformer(Stream):
         if self.keep_order:
             try:
                 return y.result()
-            except:
+            except Exception:
                 self._crashed.set()
                 raise
         if isinstance(y, Exception) and not self.return_exceptions:

@@ -248,10 +248,10 @@ async def test_concurrent_transform():
     got = [v async for v in s]
     assert got == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers=10, keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
     assert await s == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers='max', keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
     assert await s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
@@ -288,21 +288,17 @@ async def test_concurrent_transform_sync():
 
     SYNC_INPUT = list(range(278))
 
-    print('\n1\n')
     expected = [v + 3.8 for v in SYNC_INPUT]
     s = Stream(SYNC_INPUT).transform(f1, workers=1)
     got = [v async for v in s]
     assert got == expected
 
-    print('\n2\n')
-    s = Stream(SYNC_INPUT).transform(f1, workers=10, keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
     assert await s == expected
 
-    print('\n3\n')
-    s = Stream(SYNC_INPUT).transform(f1, workers='max', keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
     assert await s == expected
 
-    print('\n4\n')
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
     s = Stream(SYNC_INPUT).transform(f1).transform(f2)
     assert await s.collect() == expected
@@ -315,13 +311,11 @@ async def test_concurrent_transform_sync():
             time.sleep(random.random() * 0.01)
             self.result += x * 3
 
-    print('\n5\n')
     mysink = MySink()
     s = Stream(SYNC_INPUT).transform(f1).transform(mysink)
     n = await s.drain()
     assert n == len(SYNC_INPUT)
 
-    print('\n6\n')
     got = mysink.result
     expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
     assert math.isclose(got, expected)

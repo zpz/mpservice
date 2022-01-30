@@ -509,14 +509,14 @@ class MPServer(metaclass=ABCMeta):
                 return_x=return_x,
                 return_exc=return_exceptions,
                 timeout=enqueue_timeout,
-                )
+            )
             .transform(
                 _dequeue, workers=1,
                 return_exceptions=return_exceptions,
                 return_x=return_x,
                 return_exc=return_exceptions,
                 timeout=total_timeout,
-                )
+            )
         )
 
     def stream(self, data_stream, *,
@@ -583,7 +583,7 @@ class MPServer(metaclass=ABCMeta):
                     return_x=return_x,
                     return_exc=return_exceptions,
                     timeout=enqueue_timeout,
-                    )
+                )
                 .transform(
                     _dequeue,
                     workers=1,
@@ -591,7 +591,7 @@ class MPServer(metaclass=ABCMeta):
                     return_x=return_x,
                     return_exc=return_exceptions,
                     timeout=total_timeout,
-                    )
+                )
                 )
 
     def _add_servlet(self,

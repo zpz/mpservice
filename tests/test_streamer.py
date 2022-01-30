@@ -147,10 +147,10 @@ def test_transform():
     got = [v for v in s]
     assert got == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers=10, keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers=10).collect()
     assert s == expected
 
-    s = Stream(SYNC_INPUT).transform(f1, workers='max', keep_order=True).collect()
+    s = Stream(SYNC_INPUT).transform(f1, workers='max').collect()
     assert s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
@@ -269,10 +269,10 @@ def test_chain():
     print(z.collect())
 
     z = (Stream(corrupt_data())
-         .transform(process1, workers=2, return_exceptions=True, keep_order=True)
+         .transform(process1, workers=2, return_exceptions=True)
          .drop_exceptions()
          .buffer(3)
-         .transform(process2, workers=3, return_exceptions=True, keep_order=True)
+         .transform(process2, workers=3, return_exceptions=True)
          .log_exceptions()
          .drop_exceptions()
          )

@@ -48,7 +48,6 @@ from typing import (
     Awaitable, Callable, TypeVar, Optional, Union,
     Iterable, Iterator,
     Tuple, Type)
-from uuid import RESERVED_FUTURE
 
 from . import _streamer as _sync_streamer
 from ._streamer import is_exception, _default_peek_func, EventUpstreamer, MAX_THREADS
@@ -143,8 +142,8 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
     def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
         return Dropper(self, func)
 
-    def head(self, n: int) -> Head:
-        return Head(self, n)
+    def head(self, n: int) -> Header:
+        return Header(self, n)
 
     def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
         if func is None:
@@ -184,7 +183,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
             self, func, workers=workers,
             return_exceptions=return_exceptions,
             keep_order=keep_order,
-            )
+        )
 
 
 class Batcher(Stream):
@@ -235,7 +234,7 @@ class Dropper(Stream):
             return z
 
 
-class Head(Stream):
+class Header(Stream):
     def __init__(self, instream: Stream, n: int):
         super().__init__(instream)
         assert n >= 0
@@ -307,7 +306,7 @@ class Buffer(Stream):
         async def foo(instream, q, crashed):
             try:
                 async for v in instream:
-                    if self._crashed.is_set():
+                    if crashed.is_set():
                         break
                     await q.put(v)
                 await q.put_end()
@@ -316,17 +315,9 @@ class Buffer(Stream):
                 # getting data from `instream`,
                 # not exception in the current object.
                 self._upstream_err = e
-                q.put_end()
+                await q.put_end()
 
         self._task = asyncio.create_task(foo(self._instream, self._q, self._crashed))
-
-    def _stop(self):
-        if self._task is not None:
-            _ = self._task.result()
-            self._task = None
-
-    def __del__(self):
-        self._stop()
 
     async def _get_next(self):
         try:
@@ -401,7 +392,7 @@ class ConcurrentTransformer(Stream):
             self._start_sync()
 
     def _start_async(self):
-        async def _process(in_stream, out_stream, func, lock, finished, keep_order):
+        async def _process(in_stream, out_stream, func, lock, finished, crashed, keep_order):
 
             async def set_finish():
                 active_tasks.pop()
@@ -417,7 +408,7 @@ class ConcurrentTransformer(Stream):
                     if finished.is_set():
                         await set_finish()
                         return
-                    if self._crashed.is_set():
+                    if crashed.is_set():
                         await set_finish()
                         return
 
@@ -439,7 +430,7 @@ class ConcurrentTransformer(Stream):
                     try:
                         y = await func(x)
                     except Exception as e:
-                        if return_exceptions:
+                        if self.return_exceptions:
                             y = e
                         else:
                             fut.set_exception(e)
@@ -471,6 +462,7 @@ class ConcurrentTransformer(Stream):
                     self.func,
                     lock,
                     finished,
+                    self._crashed,
                     self.keep_order),
                 name=f'transformer-{i}',
             )
@@ -478,7 +470,7 @@ class ConcurrentTransformer(Stream):
         ]
 
     def _start_sync(self):
-        async def _put_input_in_queue(q_in, q_out, crashed):
+        async def _put_input_in_queue(q_in, q_out, crashed, finished):
             async def put_end():
                 while True:
                     try:
@@ -494,17 +486,17 @@ class ConcurrentTransformer(Stream):
                             q_out.put(x, block=False)
                             break
                         except queue.Full:
-                            if crashed.is_set():
+                            if crashed.is_set() or finished.is_set():
                                 await put_end()
                                 return
                         await asyncio.sleep(q_out.PUT_SLEEP)
             except Exception as e:
                 self._upstream_err.append(e)
-                await put_end()
-                return
+            await put_end()
 
         q_in = _sync_streamer.IterQueue(1024, self._crashed)
-        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in, self._crashed))
+        finished = threading.Event()
+        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in, self._crashed, finished))
         t2 = _sync_streamer.transform(
             q_in,
             self._outstream,
@@ -514,7 +506,7 @@ class ConcurrentTransformer(Stream):
             keep_order=self.keep_order,
             crashed=self._crashed,
             upstream_err=self._upstream_err,
-            )
+        )
         self._tasks = [t1] + t2
 
     async def _astop(self):
@@ -530,23 +522,6 @@ class ConcurrentTransformer(Stream):
         self._tasks = []
 
     async def _get_next(self):
-        try:
-            y = await self._outstream.__anext__()
-            if self.keep_order:
-                if self._async:
-                    return await y
-                else:
-                    while not y.done():
-                        await asyncio.sleep(IterQueue.GET_SLEEP)
-                    return y.result()
-            else:
-                return y
-        except:
-            await self._astop()
-            raise
-
-
-    async def _get_next(self):
         if self._upstream_err:
             raise self._upstream_err[0]
         try:
@@ -559,7 +534,7 @@ class ConcurrentTransformer(Stream):
             if self._async:
                 try:
                     return await y
-                except:
+                except Exception:
                     self._crashed.set()
                     raise
             else:
@@ -567,7 +542,7 @@ class ConcurrentTransformer(Stream):
                     await asyncio.sleep(IterQueue.GET_SLEEP)
                 try:
                     return y.result()
-                except:
+                except Exception:
                     self._crashed.set()
                     raise
         if isinstance(y, Exception) and not self.return_exceptions:
