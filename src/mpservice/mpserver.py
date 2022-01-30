@@ -68,7 +68,7 @@ from uuid import uuid4
 
 import psutil  # type: ignore
 
-from .exceptions import RemoteException
+from .remote_exception import RemoteException
 from . import streamer
 
 

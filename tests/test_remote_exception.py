@@ -1,6 +1,6 @@
 from multiprocessing import Process, Queue
 
-from mpservice.exceptions import RemoteException
+from mpservice.remote_exception import RemoteException
 
 
 def goo(x, q):
