@@ -576,7 +576,7 @@ class Buffer(Stream):
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = IterQueue(maxsize)
-        self._err = None
+        self._upstream_err = None
         self._thread = None
         self._start()
 
@@ -584,15 +584,15 @@ class Buffer(Stream):
         def foo(instream, q, crashed):
             try:
                 for v in instream:
-                    q.put(v)
                     if crashed.is_set():
                         break
+                    q.put(v)
                 q.put_end()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
-                self._err = e
+                self._upstream_err = e
                 q.put_end()
 
         self._thread = threading.Thread(
@@ -608,14 +608,14 @@ class Buffer(Stream):
         self._stop()
 
     def _get_next(self):
-        if self._err is not None:
-            raise self._err
+        if self._upstream_err is not None:
+            raise self._upstream_err
         try:
             z = next(self._q)
             return z
         except StopIteration:
-            if self._err is not None:
-                raise self._err
+            if self._upstream_err is not None:
+                raise self._upstream_err
             raise
 
 
