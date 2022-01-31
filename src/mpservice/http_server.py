@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import logging
 from typing import Union
 
@@ -49,6 +48,7 @@ class ShutdownMiddleware:
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets
 
 
+# User should set up a 'stop' endpoint which calls this function.
 async def stop_starlette_server(request):
     return SHUTDOWN_RESPONSE
 
@@ -62,17 +62,15 @@ def make_server(
         log_level: str = None,
         debug: bool = None,
         access_log: bool = None,
-        loop='none',
+        loop='auto',
         **kwargs,
 ):
     '''
     `app`: a `Starlette` instance or the import string for such
         an instance, like 'mymodule:app'.
 
-    `loop`: usually, leave it at 'none', esp if you need to use
-        the event loop before calling this function. Otherwise,
-        `uvicorn` has some inconsistent behavior between `asyncio`
-        and `uvloop`.
+    `loop`: if you encounter errors, esp if you need to use
+        the event loop before calling this function, use 'none'.
 
         If you don't need to use the eventloop at all before
         calling this function, then it's OK to pass in
@@ -137,34 +135,4 @@ def make_server(
 
 def run_app(app, **kwargs):
     server = make_server(app, **kwargs)
-    server.config.setup_event_loop()
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        import nest_asyncio
-        nest_asyncio.apply()
-        # Prevent the "this event loop is alreayd running" problem
-        # encountered when using this in a `multiprocessing.Process`.
-    loop.run_until_complete(server.serve(sockets=None))
-
-
-@contextlib.asynccontextmanager
-async def run_local_app(app, **kwargs):
-    # Run the server in the same thread in an async context.
-    # Call the service by other aysnc functions using server address
-    # 'http://127.0.0.1:<port>'.
-    # Refer to tests in `uvicorn`.
-    #
-    # TODO: re-consider the usefulness and usecases of this function.
-
-    server = make_server(app, **kwargs)
-    handle = asyncio.ensure_future(server.serve(sockets=None))
-
-    await asyncio.sleep(0.1)
-    # This fixes an issue but I didn't understand it.
-    # This is also found in `uvicorn.tests.utils.run_server`.
-
-    try:
-        yield server
-    finally:
-        await server.shutdown()
-        handle.cancel()
+    return server.run()
