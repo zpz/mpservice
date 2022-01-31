@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import httpx
 import pytest
 from starlette.applications import Starlette
@@ -5,7 +7,30 @@ from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.testclient import TestClient
 from mpservice.http_server import SHUTDOWN_MSG, SHUTDOWN_STATUS
 from mpservice.http_server import stop_starlette_server
-from mpservice.http_server import run_local_app
+from mpservice.http_server import make_server
+
+
+@contextlib.asynccontextmanager
+async def run_local_app(app, **kwargs):
+    # Run the server in the same thread in an async context.
+    # Call the service by other aysnc functions using server address
+    # 'http://127.0.0.1:<port>'.
+    # Refer to tests in `uvicorn`.
+    #
+    # TODO: re-consider the usefulness and usecases of this function.
+
+    server = make_server(app, **kwargs)
+    handle = asyncio.ensure_future(server.serve(sockets=None))
+
+    await asyncio.sleep(0.1)
+    # This fixes an issue but I didn't understand it.
+    # This is also found in `uvicorn.tests.utils.run_server`.
+
+    try:
+        yield server
+    finally:
+        await server.shutdown()
+        handle.cancel()
 
 
 @pytest.fixture()
@@ -72,6 +97,7 @@ def test_testclient(app):
         assert response.json() == {'result': 2}
 
         # This approach does not run middleware,
+        # because our `make_app` is not called at all,
         # hence the 'shutdown' mechanism does not have an effect.
 
         response = client.post('/stop')
@@ -86,11 +112,13 @@ def test_testclient(app):
 # interactively within a container.
 # @pytest.mark.asyncio
 # async def test_mp(app):
+#     import multiprocessing as mp
+#     from mpservice.http_server import run_app
 #     process = mp.Process(
 #         target=run_app, args=(app,), kwargs={'port': 8080}
 #     )
 #     process.start()
-
+# 
 #     url = 'http://127.0.0.1:8080'
 #     async with httpx.AsyncClient() as client:
 #         response = await client.get(url + '/simple1')
@@ -99,13 +127,13 @@ def test_testclient(app):
 #         response = await client.get(url + '/simple2')
 #         assert response.status_code == 202
 #         assert response.json() == {'result': 2}
-
+# 
 #         response = await client.post(url + '/stop')
 #         assert response.status_code == 200
 #         assert response.text == SHUTDOWN_MSG
-
+# 
 #         with pytest.raises(httpx.ConnectError):
 #             response = await client.get(url + '/simple1')
 #             assert response.status_code == 201
-
+# 
 #         process.join()

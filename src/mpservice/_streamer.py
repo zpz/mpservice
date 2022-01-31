@@ -354,8 +354,8 @@ class Stream(collections.abc.Iterator, StreamMixin):
     def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
         return Dropper(self, func)
 
-    def head(self, n: int) -> Head:
-        return Head(self, n)
+    def head(self, n: int) -> Header:
+        return Header(self, n)
 
     def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
         '''Take a peek at the data element *before* it is sent
@@ -490,7 +490,7 @@ class Dropper(Stream):
             return z
 
 
-class Head(Stream):
+class Header(Stream):
     def __init__(self, instream: Stream, n: int):
         super().__init__(instream)
         assert n >= 0
