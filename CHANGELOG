@@ -1,3 +1,9 @@
+Release 0.9.8.post1
+===================
+
+- Requirement on `uvicorn` changes to `uvicorn[standard]`, which uses `uvloop`.
+
+
 Release 0.9.8
 =============
 
