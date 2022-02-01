@@ -287,7 +287,7 @@ class Stream(collections.abc.Iterator, StreamMixin):
 
         setattr(cls, name, f)
 
-    def __init__(self, instream: Union[Stream, Iterator, Iterable]):
+    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
         if isinstance(instream, Stream):
             self._crashed = EventUpstreamer(instream._crashed)
             self._instream = instream

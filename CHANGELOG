@@ -1,3 +1,9 @@
+Release 0.9.8.post2
+===================
+
+- Improvements to the utilities in `mpservice.http_server`, esp regarding service shutdown.
+
+
 Release 0.9.8.post1
 ===================
 

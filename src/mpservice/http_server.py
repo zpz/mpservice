@@ -1,68 +1,33 @@
 import asyncio
+import contextlib
 import logging
 from typing import Union
 
 import uvicorn  # type: ignore
-from starlette.responses import PlainTextResponse
-from starlette.applications import Starlette
+from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 
 
 logger = logging.getLogger(__name__)
-
-SHUTDOWN_STATUS = 267
-SHUTDOWN_MSG = 'CLIENT REQUESTED SHUTDOWN'
-SHUTDOWN_RESPONSE = PlainTextResponse(SHUTDOWN_MSG, SHUTDOWN_STATUS)
-# Returning this response to a request will signal the server
-# to shutdown.
-
-
-class ShutdownMiddleware:
-    def __init__(self, app, server):
-        self.app = app
-        self.server = server
-
-    async def __call__(self, scope, receive, send):
-        async def inner_send(message):
-            if (message['type'] == 'http.response.start'
-                    and message['status'] == SHUTDOWN_STATUS
-                    and message['headers'][0] == (
-                        b'content-length',
-                        str(len(SHUTDOWN_MSG.encode())).encode()
-            )):
-                message['status'] = 200
-                self.server.should_exit = True
-                await asyncio.sleep(2.2)  # wait for shutdown
-            await send(message)
-
-        try:
-            await self.app(scope, receive, inner_send)
-        except (BaseException, Exception) as e:
-            logger.error('shutting down on error %r', e)
-            self.server.should_exit = True
-            await asyncio.sleep(2.2)
-            raise
 
 
 # About server shutdown:
 #  https://github.com/encode/uvicorn/issues/742
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets
 
-
-# User should set up a 'stop' endpoint which calls this function.
-async def stop_starlette_server(request):
-    return SHUTDOWN_RESPONSE
+# See tests for examples of server shutdown.
 
 
 # Adapted from `uvicorn.main.run`.
 def make_server(
-        app: Union[str, Starlette],
+        app: Union[str, ASGIApplication],
         *,
-        port: int,
-        backlog: int = 512,
+        host='0.0.0.0',
+        port: int = 8000,
         log_level: str = None,
         debug: bool = None,
         access_log: bool = None,
         loop='auto',
+        workers=1,
         **kwargs,
 ):
     '''
@@ -78,6 +43,8 @@ def make_server(
         if that package is installed (w/o creating a new loop);
         otherwise it will create a new `asyncio` native event loop
         and set it as the default loop.
+
+    `workers`: when used for `mpservice.mpserver.MPServer`, this should be 1.
     '''
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()
@@ -93,13 +60,10 @@ def make_server(
     else:
         access_log = bool(access_log)
 
-    workers = 1
-
     config = uvicorn.Config(
         app,
-        host='0.0.0.0',
+        host=host,
         port=port,
-        backlog=backlog,
         access_log=access_log,
         debug=debug,
         log_level=log_level,
@@ -109,30 +73,30 @@ def make_server(
         **kwargs)
     server = uvicorn.Server(config=config)
 
-    if not config.loaded:
-        config.load()
-
-    config.loaded_app = ShutdownMiddleware(config.loaded_app, server)
-
-    # if config.reload and not isinstance(app, str):
-    #     logging.getLogger('uvicorn.error').warning(
-    #         'You must pass the application as an import string to enable "reload"'
-    #     )
-    #     sys.exit(1)
-
-    # `workers > 1` is not used in my use case and
-    # is likely broken.
-
-    # This part is not tested.
-    if config.should_reload:
-        sock = config.bind_socket()
-        supervisor = uvicorn.supervisors.ChangeReload(
-            config, target=server.run, sockets=[sock])
-        return supervisor
-
     return server
 
 
 def run_app(app, **kwargs):
     server = make_server(app, **kwargs)
     return server.run()
+
+
+@contextlib.asynccontextmanager
+async def run_local_app(app, **kwargs):
+    # Run the server in the same thread in an async context.
+    # Call the service by other aysnc functions using server address
+    # 'http://127.0.0.1:<port>'.
+    # Refer to tests in `uvicorn`.
+
+    server = make_server(app, **kwargs)
+    task = asyncio.create_task(server.serve(sockets=None))
+
+    await asyncio.sleep(1)
+    # This fixes an issue but I didn't understand it.
+    # This is also found in `uvicorn.tests.utils.run_server`.
+
+    try:
+        yield server
+    finally:
+        server.should_exit = True
+        await task

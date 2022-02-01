@@ -1,40 +1,25 @@
 import asyncio
-import contextlib
+import multiprocessing as mp
+import time
+
 import httpx
 import pytest
+from starlette.responses import PlainTextResponse
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.testclient import TestClient
-from mpservice.http_server import SHUTDOWN_MSG, SHUTDOWN_STATUS
-from mpservice.http_server import stop_starlette_server
-from mpservice.http_server import make_server
+
+from mpservice.http_server import run_local_app, make_server
 
 
-@contextlib.asynccontextmanager
-async def run_local_app(app, **kwargs):
-    # Run the server in the same thread in an async context.
-    # Call the service by other aysnc functions using server address
-    # 'http://127.0.0.1:<port>'.
-    # Refer to tests in `uvicorn`.
-    #
-    # TODO: re-consider the usefulness and usecases of this function.
-
-    server = make_server(app, **kwargs)
-    handle = asyncio.ensure_future(server.serve(sockets=None))
-
-    await asyncio.sleep(0.1)
-    # This fixes an issue but I didn't understand it.
-    # This is also found in `uvicorn.tests.utils.run_server`.
-
-    try:
-        yield server
-    finally:
-        await server.shutdown()
-        handle.cancel()
+HOST = '0.0.0.0'
+PORT = 8000
+LOCALHOST = f'http://0.0.0.0:{PORT}'
+#LOCALHOST = f'http://{HOST}:{PORT}'
+SHUTDOWN_MSG = "server shutdown as requested"
 
 
-@pytest.fixture()
-def app():
+def make_app():
 
     async def simple1(request):
         return PlainTextResponse('1', status_code=201)
@@ -45,14 +30,14 @@ def app():
     a = Starlette()
     a.add_route('/simple1', simple1, ['GET', 'POST'])
     a.add_route('/simple2', simple2, ['GET', 'POST'])
-    a.add_route('/stop', stop_starlette_server, ['POST'])
     return a
 
 
 @pytest.mark.asyncio
-async def test_run(app):
-    url = 'http://127.0.0.1:8080'
-    async with run_local_app(app, port=8080, limit_max_requests=2):
+async def test_run():
+    app = make_app()
+    url = LOCALHOST
+    async with run_local_app(app, host=HOST, port=PORT, limit_max_requests=2):
         async with httpx.AsyncClient() as client:
             response = await client.get(url + '/simple1')
             assert response.status_code == 201
@@ -63,31 +48,47 @@ async def test_run(app):
 
 
 @pytest.mark.asyncio
-async def test_shutdown(app):
-    url = 'http://127.0.0.1:8080'
-    async with run_local_app(app, port=8080) as server:
+async def test_shutdown():
+    app = make_app()
+    server = make_server(app, host=HOST, port=PORT)
+
+    async def shutdown(request):
+        server.should_exit = True
+        return PlainTextResponse(SHUTDOWN_MSG)
+
+    app.add_route('/shutdown', shutdown, ['POST'])
+
+    service = asyncio.create_task(server.serve())
+    await asyncio.sleep(1)
+
+    url = LOCALHOST 
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url + '/simple1')
+        assert response.status_code == 201
         print('server state tasks:', server.server_state.tasks)
-        async with httpx.AsyncClient() as client:
+
+        response = await client.get(url + '/simple2')
+        assert response.status_code == 202
+        print('server state tasks:', server.server_state.tasks)
+
+        response = await client.post(url + '/shutdown')
+        assert response.status_code == 200
+        assert response.text == SHUTDOWN_MSG 
+        print('server state tasks:', server.server_state.tasks)
+
+        await asyncio.sleep(1)
+
+        with pytest.raises(httpx.ConnectError):
             response = await client.get(url + '/simple1')
             assert response.status_code == 201
-            print('server state tasks:', server.server_state.tasks)
 
-            response = await client.get(url + '/simple2')
-            assert response.status_code == 202
-            print('server state tasks:', server.server_state.tasks)
-
-            response = await client.post(url + '/stop')
-            assert response.status_code == 200
-            assert response.text == SHUTDOWN_MSG
-            print('server state tasks:', server.server_state.tasks)
-
-            with pytest.raises(httpx.ConnectError):
-                response = await client.get(url + '/simple1')
-                assert response.status_code == 201
+    server.should_exit = True
+    await service
 
 
-def test_testclient(app):
-    with TestClient(app) as client:
+def test_testclient():
+    with TestClient(make_app()) as client:
         response = client.get('/simple1')
         assert response.status_code == 201
         assert response.text == '1'
@@ -96,44 +97,48 @@ def test_testclient(app):
         assert response.status_code == 202
         assert response.json() == {'result': 2}
 
-        # This approach does not run middleware,
-        # because our `make_app` is not called at all,
-        # hence the 'shutdown' mechanism does not have an effect.
 
-        response = client.post('/stop')
-        assert response.status_code == SHUTDOWN_STATUS
+def _run_app():
+    app = make_app()
+    server = make_server(app, host=HOST, port=PORT)
+
+    async def shutdown(request):
+        server.should_exit = True
+        return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
+
+    app.add_route('/shutdown', shutdown, ['POST'])
+    server.run()
+
+
+# This one failed in `./run-tests` and succeeded when run
+# interactively within a container.
+@pytest.mark.asyncio
+async def test_mp():
+    process = mp.Process(target=_run_app)
+    process.start()
+    await asyncio.sleep(1)
+
+    # Below, using a sync client wouldn't work.
+    # Don't know why.
+
+    url = LOCALHOST
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url + '/simple1')
+        assert response.status_code == 201
+        assert response.text == '1'
+        response = await client.get(url + '/simple2')
+        assert response.status_code == 202
+        assert response.json() == {'result': 2}
+
+        response = await client.post(url + '/shutdown')
+        assert response.status_code == 200
         assert response.text == SHUTDOWN_MSG
 
-        response = client.get('/simple1')
-        assert response.status_code == 201
+        time.sleep(1)
 
+        with pytest.raises(httpx.ConnectError):
+            response = await client.get(url + '/simple1')
+            assert response.status_code == 201
 
-# This failed in `./run-tests` and succeeded when run
-# interactively within a container.
-# @pytest.mark.asyncio
-# async def test_mp(app):
-#     import multiprocessing as mp
-#     from mpservice.http_server import run_app
-#     process = mp.Process(
-#         target=run_app, args=(app,), kwargs={'port': 8080}
-#     )
-#     process.start()
-# 
-#     url = 'http://127.0.0.1:8080'
-#     async with httpx.AsyncClient() as client:
-#         response = await client.get(url + '/simple1')
-#         assert response.status_code == 201
-#         assert response.text == '1'
-#         response = await client.get(url + '/simple2')
-#         assert response.status_code == 202
-#         assert response.json() == {'result': 2}
-# 
-#         response = await client.post(url + '/stop')
-#         assert response.status_code == 200
-#         assert response.text == SHUTDOWN_MSG
-# 
-#         with pytest.raises(httpx.ConnectError):
-#             response = await client.get(url + '/simple1')
-#             assert response.status_code == 201
-# 
-#         process.join()
+    process.join()
+
