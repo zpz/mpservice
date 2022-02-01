@@ -55,7 +55,7 @@ class RemoteException(Exception):
     To get the original exception object, reach for the `exc_value` attribute.
     '''
 
-    def __init__(self, exc: Exception = None):
+    def __init__(self, exc: Exception = None, /):
         if exc is None:
             self.exc_type, self.exc_value, tb = sys.exc_info()
         else:

@@ -68,7 +68,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
 
         setattr(cls, name, f)
 
-    def __init__(self, instream: Union[Stream, Iterator, Iterable]):
+    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
         if isinstance(instream, Stream):
             self._crashed = instream._crashed
             self._instream = instream

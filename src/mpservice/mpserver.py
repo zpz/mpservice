@@ -406,9 +406,7 @@ class MPServer(metaclass=ABCMeta):
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
 
-    async def async_call(self,
-                         x,
-                         *,
+    async def async_call(self, x, /, *,
                          enqueue_timeout: Union[int, float] = None,
                          total_timeout: Union[int, float] = None,
                          ):
@@ -422,9 +420,7 @@ class MPServer(metaclass=ABCMeta):
             uid=uid, fut=fut,
             t0=time0, total_timeout=total_timeout)
 
-    def call(self,
-             x,
-             *,
+    def call(self, x, /, *,
              enqueue_timeout: Union[int, float] = None,
              total_timeout: Union[int, float] = None,
              ):
@@ -446,7 +442,7 @@ class MPServer(metaclass=ABCMeta):
         return self._call_wait_for_result(
             uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
 
-    def async_stream(self, data_stream, *,
+    def async_stream(self, data_stream, /, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
                      ) -> streamer.AsyncStream:
@@ -519,7 +515,7 @@ class MPServer(metaclass=ABCMeta):
             )
         )
 
-    def stream(self, data_stream, *,
+    def stream(self, data_stream, /, *,
                return_exceptions: bool = False,
                return_x: bool = False,
                ) -> streamer.Stream:
@@ -973,8 +969,7 @@ class SimpleServer(SequentialServer):
     '''
 
     def __init__(self,
-                 func: Callable,
-                 *,
+                 func: Callable, /, *,
                  max_queue_size: int = None,
                  cpus: list = None,
                  workers: int = None,
