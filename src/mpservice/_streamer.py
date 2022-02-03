@@ -537,11 +537,15 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         '''
         super().__init__(maxsize + 1)
         self._downstream_crashed = downstream_crashed
+        self._closed = False
 
     def put_end(self, block: bool = True):
+        assert not self._closed
         self.put(self.NO_MORE_DATA, block=block)
+        self._closed = True
 
     def put(self, x, block: bool = True):
+        assert not self._closed
         while True:
             try:
                 super().put(x, block=False)
