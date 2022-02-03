@@ -381,9 +381,11 @@ class MPServer(metaclass=ABCMeta):
                 k += 1
                 logger.info(f"servlet processes ready: {k}/{n}")
 
-        self._t_gather_output = threading.Thread(target=self._gather_output)
+        self._t_gather_output = threading.Thread(
+                target=self._gather_output, name='ResultCollector')
         self._t_gather_output.start()
-        self._t_gather_error = threading.Thread(target=self._gather_error)
+        self._t_gather_error = threading.Thread(
+                target=self._gather_error, name='ErrorCollector')
         self._t_gather_error.start()
 
     def stop(self):
@@ -608,21 +610,17 @@ class MPServer(metaclass=ABCMeta):
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
 
-        name = name or 'servlet'
+        name = name or 'Servlet'
 
         for cpu in cpus:
-            if cpu is None:
-                # Not pinned to any core.
-                logger.info('adding servlet %s', servlet.__name__)
-            else:
-                # Pinned to the specified cpu core.
-                logger.info('adding servlet %s at CPU %s',
-                            servlet.__name__, cpu)
+            # Pinned to the specified cpu core.
+            logger.info('adding servlet %s at CPU %s',
+                        servlet.__name__, cpu)
 
             self._servlets.append(
                 self.MP_CLASS.Process(
                     target=servlet.run,
-                    name=f'{name}-{cpu}',
+                    name=f"{name}-{','.join(cpu)}",
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
@@ -637,7 +635,7 @@ class MPServer(metaclass=ABCMeta):
     def _resolve_cpus(self, *, cpus: list = None, workers: int = None):
         n_cpus = psutil.cpu_count(logical=True)
 
-        # Either `workers` or `cpus`, but not both.
+        # Either `workers` or `cpus`, but not both,
         # can be specified.
         if workers:
             # Number of workers is specified.
@@ -649,6 +647,7 @@ class MPServer(metaclass=ABCMeta):
             assert 0 < workers <= n_cpus * 4
             cpus = list(reversed(range(n_cpus))) * 4
             cpus = sorted(cpus[:workers])
+            # List[int]
         elif cpus:
             assert isinstance(cpus, list)
             # Create as many processes as the length of `cpus`.
@@ -662,6 +661,7 @@ class MPServer(metaclass=ABCMeta):
             # Create as many processes as there are cores,
             # one process pinned to one core.
             cpus = list(range(n_cpus))
+            # List[int]
 
         for i, cpu in enumerate(cpus):
             if isinstance(cpu, int):

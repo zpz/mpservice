@@ -470,9 +470,12 @@ class Unbatcher(Stream):
         self._batch = None
 
     def _get_next(self):
-        if self._batch:
+        if self._batch is not None:
             return self._batch.pop(0)
-        self._batch = next(self._instream)
+        z = next(self._instream)
+        if isinstance(z, Exception):
+            return z
+        self._batch = z
         return self._get_next()
 
 
@@ -603,7 +606,8 @@ class Buffer(Stream):
                 q.put_end()
 
         self._thread = threading.Thread(
-            target=foo, args=(self._instream, self._q, self._crashed))
+            target=foo, args=(self._instream, self._q, self._crashed),
+            name='BufferThread')
         self._thread.start()
 
     def _stop(self):
@@ -723,7 +727,7 @@ def transform(
     tasks = [
         threading.Thread(
             target=_process,
-            name=f'transformer-{i}',
+            name=f'TransformerThread-{i}',
             args=(in_stream, out_stream, func, lock, finished, crashed, keep_order),
         )
         for i in range(workers)

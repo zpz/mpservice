@@ -216,7 +216,10 @@ class Unbatcher(Stream):
     async def _get_next(self):
         if self._batch:
             return self._batch.pop(0)
-        self._batch = await self._instream.__anext__()
+        z = await self._instream.__anext__()
+        if isinstance(z, Exception):
+            return z
+        self._batch = z
         return await self._get_next()
 
 
