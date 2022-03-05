@@ -1,11 +1,7 @@
 bandit
 httpx
 mypy
-flake8
 pylint
-pytest
-pytest-asyncio
-pytest-cov
 radon
 requests
 starlette
