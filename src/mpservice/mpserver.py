@@ -249,8 +249,7 @@ class Servlet(metaclass=ABCMeta):
             n_batches += 1
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
-            batch_size_mean = (batch_size_mean *
-                               (n_batches - 1) + n) / n_batches
+            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
             if n_batches % 1000 == 0:
                 logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
@@ -301,7 +300,7 @@ class Servlet(metaclass=ABCMeta):
 
 
 class MPServer(metaclass=ABCMeta):
-    MP_CLASS = mp
+    MP_CLASS = mp.get_context('spawn')
     # This class attribute is provided because in some cases
     # one may want to use `torch.multiprocessing`, which is
     # a drop-in replacement for the standard `multiprocessing`
@@ -359,6 +358,10 @@ class MPServer(metaclass=ABCMeta):
             n = len(self._servlets)
             k = 0
             for m in self._servlets:
+                print('servlet')
+                print(m)
+                print('')
+
                 m.start()
                 z = self._q_err.get()
                 assert z == 'ready'
@@ -382,10 +385,10 @@ class MPServer(metaclass=ABCMeta):
                 logger.info(f"servlet processes ready: {k}/{n}")
 
         self._t_gather_output = threading.Thread(
-                target=self._gather_output, name='ResultCollector')
+            target=self._gather_output, name='ResultCollector')
         self._t_gather_output.start()
         self._t_gather_error = threading.Thread(
-                target=self._gather_error, name='ErrorCollector')
+            target=self._gather_error, name='ErrorCollector')
         self._t_gather_error.start()
 
     def stop(self):
@@ -620,7 +623,7 @@ class MPServer(metaclass=ABCMeta):
             self._servlets.append(
                 self.MP_CLASS.Process(
                     target=servlet.run,
-                    name=f"{name}-{','.join(cpu)}",
+                    name=f"{name}-{','.join(map(str, cpu))}",
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
@@ -962,6 +965,16 @@ class EnsembleServer(MPServer):
         return self._q_in
 
 
+class SimpleServlet(Servlet):
+    def __init__(self, *, func, batch_size: int = None, **kwargs):
+        super().__init__(batch_size=batch_size)
+        self._kwargs = kwargs
+        self._func = func
+
+    def call(self, x):
+        return self._func(x, **self._kwargs)
+
+
 class SimpleServer(SequentialServer):
     '''
     One worker process per CPU core, each worker running
@@ -978,21 +991,16 @@ class SimpleServer(SequentialServer):
                  ):
         '''
         `func`: a function that takes an input value,
-        which will be the value provided in calls to the server,
-        plus `kwargs`.
+            which will be the value provided in calls to the server,
+            plus `kwargs`. This function must be defined on the module
+            level (can't be defined within a function), and can't be
+            a lambda.
         '''
         super().__init__(max_queue_size=max_queue_size)
-
-        class SimpleServlet(Servlet):
-            def __init__(self, *, batch_size: int = None, **kwargs):
-                super().__init__(batch_size=batch_size)
-                self._kwargs = kwargs
-
-            def call(self, x):
-                return func(x, **self._kwargs)
 
         self.add_servlet(SimpleServlet,
                          cpus=cpus,
                          workers=workers,
                          batch_size=batch_size,
+                         func=func,
                          **kwargs)
