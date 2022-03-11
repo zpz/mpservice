@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import logging
 from typing import Union
 
@@ -79,24 +77,3 @@ def make_server(
 def run_app(app, **kwargs):
     server = make_server(app, **kwargs)
     return server.run()
-
-
-@contextlib.asynccontextmanager
-async def run_local_app(app, **kwargs):
-    # Run the server in the same thread in an async context.
-    # Call the service by other aysnc functions using server address
-    # 'http://127.0.0.1:<port>'.
-    # Refer to tests in `uvicorn`.
-
-    server = make_server(app, **kwargs)
-    task = asyncio.create_task(server.serve(sockets=None))
-
-    await asyncio.sleep(1)
-    # This fixes an issue but I didn't understand it.
-    # This is also found in `uvicorn.tests.utils.run_server`.
-
-    try:
-        yield server
-    finally:
-        server.should_exit = True
-        await task

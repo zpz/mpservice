@@ -9,7 +9,7 @@ from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.testclient import TestClient
 
-from mpservice.http_server import run_local_app, make_server
+from mpservice.http_server import make_server
 
 
 HOST = '0.0.0.0'
@@ -34,20 +34,6 @@ def make_app():
 
 
 @pytest.mark.asyncio
-async def test_run():
-    app = make_app()
-    url = LOCALHOST
-    async with run_local_app(app, host=HOST, port=PORT, limit_max_requests=2):
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url + '/simple1')
-            assert response.status_code == 201
-            assert response.text == '1'
-            response = await client.get(url + '/simple2')
-            assert response.status_code == 202
-            assert response.json() == {'result': 2}
-
-
-@pytest.mark.asyncio
 async def test_shutdown():
     app = make_app()
     server = make_server(app, host=HOST, port=PORT)
@@ -61,7 +47,7 @@ async def test_shutdown():
     service = asyncio.create_task(server.serve())
     await asyncio.sleep(1)
 
-    url = LOCALHOST 
+    url = LOCALHOST
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url + '/simple1')
@@ -74,7 +60,7 @@ async def test_shutdown():
 
         response = await client.post(url + '/shutdown')
         assert response.status_code == 200
-        assert response.text == SHUTDOWN_MSG 
+        assert response.text == SHUTDOWN_MSG
         print('server state tasks:', server.server_state.tasks)
 
         await asyncio.sleep(1)
