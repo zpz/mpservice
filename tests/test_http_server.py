@@ -1,5 +1,5 @@
 import asyncio
-import multiprocessing as mp
+import multiprocessing
 import time
 
 import httpx
@@ -100,6 +100,7 @@ def _run_app():
 # interactively within a container.
 @pytest.mark.asyncio
 async def test_mp():
+    mp = multiprocessing.get_context('spawn')
     process = mp.Process(target=_run_app)
     process.start()
     await asyncio.sleep(1)

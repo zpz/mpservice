@@ -1,4 +1,4 @@
-from multiprocessing import Process, Queue
+import multiprocessing
 
 from mpservice.remote_exception import RemoteException
 
@@ -14,8 +14,9 @@ def goo(x, q):
 
 
 def test_exception():
-    q = Queue()
-    p = Process(target=goo, args=(20, q))
+    mp = multiprocessing.get_context('spawn')
+    q = mp.Queue()
+    p = mp.Process(target=goo, args=(20, q))
     p.start()
     p.join()
 

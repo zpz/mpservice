@@ -1,5 +1,6 @@
+import multiprocessing
 import time
-from multiprocessing import Process, current_process, active_children
+from multiprocessing import current_process, active_children
 
 from mpservice.server_process import ServerProcess
 
@@ -55,15 +56,17 @@ def test_data_server():
     data_server = MyDataServer.start(inc=3.2)
     data_server2 = MyDataServer.start()
 
-    p1 = Process(
+    mp = multiprocessing.get_context('spawn')
+
+    p1 = mp.Process(
         target=increment,
         args=(data_server, 3.2),
     )
-    p2 = Process(
+    p2 = mp.Process(
         target=wait_long,
         args=(data_server,),
     )
-    p3 = Process(
+    p3 = mp.Process(
         target=increment2,
         args=(data_server2, ),
     )
