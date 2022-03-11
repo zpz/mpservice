@@ -1,7 +1,0 @@
-bandit
-httpx
-mypy
-pylint
-radon
-requests
-starlette
