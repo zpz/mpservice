@@ -470,7 +470,7 @@ class Unbatcher(Stream):
         self._batch = None
 
     def _get_next(self):
-        if self._batch is not None:
+        if self._batch:
             return self._batch.pop(0)
         z = next(self._instream)
         if isinstance(z, Exception):
