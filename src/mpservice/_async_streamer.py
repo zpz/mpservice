@@ -216,7 +216,10 @@ class Unbatcher(Stream):
     async def _get_next(self):
         if self._batch:
             return self._batch.pop(0)
-        self._batch = await self._instream.__anext__()
+        z = await self._instream.__anext__()
+        if isinstance(z, Exception):
+            return z
+        self._batch = z
         return await self._get_next()
 
 
@@ -265,11 +268,15 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
     def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer):
         super().__init__(maxsize)
         self._downstream_crashed = downstream_crashed
+        self._closed = False
 
     async def put_end(self):
+        assert not self._closed
         await self.put(self.NO_MORE_DATA)
+        self._closed = True
 
     async def put(self, x):
+        assert not self._closed
         while True:
             try:
                 super().put_nowait(x)

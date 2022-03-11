@@ -472,7 +472,10 @@ class Unbatcher(Stream):
     def _get_next(self):
         if self._batch:
             return self._batch.pop(0)
-        self._batch = next(self._instream)
+        z = next(self._instream)
+        if isinstance(z, Exception):
+            return z
+        self._batch = z
         return self._get_next()
 
 
@@ -534,11 +537,15 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         '''
         super().__init__(maxsize + 1)
         self._downstream_crashed = downstream_crashed
+        self._closed = False
 
     def put_end(self, block: bool = True):
+        assert not self._closed
         self.put(self.NO_MORE_DATA, block=block)
+        self._closed = True
 
     def put(self, x, block: bool = True):
+        assert not self._closed
         while True:
             try:
                 super().put(x, block=False)
@@ -603,7 +610,8 @@ class Buffer(Stream):
                 q.put_end()
 
         self._thread = threading.Thread(
-            target=foo, args=(self._instream, self._q, self._crashed))
+            target=foo, args=(self._instream, self._q, self._crashed),
+            name='BufferThread')
         self._thread.start()
 
     def _stop(self):
@@ -723,7 +731,7 @@ def transform(
     tasks = [
         threading.Thread(
             target=_process,
-            name=f'transformer-{i}',
+            name=f'TransformerThread-{i}',
             args=(in_stream, out_stream, func, lock, finished, crashed, keep_order),
         )
         for i in range(workers)

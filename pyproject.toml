@@ -1,11 +1,70 @@
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["flit_core >=3.7.1,<4"]
+build-backend = "flit_core.buildapi"
+
+
+[project]
+name = "mpservice"
+authors = [
+    {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
+]
+dependencies = [
+    "psutil",
+    "uvicorn[standard] >=0.15.0,<1.0",
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+description = "Serving with asyncio, multiprocessing, and batching"
+dynamic = ['version']
+
+
+[project.urls]
+Source = "https://github.com/zpz/mpservice"
+
+
+[project.optional-dependencies]
+test = [
+    "bandit",
+    "coverage[toml]",
+    "flake8",
+    "httpx",
+    "mypy",
+    "pylint",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
+    "requests",
+    "starlette",
+]
 
 
 [tool.pytest.ini_options]
-addopts = "-p no:cacheprovider"
+minversion = "6.0"
+addopts = "-sv --log-cli-level info -p no:cacheprovider"
+asyncio_mode = "auto"
 
 
-[tool.coverage.run]
-data_file = "/tmp/.coverage"
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_empty = true
+
+
+[tool.pylint.messages_control]
+max-line-length = 88
+disable = [
+    "consider-using-f-string",
+    "missing-docstring",
+    "invalid-name",
+    "line-too-long",
+    "fixme",
+    "too-few-public-methods",
+    "too-many-branches",
+    "too-many-return-statements",
+]

@@ -316,21 +316,25 @@ def test_ensemble_stream():
         assert ss.collect() == [[v + 1, v + 7] for v in data]
 
 
-def test_simple_server():
-    def func(x, shift):
-        return x + shift
+def func1(x, shift):
+    return x + shift
 
-    server = SimpleServer(func, shift=3)
+
+def func2(x, shift):
+    return [_ + shift for _ in x]
+
+
+def test_simple_server():
+
+    server = SimpleServer(func1, shift=3)
     with server:
         data = range(1000)
         ss = server.stream(data, return_x=True)
         assert ss.collect() == [(x, x + 3) for x in range(1000)]
-
-    def func2(x, shift):
-        return [_ + shift for _ in x]
 
     server = SimpleServer(func2, batch_size=99, shift=5)
     with server:
         data = range(1000)
         ss = server.stream(data)
         assert ss.collect() == [x + 5 for x in range(1000)]
+
