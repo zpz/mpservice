@@ -57,12 +57,12 @@ This article describes roughly version 0.7.2.
 import asyncio
 import concurrent.futures
 import logging
-import multiprocessing as mp
+import multiprocessing
 import queue
 import threading
 import time
 from abc import ABCMeta, abstractmethod
-from multiprocessing import synchronize
+from multiprocessing import synchronize, Queue
 from typing import List, Type, Sequence, Union, Callable
 from uuid import uuid4
 
@@ -70,7 +70,11 @@ import psutil  # type: ignore
 
 from .remote_exception import RemoteException
 from . import streamer
+from ._util import forward_logs, logger_thread
 
+
+# Set level for logs produced by the standard `multiprocessing` module.
+multiprocessing.log_to_stderr(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +97,11 @@ class Servlet(metaclass=ABCMeta):
 
     @classmethod
     def run(cls, *,
-            q_in: mp.Queue,
-            q_out: mp.Queue,
-            q_err: mp.Queue,
+            q_in: Queue,
+            q_out: Queue,
+            q_err: Queue,
             q_in_lock: synchronize.Lock,
+            q_log: Queue,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -109,6 +114,7 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
+        forward_logs(q_log)
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
         obj = cls(**init_kwargs)
@@ -144,7 +150,7 @@ class Servlet(metaclass=ABCMeta):
 
         If the algorithm can not vectorize the computation, then there is
         no advantage in enabling batching. In that case, the subclass should
-        simple fix `batch_size` to 0 in their `__init__`.
+        simply fix `batch_size` to 0 in their `__init__`.
 
         The `__init__` of a subclass may define additional input parameters;
         they can be passed in through `run`.
@@ -168,11 +174,10 @@ class Servlet(metaclass=ABCMeta):
 
         self.batch_size = batch_size
         self.batch_wait_time = batch_wait_time
-        self.name = f'{self.__class__.__name__}--{mp.current_process().name}'
+        self.name = f'{self.__class__.__name__}--{multiprocessing.current_process().name}'
 
     def start(self, *, q_in, q_out, q_err, q_in_lock):
-        q_err.put('ready')
-        logger.info('%s started', self.name)
+        q_err.put(self.name)
         if self.batch_size > 1:
             self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
                               q_in_lock=q_in_lock)
@@ -234,9 +239,8 @@ class Servlet(metaclass=ABCMeta):
                         # are already over time. That is, if supply
                         # has piled up, then will get up to the
                         # batch capacity.
-                        if time_left > 0:
-                            # Or should we do `if time_left > 0.001`?
-                            uid, x = q_in.get(timeout=max(0.001, time_left))
+                        if time_left > 0.001:
+                            uid, x = q_in.get(timeout=time_left)
                         else:
                             uid, x = q_in.get_nowait()
                     except queue.Empty:
@@ -296,11 +300,15 @@ class Servlet(metaclass=ABCMeta):
         # `self.batch_size` and act accordingly, because it is up to
         # the uer in `MPServer` to specify a zero or nonzero `batch_size`
         # for this worker.
+        #
+        # In case of exceptions, unless the user has specific things to do,
+        # do not handle them; just let them happen. They will be handled
+        # in `_start_batch` and `_start_single`.
         raise NotImplementedError
 
 
 class MPServer(metaclass=ABCMeta):
-    MP_CLASS = mp.get_context('spawn')
+    MP_CLASS = multiprocessing.get_context('spawn')
     # This class attribute is provided because in some cases
     # one may want to use `torch.multiprocessing`, which is
     # a drop-in replacement for the standard `multiprocessing`
@@ -322,12 +330,14 @@ class MPServer(metaclass=ABCMeta):
         '''
         self.max_queue_size = max_queue_size or 1024
         self._q_in_lock: List[synchronize.Lock] = []
-        self._q_err: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        self._q_err: Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        self._q_log: Queue = self.MP_CLASS.Queue()
 
         self._t_gather_output: threading.Thread = None  # type: ignore
         self._t_gather_error: threading.Thread = None  # type: ignore
+        self._t_servlet_log: threading.Thread = None
 
-        self._servlets: List[mp.Process] = []
+        self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
         self.started = 0
@@ -353,20 +363,20 @@ class MPServer(metaclass=ABCMeta):
             # Re-entry.
             return
 
+        self._t_servlet_log = threading.Thread(
+            target=logger_thread, args=(self._q_log,))
+        self._t_servlet_log.start()
+
         if sequential:
             # Start the servlets one by one.
             n = len(self._servlets)
             k = 0
             for m in self._servlets:
-                print('servlet')
-                print(m)
-                print('')
-
+                logger.debug(f"starting servlet in Process {m}")
                 m.start()
-                z = self._q_err.get()
-                assert z == 'ready'
+                name = self._q_err.get()
                 k += 1
-                logger.info(f"servlet processes ready: {k}/{n}")
+                logger.info(f"{k}/{n}: servlet <{name}> is ready")
         else:
             # Start the servlets concurrently.
             # In some situations, concurrent servlet launch
@@ -375,14 +385,14 @@ class MPServer(metaclass=ABCMeta):
             # the same dataset on startup.
             n = 0
             for m in self._servlets:
+                logger.debug(f"starting servlet in Process {m}")
                 m.start()
                 n += 1
             k = 0
             while k < n:
-                z = self._q_err.get()
-                assert z == 'ready'
+                name = self._q_err.get()
                 k += 1
-                logger.info(f"servlet processes ready: {k}/{n}")
+                logger.info(f"{k}/{n}: servlet <{name}> is ready")
 
         self._t_gather_output = threading.Thread(
             target=self._gather_output, name='ResultCollector')
@@ -407,6 +417,9 @@ class MPServer(metaclass=ABCMeta):
             # if m.is_alive():
             m.terminate()
             m.join()
+
+        self._q_log.put(None)
+        self._t_servlet_log.join()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -610,6 +623,7 @@ class MPServer(metaclass=ABCMeta):
         q_in_lock = self.MP_CLASS.Lock()
         self._q_in_lock.append(q_in_lock)
         q_err = self._q_err
+        q_log = self._q_log
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
 
@@ -617,19 +631,20 @@ class MPServer(metaclass=ABCMeta):
 
         for cpu in cpus:
             # Pinned to the specified cpu core.
-            logger.info('adding servlet %s at CPU %s',
-                        servlet.__name__, cpu)
+            sname = f"{name}-{','.join(map(str, cpu))}"
+            logger.info('adding servlet <%s> at CPU %s', sname, cpu)
 
             self._servlets.append(
                 self.MP_CLASS.Process(
                     target=servlet.run,
-                    name=f"{name}-{','.join(map(str, cpu))}",
+                    name=sname,
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
                         'q_err': q_err,
                         'cpus': cpu,
                         'q_in_lock': q_in_lock,
+                        'q_log': q_log,
                         **init_kwargs,
                     },
                 )
@@ -836,12 +851,12 @@ class SequentialServer(MPServer):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._q_in_out: List[mp.Queue] = [
+        self._q_in_out: List[Queue] = [
             self.MP_CLASS.Queue(self.max_queue_size)]
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = self._q_in_out[-1]
-        q_out: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        q_out: Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._q_in_out.append(q_out)
 
         self._add_servlet(
@@ -890,12 +905,12 @@ class EnsembleServer(MPServer):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._q_in: List[mp.Queue] = []
-        self._q_out: List[mp.Queue] = []
+        self._q_in: List[Queue] = []
+        self._q_out: List[Queue] = []
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
-        q_in: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
-        q_out: mp.Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        q_in: Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        q_out: Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._q_in.append(q_in)
         self._q_out.append(q_out)
 

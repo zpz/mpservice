@@ -1,15 +1,19 @@
+import logging
 import multiprocessing as mp
 import queue
 import threading
 import time
 
-from zpz.profile import profiled
+# from zpz.profile import profiled
 from mpservice.mpserver import Servlet, SequentialServer
 from mpservice.streamer import Stream
 from mpservice._streamer import IterQueue
 
+from zpz.logging import config_logger
+logger = logging.getLogger(__name__)
 
-NN = 100000
+
+NN = 20 # 100000
 
 
 class Double(Servlet):
@@ -113,10 +117,14 @@ def test_streamer(keep_order=False):
     print('\ntime taken:', t1 - t0)
 
 
-test_queue()
-#test_iterqueue()
-#test_mp_queue()
-test_streamer(False)
-test_streamer(True)
-test_sequential_stream()
+if __name__ == '__main__':
+    config_logger(level='info')
+
+    #test_queue()
+    #test_iterqueue()
+    #test_mp_queue()
+    #test_streamer(False)
+    #test_streamer(True)
+    test_sequential_stream()
+
 
