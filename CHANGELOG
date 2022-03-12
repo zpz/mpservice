@@ -1,3 +1,9 @@
+Release 0.9.9.post1
+===================
+
+- Handle logging in multiprocessing.
+
+
 Release 0.9.9
 =============
 

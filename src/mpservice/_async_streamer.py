@@ -317,6 +317,9 @@ class Buffer(Stream):
                         break
                     await q.put(v)
                 await q.put_end()
+                # TODO: error
+                #   "Task was destroyed but it is pending!"
+                # around here. Watch printouts in tests.
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
