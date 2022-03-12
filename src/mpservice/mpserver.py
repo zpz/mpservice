@@ -102,6 +102,7 @@ class Servlet(metaclass=ABCMeta):
             q_err: Queue,
             q_in_lock: synchronize.Lock,
             q_log: Queue,
+            should_stop: multiprocessing.Event,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -121,7 +122,9 @@ class Servlet(metaclass=ABCMeta):
         obj.start(q_in=q_in,
                   q_out=q_out,
                   q_err=q_err,
-                  q_in_lock=q_in_lock)
+                  q_in_lock=q_in_lock,
+                  should_stop=should_stop,
+                  )
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -170,24 +173,30 @@ class Servlet(metaclass=ABCMeta):
             if batch_wait_time is None:
                 batch_wait_time = 0.01
             else:
-                assert batch_wait_time > 0
+                assert 0 < batch_wait_time < 1
 
         self.batch_size = batch_size
         self.batch_wait_time = batch_wait_time
         self.name = f'{self.__class__.__name__}--{multiprocessing.current_process().name}'
 
-    def start(self, *, q_in, q_out, q_err, q_in_lock):
+    def start(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         q_err.put(self.name)
         if self.batch_size > 1:
             self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
-                              q_in_lock=q_in_lock)
+                              q_in_lock=q_in_lock, should_stop=should_stop)
         else:
-            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
+            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
 
-    def _start_single(self, *, q_in, q_out, q_err):
+    def _start_single(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
         while True:
-            uid, x = q_in.get()
+            try:
+                uid, x = q_in.get(timeout=0.5)
+            except queue.Empty:
+                if should_stop.is_set():
+                    break
+                continue
+
             try:
                 if batch_size:
                     y = self.call([x])[0]
@@ -202,7 +211,7 @@ class Servlet(metaclass=ABCMeta):
                 err = RemoteException()
                 q_err.put((uid, err))
 
-    def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
+    def _start_batch(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         batch_size = self.batch_size
         batch_wait_time = self.batch_wait_time
         perf_counter = time.perf_counter
@@ -219,18 +228,28 @@ class Servlet(metaclass=ABCMeta):
             with q_in_lock:
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
-                uid, x = q_in.get()
+                while True:
+                    try:
+                        uid, x = q_in.get(timeout=0.5)
+                        break
+                    except queue.Empty:
+                        if should_stop.is_set():
+                            if n_batches and n_batches % 1000 != 0:
+                                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
+                                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                            return
+
                 batch.append(x)
                 uids.append(uid)
                 n += 1
 
-                wait_until = perf_counter() + batch_wait_time
+                time_left = batch_wait_time
+                wait_until = perf_counter() + time_left
                 # Wait time starts after getting the first item,
                 # because however long the first item takes to come
                 # is not the worker's fault.
 
                 while n < batch_size:
-                    time_left = wait_until - perf_counter()
                     try:
                         # If there is remaining time, wait up to
                         # that long.
@@ -249,14 +268,7 @@ class Servlet(metaclass=ABCMeta):
                     batch.append(x)
                     uids.append(uid)
                     n += 1
-
-            n_batches += 1
-            batch_size_max = max(batch_size_max, n)
-            batch_size_min = min(batch_size_min, n)
-            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-            if n_batches % 1000 == 0:
-                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
-                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                    time_left = wait_until - perf_counter()
 
             try:
                 results = self.call(batch)
@@ -267,6 +279,14 @@ class Servlet(metaclass=ABCMeta):
             else:
                 for uid, y in zip(uids, results):
                     q_out.put((uid, y))
+
+            n_batches += 1
+            batch_size_max = max(batch_size_max, n)
+            batch_size_min = min(batch_size_min, n)
+            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+            if n_batches % 1000 == 0:
+                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
+                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
     @abstractmethod
     def call(self, x):
@@ -340,6 +360,12 @@ class MPServer(metaclass=ABCMeta):
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
+        self._should_stop = multiprocessing.Event()
+        # `_add_servlet` can only be called after this.
+        # In other words, subclasses should call `super().__init__`
+        # at the beginning of their `__init__` rather than
+        # at the end.
+
         self.started = 0
         if cpus:
             # Pin this coordinating thread to the specified CPUs.
@@ -408,18 +434,18 @@ class MPServer(metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
+        self._should_stop.set()
         self._t_gather_output.join()
-        self._t_gather_output = None
         self._t_gather_error.join()
-        self._t_gather_error = None
-
         for m in self._servlets:
-            # if m.is_alive():
-            m.terminate()
             m.join()
-
         self._q_log.put(None)
         self._t_servlet_log.join()
+
+        self._t_gather_output = None
+        self._t_gather_error = None
+        self._t_servlet_log = None
+        self._should_stop = None
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -645,6 +671,7 @@ class MPServer(metaclass=ABCMeta):
                         'cpus': cpu,
                         'q_in_lock': q_in_lock,
                         'q_log': q_log,
+                        'should_stop': self._should_stop,
                         **init_kwargs,
                     },
                 )
@@ -702,7 +729,7 @@ class MPServer(metaclass=ABCMeta):
         `total_timeout` is the max total time spent in `call`
         or `async_call` before timeout. Upon entering `call`
         or `async_call`, the input is placed in a queue (timeout
-        if that can't be doen within `enqueue_timeout`), then
+        if that can't be done within `enqueue_timeout`), then
         we'll wait for the result. If result does not come within
         `total_timeout`, it will timeout. This waittime is counted
         starting from the beginning of `call` or `async_call`, not
@@ -710,18 +737,20 @@ class MPServer(metaclass=ABCMeta):
         '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
-        elif enqueue_timeout < 0:
-            enqueue_timeout = 0
+        assert 0 <= enqueue_timeout <= 10
         if total_timeout is None:
             total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
-        else:
-            assert total_timeout > 0, "total_timeout must be > 0"
+        assert 0 < total_timeout <= 100
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
 
     @abstractmethod
     def _init_future_struct(self, x, fut):
+        # We store the Future object for future retrieval.
+        # Different types of services may need to store additional things
+        # along with other things.
+        # Subclasses customize this method to their need.
         raise NotImplementedError
 
     def _enqueue_future(self, x, fut):
@@ -729,6 +758,10 @@ class MPServer(metaclass=ABCMeta):
         while True:
             uid = str(uuid4())
             if self._uid_to_futures.setdefault(uid, z) is z:
+                # Stored `uid` as value `z`.
+                # If not in this block, it's because `uid`
+                # already exists in `self._uid_to_futures`,
+                # so will generate a new one.
                 return uid
 
     @abstractmethod
@@ -744,11 +777,13 @@ class MPServer(metaclass=ABCMeta):
     def _gather_error(self):
         q_err = self._q_err
         futures = self._uid_to_futures
+        should_stop = self._should_stop
         while self.started:
             try:
                 uid, err = q_err.get(timeout=1)
             except queue.Empty:
-                continue
+                if should_stop.is_set():
+                    break
             else:
                 fut = futures.pop(uid, None)
                 if fut is None:  # timed-out in `call` or `async_call`
@@ -869,12 +904,14 @@ class SequentialServer(MPServer):
     def _gather_output(self):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
+        should_stop = self._should_stop
 
         while self.started:
             try:
                 uid, y = q_out.get(timeout=1)
             except queue.Empty:
-                continue
+                if should_stop.is_set():
+                    break
             else:
                 fut = futures.pop(uid, None)
                 if fut is None:
@@ -937,6 +974,9 @@ class EnsembleServer(MPServer):
     def _gather_output(self):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
+        should_stop = self._should_stop
+
+        # TODO: needs tighten up.
 
         while self.started:
             # TODO: need improvement; refer to other `_gather_output`.
@@ -967,6 +1007,8 @@ class EnsembleServer(MPServer):
                             fut['fut'].set_exception(e)
                     # No sleep. Get results out of the queue as quickly as possible.
             time.sleep(self.SLEEP_DEQUEUE)
+            if should_stop.is_set():
+                break
 
     def _init_future_struct(self, x, fut):
         return {
