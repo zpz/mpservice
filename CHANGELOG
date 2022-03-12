@@ -1,3 +1,10 @@
+Release 0.10.0
+==============
+
+- `mpserver` fine tune, including
+  - Graceful stop
+
+
 Release 0.9.9.post1
 ===================
 

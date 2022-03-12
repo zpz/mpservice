@@ -360,7 +360,7 @@ class MPServer(metaclass=ABCMeta):
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
-        self._should_stop = multiprocessing.Event()
+        self._should_stop = self.MP_CLASS.Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
         # at the beginning of their `__init__` rather than
