@@ -1,8 +1,8 @@
 Release 0.10.0
 ==============
 
-- `mpserver` fine tune, including
-  - Graceful stop
+- `mpserver` fine tune, esp about graceful shutdown.
+- Use `overrides` to help keep sanity checks on class inheritance.
 
 
 Release 0.9.9.post1

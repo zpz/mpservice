@@ -809,34 +809,31 @@ class MPServer(metaclass=ABCMeta):
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
-                if not self.started:
-                    return
                 try:
                     q.put_nowait((uid, x))
                     break
                 except queue.Full:
                     timenow = time.perf_counter()
-                    if timenow < t1:
-                        await asyncio.sleep(self.SLEEP_ENQUEUE)
-                    else:
+                    if timenow >= t1:
                         fut.cancel()
                         del self._uid_to_futures[uid]
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                    await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
         return uid, fut
 
     async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout):
         t1 = t0 + total_timeout
         while not fut.done():
-            if time.perf_counter() > t1:
+            timenow = time.perf_counter()
+            if time.perf_counter() >= t1:
                 fut.cancel()
                 self._uid_to_futures.pop(uid, None)
                 # `uid` could have been deleted by
                 # `gather_results` during very subtle
                 # timing coincidence.
-                raise TotalTimeout(
-                    f'waited {time.perf_counter() - t0} seconds')
-            await asyncio.sleep(self.SLEEP_DEQUEUE)
+                raise TotalTimeout(f'waited {timenow - t0} seconds')
+            await asyncio.sleep(min(self.SLEEP_DEQUEUE, t1 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - time.perf_counter())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
@@ -850,16 +847,19 @@ class MPServer(metaclass=ABCMeta):
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            if not self.started:
-                return
+            timenow = time.perf_counter()
             try:
-                q.put((uid, x), timeout=t1 - time.perf_counter())
+                # `enqueue_timeout` is the combined time across input queues,
+                # not time per queue.
+                if timenow >= t1:
+                    q.put_nowait((uid, x))
+                else:
+                    q.put((uid, x), timeout=t1 - timenow)
             except queue.Full:
-                timenow = time.perf_counter()
                 fut.cancel()
                 del self._uid_to_futures[uid]
                 raise EnqueueTimeout(
-                    f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                    f'waited {time.perf_counter() - t0} seconds; timeout at queue {iq}')
 
         return uid, fut
 
@@ -873,8 +873,7 @@ class MPServer(metaclass=ABCMeta):
             # `uid` could have been deleted by
             # `gather_results` during very subtle
             # timing coincidence.
-            raise TotalTimeout(
-                f'waited {time.perf_counter() - t0} seconds')
+            raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
 
 
 class SequentialServer(MPServer):
@@ -974,15 +973,12 @@ class EnsembleServer(MPServer):
     def _gather_output(self):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
-        should_stop = self._should_stop
-
-        # TODO: needs tighten up.
 
         while self.started:
-            # TODO: need improvement; refer to other `_gather_output`.
-            # How to make waiting more efficient?
             for idx, q_out in enumerate(self._q_out):
                 while not q_out.empty():
+                    # Get all available results out of this queue.
+                    # They are for different requests.
                     uid, y = q_out.get_nowait()
                     fut = futures.get(uid)
                     if fut is None:
@@ -992,6 +988,7 @@ class EnsembleServer(MPServer):
                     fut['res'][idx] = y
                     fut['n'] += 1
                     if fut['n'] == n_results_needed:
+                        # All results for this request have been collected.
                         del futures[uid]
                         try:
                             z = self.ensemble(fut['x'], fut['res'])
@@ -1007,8 +1004,6 @@ class EnsembleServer(MPServer):
                             fut['fut'].set_exception(e)
                     # No sleep. Get results out of the queue as quickly as possible.
             time.sleep(self.SLEEP_DEQUEUE)
-            if should_stop.is_set():
-                break
 
     def _init_future_struct(self, x, fut):
         return {
