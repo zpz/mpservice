@@ -1,7 +1,7 @@
 import logging
 from typing import Union
 
-import uvicorn  # type: ignore
+import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 
 

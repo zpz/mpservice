@@ -1,9 +1,10 @@
 import logging
 import logging.handlers
+import multiprocessing
 import warnings
 
 
-def logger_thread(q):
+def logger_thread(q: multiprocessing.Queue):
     '''
     In main thread, start another thread with this function as `target`.
     '''
@@ -17,10 +18,11 @@ def logger_thread(q):
             logger.handle(record)
 
 
-def forward_logs(q):
+def forward_logs(q: multiprocessing.Queue):
     '''
-    In a Process, run this function at the start to put all log messages
-    ever produced in that process in the queue that is consumed by
+    In a Process (created using the "spawn" method),
+    run this function at the beginning to set up putting all log messages
+    ever produced in that process into the queue that will be consumed by
     `logger_thread`.
 
     During the execution of the process, logging should not be configured.

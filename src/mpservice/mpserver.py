@@ -66,10 +66,12 @@ from multiprocessing import synchronize, Queue
 from typing import List, Type, Sequence, Union, Callable
 from uuid import uuid4
 
-import psutil  # type: ignore
+import psutil
+from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
 from . import streamer
+from ._streamer import is_exception
 from ._util import forward_logs, logger_thread
 
 
@@ -102,6 +104,7 @@ class Servlet(metaclass=ABCMeta):
             q_err: Queue,
             q_in_lock: synchronize.Lock,
             q_log: Queue,
+            should_stop: multiprocessing.Event,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -121,7 +124,9 @@ class Servlet(metaclass=ABCMeta):
         obj.start(q_in=q_in,
                   q_out=q_out,
                   q_err=q_err,
-                  q_in_lock=q_in_lock)
+                  q_in_lock=q_in_lock,
+                  should_stop=should_stop,
+                  )
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -170,24 +175,30 @@ class Servlet(metaclass=ABCMeta):
             if batch_wait_time is None:
                 batch_wait_time = 0.01
             else:
-                assert batch_wait_time > 0
+                assert 0 < batch_wait_time < 1
 
         self.batch_size = batch_size
         self.batch_wait_time = batch_wait_time
         self.name = f'{self.__class__.__name__}--{multiprocessing.current_process().name}'
 
-    def start(self, *, q_in, q_out, q_err, q_in_lock):
+    def start(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         q_err.put(self.name)
         if self.batch_size > 1:
             self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
-                              q_in_lock=q_in_lock)
+                              q_in_lock=q_in_lock, should_stop=should_stop)
         else:
-            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err)
+            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
 
-    def _start_single(self, *, q_in, q_out, q_err):
+    def _start_single(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
         while True:
-            uid, x = q_in.get()
+            try:
+                uid, x = q_in.get(timeout=0.5)
+            except queue.Empty:
+                if should_stop.is_set():
+                    break
+                continue
+
             try:
                 if batch_size:
                     y = self.call([x])[0]
@@ -202,7 +213,7 @@ class Servlet(metaclass=ABCMeta):
                 err = RemoteException()
                 q_err.put((uid, err))
 
-    def _start_batch(self, *, q_in, q_out, q_err, q_in_lock):
+    def _start_batch(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         batch_size = self.batch_size
         batch_wait_time = self.batch_wait_time
         perf_counter = time.perf_counter
@@ -219,18 +230,28 @@ class Servlet(metaclass=ABCMeta):
             with q_in_lock:
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
-                uid, x = q_in.get()
+                while True:
+                    try:
+                        uid, x = q_in.get(timeout=0.5)
+                        break
+                    except queue.Empty:
+                        if should_stop.is_set():
+                            if n_batches and n_batches % 1000 != 0:
+                                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
+                                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                            return
+
                 batch.append(x)
                 uids.append(uid)
                 n += 1
 
-                wait_until = perf_counter() + batch_wait_time
+                time_left = batch_wait_time
+                wait_until = perf_counter() + time_left
                 # Wait time starts after getting the first item,
                 # because however long the first item takes to come
                 # is not the worker's fault.
 
                 while n < batch_size:
-                    time_left = wait_until - perf_counter()
                     try:
                         # If there is remaining time, wait up to
                         # that long.
@@ -249,14 +270,7 @@ class Servlet(metaclass=ABCMeta):
                     batch.append(x)
                     uids.append(uid)
                     n += 1
-
-            n_batches += 1
-            batch_size_max = max(batch_size_max, n)
-            batch_size_min = min(batch_size_min, n)
-            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-            if n_batches % 1000 == 0:
-                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
-                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                    time_left = wait_until - perf_counter()
 
             try:
                 results = self.call(batch)
@@ -267,6 +281,14 @@ class Servlet(metaclass=ABCMeta):
             else:
                 for uid, y in zip(uids, results):
                     q_out.put((uid, y))
+
+            n_batches += 1
+            batch_size_max = max(batch_size_max, n)
+            batch_size_min = min(batch_size_min, n)
+            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+            if n_batches % 1000 == 0:
+                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
+                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
 
     @abstractmethod
     def call(self, x):
@@ -307,7 +329,7 @@ class Servlet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class MPServer(metaclass=ABCMeta):
+class MPServer(EnforceOverrides, metaclass=ABCMeta):
     MP_CLASS = multiprocessing.get_context('spawn')
     # This class attribute is provided because in some cases
     # one may want to use `torch.multiprocessing`, which is
@@ -333,12 +355,18 @@ class MPServer(metaclass=ABCMeta):
         self._q_err: Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._q_log: Queue = self.MP_CLASS.Queue()
 
-        self._t_gather_output: threading.Thread = None  # type: ignore
-        self._t_gather_error: threading.Thread = None  # type: ignore
+        self._t_gather_output: threading.Thread = None
+        self._t_gather_error: threading.Thread = None
         self._t_servlet_log: threading.Thread = None
 
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
+
+        self._should_stop = self.MP_CLASS.Event()
+        # `_add_servlet` can only be called after this.
+        # In other words, subclasses should call `super().__init__`
+        # at the beginning of their `__init__` rather than
+        # at the end.
 
         self.started = 0
         if cpus:
@@ -408,18 +436,18 @@ class MPServer(metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
+        self._should_stop.set()
         self._t_gather_output.join()
-        self._t_gather_output = None
         self._t_gather_error.join()
-        self._t_gather_error = None
-
         for m in self._servlets:
-            # if m.is_alive():
-            m.terminate()
             m.join()
-
         self._q_log.put(None)
         self._t_servlet_log.join()
+
+        self._t_gather_output = None
+        self._t_gather_error = None
+        self._t_servlet_log = None
+        self._should_stop = None
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -463,6 +491,8 @@ class MPServer(metaclass=ABCMeta):
     def async_stream(self, data_stream, /, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
+                     enqueue_timeout: Union[int, float] = None,
+                     total_timeout: Union[int, float] = None,
                      ) -> streamer.AsyncStream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
@@ -474,7 +504,10 @@ class MPServer(metaclass=ABCMeta):
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on tweaking the "workers" parameter.
 
-        enqueue_timeout, total_timeout = self._resolve_timeout()
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout,
+            total_timeout=total_timeout,
+        )
 
         async def _enqueue(x, *, return_x, return_exc, timeout):
             time0 = time.perf_counter()
@@ -488,15 +521,22 @@ class MPServer(metaclass=ABCMeta):
             except Exception as e:
                 if return_x and return_exc:
                     return x, time0, None, e
+                # If `return_x` is False, then whether to return exception
+                # is controlled by `transform(..., return_exceptions=...)`
                 raise
 
         async def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
                 x, time0, uid, fut = x
-                if return_exc and isinstance(fut, Exception):
+                if return_exc and is_exception(fut):
                     return x, fut
+                # When `return_exc` is False, `fut` won't be an exception,
+                # b/c exceptions would have been raised in `_enqueue`.
             else:
-                if return_exc and isinstance(x, Exception):
+                if return_exc and is_exception(x):
+                    # When `return_exc` is True, hence
+                    # `transform(_enqueue, ..., return_exceptions=True)`,
+                    # hence an exception object could have been passed on.
                     return x
                 time0, uid, fut = x
 
@@ -511,6 +551,8 @@ class MPServer(metaclass=ABCMeta):
                 if return_x and return_exc:
                     return x, e
                 raise
+                # Like in `_enqueue`, whether this will crash depends on
+                # `return_exceptions` to the second `transform`.
 
         if not isinstance(data_stream, streamer.AsyncStream):
             data_stream = streamer.AsyncStream(data_stream)
@@ -518,14 +560,16 @@ class MPServer(metaclass=ABCMeta):
         return (
             data_stream
             .transform(
-                _enqueue, workers=1,
+                _enqueue,
+                workers=1,
                 return_exceptions=return_exceptions,
                 return_x=return_x,
                 return_exc=return_exceptions,
                 timeout=enqueue_timeout,
             )
             .transform(
-                _dequeue, workers=1,
+                _dequeue,
+                workers=1,
                 return_exceptions=return_exceptions,
                 return_x=return_x,
                 return_exc=return_exceptions,
@@ -536,6 +580,8 @@ class MPServer(metaclass=ABCMeta):
     def stream(self, data_stream, /, *,
                return_exceptions: bool = False,
                return_x: bool = False,
+               enqueue_timeout: Union[int, float] = None,
+               total_timeout: Union[int, float] = None,
                ) -> streamer.Stream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
@@ -547,7 +593,10 @@ class MPServer(metaclass=ABCMeta):
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on tweaking the "workers" parameter.
 
-        enqueue_timeout, total_timeout = self._resolve_timeout()
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout,
+            total_timeout=total_timeout,
+        )
 
         def _enqueue(x, *, return_x, return_exc, timeout):
             fut = concurrent.futures.Future()
@@ -645,6 +694,7 @@ class MPServer(metaclass=ABCMeta):
                         'cpus': cpu,
                         'q_in_lock': q_in_lock,
                         'q_log': q_log,
+                        'should_stop': self._should_stop,
                         **init_kwargs,
                     },
                 )
@@ -702,7 +752,7 @@ class MPServer(metaclass=ABCMeta):
         `total_timeout` is the max total time spent in `call`
         or `async_call` before timeout. Upon entering `call`
         or `async_call`, the input is placed in a queue (timeout
-        if that can't be doen within `enqueue_timeout`), then
+        if that can't be done within `enqueue_timeout`), then
         we'll wait for the result. If result does not come within
         `total_timeout`, it will timeout. This waittime is counted
         starting from the beginning of `call` or `async_call`, not
@@ -710,18 +760,20 @@ class MPServer(metaclass=ABCMeta):
         '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
-        elif enqueue_timeout < 0:
-            enqueue_timeout = 0
+        assert 0 <= enqueue_timeout <= 10
         if total_timeout is None:
             total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
-        else:
-            assert total_timeout > 0, "total_timeout must be > 0"
+        assert 0 < total_timeout <= 100
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
 
     @abstractmethod
     def _init_future_struct(self, x, fut):
+        # We store the Future object for future retrieval.
+        # Different types of services may need to store additional things
+        # along with other things.
+        # Subclasses customize this method to their need.
         raise NotImplementedError
 
     def _enqueue_future(self, x, fut):
@@ -729,6 +781,10 @@ class MPServer(metaclass=ABCMeta):
         while True:
             uid = str(uuid4())
             if self._uid_to_futures.setdefault(uid, z) is z:
+                # Stored `uid` as value `z`.
+                # If not in this block, it's because `uid`
+                # already exists in `self._uid_to_futures`,
+                # so will generate a new one.
                 return uid
 
     @abstractmethod
@@ -744,11 +800,13 @@ class MPServer(metaclass=ABCMeta):
     def _gather_error(self):
         q_err = self._q_err
         futures = self._uid_to_futures
+        should_stop = self._should_stop
         while self.started:
             try:
                 uid, err = q_err.get(timeout=1)
             except queue.Empty:
-                continue
+                if should_stop.is_set():
+                    break
             else:
                 fut = futures.pop(uid, None)
                 if fut is None:  # timed-out in `call` or `async_call`
@@ -774,34 +832,31 @@ class MPServer(metaclass=ABCMeta):
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             while True:
-                if not self.started:
-                    return
                 try:
                     q.put_nowait((uid, x))
                     break
                 except queue.Full:
                     timenow = time.perf_counter()
-                    if timenow < t1:
-                        await asyncio.sleep(self.SLEEP_ENQUEUE)
-                    else:
+                    if timenow >= t1:
                         fut.cancel()
                         del self._uid_to_futures[uid]
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                    await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
         return uid, fut
 
     async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout):
         t1 = t0 + total_timeout
         while not fut.done():
-            if time.perf_counter() > t1:
+            timenow = time.perf_counter()
+            if time.perf_counter() >= t1:
                 fut.cancel()
                 self._uid_to_futures.pop(uid, None)
                 # `uid` could have been deleted by
                 # `gather_results` during very subtle
                 # timing coincidence.
-                raise TotalTimeout(
-                    f'waited {time.perf_counter() - t0} seconds')
-            await asyncio.sleep(self.SLEEP_DEQUEUE)
+                raise TotalTimeout(f'waited {timenow - t0} seconds')
+            await asyncio.sleep(min(self.SLEEP_DEQUEUE, t1 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - time.perf_counter())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
@@ -815,16 +870,19 @@ class MPServer(metaclass=ABCMeta):
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            if not self.started:
-                return
+            timenow = time.perf_counter()
             try:
-                q.put((uid, x), timeout=t1 - time.perf_counter())
+                # `enqueue_timeout` is the combined time across input queues,
+                # not time per queue.
+                if timenow >= t1:
+                    q.put_nowait((uid, x))
+                else:
+                    q.put((uid, x), timeout=t1 - timenow)
             except queue.Full:
-                timenow = time.perf_counter()
                 fut.cancel()
                 del self._uid_to_futures[uid]
                 raise EnqueueTimeout(
-                    f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                    f'waited {time.perf_counter() - t0} seconds; timeout at queue {iq}')
 
         return uid, fut
 
@@ -838,8 +896,7 @@ class MPServer(metaclass=ABCMeta):
             # `uid` could have been deleted by
             # `gather_results` during very subtle
             # timing coincidence.
-            raise TotalTimeout(
-                f'waited {time.perf_counter() - t0} seconds')
+            raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
 
 
 class SequentialServer(MPServer):
@@ -866,15 +923,18 @@ class SequentialServer(MPServer):
             **kwargs,
         )
 
+    @overrides
     def _gather_output(self):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
+        should_stop = self._should_stop
 
         while self.started:
             try:
                 uid, y = q_out.get(timeout=1)
             except queue.Empty:
-                continue
+                if should_stop.is_set():
+                    break
             else:
                 fut = futures.pop(uid, None)
                 if fut is None:
@@ -889,9 +949,11 @@ class SequentialServer(MPServer):
                         logger.exception(e)
                         raise
 
+    @overrides
     def _init_future_struct(self, x, fut):
         return {'fut': fut}
 
+    @overrides
     def _input_queues(self):
         return self._q_in_out[:1]
 
@@ -934,15 +996,16 @@ class EnsembleServer(MPServer):
         '''
         raise NotImplementedError
 
+    @overrides
     def _gather_output(self):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
         while self.started:
-            # TODO: need improvement; refer to other `_gather_output`.
-            # How to make waiting more efficient?
             for idx, q_out in enumerate(self._q_out):
                 while not q_out.empty():
+                    # Get all available results out of this queue.
+                    # They are for different requests.
                     uid, y = q_out.get_nowait()
                     fut = futures.get(uid)
                     if fut is None:
@@ -952,6 +1015,7 @@ class EnsembleServer(MPServer):
                     fut['res'][idx] = y
                     fut['n'] += 1
                     if fut['n'] == n_results_needed:
+                        # All results for this request have been collected.
                         del futures[uid]
                         try:
                             z = self.ensemble(fut['x'], fut['res'])
@@ -968,6 +1032,7 @@ class EnsembleServer(MPServer):
                     # No sleep. Get results out of the queue as quickly as possible.
             time.sleep(self.SLEEP_DEQUEUE)
 
+    @overrides
     def _init_future_struct(self, x, fut):
         return {
             'x': x,
@@ -976,6 +1041,7 @@ class EnsembleServer(MPServer):
             'n': 0
         }
 
+    @overrides
     def _input_queues(self):
         return self._q_in
 

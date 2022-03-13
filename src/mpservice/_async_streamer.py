@@ -49,6 +49,7 @@ from typing import (
     Iterable, Iterator,
     Tuple, Type)
 
+from overrides import overrides
 from . import _streamer as _sync_streamer
 from ._streamer import is_exception, _default_peek_func, EventUpstreamer, MAX_THREADS
 
@@ -193,6 +194,7 @@ class Batcher(Stream):
         self.batch_size = batch_size
         self._done = False
 
+    @overrides
     async def _get_next(self):
         if self._done:
             raise StopAsyncIteration
@@ -213,6 +215,7 @@ class Unbatcher(Stream):
         super().__init__(instream)
         self._batch = None
 
+    @overrides
     async def _get_next(self):
         if self._batch:
             return self._batch.pop(0)
@@ -228,6 +231,7 @@ class Dropper(Stream):
         super().__init__(instream)
         self.func = func
 
+    @overrides
     async def _get_next(self):
         while True:
             z = await self._instream.__anext__()
@@ -243,6 +247,7 @@ class Header(Stream):
         assert n >= 0
         self.n = n
 
+    @overrides
     async def _get_next(self):
         if self.index >= self.n:
             raise StopAsyncIteration
@@ -254,6 +259,7 @@ class Peeker(Stream):
         super().__init__(instream)
         self.func = func
 
+    @overrides
     async def _get_next(self):
         z = await self._instream.__anext__()
         self.func(self.index, z)
@@ -272,7 +278,6 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
 
     async def put_end(self):
         assert not self._closed
-        await self.put(self.NO_MORE_DATA)
         self._closed = True
 
     async def put(self, x):
@@ -289,11 +294,14 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
     async def __anext__(self):
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopAsyncIteration
-                return z
+                return self.get_nowait()
             except asyncio.QueueEmpty:
+                if self._closed:
+                    # No more elements can be put in the queue
+                    # after `_closed` is set to True,
+                    # hence if queue is empty and `_closed` is True,
+                    # all elements have been consumed.
+                    raise StopAsyncIteration
                 if self._downstream_crashed.is_set():
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
@@ -317,9 +325,6 @@ class Buffer(Stream):
                         break
                     await q.put(v)
                 await q.put_end()
-                # TODO: error
-                #   "Task was destroyed but it is pending!"
-                # around here. Watch printouts in tests.
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
@@ -329,6 +334,7 @@ class Buffer(Stream):
 
         self._task = asyncio.create_task(foo(self._instream, self._q, self._crashed))
 
+    @overrides
     async def _get_next(self):
         try:
             return await self._q.__anext__()
@@ -360,6 +366,7 @@ class Transformer(Stream):
         self.return_exceptions = return_exceptions
         self._async = is_async(func)
 
+    @overrides
     async def _get_next(self):
         z = await self._instream.__anext__()
         try:
@@ -484,7 +491,7 @@ class ConcurrentTransformer(Stream):
             async def put_end():
                 while True:
                     try:
-                        q_out.put_end(block=False)
+                        q_out.put_end()
                         return
                     except queue.Full:
                         await asyncio.sleep(q_out.PUT_SLEEP)
@@ -519,6 +526,7 @@ class ConcurrentTransformer(Stream):
         )
         self._tasks = [t1] + t2
 
+    # This function appears to be unused. What's the purpose of it?
     async def _astop(self):
         if not self._tasks:
             return
@@ -531,6 +539,7 @@ class ConcurrentTransformer(Stream):
                 t.join()
         self._tasks = []
 
+    @overrides
     async def _get_next(self):
         if self._upstream_err:
             raise self._upstream_err[0]

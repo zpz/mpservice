@@ -1,9 +1,11 @@
 import asyncio
 import concurrent.futures
 import time
-from mpservice.remote_exception import RemoteException
-import pytest
 
+import pytest
+from overrides import overrides
+
+from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout, RemoteException
@@ -189,6 +191,7 @@ class MyWideServer(EnsembleServer):
         self.add_servlet(GetTail, cpus=[3])
         self.add_servlet(GetLen, cpus=[2])
 
+    @overrides
     def ensemble(self, x, results):
         return (results[0] + results[1]) * results[2]
 
@@ -230,6 +233,7 @@ class YourWideServer(EnsembleServer):
         self.add_servlet(AddThree, cpus=[1, 2])
         self.add_servlet(Delay, cpus=[3])
 
+    @overrides
     def ensemble(self, x, results):
         return results[0] + results[1] + x
 
@@ -289,6 +293,7 @@ class HisWideServer(EnsembleServer):
         self.add_servlet(Shift, stepsize=5, cpus=[0, 3], batch_size=4)
         self.add_servlet(Shift, stepsize=7, cpus=[2])
 
+    @overrides
     def ensemble(self, x, results: list):
         return [min(results), max(results)]
 

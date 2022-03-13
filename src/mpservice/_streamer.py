@@ -173,6 +173,8 @@ from typing import (
     Tuple, Type,
 )
 
+from overrides import EnforceOverrides, overrides
+
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
@@ -186,6 +188,7 @@ TT = TypeVar('TT')
 
 
 class EventUpstreamer:
+    '''Propagate a signal (Event) upstream, i.e. to input_stream.'''
     def __init__(self, upstream: Optional[EventUpstreamer] = None, /):
         self.upstream = upstream
         self._event = threading.Event()
@@ -212,7 +215,7 @@ def _default_peek_func(i, x):
     print(x)
 
 
-class StreamMixin:
+class StreamMixin(EnforceOverrides):
     def drop_exceptions(self):
         return self.drop_if(lambda i, x: is_exception(x))
 
@@ -290,6 +293,8 @@ class Stream(collections.abc.Iterator, StreamMixin):
     def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
         if isinstance(instream, Stream):
             self._crashed = EventUpstreamer(instream._crashed)
+            # `self._crashed` is set when the current object encounters
+            # a problem; it also signals upstream that downstream has crashed.
             self._instream = instream
         else:
             self._crashed = EventUpstreamer()
@@ -449,6 +454,7 @@ class Batcher(Stream):
         self.batch_size = batch_size
         self._done = False
 
+    @overrides
     def _get_next(self):
         if self._done:
             raise StopIteration
@@ -469,6 +475,7 @@ class Unbatcher(Stream):
         super().__init__(instream)
         self._batch = None
 
+    @overrides
     def _get_next(self):
         if self._batch:
             return self._batch.pop(0)
@@ -484,6 +491,7 @@ class Dropper(Stream):
         super().__init__(instream)
         self.func = func
 
+    @overrides
     def _get_next(self):
         while True:
             z = next(self._instream)
@@ -499,6 +507,7 @@ class Header(Stream):
         assert n >= 0
         self.n = n
 
+    @overrides
     def _get_next(self):
         if self.index >= self.n:
             raise StopIteration
@@ -510,6 +519,7 @@ class Peeker(Stream):
         super().__init__(instream)
         self.func = func
 
+    @overrides
     def _get_next(self):
         z = next(self._instream)
         self.func(self.index, z)
@@ -539,9 +549,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         self._downstream_crashed = downstream_crashed
         self._closed = False
 
-    def put_end(self, block: bool = True):
+    def put_end(self):
         assert not self._closed
-        self.put(self.NO_MORE_DATA, block=block)
         self._closed = True
 
     def put(self, x, block: bool = True):
@@ -561,11 +570,10 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
     def __next__(self):
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopIteration
-                return z
+                return self.get_nowait()
             except queue.Empty:
+                if self._closed:
+                    raise StopIteration
                 if self._downstream_crashed.is_set():
                     raise StopIteration
                 time.sleep(self.GET_SLEEP)
@@ -574,11 +582,10 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         # This is used by `async_streamer`.
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopAsyncIteration
-                return z
+                return self.get_nowait()
             except queue.Empty:
+                if self._closed:
+                    raise StopAsyncIteration
                 if self._downstream_crashed.is_set():
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
@@ -622,6 +629,7 @@ class Buffer(Stream):
     def __del__(self):
         self._stop()
 
+    @overrides
     def _get_next(self):
         try:
             z = next(self._q)
@@ -643,6 +651,7 @@ class Transformer(Stream):
         self.func = func
         self.return_exceptions = return_exceptions
 
+    @overrides
     def _get_next(self):
         z = next(self._instream)
         try:
@@ -782,6 +791,7 @@ class ConcurrentTransformer(Stream):
     def __del__(self):
         self._stop()
 
+    @overrides
     def _get_next(self):
         if self._upstream_err:
             raise self._upstream_err[0]
