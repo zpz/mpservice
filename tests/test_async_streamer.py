@@ -277,7 +277,7 @@ async def test_concurrent_transform():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_transform_sync():
+async def _test_concurrent_transform_sync():
     def f1(x):
         time.sleep(random.random() * 0.01)
         return x + 3.8

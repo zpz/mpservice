@@ -549,9 +549,8 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         self._downstream_crashed = downstream_crashed
         self._closed = False
 
-    def put_end(self, block: bool = True):
+    def put_end(self):
         assert not self._closed
-        self.put(self.NO_MORE_DATA, block=block)
         self._closed = True
 
     def put(self, x, block: bool = True):
@@ -571,11 +570,10 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
     def __next__(self):
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopIteration
-                return z
+                return self.get_nowait()
             except queue.Empty:
+                if self._closed:
+                    raise StopIteration
                 if self._downstream_crashed.is_set():
                     raise StopIteration
                 time.sleep(self.GET_SLEEP)
@@ -584,11 +582,10 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
         # This is used by `async_streamer`.
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopAsyncIteration
-                return z
+                return self.get_nowait()
             except queue.Empty:
+                if self._closed:
+                    raise StopAsyncIteration
                 if self._downstream_crashed.is_set():
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)

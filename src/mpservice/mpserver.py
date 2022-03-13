@@ -505,9 +505,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # "transfomer" depends on tweaking the "workers" parameter.
 
         enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
-            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10,
-            )
+            enqueue_timeout=enqueue_timeout,
+            total_timeout=total_timeout,
+        )
 
         async def _enqueue(x, *, return_x, return_exc, timeout):
             time0 = time.perf_counter()
@@ -594,9 +594,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # "transfomer" depends on tweaking the "workers" parameter.
 
         enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
-            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10,
-            )
+            enqueue_timeout=enqueue_timeout,
+            total_timeout=total_timeout,
+        )
 
         def _enqueue(x, *, return_x, return_exc, timeout):
             fut = concurrent.futures.Future()

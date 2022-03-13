@@ -278,7 +278,6 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
 
     async def put_end(self):
         assert not self._closed
-        await self.put(self.NO_MORE_DATA)
         self._closed = True
 
     async def put(self, x):
@@ -295,11 +294,14 @@ class IterQueue(asyncio.Queue, collections.abc.AsyncIterator):
     async def __anext__(self):
         while True:
             try:
-                z = self.get_nowait()
-                if z is self.NO_MORE_DATA:
-                    raise StopAsyncIteration
-                return z
+                return self.get_nowait()
             except asyncio.QueueEmpty:
+                if self._closed:
+                    # No more elements can be put in the queue
+                    # after `_closed` is set to True,
+                    # hence if queue is empty and `_closed` is True,
+                    # all elements have been consumed.
+                    raise StopAsyncIteration
                 if self._downstream_crashed.is_set():
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
@@ -316,9 +318,6 @@ class Buffer(Stream):
         self._start()
 
     def _start(self):
-        # TODO: error
-        #   "Task was destroyed but it is pending!"
-        # around here. Watch printouts in tests/test_async_streamer.py::test_chain.
         async def foo(instream, q, crashed):
             try:
                 async for v in instream:
@@ -330,7 +329,6 @@ class Buffer(Stream):
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
-                logger.exception(e)
                 self._upstream_err = e
                 await q.put_end()
 
@@ -493,7 +491,7 @@ class ConcurrentTransformer(Stream):
             async def put_end():
                 while True:
                     try:
-                        q_out.put_end(block=False)
+                        q_out.put_end()
                         return
                     except queue.Full:
                         await asyncio.sleep(q_out.PUT_SLEEP)
