@@ -39,7 +39,6 @@ test = [
     "pylint",
     "pytest",
     "pytest-asyncio",
-    "pytest-mock",
     "requests",
     "starlette",
 ]
