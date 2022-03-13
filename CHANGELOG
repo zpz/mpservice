@@ -3,6 +3,7 @@ Release 0.10.0
 
 - `mpserver` fine tune, esp about graceful shutdown.
 - Use `overrides` to help keep sanity checks on class inheritance.
+- Bug fixes in streamer.
 
 
 Release 0.9.9.post1
