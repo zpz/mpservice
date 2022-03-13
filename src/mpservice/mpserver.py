@@ -66,10 +66,12 @@ from multiprocessing import synchronize, Queue
 from typing import List, Type, Sequence, Union, Callable
 from uuid import uuid4
 
-import psutil  # type: ignore
+import psutil
+from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
 from . import streamer
+from ._streamer import is_exception
 from ._util import forward_logs, logger_thread
 
 
@@ -327,7 +329,7 @@ class Servlet(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class MPServer(metaclass=ABCMeta):
+class MPServer(EnforceOverrides, metaclass=ABCMeta):
     MP_CLASS = multiprocessing.get_context('spawn')
     # This class attribute is provided because in some cases
     # one may want to use `torch.multiprocessing`, which is
@@ -353,8 +355,8 @@ class MPServer(metaclass=ABCMeta):
         self._q_err: Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._q_log: Queue = self.MP_CLASS.Queue()
 
-        self._t_gather_output: threading.Thread = None  # type: ignore
-        self._t_gather_error: threading.Thread = None  # type: ignore
+        self._t_gather_output: threading.Thread = None
+        self._t_gather_error: threading.Thread = None
         self._t_servlet_log: threading.Thread = None
 
         self._servlets: List[multiprocessing.Process] = []
@@ -489,6 +491,8 @@ class MPServer(metaclass=ABCMeta):
     def async_stream(self, data_stream, /, *,
                      return_exceptions: bool = False,
                      return_x: bool = False,
+                     enqueue_timeout: Union[int, float] = None,
+                     total_timeout: Union[int, float] = None,
                      ) -> streamer.AsyncStream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
@@ -500,7 +504,10 @@ class MPServer(metaclass=ABCMeta):
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on tweaking the "workers" parameter.
 
-        enqueue_timeout, total_timeout = self._resolve_timeout()
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
+            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10,
+            )
 
         async def _enqueue(x, *, return_x, return_exc, timeout):
             time0 = time.perf_counter()
@@ -514,15 +521,22 @@ class MPServer(metaclass=ABCMeta):
             except Exception as e:
                 if return_x and return_exc:
                     return x, time0, None, e
+                # If `return_x` is False, then whether to return exception
+                # is controlled by `transform(..., return_exceptions=...)`
                 raise
 
         async def _dequeue(x, *, return_x, return_exc, timeout):
             if return_x:
                 x, time0, uid, fut = x
-                if return_exc and isinstance(fut, Exception):
+                if return_exc and is_exception(fut):
                     return x, fut
+                # When `return_exc` is False, `fut` won't be an exception,
+                # b/c exceptions would have been raised in `_enqueue`.
             else:
-                if return_exc and isinstance(x, Exception):
+                if return_exc and is_exception(x):
+                    # When `return_exc` is True, hence
+                    # `transform(_enqueue, ..., return_exceptions=True)`,
+                    # hence an exception object could have been passed on.
                     return x
                 time0, uid, fut = x
 
@@ -537,6 +551,8 @@ class MPServer(metaclass=ABCMeta):
                 if return_x and return_exc:
                     return x, e
                 raise
+                # Like in `_enqueue`, whether this will crash depends on
+                # `return_exceptions` to the second `transform`.
 
         if not isinstance(data_stream, streamer.AsyncStream):
             data_stream = streamer.AsyncStream(data_stream)
@@ -544,14 +560,16 @@ class MPServer(metaclass=ABCMeta):
         return (
             data_stream
             .transform(
-                _enqueue, workers=1,
+                _enqueue,
+                workers=1,
                 return_exceptions=return_exceptions,
                 return_x=return_x,
                 return_exc=return_exceptions,
                 timeout=enqueue_timeout,
             )
             .transform(
-                _dequeue, workers=1,
+                _dequeue,
+                workers=1,
                 return_exceptions=return_exceptions,
                 return_x=return_x,
                 return_exc=return_exceptions,
@@ -562,6 +580,8 @@ class MPServer(metaclass=ABCMeta):
     def stream(self, data_stream, /, *,
                return_exceptions: bool = False,
                return_x: bool = False,
+               enqueue_timeout: Union[int, float] = None,
+               total_timeout: Union[int, float] = None,
                ) -> streamer.Stream:
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
@@ -573,7 +593,10 @@ class MPServer(metaclass=ABCMeta):
         # performance, whereas the efficiency achieved by
         # "transfomer" depends on tweaking the "workers" parameter.
 
-        enqueue_timeout, total_timeout = self._resolve_timeout()
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
+            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10,
+            )
 
         def _enqueue(x, *, return_x, return_exc, timeout):
             fut = concurrent.futures.Future()
@@ -900,6 +923,7 @@ class SequentialServer(MPServer):
             **kwargs,
         )
 
+    @overrides
     def _gather_output(self):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
@@ -925,9 +949,11 @@ class SequentialServer(MPServer):
                         logger.exception(e)
                         raise
 
+    @overrides
     def _init_future_struct(self, x, fut):
         return {'fut': fut}
 
+    @overrides
     def _input_queues(self):
         return self._q_in_out[:1]
 
@@ -970,6 +996,7 @@ class EnsembleServer(MPServer):
         '''
         raise NotImplementedError
 
+    @overrides
     def _gather_output(self):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
@@ -1005,6 +1032,7 @@ class EnsembleServer(MPServer):
                     # No sleep. Get results out of the queue as quickly as possible.
             time.sleep(self.SLEEP_DEQUEUE)
 
+    @overrides
     def _init_future_struct(self, x, fut):
         return {
             'x': x,
@@ -1013,6 +1041,7 @@ class EnsembleServer(MPServer):
             'n': 0
         }
 
+    @overrides
     def _input_queues(self):
         return self._q_in
 
