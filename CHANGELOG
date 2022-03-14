@@ -1,3 +1,9 @@
+Release 0.10.1 (forthcoming)
+==============
+
+- `mpservice.http_server` was renamed to `mpservice.http`.
+
+
 Release 0.10.0
 ==============
 
