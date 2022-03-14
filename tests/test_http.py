@@ -9,7 +9,7 @@ from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.testclient import TestClient
 
-from mpservice.http_server import make_server
+from mpservice.http import make_server
 
 
 HOST = '0.0.0.0'
