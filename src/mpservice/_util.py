@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 import multiprocessing
+import subprocess
 import warnings
 
 
@@ -35,3 +36,16 @@ def forward_logs(q: multiprocessing.Queue):
     root.setLevel(logging.DEBUG)
     qh = logging.handlers.QueueHandler(q)
     root.addHandler(qh)
+
+
+def get_docker_host_ip():
+    # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
+    # another idea:
+    # ip -4 route list match 0/0 | cut -d' ' -f3
+    #
+    # Usually the result is '172.17.0.1'
+
+    z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
+    z = z.decode()[len('default via ') :]
+    return z[: z.find(' ')]
+
