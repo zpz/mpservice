@@ -77,44 +77,15 @@ def recv_record(sock):
     return loads(data)
 
 
-async def make_request(reader, writer):
-    data = ['first', 'second', 'third', 'fourth', 'fifth']
-    for msg in data:
-        await write_record(writer, msg)
-
-    for _ in range(len(data)):
-        data = await read_record(reader)
-        print(data)
-
-    writer.close()
-    await writer.wait_closed()
-
-
-async def run_tcp_client(host: str, port: int):
-    # If both client and server run on the same machine
-    # in separate Docker containers, `host` should be
-    # `mpservice._util.get_docker_host_ip()`.
-    reader, writer = await asyncio.open_connection(host, port)
-    await make_request(reader, writer)
-
-
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
-    # If the server runs within a Docker container,
-    # `host` should be '0.0.0.0'. Outside of Docker,
-    # it should be '127.0.0.1' (I think but did not verify).
     server = await asyncio.start_server(conn_handler, host, port)
     async with server:
+        addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+        logger.info('serving on %s', addrs)
         await server.serve_forever()
 
 
-async def run_unix_client(path: str):
-    # `path` must be consistent with that passed to `run_unix_server`.
-    reader, writer = await asyncio.open_unix_connection(path)
-    await make_request(reader, writer)
-
-
 async def run_unix_server(conn_handler: Callable, path: str):
-    # Make sure the socket does not already exist.
     try:
         os.unlink(path)
     except OSError:
@@ -123,6 +94,8 @@ async def run_unix_server(conn_handler: Callable, path: str):
 
     server = await asyncio.start_unix_server(conn_handler, path)
     async with server:
+        addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+        logger.info('serving on %s', addrs)
         await server.serve_forever()
 
 
@@ -132,11 +105,15 @@ class SocketServer:
                  host: str = None,
                  port: int = None):
         if path:
+            # Make sure the socket does not already exist.
             assert not host
             assert not port
             self._socket_type = 'unix'
             self._socket_path = path
         else:
+            # If the server runs within a Docker container,
+            # `host` should be '0.0.0.0'. Outside of Docker,
+            # it should be '127.0.0.1' (I think but did not verify).
             assert port
             if not host:
                 host = '0.0.0.0'  # in Docker
@@ -144,37 +121,57 @@ class SocketServer:
             self._host = host
             self._port = port
         self._n_connections = 0
+        self._to_shutdown = False
         self.to_shutdown = False
 
-    async def on_startup(self):
+    async def before_startup(self):
         pass
 
-    async def on_shutdown(self):
+    async def after_startup(self):
+        pass
+
+    async def before_shutdown(self):
+        pass
+
+    async def after_shutdown(self):
         pass
 
     async def run(self):
-        await self.on_startup()
+        await self.before_startup()
         if self._socket_type == 'tcp':
             server_task = asyncio.create_task(
                 run_tcp_server(self._handle_connection, self._host, self._port))
         else:
             server_task = asyncio.create_task(
                 run_unix_server(self._handle_connection, self._socket_path))
-        print('server', self, 'is ready')
+        await self.after_startup()
+        logger.info('server %s is ready', self)
         while True:
             if self.to_shutdown:
+                await self.before_shutdown()
                 server_task.cancel()
-                await self.on_shutdown()
-                print('server', self, 'is stopped')
+                await self.after_shutdown()
+                logger.info('server %s is stopped', self)
                 break
             await asyncio.sleep(1)
 
     async def handle_request(self, data, writer):
-        # Simple echo. Subclass will override this.
+        # In one connection, "one round of interactions"
+        # if for server to receive a request and send back a response.
+        # This method handles one such round.
+        # Subclass will override this with their interpretation of
+        # the request `data` and their response.
+
+        # Simple echo.
         # print('received', data)
+        await asyncio.sleep(0.8)
         await write_record(writer, data)
 
     async def _handle_connection(self, reader, writer):
+        # This is called upon a new connection that is openned
+        # at the request from a client to the server.
+        addr = writer.get_extra_info('peername' if self._socket_type == 'tcp' else 'sockname')
+        logger.debug('connection %r openned on server', addr)
         self._n_connections += 1
         while True:
             try:
@@ -183,15 +180,21 @@ class SocketServer:
                 # Client has closed the connection.
                 break
             if isinstance(self, dict) and 'run_server_command' in data:
+                # Client submitted `{'run_server_command': 'shutdown'}`.
                 assert len(data) == 1
                 if data['run_server_command'] == 'shutdown':
                     self._to_shutdown = True
                     break
+                # Subclass may define and handle other server commands
+                # in `handle_request`.
             await self.handle_request(data, writer)
 
         writer.close()
+        logger.debug('connection %r closed on server', addr)
         self._n_connections -= 1
-        if self._n_connections == 0:
+        if self._n_connections == 0 and self._to_shutdown:
+            # If any one connection has requested server shutdown,
+            # then stop server once all connections are closed.
             self.to_shutdown = True
 
 
@@ -200,14 +203,18 @@ class SocketClient:
                  path: str = None,
                  host: str = None,
                  port: int = None,
-                 max_workers: int = None,
+                 max_connections: int = None,
                  ):
         if path:
+            # `path` must be consistent with that passed to `run_unix_server`.
             assert not host
             assert not port
             self._socket_type = 'unix'
             self._socket_path = path
         else:
+            # If both client and server run on the same machine
+            # in separate Docker containers, `host` should be
+            # `mpservice._util.get_docker_host_ip()`.
             assert port
             if not host:
                 host = get_docker_host_ip()  # in Docker
@@ -215,7 +222,7 @@ class SocketClient:
             self._host = host
             self._port = port
 
-        self._max_workers = max_workers or MAX_THREADS
+        self._max_connections = max_connections or MAX_THREADS
         self._sel = selectors.DefaultSelector()
         self._socks = []
 
@@ -231,7 +238,7 @@ class SocketClient:
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
         self._sel.register(sock, events, data=None)
         self._socks.append(sock)
-        #print('connection', sock, 'started')
+        logger.debug('connection %r openned on client', sock)
         return sock
 
     def _make_request(self, data, sock):
@@ -244,8 +251,6 @@ class SocketClient:
         return z
 
     def request(self, data):
-        for _ in range(self._max_workers):
-            self._open_connection()
         n = len(data)
         k = 0
         kk = 0
@@ -262,10 +267,6 @@ class SocketClient:
                     kk += 1
             if k == n and kk == n:
                 break
-
-        for sock in self._socks:
-            self._sel.unregister(sock)
-            sock.close()
 
         # if not self._socks:
         #     self._open_connection()
@@ -290,6 +291,17 @@ class SocketClient:
         #             break
         #         time.sleep(0.01)
         # return self._make_request(data, sock)
+
+
+    def __enter__(self):
+        for _ in range(self._max_connections):
+            self._open_connection()
+
+    def __exit__(self, *args, **kwargs):
+        for sock in self._socks:
+            self._sel.unregister(sock)
+            sock.close()
+            logger.debug('connection %r closed on client', sock)
 
 
 class MPSocketServer(SocketServer):
@@ -329,23 +341,26 @@ class MPSocketServer(SocketServer):
 
 if __name__ == '__main__':
     import sys
+    from zpz.logging import config_logger
     from mpservice._util import get_docker_host_ip
+    config_logger(level='info')
     cmd = sys.argv[1]
     if cmd == 'server':
         server = SocketServer(path='./abc')
         # server = SocketServer(port=9898)
         asyncio.run(server.run())
     else:
-        client = SocketClient(path='./abc', max_workers=1)
+        client = SocketClient(path='./abc', max_workers=100)
         # client = SocketClient(port=9898, max_workers=10)
         import string
         x = string.ascii_letters * 100
-        data = [x for _ in range(10000)]
-        t0 = time.perf_counter()
-        # for i in range(10000):
-        #    client.request(x)
-        client.request(data)
-        t1 = time.perf_counter()
-        print(t1 - t0)
+        data = [x for _ in range(1000)]
+        with client:
+            t0 = time.perf_counter()
+            # for i in range(10000):
+            #    client.request(x)
+            client.request(data)
+            t1 = time.perf_counter()
+            print(t1 - t0)
 
 
