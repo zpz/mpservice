@@ -1,11 +1,16 @@
 import asyncio
 import logging
 import os
+import queue
+import selectors
+import socket
+import time
 from typing import Callable
 
 from orjson import loads, dumps
 
 from .mpserver import MPServer
+from ._streamer import MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +28,10 @@ logger = logging.getLogger(__name__)
 # Unix domain sockets
 #   https://pymotw.com/2/socket/uds.html
 
+# Python socket programming
+#  https://realpython.com/python-sockets/
+#  https://docs.python.org/3/howto/sockets.html
+
 
 async def write_record(writer, data):
     data_bytes = dumps(data)
@@ -39,6 +48,35 @@ async def read_record(reader):
     return loads(data)
 
 
+def send_record(sock, data):
+    data_bytes = dumps(data)
+    sock.sendall(str(len(data_bytes)).encode() + b'\n')
+    sock.sendall(data_bytes)
+
+
+def recv_record(sock):
+    # Returning `b''` indicates connection has been closed.
+    size = b''
+    while True:
+        x = sock.recv(1)
+        if x == b'':
+            return b''
+        if x == b'\n':
+            break
+        size += x
+    size = int(size.decode())
+    data = b''
+    while True:
+        x = sock.recv(size)
+        if x == b'':
+            return b''
+        data += x
+        size -= len(x)
+        if size == 0:
+            break
+    return loads(data)
+
+
 async def make_request(reader, writer):
     data = ['first', 'second', 'third', 'fourth', 'fifth']
     for msg in data:
@@ -50,15 +88,6 @@ async def make_request(reader, writer):
 
     writer.close()
     await writer.wait_closed()
-
-
-async def take_request(reader, writer):
-    for _ in range(5):
-        data = await read_record(reader)
-        print('server received', data)
-        await write_record(writer, f'{data} {len(data)}')
-
-    writer.close()
 
 
 async def run_tcp_client(host: str, port: int):
@@ -97,52 +126,53 @@ async def run_unix_server(conn_handler: Callable, path: str):
         await server.serve_forever()
 
 
-class MPSocketServer:
-    def __init__(self,
-                 server: MPServer,
-                 *,
-                 socket_type: str,
+class SocketServer:
+    def __init__(self, *,
+                 path: str = None,
                  host: str = None,
-                 port: int = None,
-                 path: str = None):
-        assert socket_type in ('tcp', 'unix')
-        self._socket_type = socket_type
-        if socket_type == 'tcp':
+                 port: int = None):
+        if path:
+            assert not host
+            assert not port
+            self._socket_type = 'unix'
+            self._socket_path = path
+        else:
+            assert port
             if not host:
                 host = '0.0.0.0'  # in Docker
-            assert port
+            self._socket_type = 'tcp'
             self._host = host
             self._port = port
-        else:
-            assert path
-            self._path = path
-        self._server = server
-        self._server_task = None
-        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
         self._n_connections = 0
-        self._to_shutdown = False
+        self.to_shutdown = False
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}({repr(self._server)})'
+    async def on_startup(self):
+        pass
 
-    def __str__(self):
-        return self.__repr__()
+    async def on_shutdown(self):
+        pass
 
-    def run(self):
-        self._server.__enter__()
-        # TODO: need to start loop.
+    async def run(self):
+        await self.on_startup()
         if self._socket_type == 'tcp':
-            self._server_task = asyncio.create_task(
+            server_task = asyncio.create_task(
                 run_tcp_server(self._handle_connection, self._host, self._port))
         else:
-            self._server_task = asyncio.create_task(
-                run_unix_server(self._handle_connection, self._path))
-        logger.info('server %s is ready', self)
+            server_task = asyncio.create_task(
+                run_unix_server(self._handle_connection, self._socket_path))
+        print('server', self, 'is ready')
+        while True:
+            if self.to_shutdown:
+                server_task.cancel()
+                await self.on_shutdown()
+                print('server', self, 'is stopped')
+                break
+            await asyncio.sleep(1)
 
-    def stop(self):
-        self._server.__exit__(None, None, None)
-        self._server_task.cancel()
-        logger.info('server %s is stopped')
+    async def handle_request(self, data, writer):
+        # Simple echo. Subclass will override this.
+        # print('received', data)
+        await write_record(writer, data)
 
     async def _handle_connection(self, reader, writer):
         self._n_connections += 1
@@ -152,42 +182,170 @@ class MPSocketServer:
             except asyncio.IncompleteReadError:
                 # Client has closed the connection.
                 break
-            if isinstance(data, dict) and 'set_server_option' in data:
-                assert len(data) == 1
-                opts = data['set_server_option']
-                # Currently the only options are timeouts.
-                if 'enqueue_timeout' in opts or 'total_timeout' in opts:
-                    tt = self._server._resolve_timeout(
-                        enqueue_timeout=opts.get('enqueue_timeout'),
-                        total_timeout=opts.get('total_timeout'))
-                    self._enqueue_timeout, self._total_timeout = tt
-                continue
             if isinstance(self, dict) and 'run_server_command' in data:
                 assert len(data) == 1
-                assert data['run_server_command'] == 'shutdown'
-                self._to_shutdown = True
-                break
-            y = await self._server.async_call(
-                data, enqueue_timeout=self._enqueue_timeout,
-                total_timeout=self._total_timeout)
-            await write_record(writer, y)
+                if data['run_server_command'] == 'shutdown':
+                    self._to_shutdown = True
+                    break
+            await self.handle_request(data, writer)
 
         writer.close()
         self._n_connections -= 1
         if self._n_connections == 0:
-            self.stop()
+            self.to_shutdown = True
+
+
+class SocketClient:
+    def __init__(self, *,
+                 path: str = None,
+                 host: str = None,
+                 port: int = None,
+                 max_workers: int = None,
+                 ):
+        if path:
+            assert not host
+            assert not port
+            self._socket_type = 'unix'
+            self._socket_path = path
+        else:
+            assert port
+            if not host:
+                host = get_docker_host_ip()  # in Docker
+            self._socket_type = 'tcp'
+            self._host = host
+            self._port = port
+
+        self._max_workers = max_workers or MAX_THREADS
+        self._sel = selectors.DefaultSelector()
+        self._socks = []
+
+    def _open_connection(self):
+        if self._socket_type == 'tcp':
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setblocking(False)
+            sock.connect_ex((self._host, self._port))
+        else:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.setblocking(False)
+            sock.connect_ex(self._socket_path)
+        events = selectors.EVENT_READ | selectors.EVENT_WRITE
+        self._sel.register(sock, events, data=None)
+        self._socks.append(sock)
+        #print('connection', sock, 'started')
+        return sock
+
+    def _make_request(self, data, sock):
+        send_record(sock, data)
+        z = recv_record(sock)
+        # print('received', z)
+        if z == b'':
+            self._sel.unregister(sock)
+            sock.close()
+        return z
+
+    def request(self, data):
+        for _ in range(self._max_workers):
+            self._open_connection()
+        n = len(data)
+        k = 0
+        kk = 0
+        while True:
+            events = self._sel.select(timeout=None)
+            for key, mask in events:
+                if k < n and (mask & selectors.EVENT_WRITE):
+                    # print('sending', data[k])
+                    send_record(key.fileobj, data[k])
+                    k += 1
+                elif kk < n and (mask & selectors.EVENT_READ):
+                    z = recv_record(key.fileobj)
+                    # print('received', z)
+                    kk += 1
+            if k == n and kk == n:
+                break
+
+        for sock in self._socks:
+            self._sel.unregister(sock)
+            sock.close()
+
+        # if not self._socks:
+        #     self._open_connection()
+        # if len(self._socks) < self._max_workers:
+        #     events = self._sel.select(timeout=0)
+        #     sock = None
+        #     # for key, mask in events:
+        #     #     if mask & selectors.EVENT_WRITE:
+        #     #         sock = key.fileobj
+        #     #         break
+        #     if sock is None:
+        #         sock = self._open_connection()
+        # else:
+        #     while True:
+        #         events = self._sel.select(timeout=None)
+        #         sock = None
+        #         for key, mask in events:
+        #             if mask & selectors.EVENT_WRITE:
+        #                 sock = key.fileobj
+        #                 break
+        #         if sock is not None:
+        #             break
+        #         time.sleep(0.01)
+        # return self._make_request(data, sock)
+
+
+class MPSocketServer(SocketServer):
+    def __init__(self, server: MPServer, **kwargs):
+        super().__init__(**kwargs)
+        self._server = server
+        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({repr(self._server)})'
+
+    def __str__(self):
+        return self.__repr__()
+
+    async def on_startup(self):
+        self._server.__enter__()
+
+    async def on_shutdown(self):
+        self._server.__exit__(None, None, None)
+
+    async def handle_request(self, data, writer):
+        if isinstance(data, dict) and 'set_server_option' in data:
+            assert len(data) == 1
+            opts = data['set_server_option']
+            # Currently the only options are timeouts.
+            if 'enqueue_timeout' in opts or 'total_timeout' in opts:
+                tt = self._server._resolve_timeout(
+                    enqueue_timeout=opts.get('enqueue_timeout'),
+                    total_timeout=opts.get('total_timeout'))
+                self._enqueue_timeout, self._total_timeout = tt
+                return
+        y = await self._server.async_call(
+            data, enqueue_timeout=self._enqueue_timeout,
+            total_timeout=self._total_timeout)
+        await write_record(writer, y)
 
 
 if __name__ == '__main__':
     import sys
     from mpservice._util import get_docker_host_ip
     cmd = sys.argv[1]
-    print('command:', cmd)
     if cmd == 'server':
-        # asyncio.run(run_tcp_server('0.0.0.0', 9898))
-        asyncio.run(run_unix_server('./abc'))
+        server = SocketServer(path='./abc')
+        # server = SocketServer(port=9898)
+        asyncio.run(server.run())
     else:
-        # asyncio.run(run_tcp_client(get_docker_host_ip(), 9898))
-        asyncio.run(run_unix_client('./abc'))
+        client = SocketClient(path='./abc', max_workers=1)
+        # client = SocketClient(port=9898, max_workers=10)
+        import string
+        x = string.ascii_letters * 100
+        data = [x for _ in range(10000)]
+        t0 = time.perf_counter()
+        # for i in range(10000):
+        #    client.request(x)
+        client.request(data)
+        t1 = time.perf_counter()
+        print(t1 - t0)
 
 
