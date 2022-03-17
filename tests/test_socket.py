@@ -26,13 +26,16 @@ def test_simple():
     with SocketClient(path='/tmp/sock_abc') as client:
         assert client.request(23) == 46
         assert client.request('abc') == 'abcabc'
-        client.shutdown_server()
+
+        client.set_server_option('encoder', 'pickle')
 
         data = range(10)
         for x, y in zip(data, client.stream(data)):
             assert y == x * 2
         for x, y in zip(data, client.stream(data, return_x=True)):
             assert y == (x, x * 2)
+
+        client.shutdown_server()
 
     server.join()
 
@@ -59,6 +62,9 @@ def test_mp():
         data = range(10)
         for x, y in zip(data, client.stream(data)):
             assert y == x * 2
+
+        client.set_server_option('timeout', (0.1, 1))
+
         for x, y in zip(data, client.stream(data, return_x=True)):
             assert y == (x, x * 2)
 

@@ -1,7 +1,8 @@
-Release 0.10.1 (forthcoming)
+Release 0.10.1
 ==============
 
 - `mpservice.http_server` was renamed to `mpservice.http`.
+- Initial implementation of socket client/server.
 
 
 Release 0.10.0
