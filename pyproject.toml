@@ -9,6 +9,7 @@ authors = [
     {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
 ]
 dependencies = [
+    "orjson",
     "overrides",
     "psutil",
     "uvicorn[standard] >=0.15.0,<1.0",
@@ -41,6 +42,7 @@ test = [
     "pytest-asyncio",
     "requests",
     "starlette",
+    "zpz",
 ]
 
 
@@ -51,7 +53,7 @@ asyncio_mode = "auto"
 
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 75
 show_missing = true
 skip_empty = true
 
