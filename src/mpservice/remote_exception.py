@@ -50,15 +50,17 @@ class RemoteException(Exception):
     that an exception object is one from another process via the
     `RemoteException` mechanism. As a result, it's decided to keep the
     `RemoteException` class in both originating and receiving processes,
-    and make it behavior differently from the original class in a few places.
+    and make it behave differently from the original class in a few places.
 
     To get the original exception object, reach for the `exc_value` attribute.
     '''
 
-    def __init__(self, exc: Exception = None, /):
+    def __init__(self, exc: BaseException = None, /):
         if exc is None:
             self.exc_type, self.exc_value, tb = sys.exc_info()
         else:
+            if type(exc) is type:
+                exc = exc()
             self.exc_type, self.exc_value, tb = type(
                 exc), exc, exc.__traceback__
         self.tb_exc_value = traceback.TracebackException(
@@ -67,7 +69,7 @@ class RemoteException(Exception):
 
         self.__cause__ = Exception(self.format())
         # This special attribute is not in `self.__dict__`
-        # and will not be pickled. This attribute make the `raise`
+        # and will not be pickled. This attribute makes the `raise`
         # printout look like this:
         #
         #   ....

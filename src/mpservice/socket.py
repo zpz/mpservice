@@ -1,16 +1,20 @@
 import asyncio
+import concurrent.futures
 import logging
 import os
 import queue
 import selectors
 import socket
 import time
-from typing import Callable
+from pickle import dumps as pickle_dumps, loads as pickle_loads
+from types import SimpleNamespace
+from typing import Callable, Iterable
 
-from orjson import loads, dumps
+from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 
 from .mpserver import MPServer
-from ._streamer import MAX_THREADS
+from ._streamer import MAX_THREADS, IterQueue, is_exception
+from ._util import get_docker_host_ip
 
 
 logger = logging.getLogger(__name__)
@@ -33,9 +37,31 @@ logger = logging.getLogger(__name__)
 #  https://docs.python.org/3/howto/sockets.html
 
 
-async def write_record(writer, data):
-    data_bytes = dumps(data)
-    writer.write(str(len(data_bytes)).encode() + b'\n')
+def encode(data, encoder):
+    if encoder == 'orjson':
+        return orjson_dumps(data)
+    if encoder == 'pickle':
+        return pickle_dumps(data)
+    if encoder == 'utf8':
+        return data.encode('utf8')
+    assert encoder == 'none'
+    return data   # `data` must be bytes
+
+
+def decode(data, encoder):
+    if encoder == 'orjson':
+        return orjson_loads(data)
+    if encoder == 'pickle':
+        return pickle_loads(data)
+    if encoder == 'utf8':
+        return data.decode('utf')
+    assert encoder == 'none'
+    return data  # remain bytes
+
+
+async def write_record(writer, data, *, encoder: str = 'orjson'):
+    data_bytes = encode(data, encoder)
+    writer.write(f'{len(data_bytes)} {encoder}\n'.encode())
     writer.write(data_bytes)
     await writer.drain()
 
@@ -43,14 +69,15 @@ async def write_record(writer, data):
 async def read_record(reader):
     # This may raise `asyncio.IncompleteReadError`.
     data = await reader.readuntil(b'\n')
-    n = int(data[:-1].decode())
+    n, encoder = data[:-1].decode().split()
+    n = int(n)
     data = await reader.readexactly(n)
-    return loads(data)
+    return decode(data, encoder)
 
 
-def send_record(sock, data):
-    data_bytes = dumps(data)
-    sock.sendall(str(len(data_bytes)).encode() + b'\n')
+def send_record(sock, data, *, encoder: str = 'orjson'):
+    data_bytes = encode(data, encoder)
+    sock.sendall(f'{len(data_bytes)} {encoder}\n'.encode())
     sock.sendall(data_bytes)
 
 
@@ -64,7 +91,8 @@ def recv_record(sock):
         if x == b'\n':
             break
         size += x
-    size = int(size.decode())
+    size, encoder = size.decode().split()
+    size = int(size)
     data = b''
     while True:
         x = sock.recv(size)
@@ -74,7 +102,36 @@ def recv_record(sock):
         size -= len(x)
         if size == 0:
             break
-    return loads(data)
+    return decode(data, encoder)
+
+
+def recv_record_inc(sock, sock_data):
+    # Incrementally read one record in multiple calls to this function.
+    # Returning `b''` indicates connection has been closed.
+    if sock_data.n is None:
+        x = sock.recv(1)
+        if x == b'':
+            return x
+        if x == b'\n':
+            size, encoder = sock_data.d.decode().split()
+            sock_data.n = int(size)
+            sock_data.e = encoder
+            sock_data.d = b''
+            return
+        sock_data.d += x
+        return
+    k = sock_data.n - len(sock_data.d)
+    x = sock.recv(k)
+    if x == b'':
+        return x
+    sock_data.d += x
+    if len(x) < k:
+        return
+    z = decode(sock_data.d, sock_data.e)
+    sock_data.d = b''
+    sock_data.n = None
+    sock_data.e = None
+    return z
 
 
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
@@ -120,6 +177,7 @@ class SocketServer:
             self._socket_type = 'tcp'
             self._host = host
             self._port = port
+        self._encoder = 'orjson'  # encoder when sending responses
         self._n_connections = 0
         self._to_shutdown = False
         self.to_shutdown = False
@@ -163,39 +221,124 @@ class SocketServer:
         # the request `data` and their response.
 
         # Simple echo.
-        # print('received', data)
-        await asyncio.sleep(0.8)
-        await write_record(writer, data)
+        await asyncio.sleep(0.5)
+        await write_record(writer, data, encoder=self._encoder)
+        # Subclass reimplementation: don't forget `encoder` in this call.
+
+        # In case of exception, if one wants to pass the exception object
+        # to the client, send `RemoteException(e)` with `encoder='pickle'`.
+
+    async def set_server_option(self, name: str, value) -> None:
+        if name == 'encoder':
+            self._encoder = value
+            return
+        raise ValueError(f"unknown option '{name}'")
+
+    async def run_server_command(self, name: str, *args, **kwargs):
+        if name == 'shutdown':
+            assert not args
+            assert not kwargs
+            self._to_shutdown = True
+            return
+        raise ValueError(f"unknown command '{name}'")
 
     async def _handle_connection(self, reader, writer):
         # This is called upon a new connection that is openned
         # at the request from a client to the server.
-        addr = writer.get_extra_info('peername' if self._socket_type == 'tcp' else 'sockname')
-        logger.debug('connection %r openned on server', addr)
+        if self._socket_type == 'tcp':
+            addr = writer.get_extra_info('peername')
+        else:
+            addr = writer.get_extra_info('sockname')
+        logger.debug('connection %r openned from client', addr)
         self._n_connections += 1
         while True:
+            # Infinite loop to handle requests on this connection
+            # until the connection is closed by the client.
             try:
                 data = await read_record(reader)
             except asyncio.IncompleteReadError:
                 # Client has closed the connection.
                 break
-            if isinstance(self, dict) and 'run_server_command' in data:
-                # Client submitted `{'run_server_command': 'shutdown'}`.
-                assert len(data) == 1
-                if data['run_server_command'] == 'shutdown':
-                    self._to_shutdown = True
-                    break
-                # Subclass may define and handle other server commands
-                # in `handle_request`.
+
+            if isinstance(data, dict):
+                if 'run_server_command' in data:
+                    await self.run_server_command(
+                        data['run_server_command'],
+                        *data['args'], **data['kwargs'])
+                    continue
+                elif 'set_server_option' in data:
+                    await self.set_server_option(
+                        data['set_server_option'], data['value'])
+                    continue
+
             await self.handle_request(data, writer)
 
         writer.close()
-        logger.debug('connection %r closed on server', addr)
+        logger.debug('connection %r closed from client', addr)
         self._n_connections -= 1
         if self._n_connections == 0 and self._to_shutdown:
             # If any one connection has requested server shutdown,
             # then stop server once all connections are closed.
             self.to_shutdown = True
+
+
+class MPSocketServer(SocketServer):
+    def __init__(self, server: MPServer, **kwargs):
+        super().__init__(**kwargs)
+        self._server = server
+        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({repr(self._server)})'
+
+    def __str__(self):
+        return self.__repr__()
+
+    async def set_server_option(self, name: str, value):
+        if name == 'timeout':
+            self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
+                enqueue_timeout=value[0], total_timeout=value[1])
+            return
+        await super().set_server_option(name, value)
+
+    async def before_startup(self):
+        self._server.__enter__()
+
+    async def after_shutdown(self):
+        self._server.__exit__(None, None, None)
+
+    async def handle_request(self, data, writer):
+        y = await self._server.async_call(
+            data, enqueue_timeout=self._enqueue_timeout,
+            total_timeout=self._total_timeout)
+        await write_record(writer, y, encoder=self._encoder)
+
+
+class ResultStream(IterQueue):
+    def __init__(self, *, return_x: bool, return_exceptions: bool, **kwargs):
+        super().__init__(**kwargs)
+        self._return_x = return_x
+        self._return_exceptions = return_exceptions
+
+    def __next__(self):
+        fut = super().__next__()
+        x, y = fut.result()
+        if is_exception(y) and not self._return_exceptions:
+            raise y
+        if self._return_x:
+            return x, y
+        return y
+
+    async def __anext__(self):
+        fut = await super().__anext__()
+        while not fut.done():
+            await asyncio.sleep(0.001)
+        x, y = fut.result()
+        if is_exception(y) and not self._return_exceptions:
+            raise y
+        if self._return_x:
+            return x, y
+        return y
 
 
 class SocketClient:
@@ -204,7 +347,10 @@ class SocketClient:
                  host: str = None,
                  port: int = None,
                  max_connections: int = None,
+                 backlog: int = 1024,
                  ):
+        # Experiments showed `max_connections` can be up to 200.
+        # This needs to be improved.
         if path:
             # `path` must be consistent with that passed to `run_unix_server`.
             assert not host
@@ -222,145 +368,149 @@ class SocketClient:
             self._host = host
             self._port = port
 
+        self._backlog = backlog
         self._max_connections = max_connections or MAX_THREADS
+        self._encoder = 'orjson'  # encoder when sending requests.
+        self._to_shutdown = False
+        self._in_queue = None
+        self._sel = None
+        self._socks = set()
+        self._executor = None
+        self._tasks = []
+
+    def __enter__(self):
+        self._in_queue = queue.Queue(self._backlog)
         self._sel = selectors.DefaultSelector()
-        self._socks = []
+        self._executor = concurrent.futures.ThreadPoolExecutor()
+        for _ in range(self._max_connections):
+            self._open_connection()
+        self._tasks.append(self._executor.submit(self._send_recv))
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self._socks:
+            self._to_shutdown = True
+            concurrent.futures.wait(self._tasks)
+            self._executor.shutdown()
+            for sock in self._socks:
+                self._sel.unregister(sock)
+                sock.close()
+                logger.debug('connection %r closed at client', sock)
+            self._sel.close()
+            self._socks = set()
 
     def _open_connection(self):
         if self._socket_type == 'tcp':
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setblocking(False)
-            sock.connect_ex((self._host, self._port))
+            k = 0
+            while True:
+                status = sock.connect_ex((self._host, self._port))
+                if status == 0:
+                    break
+                k += 1
+                if k == 6:
+                    raise Exception('failed to connect to server')
+                time.sleep(0.5)
         else:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.setblocking(False)
-            sock.connect_ex(self._socket_path)
+            k = 0
+            while True:
+                status = sock.connect_ex(self._socket_path)
+                if status == 0:
+                    break
+                k += 1
+                if k == 6:
+                    raise Exception('failed to connect to server')
+                time.sleep(0.5)
+        # To set buffer size, use `socket.setsockopt`.
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
-        self._sel.register(sock, events, data=None)
-        self._socks.append(sock)
-        logger.debug('connection %r openned on client', sock)
-        return sock
+        self._sel.register(
+            sock, events,
+            data=SimpleNamespace(
+                q=queue.Queue(512),  # input-data and future
+                d=b'',               # bytes read so far for the next record
+                n=None,              # length of the next record
+                e=None,              # encoder of the next send_record
+                # Once `l` and `e` have been resolved, `d` will be reset
+                # to exclude the bytes for `l` and `e`.
+            )
+        )
+        self._socks.add(sock)
+        logger.debug('connection %r openned to server', sock)
 
-    def _make_request(self, data, sock):
-        send_record(sock, data)
-        z = recv_record(sock)
-        # print('received', z)
-        if z == b'':
-            self._sel.unregister(sock)
-            sock.close()
-        return z
+    def _enqueue(self, x, *, expect_response: bool = True):
+        if expect_response:
+            fut = concurrent.futures.Future()
+        else:
+            fut = None
+        self._in_queue.put((x, fut))
+        return fut
 
-    def request(self, data):
-        n = len(data)
-        k = 0
-        kk = 0
+    def _send_recv(self):
+        # TODO: consider doing reading and writing in separate threads.
+        data_in = self._in_queue
+        sel = self._sel
+        socks = self._socks
         while True:
-            events = self._sel.select(timeout=None)
-            for key, mask in events:
-                if k < n and (mask & selectors.EVENT_WRITE):
-                    # print('sending', data[k])
-                    send_record(key.fileobj, data[k])
-                    k += 1
-                elif kk < n and (mask & selectors.EVENT_READ):
-                    z = recv_record(key.fileobj)
-                    # print('received', z)
-                    kk += 1
-            if k == n and kk == n:
+            for key, mask in sel.select(timeout=None):
+                sock = key.fileobj
+                if mask & selectors.EVENT_READ:
+                    z = recv_record_inc(sock, key.data)
+                    if z == b'':
+                        sel.unregister(sock)
+                        sock.close()
+                        socks.remove(sock)
+                        continue
+                    if z is None:
+                        continue
+                    x, fut = key.data.q.get()
+                    fut.set_result((x, z))
+                    continue
+                if mask & selectors.EVENT_WRITE:
+                    try:
+                        x, fut = data_in.get_nowait()
+                    except queue.Empty:
+                        pass
+                    else:
+                        send_record(sock, x, encoder=self._encoder)
+                        if fut is not None:
+                            key.data.q.put((x, fut))
+            if self._to_shutdown:
                 break
 
-        # if not self._socks:
-        #     self._open_connection()
-        # if len(self._socks) < self._max_workers:
-        #     events = self._sel.select(timeout=0)
-        #     sock = None
-        #     # for key, mask in events:
-        #     #     if mask & selectors.EVENT_WRITE:
-        #     #         sock = key.fileobj
-        #     #         break
-        #     if sock is None:
-        #         sock = self._open_connection()
-        # else:
-        #     while True:
-        #         events = self._sel.select(timeout=None)
-        #         sock = None
-        #         for key, mask in events:
-        #             if mask & selectors.EVENT_WRITE:
-        #                 sock = key.fileobj
-        #                 break
-        #         if sock is not None:
-        #             break
-        #         time.sleep(0.01)
-        # return self._make_request(data, sock)
+    def request(self, data, *, wait_for_response: bool = True):
+        fut = self._enqueue(data, expect_response=wait_for_response)
+        if wait_for_response:
+            return fut.result()[1]
 
+    def set_server_option(self, name: str, value):
+        self.request({'set_server_option': name, 'value': value},
+                     wait_for_response=False)
 
-    def __enter__(self):
-        for _ in range(self._max_connections):
-            self._open_connection()
+    def run_server_command(self, name: str, *args, **kwargs):
+        self.request({'run_server_command': name, 'args': args, 'kwargs': kwargs},
+                     wait_for_response=False)
 
-    def __exit__(self, *args, **kwargs):
-        for sock in self._socks:
-            self._sel.unregister(sock)
-            sock.close()
-            logger.debug('connection %r closed on client', sock)
+    def shutdown_server(self):
+        self.run_server_command('shutdown')
 
+    def stream(self, data: Iterable, *,
+               return_x: bool = False,
+               return_exceptions: bool = False):
+        results = ResultStream(maxsize=self._backlog,
+                               return_x=return_x,
+                               return_exceptions=return_exceptions)
 
-class MPSocketServer(SocketServer):
-    def __init__(self, server: MPServer, **kwargs):
-        super().__init__(**kwargs)
-        self._server = server
-        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
+        def enqueue():
+            en = self._enqueue
+            data_in = data
+            fut_out = results
+            for x in data_in:
+                fut = en(x)
+                fut_out.put(fut)
+            fut_out.put_end()
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}({repr(self._server)})'
-
-    def __str__(self):
-        return self.__repr__()
-
-    async def on_startup(self):
-        self._server.__enter__()
-
-    async def on_shutdown(self):
-        self._server.__exit__(None, None, None)
-
-    async def handle_request(self, data, writer):
-        if isinstance(data, dict) and 'set_server_option' in data:
-            assert len(data) == 1
-            opts = data['set_server_option']
-            # Currently the only options are timeouts.
-            if 'enqueue_timeout' in opts or 'total_timeout' in opts:
-                tt = self._server._resolve_timeout(
-                    enqueue_timeout=opts.get('enqueue_timeout'),
-                    total_timeout=opts.get('total_timeout'))
-                self._enqueue_timeout, self._total_timeout = tt
-                return
-        y = await self._server.async_call(
-            data, enqueue_timeout=self._enqueue_timeout,
-            total_timeout=self._total_timeout)
-        await write_record(writer, y)
-
-
-if __name__ == '__main__':
-    import sys
-    from zpz.logging import config_logger
-    from mpservice._util import get_docker_host_ip
-    config_logger(level='info')
-    cmd = sys.argv[1]
-    if cmd == 'server':
-        server = SocketServer(path='./abc')
-        # server = SocketServer(port=9898)
-        asyncio.run(server.run())
-    else:
-        client = SocketClient(path='./abc', max_workers=100)
-        # client = SocketClient(port=9898, max_workers=10)
-        import string
-        x = string.ascii_letters * 100
-        data = [x for _ in range(1000)]
-        with client:
-            t0 = time.perf_counter()
-            # for i in range(10000):
-            #    client.request(x)
-            client.request(data)
-            t1 = time.perf_counter()
-            print(t1 - t0)
-
-
+        self._tasks.append(self._executor.submit(enqueue))
+        return results

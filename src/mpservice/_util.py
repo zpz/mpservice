@@ -46,6 +46,5 @@ def get_docker_host_ip():
     # Usually the result is '172.17.0.1'
 
     z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
-    z = z.decode()[len('default via ') :]
+    z = z.decode()[len('default via '):]
     return z[: z.find(' ')]
-

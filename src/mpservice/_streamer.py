@@ -204,8 +204,8 @@ class EventUpstreamer:
 
 
 def is_exception(e):
-    return isinstance(e, Exception) or (
-        inspect.isclass(e) and issubclass(e, Exception)
+    return isinstance(e, BaseException) or (
+        inspect.isclass(e) and issubclass(e, BaseException)
     )
 
 
@@ -538,7 +538,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
     PUT_SLEEP = 0.00045
     NO_MORE_DATA = object()
 
-    def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer):
+    def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer = None):
         '''
         `upstream`: an upstream `IterQueue` object, usually the data stream that
         feeds into the current queue. This parameter allows this object and
@@ -560,7 +560,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
                 super().put(x, block=False)
                 break
             except queue.Full:
-                if self._downstream_crashed.is_set():
+                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
                     return
                 if block:
                     time.sleep(self.PUT_SLEEP)
@@ -574,7 +574,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
             except queue.Empty:
                 if self._closed:
                     raise StopIteration
-                if self._downstream_crashed.is_set():
+                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
                     raise StopIteration
                 time.sleep(self.GET_SLEEP)
 
@@ -586,7 +586,7 @@ class IterQueue(queue.Queue, collections.abc.Iterator):
             except queue.Empty:
                 if self._closed:
                     raise StopAsyncIteration
-                if self._downstream_crashed.is_set():
+                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
 
