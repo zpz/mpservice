@@ -61,7 +61,7 @@ def decode(data, encoder):
 
 # Our design of a record is layed out this way:
 #
-#    b'24 pickle\naskadfka23kdkda;'
+#    b'24 pickle\naskadfka23kdkda'
 #
 # The 'header' part contains lengths (bytes) and
 # encoder, ending with '\n'; after that comes the said number
