@@ -59,6 +59,15 @@ def decode(data, encoder):
     return data  # remain bytes
 
 
+# Our design of a record is layed out this way:
+#
+#    b'24 pickle\naskadfka23kdkda;'
+#
+# The 'header' part contains lengths (bytes) and
+# encoder, ending with '\n'; after that comes the said number
+# of bytes, which should be decoded according to the 'encoder'.
+
+
 async def write_record(writer, data, *, encoder: str = 'orjson'):
     data_bytes = encode(data, encoder)
     writer.write(f'{len(data_bytes)} {encoder}\n'.encode())
@@ -107,31 +116,47 @@ def recv_record(sock):
 
 def recv_record_inc(sock, sock_data):
     # Incrementally read one record in multiple calls to this function.
+    # When `selectors.select` says a socket is ready for read, it must
+    # have something. But after the first read, there is no guarantee
+    # there is more available at the moment. When this happens, it's not
+    # that `socket.recv()` will get more after some waiting---things
+    # tend to lock up (I don't know whether it *always* locks up).
+    # That's why we need to do only one read, upon detection by
+    # `selectors.select`.
+
     # Returning `b''` indicates connection has been closed.
     if sock_data.n is None:
+        # Still reading the header part.
         x = sock.recv(1)
         if x == b'':
             return x
         if x == b'\n':
+            # Header part is complete.
             size, encoder = sock_data.d.decode().split()
-            sock_data.n = int(size)
+            sock_data.n = int(size)   # length of body in bytes
             sock_data.e = encoder
             sock_data.d = b''
             return
+
+        # More bytes for header; not finished yet.
         sock_data.d += x
         return
+
     k = sock_data.n - len(sock_data.d)
     x = sock.recv(k)
     if x == b'':
         return x
     sock_data.d += x
     if len(x) < k:
+        # Added some more bytes to body; not done yet.
         return
+
+    # Body part is finished. This record is complete.
     z = decode(sock_data.d, sock_data.e)
     sock_data.d = b''
     sock_data.n = None
     sock_data.e = None
-    return z
+    return z  # This is the Python value of this record.
 
 
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
