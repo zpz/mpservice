@@ -164,7 +164,7 @@ import functools
 import logging
 import random
 import threading
-import warnings
+import traceback
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
@@ -173,6 +173,7 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides
 
+from .remote_exception import RemoteException
 from .util import (
     is_exception, IterQueue, FutureIterQueue,
     ErrorBox, EventUpstreamer, MAX_THREADS)
@@ -247,12 +248,24 @@ class StreamMixin(EnforceOverrides):
 
         return self.peek_every_nth(nth, foo)
 
-    def log_exceptions(self, level: str = 'error') -> Peeker:
+    def log_exceptions(self, level: str = 'error', with_trace: bool = True) -> Peeker:
         flog = getattr(logger, level)
 
         def func(i, x):
             if is_exception(x):
-                flog('#%d:  %r', i, x)
+                trace = ''
+                if with_trace:
+                    if isinstance(x, RemoteException):
+                        trace = x.format()
+                    else:
+                        try:
+                            trace = ''.join(traceback.format_tb(x.__traceback__))
+                        except AttributeError:
+                            pass
+                if trace:
+                    flog('#%d:  %r\n%s', i, x, trace)
+                else:
+                    flog('#%d:  %r', i, x)
 
         return self.peek(func)
 
