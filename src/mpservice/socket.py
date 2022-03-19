@@ -13,8 +13,7 @@ from typing import Callable, Iterable
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 
 from .mpserver import MPServer
-from ._streamer import MAX_THREADS, IterQueue, is_exception
-from ._util import get_docker_host_ip
+from .util import get_docker_host_ip, FutureIterQueue, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
@@ -201,7 +200,7 @@ class SocketServer:
                 host = '0.0.0.0'  # in Docker
             self._socket_type = 'tcp'
             self._host = host
-            self._port = port
+            self._port = int(port)
         self._encoder = 'orjson'  # encoder when sending responses
         self._n_connections = 0
         self._to_shutdown = False
@@ -259,7 +258,11 @@ class SocketServer:
             return
         raise ValueError(f"unknown option '{name}'")
 
-    async def run_server_command(self, name: str, *args, **kwargs):
+    async def get_server_info(self, name: str, writer) -> None:
+        # Subclass should override and implement server info entries as needed.
+        await write_record(writer, f'unknown info item `{name}`')
+
+    async def run_server_command(self, name: str, *args, **kwargs) -> None:
         if name == 'shutdown':
             assert not args
             assert not kwargs
@@ -294,6 +297,10 @@ class SocketServer:
                 elif 'set_server_option' in data:
                     await self.set_server_option(
                         data['set_server_option'], data['value'])
+                    continue
+                elif 'get_server_info' in data:
+                    assert len(data) == 1
+                    await self.get_server_info(data['get_server_info'], writer)
                     continue
 
             await self.handle_request(data, writer)
@@ -339,33 +346,6 @@ class MPSocketServer(SocketServer):
         await write_record(writer, y, encoder=self._encoder)
 
 
-class ResultStream(IterQueue):
-    def __init__(self, *, return_x: bool, return_exceptions: bool, **kwargs):
-        super().__init__(**kwargs)
-        self._return_x = return_x
-        self._return_exceptions = return_exceptions
-
-    def __next__(self):
-        fut = super().__next__()
-        x, y = fut.result()
-        if is_exception(y) and not self._return_exceptions:
-            raise y
-        if self._return_x:
-            return x, y
-        return y
-
-    async def __anext__(self):
-        fut = await super().__anext__()
-        while not fut.done():
-            await asyncio.sleep(0.001)
-        x, y = fut.result()
-        if is_exception(y) and not self._return_exceptions:
-            raise y
-        if self._return_x:
-            return x, y
-        return y
-
-
 class SocketClient:
     def __init__(self, *,
                  path: str = None,
@@ -391,7 +371,7 @@ class SocketClient:
                 host = get_docker_host_ip()  # in Docker
             self._socket_type = 'tcp'
             self._host = host
-            self._port = port
+            self._port = int(port)
 
         self._backlog = backlog
         self._max_connections = max_connections or MAX_THREADS
@@ -514,6 +494,9 @@ class SocketClient:
         self.request({'set_server_option': name, 'value': value},
                      wait_for_response=False)
 
+    def get_server_info(self, name: str):
+        return self.request({'get_server_info': name})
+
     def run_server_command(self, name: str, *args, **kwargs):
         self.request({'run_server_command': name, 'args': args, 'kwargs': kwargs},
                      wait_for_response=False)
@@ -524,9 +507,9 @@ class SocketClient:
     def stream(self, data: Iterable, *,
                return_x: bool = False,
                return_exceptions: bool = False):
-        results = ResultStream(maxsize=self._backlog,
-                               return_x=return_x,
-                               return_exceptions=return_exceptions)
+        results = FutureIterQueue(maxsize=self._backlog,
+                                  return_x=return_x,
+                                  return_exceptions=return_exceptions)
 
         def enqueue():
             en = self._enqueue
@@ -535,7 +518,7 @@ class SocketClient:
             for x in data_in:
                 fut = en(x)
                 fut_out.put(fut)
-            fut_out.put_end()
+            fut_out.close()
 
         self._tasks.append(self._executor.submit(enqueue))
         return results

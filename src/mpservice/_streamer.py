@@ -156,17 +156,12 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 
-import asyncio
 import collections.abc
 import concurrent.futures
 import functools
-import inspect
 import logging
-import multiprocessing
-import queue
 import random
 import threading
-import time
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
@@ -175,38 +170,13 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides
 
-
-MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
-# This default is suitable for I/O bound operations.
-# For others, user may want to specify a smaller value.
+from .util import is_exception, IterQueue, EventUpstreamer, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 TT = TypeVar('TT')
-
-
-class EventUpstreamer:
-    '''Propagate a signal (Event) upstream, i.e. to input_stream.'''
-    def __init__(self, upstream: Optional[EventUpstreamer] = None, /):
-        self.upstream = upstream
-        self._event = threading.Event()
-
-    def set(self, include_self: bool = False):
-        if include_self:
-            self._event.set()
-        if self.upstream is not None:
-            self.upstream.set(True)
-
-    def is_set(self) -> bool:
-        return self._event.is_set()
-
-
-def is_exception(e):
-    return isinstance(e, BaseException) or (
-        inspect.isclass(e) and issubclass(e, BaseException)
-    )
 
 
 def _default_peek_func(i, x):
@@ -526,77 +496,12 @@ class Peeker(Stream):
         return z
 
 
-class IterQueue(queue.Queue, collections.abc.Iterator):
-    '''
-    A queue that supports iteration over its elements.
-
-    In order to support iteration, it adds a special value
-    to indicate end of data, which is inserted by calling
-    the method `put_end`.
-    '''
-    GET_SLEEP = 0.00056
-    PUT_SLEEP = 0.00045
-    NO_MORE_DATA = object()
-
-    def __init__(self, maxsize: int, downstream_crashed: EventUpstreamer = None):
-        '''
-        `upstream`: an upstream `IterQueue` object, usually the data stream that
-        feeds into the current queue. This parameter allows this object and
-        the upstream share an `Event` object that indicates either queue
-        has stopped working, either deliberately or by exception.
-        '''
-        super().__init__(maxsize + 1)
-        self._downstream_crashed = downstream_crashed
-        self._closed = False
-
-    def put_end(self):
-        assert not self._closed
-        self._closed = True
-
-    def put(self, x, block: bool = True):
-        assert not self._closed
-        while True:
-            try:
-                super().put(x, block=False)
-                break
-            except queue.Full:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    return
-                if block:
-                    time.sleep(self.PUT_SLEEP)
-                else:
-                    raise
-
-    def __next__(self):
-        while True:
-            try:
-                return self.get_nowait()
-            except queue.Empty:
-                if self._closed:
-                    raise StopIteration
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    raise StopIteration
-                time.sleep(self.GET_SLEEP)
-
-    async def __anext__(self):
-        # This is used by `async_streamer`.
-        while True:
-            try:
-                return self.get_nowait()
-            except queue.Empty:
-                if self._closed:
-                    raise StopAsyncIteration
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    raise StopAsyncIteration
-                await asyncio.sleep(self.GET_SLEEP)
-
-
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = IterQueue(maxsize, self._crashed)
+        self._q = IterQueue(maxsize, downstream_crashed=self._crashed)
         self._upstream_err = None
         self._thread = None
         self._start()
@@ -608,13 +513,13 @@ class Buffer(Stream):
                     if crashed.is_set():
                         break
                     q.put(v)
-                q.put_end()
+                q.close()
             except Exception as e:
                 # This should be exception while
                 # getting data from `instream`,
                 # not exception in the current object.
                 self._upstream_err = e
-                q.put_end()
+                q.close()
 
         self._thread = threading.Thread(
             target=foo, args=(self._instream, self._q, self._crashed),
@@ -679,7 +584,7 @@ def transform(
             if not active_tasks:
                 # This thread is the last active one
                 # for the current transformer.
-                out_stream.put_end()
+                out_stream.close()
             finished.set()
 
         Future = concurrent.futures.Future
@@ -767,7 +672,7 @@ class ConcurrentTransformer(Stream):
         self.workers = workers
         self.return_exceptions = return_exceptions
         self.keep_order = workers > 1 and (keep_order is None or keep_order)
-        self._outstream = IterQueue(1024, self._crashed)
+        self._outstream = IterQueue(1024, downstream_crashed=self._crashed)
         self._tasks = []
         self._upstream_err = []
         self._start()
