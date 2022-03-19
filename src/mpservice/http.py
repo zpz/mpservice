@@ -43,6 +43,9 @@ def make_server(
         and set it as the default loop.
 
     `workers`: when used for `mpservice.mpserver.MPServer`, this should be 1.
+
+    If user has their own ways to config logging, then pass in
+    `log_config=None` in `kwargs`.
     '''
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()

@@ -61,6 +61,7 @@ import multiprocessing
 import queue
 import threading
 import time
+import warnings
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize, Queue
 from typing import List, Type, Sequence, Union, Callable
@@ -70,9 +71,7 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
-from . import streamer
-from ._streamer import is_exception
-from ._util import forward_logs, logger_thread
+from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue, is_exception
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -354,11 +353,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._q_in_lock: List[synchronize.Lock] = []
         self._q_err: Queue = self.MP_CLASS.Queue(self.max_queue_size)
         self._q_log: Queue = self.MP_CLASS.Queue()
-
-        self._t_gather_output: threading.Thread = None
-        self._t_gather_error: threading.Thread = None
-        self._t_servlet_log: threading.Thread = None
-
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
@@ -367,6 +361,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # In other words, subclasses should call `super().__init__`
         # at the beginning of their `__init__` rather than
         # at the end.
+
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(128)
+        self._thread_tasks = {}
+        self._async_tasks = {}
 
         self.started = 0
         if cpus:
@@ -391,9 +389,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # Re-entry.
             return
 
-        self._t_servlet_log = threading.Thread(
-            target=logger_thread, args=(self._q_log,))
-        self._t_servlet_log.start()
+        t = self._thread_pool.submit(logger_thread, self._q_log)
+        self._thread_tasks[t] = None
 
         if sequential:
             # Start the servlets one by one.
@@ -422,12 +419,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 k += 1
                 logger.info(f"{k}/{n}: servlet <{name}> is ready")
 
-        self._t_gather_output = threading.Thread(
-            target=self._gather_output, name='ResultCollector')
-        self._t_gather_output.start()
-        self._t_gather_error = threading.Thread(
-            target=self._gather_error, name='ErrorCollector')
-        self._t_gather_error.start()
+        t = self._thread_pool.submit(self._gather_output)
+        self._thread_tasks[t] = None
+        t = self._thread_pool.submit(self._gather_error)
+        self._thread_tasks[t] = None
 
     def stop(self):
         assert self.started > 0
@@ -436,18 +431,20 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
+        self._q_log.put(None)
         self._should_stop.set()
-        self._t_gather_output.join()
-        self._t_gather_error.join()
         for m in self._servlets:
             m.join()
-        self._q_log.put(None)
-        self._t_servlet_log.join()
+        done, not_done = concurrent.futures.wait(list(self._thread_tasks), timeout=10)
+        for t in not_done:
+            t.cancel()
 
-        self._t_gather_output = None
-        self._t_gather_error = None
-        self._t_servlet_log = None
-        self._should_stop = None
+        self._thread_pool.shutdown()
+        # TODO: in Python 3.9+, use argument `cancel_futures=True`.
+
+        for t in self._async_tasks:
+            if not t.done():
+                t.cancel()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -475,8 +472,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         to add preprocessing of the input and postprocessing of
         the output, while calling `super().call(...)` in the middle.
 
-        However, be careful to maintain consistency between the
-        `call`/`async_call` methods and the `stream`/`async_stream` methods.
+        However, be careful to maintain consistency between `call` and `stream`.
         '''
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
@@ -488,174 +484,71 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         return self._call_wait_for_result(
             uid=uid, fut=fut, t0=time0, total_timeout=total_timeout)
 
-    def async_stream(self, data_stream, /, *,
-                     return_exceptions: bool = False,
-                     return_x: bool = False,
-                     enqueue_timeout: Union[int, float] = None,
-                     total_timeout: Union[int, float] = None,
-                     ) -> streamer.AsyncStream:
-        # The order of elements in the stream is preserved, i.e.,
-        # elements in the output stream corresponds to elements
-        # in the input stream in the same order.
-
-        # What this method does can be achieved by a streamer.AsyncStream
-        # using `self.async_call` as a "transformer".
-        # However, this method is expected to achieve optimal
-        # performance, whereas the efficiency achieved by
-        # "transfomer" depends on tweaking the "workers" parameter.
-
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout,
-            total_timeout=total_timeout,
-        )
-
-        async def _enqueue(x, *, return_x, return_exc, timeout):
-            time0 = time.perf_counter()
-            try:
-                uid, fut = await self._async_call_enqueue(
-                    x, t0=time0, enqueue_timeout=timeout)
-                if return_x:
-                    return x, time0, uid, fut
-                else:
-                    return time0, uid, fut
-            except Exception as e:
-                if return_x and return_exc:
-                    return x, time0, None, e
-                # If `return_x` is False, then whether to return exception
-                # is controlled by `transform(..., return_exceptions=...)`
-                raise
-
-        async def _dequeue(x, *, return_x, return_exc, timeout):
-            if return_x:
-                x, time0, uid, fut = x
-                if return_exc and is_exception(fut):
-                    return x, fut
-                # When `return_exc` is False, `fut` won't be an exception,
-                # b/c exceptions would have been raised in `_enqueue`.
-            else:
-                if return_exc and is_exception(x):
-                    # When `return_exc` is True, hence
-                    # `transform(_enqueue, ..., return_exceptions=True)`,
-                    # hence an exception object could have been passed on.
-                    return x
-                time0, uid, fut = x
-
-            try:
-                z = await self._async_call_wait_for_result(
-                    uid=uid, fut=fut,
-                    t0=time0, total_timeout=timeout)
-                if return_x:
-                    return x, z
-                return z
-            except Exception as e:
-                if return_x and return_exc:
-                    return x, e
-                raise
-                # Like in `_enqueue`, whether this will crash depends on
-                # `return_exceptions` to the second `transform`.
-
-        if not isinstance(data_stream, streamer.AsyncStream):
-            data_stream = streamer.AsyncStream(data_stream)
-
-        return (
-            data_stream
-            .transform(
-                _enqueue,
-                workers=1,
-                return_exceptions=return_exceptions,
-                return_x=return_x,
-                return_exc=return_exceptions,
-                timeout=enqueue_timeout,
-            )
-            .transform(
-                _dequeue,
-                workers=1,
-                return_exceptions=return_exceptions,
-                return_x=return_x,
-                return_exc=return_exceptions,
-                timeout=total_timeout,
-            )
-        )
-
     def stream(self, data_stream, /, *,
                return_exceptions: bool = False,
                return_x: bool = False,
                enqueue_timeout: Union[int, float] = None,
                total_timeout: Union[int, float] = None,
-               ) -> streamer.Stream:
+               backlog: int = 1024,
+               ):
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.
-
-        # What this method does can be achieved by a streamer.Stream
-        # using `self.call` as a "transformer".
-        # However, this method is expected to achieve optimal
-        # performance, whereas the efficiency achieved by
-        # "transfomer" depends on tweaking the "workers" parameter.
 
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout,
             total_timeout=total_timeout,
         )
 
-        def _enqueue(x, *, return_x, return_exc, timeout):
-            fut = concurrent.futures.Future()
-            time0 = time.perf_counter()
-            try:
-                uid, fut = self._call_enqueue(
-                    x, t0=time0, enqueue_timeout=timeout)
-                if return_x:
-                    return x, time0, uid, fut
+        data_in_pipe = IterQueue(backlog)
+        results = FutureIterQueue(
+            backlog, return_x=return_x, return_exceptions=return_exceptions)
+
+        def _enqueue():
+            Future = concurrent.futures.Future
+            enqueue = self._call_enqueue
+            perf_counter = time.perf_counter
+            et = enqueue_timeout
+            for x in data_stream:
+                time0 = perf_counter()
+                try:
+                    uid, fut = enqueue(x, t0=time0, enqueue_timeout=et)
+                except Exception as e:
+                    uid, fut = None, e
+                ff = Future()
+                data_in_pipe.put((x, time0, uid, fut, ff))
+                results.put(ff)
+            data_in_pipe.close()
+            results.close()
+
+        def _wait():
+            tt = total_timeout
+            wait_for_result = self._call_wait_for_result
+            for x, t0, uid, fut, ff in data_in_pipe:
+                if is_exception(fut):
+                    ff.set_result((x, fut))
                 else:
-                    return time0, uid, fut
-            except Exception as e:
-                if return_x and return_exc:
-                    return x, time0, None, e
-                raise
+                    try:
+                        y = wait_for_result(uid=uid, fut=fut, t0=t0, total_timeout=tt)
+                    except Exception as e:
+                        y = e
+                    ff.set_result((x, y))
 
-        def _dequeue(x, *, return_x, return_exc, timeout):
-            if return_x:
-                x, time0, uid, fut = x
-                if return_exc and isinstance(fut, Exception):
-                    return x, fut
-            else:
-                if return_exc and isinstance(x, Exception):
-                    return x
-                time0, uid, fut = x
-
+        def cb(fut):
             try:
-                z = self._call_wait_for_result(
-                    uid=uid, fut=fut,
-                    t0=time0, total_timeout=timeout)
-                if return_x:
-                    return x, z
-                return z
-            except Exception as e:
-                if return_x and return_exc:
-                    return x, e
-                raise
+                del self._thread_tasks[fut]
+            except KeyError:
+                warnings.warn(f"the Future object `{fut}` was already removed")
 
-        if not isinstance(data_stream, streamer.Stream):
-            data_stream = streamer.Stream(data_stream)
+        t = self._thread_pool.submit(_enqueue)
+        t.add_done_callback(cb)
+        self._thread_tasks[t] = None
 
-        return (data_stream
-                .transform(
-                    _enqueue,
-                    workers=1,
-                    return_exceptions=return_exceptions,
-                    return_x=return_x,
-                    return_exc=return_exceptions,
-                    timeout=enqueue_timeout,
-                )
-                .transform(
-                    _dequeue,
-                    workers=1,
-                    return_exceptions=return_exceptions,
-                    return_x=return_x,
-                    return_exc=return_exceptions,
-                    timeout=total_timeout,
-                )
-                )
+        t = self._thread_pool.submit(_wait)
+        t.add_done_callback(cb)
+        self._thread_tasks[t] = None
+
+        return results
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -798,6 +691,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         raise NotImplementedError
 
     def _gather_error(self):
+        threading.current_thread().name = 'ErrorCollector'
         q_err = self._q_err
         futures = self._uid_to_futures
         should_stop = self._should_stop
@@ -843,6 +737,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                         raise EnqueueTimeout(
                             f'waited {timenow - t0} seconds; timeout at queue {iq}')
                     await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
+
         return uid, fut
 
     async def _async_call_wait_for_result(self, *, uid, fut, t0, total_timeout):
@@ -925,6 +820,7 @@ class SequentialServer(MPServer):
 
     @overrides
     def _gather_output(self):
+        threading.current_thread().name = 'ResultCollector'
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
         should_stop = self._should_stop
@@ -998,6 +894,7 @@ class EnsembleServer(MPServer):
 
     @overrides
     def _gather_output(self):
+        threading.current_thread().name = 'ResultCollector'
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 

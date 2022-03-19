@@ -144,26 +144,13 @@ def test_sequential_timeout():
             z = service.call(8, enqueue_timeout=0, total_timeout=2)
 
 
-@pytest.mark.asyncio
-async def test_sequential_stream_async():
-    service = SequentialServer(cpus=[0])
-    service.add_servlet(Square, cpus=[1, 2, 3])
-    with service:
-        data = range(100)
-        ss = service.async_stream(data, return_x=True)
-        assert await ss.collect() == [(v, v*v) for v in data]
-
-        ss = AsyncStream(data).transform(service.async_call, workers=10)
-        assert await ss.collect() == [v*v for v in data]
-
-
 def test_sequential_stream():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
         data = range(100)
         ss = service.stream(data)
-        assert ss.collect() == [v*v for v in data]
+        assert list(ss) == [v*v for v in data]
 
         ss = Stream(data).transform(service.call, workers=10)
         assert ss.collect() == [v*v for v in data]
@@ -298,24 +285,12 @@ class HisWideServer(EnsembleServer):
         return [min(results), max(results)]
 
 
-@pytest.mark.asyncio
-async def test_ensemble_stream_async():
-    service = HisWideServer(cpus=[0])
-    with service:
-        data = range(100)
-        ss = service.async_stream(data, return_x=True)
-        assert await ss.collect() == [(v, [v + 1, v + 7]) for v in data]
-
-        ss = AsyncStream(data).transform(service.async_call, workers=10)
-        assert await ss.collect() == [[v + 1, v + 7] for v in data]
-
-
 def test_ensemble_stream():
     service = HisWideServer(cpus=[0])
     with service:
         data = range(100)
         ss = service.stream(data)
-        assert ss.collect() == [[v + 1, v + 7] for v in data]
+        assert list(ss) == [[v + 1, v + 7] for v in data]
 
         ss = Stream(data).transform(service.call, workers=10)
         assert ss.collect() == [[v + 1, v + 7] for v in data]
@@ -335,11 +310,11 @@ def test_simple_server():
     with server:
         data = range(1000)
         ss = server.stream(data, return_x=True)
-        assert ss.collect() == [(x, x + 3) for x in range(1000)]
+        assert list(ss) == [(x, x + 3) for x in range(1000)]
 
     server = SimpleServer(func2, batch_size=99, shift=5)
     with server:
         data = range(1000)
         ss = server.stream(data)
-        assert ss.collect() == [x + 5 for x in range(1000)]
+        assert list(ss) == [x + 5 for x in range(1000)]
 
