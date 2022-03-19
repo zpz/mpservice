@@ -13,7 +13,7 @@ class MyDataServer(ServerProcess):
         self._inc = inc
 
     def inc(self, x):
-        print(f'serving `inc({x})` in {current_process().name}')
+        # print(f'serving `inc({x})` in {current_process().name}')
         return x + self._inc
 
     def set_inc_base(self, x):
@@ -26,10 +26,10 @@ class MyDataServer(ServerProcess):
 
 def increment(server, inc=1):
     time.sleep(1)
-    print(f'calling `increment` in {current_process().name}')
+    # print(f'calling `increment` in {current_process().name}')
     for x in range(10):
         assert server.inc(x) == x + inc
-        print(f'  done `inc({x})`')
+        # print(f'  done `inc({x})`')
 
 
 def increment2(server):
@@ -38,15 +38,14 @@ def increment2(server):
     server.set_inc_base(inc)
     for x in range(10):
         assert server.inc(x) == x + inc
-        print(f'  done `inc({x})`')
 
 
 def wait_long(server):
     time.sleep(1)
     for n in (0.4, 1.3, 2.5):
-        print(f'to wait for {n} seconds')
+        # print(f'to wait for {n} seconds')
         nn = server.long_process(n)
-        print(f'  done waiting for {n} seconds')
+        # print(f'  done waiting for {n} seconds')
         assert nn == n
 
 

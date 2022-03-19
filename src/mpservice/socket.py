@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from typing import Callable, Iterable
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
+from overrides import EnforceOverrides
 
-from .mpserver import MPServer
 from .util import get_docker_host_ip, FutureIterQueue, MAX_THREADS
 
 
@@ -58,7 +58,7 @@ def decode(data, encoder):
     return data  # remain bytes
 
 
-# Our design of a record is layed out this way:
+# Our design of a record is laid out this way:
 #
 #    b'24 pickle\naskadfka23kdkda'
 #
@@ -126,7 +126,12 @@ def recv_record_inc(sock, sock_data):
     # Returning `b''` indicates connection has been closed.
     if sock_data.n is None:
         # Still reading the header part.
+
+        # TODO: if we read up to 2 bytes, there may be slight
+        # performance gain. But it gets a little tricky if
+        # the length of a record can be 0.
         x = sock.recv(1)
+
         if x == b'':
             return x
         if x == b'\n':
@@ -180,7 +185,7 @@ async def run_unix_server(conn_handler: Callable, path: str):
         await server.serve_forever()
 
 
-class SocketServer:
+class SocketServer(EnforceOverrides):
     def __init__(self, *,
                  path: str = None,
                  host: str = None,
@@ -314,39 +319,7 @@ class SocketServer:
             self.to_shutdown = True
 
 
-class MPSocketServer(SocketServer):
-    def __init__(self, server: MPServer, **kwargs):
-        super().__init__(**kwargs)
-        self._server = server
-        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}({repr(self._server)})'
-
-    def __str__(self):
-        return self.__repr__()
-
-    async def set_server_option(self, name: str, value):
-        if name == 'timeout':
-            self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
-                enqueue_timeout=value[0], total_timeout=value[1])
-            return
-        await super().set_server_option(name, value)
-
-    async def before_startup(self):
-        self._server.__enter__()
-
-    async def after_shutdown(self):
-        self._server.__exit__(None, None, None)
-
-    async def handle_request(self, data, writer):
-        y = await self._server.async_call(
-            data, enqueue_timeout=self._enqueue_timeout,
-            total_timeout=self._total_timeout)
-        await write_record(writer, y, encoder=self._encoder)
-
-
-class SocketClient:
+class SocketClient(EnforceOverrides):
     def __init__(self, *,
                  path: str = None,
                  host: str = None,

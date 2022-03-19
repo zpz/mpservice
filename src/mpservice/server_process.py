@@ -15,7 +15,7 @@ Usage:
 
   (2) in main process,
 
-      obj = ServerProcess.start(...)
+      obj = MyServerProcess.start(...)
 
   (3) pass `obj` to other processes
 
@@ -23,13 +23,12 @@ Usage:
 
       y = obj.do_x(123)
 
-`obj` is NOT an instance of the class `ServerProcess`.
+`obj` is NOT an instance of the class `MyServerProcess`.
 It's a "proxy" object, which is like a reference to a
-`ServerProcess` object in the "server process".
-All public methods of `ServerProcess` can be used on this
+`MyServerProcess` object in the "server process".
+All public methods of `MyServerProcess` can be used on this
 proxy object from other processes.
-Input and output should all be small, pickle-able
-objects.
+Input and output should all be small, pickle-able objects.
 
 When all references to this proxy object have
 been garbage-collected, the server process is shut down.

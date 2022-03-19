@@ -71,6 +71,7 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
+from .socket import SocketServer, write_record
 from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue, is_exception
 
 
@@ -376,6 +377,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             self.stop()
 
     def __enter__(self):
+        # After adding servlets, all other methods of this object
+        # should be used with context manager `__enter__`/`__exit__`
+        # or `start`/`stop`.
         self.start()
         return self
 
@@ -982,3 +986,39 @@ class SimpleServer(SequentialServer):
                          batch_size=batch_size,
                          func=func,
                          **kwargs)
+
+
+class MPSocketServer(SocketServer):
+    def __init__(self, server: MPServer, **kwargs):
+        super().__init__(**kwargs)
+        self._server = server
+        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({repr(self._server)})'
+
+    def __str__(self):
+        return self.__repr__()
+
+    @overrides
+    async def set_server_option(self, name: str, value):
+        if name == 'timeout':
+            self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
+                enqueue_timeout=value[0], total_timeout=value[1])
+            return
+        await super().set_server_option(name, value)
+
+    @overrides
+    async def before_startup(self):
+        self._server.__enter__()
+
+    @overrides
+    async def after_shutdown(self):
+        self._server.__exit__(None, None, None)
+
+    @overrides
+    async def handle_request(self, data, writer):
+        y = await self._server.async_call(
+            data, enqueue_timeout=self._enqueue_timeout,
+            total_timeout=self._total_timeout)
+        await write_record(writer, y, encoder=self._encoder)

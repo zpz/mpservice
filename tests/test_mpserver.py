@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import multiprocessing
 import time
 
 import pytest
@@ -8,9 +9,11 @@ from overrides import overrides
 from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    EnqueueTimeout, TotalTimeout, RemoteException
+    EnqueueTimeout, TotalTimeout, RemoteException,
+    MPSocketServer,
 )
-from mpservice.streamer import Stream, AsyncStream
+from mpservice.socket import SocketClient
+from mpservice.streamer import Stream
 
 
 class Double(Servlet):
@@ -317,4 +320,38 @@ def test_simple_server():
         data = range(1000)
         ss = server.stream(data)
         assert list(ss) == [x + 5 for x in range(1000)]
+
+
+def double(x):
+    time.sleep(0.01)
+    return x * 2
+
+
+def run_mp_server():
+    server = MPSocketServer(SimpleServer(double), path='/tmp/sock_abc')
+    asyncio.run(server.run())
+
+
+def test_socket():
+    from zpz.logging import config_logger
+    config_logger(level='info')   # this is for the server running in another process
+    mp = multiprocessing.get_context('spawn')
+    server = mp.Process(target=run_mp_server)
+    server.start()
+    with SocketClient(path='/tmp/sock_abc') as client:
+        assert client.request(23) == 46
+        assert client.request('abc') == 'abcabc'
+
+        data = range(10)
+        for x, y in zip(data, client.stream(data)):
+            assert y == x * 2
+
+        client.set_server_option('timeout', (0.1, 1))
+
+        for x, y in zip(data, client.stream(data, return_x=True)):
+            assert y == (x, x * 2)
+
+        client.shutdown_server()
+
+    server.join()
 

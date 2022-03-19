@@ -126,6 +126,8 @@ If the operation is mainly for the side effect, e.g.
 saving data in files or a database, hence there isn't much useful result,
 then the result could be `None`, which is not a problem. Regardless,
 the returned `None`s will still become the resultant stream.
+
+Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
 '''
 
 # Iterable vs iterator
@@ -162,6 +164,7 @@ import functools
 import logging
 import random
 import threading
+import traceback
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
@@ -170,7 +173,10 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides
 
-from .util import is_exception, IterQueue, EventUpstreamer, MAX_THREADS
+from .remote_exception import RemoteException
+from .util import (
+    is_exception, IterQueue, FutureIterQueue,
+    ErrorBox, EventUpstreamer, MAX_THREADS)
 
 
 logger = logging.getLogger(__name__)
@@ -242,12 +248,24 @@ class StreamMixin(EnforceOverrides):
 
         return self.peek_every_nth(nth, foo)
 
-    def log_exceptions(self, level: str = 'error') -> Peeker:
+    def log_exceptions(self, level: str = 'error', with_trace: bool = True) -> Peeker:
         flog = getattr(logger, level)
 
         def func(i, x):
             if is_exception(x):
-                flog('#%d:  %r', i, x)
+                trace = ''
+                if with_trace:
+                    if isinstance(x, RemoteException):
+                        trace = x.format()
+                    else:
+                        try:
+                            trace = ''.join(traceback.format_tb(x.__traceback__))
+                        except AttributeError:
+                            pass
+                if trace:
+                    flog('#%d:  %r\n%s', i, x, trace)
+                else:
+                    flog('#%d:  %r', i, x)
 
         return self.peek(func)
 
@@ -365,8 +383,9 @@ class Stream(collections.abc.Iterator, StreamMixin):
                   func: Callable[[T], TT],
                   *,
                   workers: Optional[Union[int, str]] = None,
+                  return_x: bool = False,
                   return_exceptions: bool = False,
-                  keep_order: bool = None,
+                  backlog: int = 1024,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
         '''Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
@@ -394,26 +413,26 @@ class Stream(collections.abc.Iterator, StreamMixin):
 
         When `workers = N > 0`, the worker threads are named 'transformer-0',
         'transformer-1',..., 'transformer-<N-1>'.
-
-        `keep_order`: whether the output elements should be ordered the same
-            as the corresponding input elements.
-            This is ignored when `workers` is `None` or 0 or 1, because
-            in those cases order is always preserved.
         '''
         if func_args:
             func = functools.partial(func, **func_args)
 
-        if workers is None or workers == 0:
-            return Transformer(self, func, return_exceptions=return_exceptions)
-
         if workers == 'max':
             workers = MAX_THREADS
-        else:
-            1 <= workers <= 100
+
+        if workers is None or workers <= 1:
+            return Transformer(
+                self, func,
+                return_x=return_x,
+                return_exceptions=return_exceptions,
+            )
+
         return ConcurrentTransformer(
-            self, func, workers=workers,
+            self, func,
+            workers=workers,
+            return_x=return_x,
             return_exceptions=return_exceptions,
-            keep_order=keep_order,
+            backlog=backlog,
         )
 
 
@@ -550,111 +569,28 @@ class Transformer(Stream):
                  instream: Stream,
                  func: Callable[[T], TT],
                  *,
+                 return_x: bool = False,
                  return_exceptions: bool = False,
                  ):
         super().__init__(instream)
         self.func = func
+        self.return_x = return_x
         self.return_exceptions = return_exceptions
 
     @overrides
     def _get_next(self):
-        z = next(self._instream)
+        x = next(self._instream)
         try:
-            return self.func(z)
+            y = self.func(x)
         except Exception as e:
             if self.return_exceptions:
-                return e
-            self._crashed.set()
-            raise
-
-
-def transform(
-        in_stream: Iterator, out_stream: IterQueue, func, *,
-        workers, return_exceptions, keep_order, crashed,
-        upstream_err, finished=None):
-
-    def _process(in_stream, out_stream, func, lock, finished, crashed, keep_order):
-        # `finished`: finished by one of these workers, either due to
-        # exhaustion of input, or error in processing.
-        # `crashed`: some downstream transformer failed, while the current
-        # may be all fine.
-
-        def set_finish():
-            active_tasks.pop()
-            if not active_tasks:
-                # This thread is the last active one
-                # for the current transformer.
-                out_stream.close()
-            finished.set()
-
-        Future = concurrent.futures.Future
-        while True:
-            with lock:
-                if finished.is_set():
-                    set_finish()
-                    return
-                if crashed.is_set():
-                    set_finish()
-                    return
-
-                try:
-                    x = next(in_stream)
-                except StopIteration:
-                    set_finish()
-                    return
-                except Exception as e:
-                    upstream_err.append(e)
-                    set_finish()
-                    return
-                else:
-                    if keep_order:
-                        # The lock ensures the output future
-                        # holds the spot for the input
-                        # in the correct order.
-                        fut = Future()
-                        out_stream.put(fut)
-
-            if keep_order:
-                try:
-                    y = func(x)
-                except Exception as e:
-                    if return_exceptions:
-                        fut.set_result(e)
-                    else:
-                        fut.set_exception(e)
-                        crashed.set()
-                        set_finish()
-                        return
-                else:
-                    fut.set_result(y)
+                y = e
             else:
-                try:
-                    y = func(x)
-                except Exception as e:
-                    out_stream.put(e)
-                    if not return_exceptions:
-                        crashed.set()
-                        set_finish()
-                        return
-                else:
-                    out_stream.put(y)
-
-    if finished is None:
-        finished = threading.Event()
-    lock = threading.Lock()
-    tasks = [
-        threading.Thread(
-            target=_process,
-            name=f'TransformerThread-{i}',
-            args=(in_stream, out_stream, func, lock, finished, crashed, keep_order),
-        )
-        for i in range(workers)
-    ]
-    active_tasks = list(range(workers))
-
-    for t in tasks:
-        t.start()
-    return tasks
+                self._crashed.set()
+                raise
+        if self.return_x:
+            return x, y
+        return y
 
 
 class ConcurrentTransformer(Stream):
@@ -663,56 +599,79 @@ class ConcurrentTransformer(Stream):
                  func: Callable[[T], TT],
                  *,
                  workers: int,
+                 return_x: bool = False,
                  return_exceptions: bool = False,
-                 keep_order: bool = None,  # default True
+                 backlog: int = 1024,
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
-        self.workers = workers
+        self.return_x = return_x
         self.return_exceptions = return_exceptions
-        self.keep_order = workers > 1 and (keep_order is None or keep_order)
-        self._outstream = IterQueue(1024, downstream_crashed=self._crashed)
-        self._tasks = []
-        self._upstream_err = []
+        self._upstream_err = ErrorBox()
+        self._outstream = FutureIterQueue(
+            backlog,
+            return_x=return_x,
+            return_exceptions=return_exceptions,
+            downstream_crashed=self._crashed,
+            upstream_error=self._upstream_err,
+        )
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(workers)
+        self._thread_tasks = {}
         self._start()
 
     def _start(self):
-        self._tasks = transform(
-            self._instream,
-            self._outstream,
-            self.func,
-            workers=self.workers,
-            return_exceptions=self.return_exceptions,
-            keep_order=self.keep_order,
-            crashed=self._crashed,
-            upstream_err=self._upstream_err,
-        )
+        def func(x, fut):
+            try:
+                y = self.func(x)
+            except Exception as e:
+                y = e
+            fut.set_result((x, y))
 
-    def _stop(self):
-        for t in self._tasks:
-            t.join()
+        def cb(t):
+            try:
+                del self._thread_tasks[t]
+            except KeyError:
+                pass
+                # warnings.warn(f"the task {t} was already removed")
+                # TODO: understand why this would happen.
+
+        def _enqueue():
+            outstream = self._outstream
+            Future = concurrent.futures.Future
+            try:
+                for x in self._instream:
+                    fut = Future()
+                    t = self._thread_pool.submit(func, x, fut)
+                    t.add_done_callback(cb)
+                    self._thread_tasks[t] = 'func'
+                    outstream.put(fut)
+            except Exception as e:
+                self._upstream_err.set_exception(e)
+            outstream.close()
+
+        def cb_with_error(t):
+            try:
+                del self._thread_tasks[t]
+            except KeyError:
+                pass
+                # warnings.warn(f"the task {t} was already removed")
+                # TODO: understand why this would happen.
+
+        # Where `add_done_callback` callbacks are called:
+        #   https://stackoverflow.com/a/26021772/6178706
+
+        t = self._thread_pool.submit(_enqueue)
+        t.add_done_callback(cb_with_error)
+        self._thread_tasks[t] = 'enqueue'
 
     def __del__(self):
-        self._stop()
+        self._thread_pool.shutdown()
 
     @overrides
     def _get_next(self):
-        if self._upstream_err:
-            raise self._upstream_err[0]
         try:
-            y = next(self._outstream)
-        except StopIteration:
-            if self._upstream_err:
-                raise self._upstream_err[0]
-            raise
-        if self.keep_order:
-            try:
-                return y.result()
-            except Exception:
-                self._crashed.set()
-                raise
-        if isinstance(y, Exception) and not self.return_exceptions:
+            return next(self._outstream)
+        except Exception:
             self._crashed.set()
-            raise y
-        return y
+            raise
