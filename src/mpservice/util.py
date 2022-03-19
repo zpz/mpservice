@@ -301,15 +301,16 @@ class FutureIterQueue(IterQueue):
     # Elements put in this object are `concurrent.futures.Future`
     # or `asyncio.Future` objects. In either case, one can use
     # either `__next__` or `__anext__` to iterate the stream.
-    # The user of the Future object should call its `set_result`
-    # with a tuple of the input data element and the result of a computation.
-    def __init__(self, maxsize: int, *, return_x: bool, return_exceptions: bool, **kwargs):
+    # The user of the Future object takes some data `x` and produces a result `y`,
+    # then calls `fut.set_result((x, y))`. If any error happens, use the exception
+    # object as `y`.
+    def __init__(self, maxsize: int, *, return_x: bool = False, return_exceptions: bool = False, **kwargs):
         super().__init__(maxsize=maxsize, **kwargs)
         self._return_x = return_x
         self._return_exceptions = return_exceptions
 
-    def __next__(self):
-        fut = super().__next__()
+    def get(self, block=True, timeout=None):
+        fut = super().get(block=block, timeout=timeout)
         while not fut.done():
             time.sleep(0.001)
         x, y = fut.result()
@@ -319,8 +320,8 @@ class FutureIterQueue(IterQueue):
             return x, y
         return y
 
-    async def __anext__(self):
-        fut = await super().__anext__()
+    async def aget(self, block=True, timeout=None):
+        fut = await super().aget(block=block, timeout=timeout)
         while not fut.done():
             await asyncio.sleep(0.001)
         x, y = fut.result()

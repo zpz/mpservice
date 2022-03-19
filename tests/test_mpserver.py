@@ -10,7 +10,7 @@ from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout, RemoteException
 )
-from mpservice.streamer import Stream, AsyncStream
+from mpservice.streamer import Stream
 
 
 class Double(Servlet):

@@ -376,6 +376,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             self.stop()
 
     def __enter__(self):
+        # After adding servlets, all other methods of this object
+        # should be used with context manager `__enter__`/`__exit__`
+        # or `start`/`stop`.
         self.start()
         return self
 

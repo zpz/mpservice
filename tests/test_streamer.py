@@ -133,11 +133,11 @@ def test_drain():
 def test_transform():
 
     def f1(x):
-        sleep(random.random() * 0.01)
+        sleep(random.random() * 0.002)
         return x + 3.8
 
     def f2(x):
-        sleep(random.random() * 0.01)
+        sleep(random.random() * 0.003)
         return x*2
 
     SYNC_INPUT = list(range(278))
