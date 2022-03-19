@@ -232,6 +232,7 @@ def test_chain():
             )
         z.drain()
 
+    print('d')
     with pytest.raises(TypeError):
         z = (Stream(corrupt_data())
              .transform(process1, workers=2)
@@ -239,6 +240,7 @@ def test_chain():
             )
         z.drain()
 
+    print('e')
     z = (Stream(corrupt_data())
          .transform(process1, workers=2, return_exceptions=True)
          .transform(process2, workers=4, return_exceptions=True)

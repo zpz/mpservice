@@ -88,7 +88,7 @@ def get_docker_host_ip():
 
 def make_aiter(data):
     # `data` is iterable or async iterable.
-    # The returned value is guaranteed to be async iterable.
+    # The returned value is guaranteed to be async iterable and iterator.
 
     if hasattr(data, '__anext__') and hasattr(data, '__aiter__'):
         return data
@@ -135,8 +135,12 @@ def make_aiter(data):
     return YourStream(data)
 
 
+class DownstreamError(Exception):
+    pass
+
+
 class EventUpstreamer:
-    '''Propagate a signal (Event) upstream, i.e. to input_stream.'''
+    '''Propagate a signal (Event) upstream the caller chain.'''
     def __init__(self, upstream: Optional[EventUpstreamer] = None, /):
         self.upstream = upstream
         self._event = threading.Event()
@@ -149,6 +153,28 @@ class EventUpstreamer:
 
     def is_set(self) -> bool:
         return self._event.is_set()
+
+    def __bool__(self):
+        return self._event.is_set()
+
+
+class IterQueueClosedError(Exception):
+    def __init__(self, q):
+        super().__init__(f"{q} is already closed")
+
+
+class ErrorBox:
+    def __init__(self):
+        self._error = None
+
+    def set_exception(self, e: BaseException):
+        self._error = e
+
+    def __bool__(self):
+        return self._error is not None
+
+    def exception(self):
+        return self._error
 
 
 class IterQueue(collections.abc.Iterator):
@@ -163,17 +189,21 @@ class IterQueue(collections.abc.Iterator):
     PUT_SLEEP = 0.00015
     NO_MORE_DATA = object()
 
-    def __init__(self, maxsize: int, *, downstream_crashed: EventUpstreamer = None):
-        '''
-        `upstream`: an upstream `IterQueue` object, usually the data stream that
-        feeds into the current queue. This parameter allows this object and
-        the upstream share an `Event` object that indicates either queue
-        has stopped working, either deliberately or by exception.
-        '''
+    def __init__(self, maxsize: int, *,
+                 downstream_crashed: EventUpstreamer = None,
+                 upstream_error: ErrorBox = None,
+                 ):
         self.maxsize = maxsize
         self._q = queue.Queue(maxsize)
         self._downstream_crashed = downstream_crashed
+        self._upstream_error = upstream_error
         self._closed = False
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.maxsize})"
+
+    def __str__(self):
+        return self.__repr__()
 
     def qsize(self):
         return self._q.qsize()
@@ -188,7 +218,7 @@ class IterQueue(collections.abc.Iterator):
         # Close the 'write' side: no more items can be put in it.
         # If the queue is not empty, use can still get them out.
         if self._closed:
-            raise EOFError
+            raise IterQueueClosedError(self)
         self._closed = True
 
     def put(self, item, block=True, timeout=None):
@@ -198,10 +228,10 @@ class IterQueue(collections.abc.Iterator):
                 self._q.put_nowait(item)
                 break
             except queue.Full:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    return
+                if self._downstream_crashed:
+                    raise DownstreamError
                 if self._closed:
-                    raise EOFError
+                    raise IterQueueClosedError(self)
                 if not block:
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
@@ -220,10 +250,10 @@ class IterQueue(collections.abc.Iterator):
                 self._q.put_nowait(item)
                 break
             except queue.Full:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    return
+                if self._downstream_crashed:
+                    raise DownstreamError
                 if self._closed:
-                    raise EOFError
+                    raise IterQueueClosedError(self)
                 if not block:
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
@@ -237,8 +267,10 @@ class IterQueue(collections.abc.Iterator):
             try:
                 return self._q.get_nowait()
             except queue.Empty:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    return  # TODO: this is not ideal, as it still returns a value--`None`
+                if self._downstream_crashed:
+                    raise DownstreamError
+                if self._upstream_error:
+                    raise self._upstream_error.exception()
                 if self._closed:
                     raise EOFError
                 if not block:
@@ -257,8 +289,10 @@ class IterQueue(collections.abc.Iterator):
             try:
                 return self._q.get_nowait()
             except queue.Empty:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
-                    return
+                if self._downstream_crashed:
+                    raise DownstreamError
+                if self._upstream_error:
+                    raise self._upstream_error.exception()
                 if self._closed:
                     raise EOFError
                 if not block:
@@ -275,7 +309,7 @@ class IterQueue(collections.abc.Iterator):
             except EOFError:
                 raise StopIteration
             except queue.Empty:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
+                if self._downstream_crashed:
                     raise StopIteration
                 time.sleep(self.GET_SLEEP)
 
@@ -286,7 +320,7 @@ class IterQueue(collections.abc.Iterator):
             except EOFError:
                 raise StopAsyncIteration
             except queue.Empty:
-                if self._downstream_crashed is not None and self._downstream_crashed.is_set():
+                if self._downstream_crashed:
                     raise StopAsyncIteration
                 await asyncio.sleep(self.GET_SLEEP)
 
@@ -295,7 +329,6 @@ class IterQueue(collections.abc.Iterator):
 
     def __aiter__(self):
         return self
-
 
 class FutureIterQueue(IterQueue):
     # Elements put in this object are `concurrent.futures.Future`

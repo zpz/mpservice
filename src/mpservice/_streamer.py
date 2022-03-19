@@ -173,7 +173,9 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides
 
-from .util import is_exception, IterQueue, FutureIterQueue, EventUpstreamer, MAX_THREADS
+from .util import (
+    is_exception, IterQueue, FutureIterQueue,
+    ErrorBox, EventUpstreamer, MAX_THREADS)
 
 
 logger = logging.getLogger(__name__)
@@ -370,6 +372,7 @@ class Stream(collections.abc.Iterator, StreamMixin):
                   workers: Optional[Union[int, str]] = None,
                   return_x: bool = False,
                   return_exceptions: bool = False,
+                  backlog: int = 1024,
                   **func_args) -> Union[Transformer, ConcurrentTransformer]:
         '''Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
@@ -407,12 +410,16 @@ class Stream(collections.abc.Iterator, StreamMixin):
         if workers is None or workers <= 1:
             return Transformer(
                 self, func,
-                return_x=return_x, return_exceptions=return_exceptions)
+                return_x=return_x,
+                return_exceptions=return_exceptions,
+            )
 
         return ConcurrentTransformer(
-            self, func, workers=workers,
+            self, func,
+            workers=workers,
             return_x=return_x,
             return_exceptions=return_exceptions,
+            backlog=backlog,
         )
 
 
@@ -581,17 +588,21 @@ class ConcurrentTransformer(Stream):
                  workers: int,
                  return_x: bool = False,
                  return_exceptions: bool = False,
+                 backlog: int = 1024,
                  ):
         assert workers >= 1
         super().__init__(instream)
         self.func = func
         self.return_x = return_x
         self.return_exceptions = return_exceptions
+        self._upstream_err = ErrorBox()
         self._outstream = FutureIterQueue(
-            1024,
+            backlog,
             return_x=return_x,
             return_exceptions=return_exceptions,
-            downstream_crashed=self._crashed)
+            downstream_crashed=self._crashed,
+            upstream_error=self._upstream_err,
+            )
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(workers)
         self._thread_tasks = {}
         self._start()
@@ -606,27 +617,40 @@ class ConcurrentTransformer(Stream):
 
         def cb(t):
             try:
-                del self._thread_tasks[id(t)]
+                del self._thread_tasks[t]
             except KeyError:
-                warnings.warn(f"the task {t} was already removed")
-
-        def submit(x, fut):
-            t = self._thread_pool.submit(func, x, fut)
-            t.add_done_callback(cb)
-            self._thread_tasks[id(t)] = None
+                pass
+                # warnings.warn(f"the task {t} was already removed")
+                # TODO: understand why this would happen.
 
         def _enqueue():
-            Future = concurrent.futures.Future
             outstream = self._outstream
-            for x in self._instream:
-                fut = Future()
-                submit(x, fut)
-                outstream.put(fut)
+            Future = concurrent.futures.Future
+            try:
+                for x in self._instream:
+                    fut = Future()
+                    t = self._thread_pool.submit(func, x, fut)
+                    t.add_done_callback(cb)
+                    self._thread_tasks[t] = 'func'
+                    outstream.put(fut)
+            except Exception as e:
+                self._upstream_err.set_exception(e)
             outstream.close()
 
+        def cb_with_error(t):
+            try:
+                del self._thread_tasks[t]
+            except KeyError:
+                pass
+                # warnings.warn(f"the task {t} was already removed")
+                # TODO: understand why this would happen.
+
+        # Where `add_done_callback` callbacks are called:
+        #   https://stackoverflow.com/a/26021772/6178706
+
         t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(cb)
-        self._thread_tasks[id(t)] = None
+        t.add_done_callback(cb_with_error)
+        self._thread_tasks[t] = 'enqueue'
 
     def __del__(self):
         self._thread_pool.shutdown()
