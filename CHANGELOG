@@ -4,6 +4,7 @@ Release 0.10.2
 - Simplify `MPServer.stream`; remove `MPServer.async_stream`; the functionality
   of `async_stream` is provided by `stream`.
 - Make more utility functions available in `mpservice.util`.
+- Simplify `mpservice._async_streamer`.
 
 
 Release 0.10.1
