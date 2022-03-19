@@ -615,7 +615,7 @@ class ConcurrentTransformer(Stream):
             return_exceptions=return_exceptions,
             downstream_crashed=self._crashed,
             upstream_error=self._upstream_err,
-            )
+        )
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(workers)
         self._thread_tasks = {}
         self._start()

@@ -1000,6 +1000,7 @@ class MPSocketServer(SocketServer):
     def __str__(self):
         return self.__repr__()
 
+    @overrides
     async def set_server_option(self, name: str, value):
         if name == 'timeout':
             self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
@@ -1007,12 +1008,15 @@ class MPSocketServer(SocketServer):
             return
         await super().set_server_option(name, value)
 
+    @overrides
     async def before_startup(self):
         self._server.__enter__()
 
+    @overrides
     async def after_shutdown(self):
         self._server.__exit__(None, None, None)
 
+    @overrides
     async def handle_request(self, data, writer):
         y = await self._server.async_call(
             data, enqueue_timeout=self._enqueue_timeout,

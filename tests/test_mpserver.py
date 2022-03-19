@@ -332,7 +332,7 @@ def run_mp_server():
     asyncio.run(server.run())
 
 
-def test_mp():
+def test_socket():
     from zpz.logging import config_logger
     config_logger(level='info')   # this is for the server running in another process
     mp = multiprocessing.get_context('spawn')

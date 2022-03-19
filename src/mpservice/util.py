@@ -18,6 +18,9 @@ import time
 import warnings
 from typing import Optional
 
+from overrides import EnforceOverrides, overrides
+
+logger = logging.getLogger(__name__)
 
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
@@ -177,7 +180,7 @@ class ErrorBox:
         return self._error
 
 
-class IterQueue(collections.abc.Iterator):
+class IterQueue(collections.abc.Iterator, EnforceOverrides):
     '''
     A queue that supports iteration over its elements.
 
@@ -330,6 +333,7 @@ class IterQueue(collections.abc.Iterator):
     def __aiter__(self):
         return self
 
+
 class FutureIterQueue(IterQueue):
     # Elements put in this object are `concurrent.futures.Future`
     # or `asyncio.Future` objects. In either case, one can use
@@ -342,6 +346,7 @@ class FutureIterQueue(IterQueue):
         self._return_x = return_x
         self._return_exceptions = return_exceptions
 
+    @overrides
     def get(self, block=True, timeout=None):
         fut = super().get(block=block, timeout=timeout)
         while not fut.done():
@@ -353,6 +358,7 @@ class FutureIterQueue(IterQueue):
             return x, y
         return y
 
+    @overrides
     async def aget(self, block=True, timeout=None):
         fut = await super().aget(block=block, timeout=timeout)
         while not fut.done():

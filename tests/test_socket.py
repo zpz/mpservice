@@ -2,10 +2,12 @@ import asyncio
 import multiprocessing
 from mpservice.socket import SocketServer, SocketClient, write_record
 
+from overrides import overrides
 from zpz.logging import config_logger
 
 
 class MySocketServer(SocketServer):
+    @overrides
     async def handle_request(self, data, writer):
         await asyncio.sleep(0.01)
         await write_record(writer, data * 2, encoder=self._encoder)

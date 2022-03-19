@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Callable, Iterable
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
+from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, FutureIterQueue, MAX_THREADS
 
@@ -125,7 +126,12 @@ def recv_record_inc(sock, sock_data):
     # Returning `b''` indicates connection has been closed.
     if sock_data.n is None:
         # Still reading the header part.
+
+        # TODO: if we read up to 2 bytes, there may be slight
+        # performance gain. But it gets a little tricky if
+        # the length of a record can be 0.
         x = sock.recv(1)
+
         if x == b'':
             return x
         if x == b'\n':
@@ -179,7 +185,7 @@ async def run_unix_server(conn_handler: Callable, path: str):
         await server.serve_forever()
 
 
-class SocketServer:
+class SocketServer(EnforceOverrides):
     def __init__(self, *,
                  path: str = None,
                  host: str = None,
@@ -313,7 +319,7 @@ class SocketServer:
             self.to_shutdown = True
 
 
-class SocketClient:
+class SocketClient(EnforceOverrides):
     def __init__(self, *,
                  path: str = None,
                  host: str = None,
