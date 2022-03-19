@@ -40,10 +40,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import functools
-import inspect
 import logging
-import queue
-import threading
 from typing import (
     Awaitable, Callable, TypeVar, Optional, Union,
     Iterable, Iterator,
@@ -131,7 +128,7 @@ class Stream(collections.abc.AsyncIterator, _sync_streamer.StreamMixin):
         return Buffer(self, maxsize)
 
     def transform(self,
-                  func: Callable[[T], Union[TT, Awaitable[TT]]],
+                  func: Callable[[T], Awaitable[TT]],
                   *,
                   workers: Optional[Union[int, str]] = None,
                   return_exceptions: bool = False,
@@ -275,16 +272,6 @@ class Buffer(Stream):
             raise
 
 
-def is_async(func):
-    while isinstance(func, functools.partial):
-        func = func.func
-    return inspect.iscoroutinefunction(func) or (
-        not inspect.isfunction(func)
-        and hasattr(func, '__call__')
-        and inspect.iscoroutinefunction(func.__call__)
-    )
-
-
 class Transformer(Stream):
     def __init__(self,
                  instream: Stream,
@@ -295,16 +282,12 @@ class Transformer(Stream):
         super().__init__(instream)
         self.func = func
         self.return_exceptions = return_exceptions
-        self._async = is_async(func)
 
     @overrides
     async def _get_next(self):
         z = await self._instream.__anext__()
         try:
-            if self._async:
-                return await self.func(z)
-            else:
-                return self.func(z)
+            return await self.func(z)
         except Exception as e:
             if self.return_exceptions:
                 return e
@@ -330,16 +313,10 @@ class ConcurrentTransformer(Stream):
         self._upstream_err = []
         self._tasks = []
 
-        if is_async(func):
-            self._async = True
-            self._outstream = IterQueue(workers * 1024, downstream_crashed=self._crashed)
-            self._start_async()
-        else:
-            self._async = False
-            self._outstream = IterQueue(1024, downstream_crashed=self._crashed)
-            self._start_sync()
+        self._outstream = IterQueue(workers * 1024, downstream_crashed=self._crashed)
+        self._start()
 
-    def _start_async(self):
+    def _start(self):
         async def _process(in_stream, out_stream, func, lock, finished, crashed, keep_order):
 
             async def set_finish():
@@ -417,59 +394,6 @@ class ConcurrentTransformer(Stream):
             for i in range(self.workers)
         ]
 
-    def _start_sync(self):
-        async def _put_input_in_queue(q_in, q_out, crashed, finished):
-            async def put_end():
-                while True:
-                    try:
-                        q_out.close()
-                        return
-                    except queue.Full:
-                        await asyncio.sleep(q_out.PUT_SLEEP)
-
-            try:
-                async for x in q_in:
-                    while True:
-                        try:
-                            q_out.put(x, block=False)
-                            break
-                        except queue.Full:
-                            if crashed.is_set() or finished.is_set():
-                                await put_end()
-                                return
-                        await asyncio.sleep(q_out.PUT_SLEEP)
-            except Exception as e:
-                self._upstream_err.append(e)
-            await put_end()
-
-        q_in = IterQueue(1024, downstream_crashed=self._crashed)
-        finished = threading.Event()
-        t1 = asyncio.create_task(_put_input_in_queue(self._instream, q_in, self._crashed, finished))
-        t2 = _sync_streamer.transform(
-            q_in,
-            self._outstream,
-            self.func,
-            workers=self.workers,
-            return_exceptions=self.return_exceptions,
-            keep_order=self.keep_order,
-            crashed=self._crashed,
-            upstream_err=self._upstream_err,
-        )
-        self._tasks = [t1] + t2
-
-    # This function appears to be unused. What's the purpose of it?
-    # async def _astop(self):
-    #     if not self._tasks:
-    #         return
-    #     if self._async:
-    #         for t in self._tasks:
-    #             await t
-    #     else:
-    #         await self._tasks[0]
-    #         for t in self._tasks[1:]:
-    #             t.join()
-    #     self._tasks = []
-
     @overrides
     async def _get_next(self):
         if self._upstream_err:
@@ -481,20 +405,11 @@ class ConcurrentTransformer(Stream):
                 raise self._upstream_err[0]
             raise
         if self.keep_order:
-            if self._async:
-                try:
-                    return await y
-                except Exception:
-                    self._crashed.set()
-                    raise
-            else:
-                while not y.done():
-                    await asyncio.sleep(IterQueue.GET_SLEEP)
-                try:
-                    return y.result()
-                except Exception:
-                    self._crashed.set()
-                    raise
+            try:
+                return await y
+            except Exception:
+                self._crashed.set()
+                raise
         if isinstance(y, Exception) and not self.return_exceptions:
             self._crashed.set()
             raise y

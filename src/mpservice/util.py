@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import functools
+import inspect
 import logging
 import logging.handlers
 import multiprocessing
@@ -26,6 +28,16 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 def is_exception(e):
     return isinstance(e, BaseException) or (
         (type(e) is type) and issubclass(e, BaseException)
+    )
+
+
+def is_async(func):
+    while isinstance(func, functools.partial):
+        func = func.func
+    return inspect.iscoroutinefunction(func) or (
+        not inspect.isfunction(func)
+        and hasattr(func, '__call__')
+        and inspect.iscoroutinefunction(func.__call__)
     )
 
 
