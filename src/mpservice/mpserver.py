@@ -61,6 +61,7 @@ import multiprocessing
 import queue
 import threading
 import time
+import traceback
 import warnings
 from abc import ABCMeta, abstractmethod
 from multiprocessing import synchronize, Queue
@@ -86,11 +87,19 @@ class TimeoutError(Exception):
 
 
 class EnqueueTimeout(TimeoutError):
-    pass
+    def __init__(self, duration, queue_idx):
+        super().__init__(duration, queue_idx)
+
+    def __str__(self):
+        return f"enqueue timed out after {self.args[0]} seconds at queue {self.args[1]}"
 
 
 class TotalTimeout(TimeoutError):
-    pass
+    def __init__(self, duration):
+        super().__init__(duration)
+
+    def __str__(self):
+        return f"total timed out after {self.args[0]} seconds"
 
 
 class Servlet(metaclass=ABCMeta):
@@ -179,7 +188,7 @@ class Servlet(metaclass=ABCMeta):
 
         self.batch_size = batch_size
         self.batch_wait_time = batch_wait_time
-        self.name = f'{self.__class__.__name__}--{multiprocessing.current_process().name}'
+        self.name = multiprocessing.current_process().name
 
     def start(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         q_err.put(self.name)
@@ -365,7 +374,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(128)
         self._thread_tasks = {}
-        self._async_tasks = {}
 
         self.started = 0
         if cpus:
@@ -384,6 +392,17 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
+        if exc_type:
+            logger.error("Exiting %s with exception:\n%s\n%s\n%s",
+                         self.__class__.__name__,
+                         exc_type, exc_value,
+                         ''.join(traceback.format_tb(exc_traceback)),
+                         )
+            print(f"Exiting {self.__class__.__name__} with exception:")
+            print('exc_type:', exc_type)
+            print('exc_value:', exc_value)
+            print('traceback:')
+            traceback.print_tb(exc_traceback)
         self.stop()
 
     def start(self, sequential: bool = True):
@@ -394,6 +413,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             return
 
         t = self._thread_pool.submit(logger_thread, self._q_log)
+        t.add_done_callback(self._thread_tasks_done_callback)
         self._thread_tasks[t] = None
 
         if sequential:
@@ -424,8 +444,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 logger.info(f"{k}/{n}: servlet <{name}> is ready")
 
         t = self._thread_pool.submit(self._gather_output)
+        t.add_done_callback(self._thread_tasks_done_callback)
         self._thread_tasks[t] = None
         t = self._thread_pool.submit(self._gather_error)
+        t.add_done_callback(self._thread_tasks_done_callback)
         self._thread_tasks[t] = None
 
     def stop(self):
@@ -445,10 +467,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         self._thread_pool.shutdown()
         # TODO: in Python 3.9+, use argument `cancel_futures=True`.
-
-        for t in self._async_tasks:
-            if not t.done():
-                t.cancel()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -538,21 +556,21 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                         y = e
                     ff.set_result((x, y))
 
-        def cb(fut):
-            try:
-                del self._thread_tasks[fut]
-            except KeyError:
-                warnings.warn(f"the Future object `{fut}` was already removed")
-
         t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(cb)
+        t.add_done_callback(self._thread_tasks_done_callback)
         self._thread_tasks[t] = None
 
         t = self._thread_pool.submit(_wait)
-        t.add_done_callback(cb)
+        t.add_done_callback(self._thread_tasks_done_callback)
         self._thread_tasks[t] = None
 
         return results
+
+    def _thread_tasks_done_callback(self, t):
+        try:
+            del self._thread_tasks[t]
+        except KeyError:
+            warnings.warn(f"the Future object `{t}` was already removed")
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -573,7 +591,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
 
-        name = name or 'Servlet'
+        name = name or servlet.__name__
 
         for cpu in cpus:
             # Pinned to the specified cpu core.
@@ -738,8 +756,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     if timenow >= t1:
                         fut.cancel()
                         del self._uid_to_futures[uid]
-                        raise EnqueueTimeout(
-                            f'waited {timenow - t0} seconds; timeout at queue {iq}')
+                        raise EnqueueTimeout(timenow - t0, iq)
                     await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
 
         return uid, fut
@@ -754,7 +771,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 # `uid` could have been deleted by
                 # `gather_results` during very subtle
                 # timing coincidence.
-                raise TotalTimeout(f'waited {timenow - t0} seconds')
+                raise TotalTimeout(timenow - t0)
             await asyncio.sleep(min(self.SLEEP_DEQUEUE, t1 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - time.perf_counter())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
@@ -780,8 +797,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             except queue.Full:
                 fut.cancel()
                 del self._uid_to_futures[uid]
-                raise EnqueueTimeout(
-                    f'waited {time.perf_counter() - t0} seconds; timeout at queue {iq}')
+                raise EnqueueTimeout(time.perf_counter() - t0, iq)
 
         return uid, fut
 
@@ -795,7 +811,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # `uid` could have been deleted by
             # `gather_results` during very subtle
             # timing coincidence.
-            raise TotalTimeout(f'waited {time.perf_counter() - t0} seconds')
+            raise TotalTimeout(time.perf_counter() - t0)
 
 
 class SequentialServer(MPServer):
