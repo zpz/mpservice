@@ -73,7 +73,7 @@ from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
 from .socket import SocketServer, write_record
-from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue, is_exception
+from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -522,6 +522,11 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
 
+        # TODO:
+        # use async tasks in another thread to do the 'wait'; this would
+        # continue to hold the timeout settings meaningful.
+        # https://stackoverflow.com/a/65780581/6178706
+
         def _enqueue():
             Future = concurrent.futures.Future
             enqueue = self._call_enqueue
@@ -667,10 +672,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
-        assert 0 <= enqueue_timeout <= 10
+        assert enqueue_timeout >= 0
         if total_timeout is None:
             total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
-        assert 0 < total_timeout <= 100
+        assert total_timeout > 0
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout

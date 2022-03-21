@@ -3,6 +3,7 @@ import concurrent.futures
 import logging
 import os
 import queue
+import random
 import selectors
 import socket
 import time
@@ -325,6 +326,7 @@ class SocketClient(EnforceOverrides):
                  host: str = None,
                  port: int = None,
                  max_connections: int = None,
+                 connection_timeout: int = 10,
                  backlog: int = 1024,
                  ):
         # Experiments showed `max_connections` can be up to 200.
@@ -348,6 +350,7 @@ class SocketClient(EnforceOverrides):
 
         self._backlog = backlog
         self._max_connections = max_connections or MAX_THREADS
+        self._connection_timeout = connection_timeout
         self._encoder = 'orjson'  # encoder when sending requests.
         self._to_shutdown = False
         self._in_queue = None
@@ -381,27 +384,25 @@ class SocketClient(EnforceOverrides):
         if self._socket_type == 'tcp':
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setblocking(False)
-            k = 0
+            t0 = time.perf_counter()
             while True:
                 status = sock.connect_ex((self._host, self._port))
                 if status == 0:
                     break
-                k += 1
-                if k == 6:
-                    raise Exception('failed to connect to server')
-                time.sleep(0.5)
+                if time.perf_counter() - t0 > self._connection_timeout:
+                    raise ConnectionError('failed to connect to server')
+                time.sleep(random.uniform(0.2, 2))
         else:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.setblocking(False)
-            k = 0
+            t0 = time.perf_counter()
             while True:
                 status = sock.connect_ex(self._socket_path)
                 if status == 0:
                     break
-                k += 1
-                if k == 6:
-                    raise Exception('failed to connect to server')
-                time.sleep(0.5)
+                if time.perf_counter() - t0 > self._connection_timeout:
+                    raise ConnectionError('failed to connect to server')
+                time.sleep(random.uniform(0.2, 2))
         # To set buffer size, use `socket.setsockopt`.
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
         self._sel.register(
