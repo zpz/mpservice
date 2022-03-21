@@ -73,7 +73,7 @@ from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
 from .socket import SocketServer, write_record
-from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue, is_exception
+from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -509,52 +509,49 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     def stream(self, data_stream, /, *,
                return_exceptions: bool = False,
                return_x: bool = False,
-               enqueue_timeout: Union[int, float] = None,
-               total_timeout: Union[int, float] = None,
                backlog: int = 1024,
                ):
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.
 
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout,
-            total_timeout=total_timeout,
-        )
+        # For streaming, "timeout" is not a concern.
+        # The concern is overall throughput.
 
         data_in_pipe = IterQueue(backlog)
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
 
+        # TODO:
+        # use async tasks in another thread to do the 'wait'; this would
+        # continue to hold the timeout settings meaningful.
+        # https://stackoverflow.com/a/65780581/6178706
+
         def _enqueue():
             Future = concurrent.futures.Future
             enqueue = self._call_enqueue
             perf_counter = time.perf_counter
-            et = enqueue_timeout
             for x in data_stream:
+                ff = Future()
+                results.put(ff)
                 time0 = perf_counter()
                 try:
-                    uid, fut = enqueue(x, t0=time0, enqueue_timeout=et)
+                    uid, fut = enqueue(x, t0=time0, enqueue_timeout=600)
                 except Exception as e:
-                    uid, fut = None, e
-                ff = Future()
-                data_in_pipe.put((x, time0, uid, fut, ff))
-                results.put(ff)
+                    ff.set_result((x, e))
+                else:
+                    data_in_pipe.put((x, time0, uid, fut, ff))
             data_in_pipe.close()
             results.close()
 
         def _wait():
-            tt = total_timeout
             wait_for_result = self._call_wait_for_result
             for x, t0, uid, fut, ff in data_in_pipe:
-                if is_exception(fut):
-                    ff.set_result((x, fut))
-                else:
-                    try:
-                        y = wait_for_result(uid=uid, fut=fut, t0=t0, total_timeout=tt)
-                    except Exception as e:
-                        y = e
-                    ff.set_result((x, y))
+                try:
+                    y = wait_for_result(uid=uid, fut=fut, t0=t0, total_timeout=3600)
+                except Exception as e:
+                    y = e
+                ff.set_result((x, y))
 
         t = self._thread_pool.submit(_enqueue)
         t.add_done_callback(self._thread_tasks_done_callback)
@@ -675,10 +672,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
-        assert 0 <= enqueue_timeout <= 10
+        assert enqueue_timeout >= 0
         if total_timeout is None:
             total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
-        assert 0 < total_timeout <= 100
+        assert total_timeout > 0
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
