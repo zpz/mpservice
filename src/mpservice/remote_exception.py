@@ -88,7 +88,7 @@ class RemoteException(Exception):
         )
 
     def __str__(self):
-        return f"{self.exc_type.__name__}: {self.exc_value.__str__()}"
+        return f"{self.__class__.__name__}: {self.exc_value.__str__()}"
 
     def __setstate__(self, data):
         # TODO: I tried to customize `__getstate__` as well,
