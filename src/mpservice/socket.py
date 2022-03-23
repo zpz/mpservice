@@ -175,6 +175,10 @@ async def run_tcp_server(conn_handler: Callable, host: str, port: int):
 async def run_unix_server(conn_handler: Callable, path: str):
     try:
         os.unlink(path)
+    except FileNotFoundError:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except PermissionError:
+        raise
     except OSError:
         if os.path.exists(path):
             raise
@@ -239,6 +243,7 @@ class SocketServer(EnforceOverrides):
                 await self.before_shutdown()
                 server_task.cancel()
                 await self.after_shutdown()
+                os.unlink(self._socket_path)
                 logger.info('server %s is stopped', self)
                 break
             await asyncio.sleep(1)

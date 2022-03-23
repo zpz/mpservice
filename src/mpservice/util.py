@@ -16,7 +16,7 @@ import subprocess
 import threading
 import time
 import warnings
-from typing import Optional
+from typing import Optional, Callable
 
 from overrides import EnforceOverrides, overrides
 
@@ -201,6 +201,7 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
         self._downstream_crashed = downstream_crashed
         self._upstream_error = upstream_error
         self._closed = False
+        self._done_callbacks = []
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.maxsize})"
@@ -221,6 +222,7 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
         # Close the 'write' side: no more items can be put in it.
         # If the queue is not empty, use can still get them out.
         if self._closed:
+            self._run_done_callbacks()
             raise IterQueueClosedError(self)
         self._closed = True
 
@@ -232,14 +234,18 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                 break
             except queue.Full:
                 if self._downstream_crashed:
+                    self._run_done_callbacks()
                     raise DownstreamError
                 if self._closed:
+                    self._run_done_callbacks()
                     raise IterQueueClosedError(self)
                 if not block:
+                    self._run_done_callbacks()
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
                     time.sleep(self.PUT_SLEEP)
                 else:
+                    self._run_done_callbacks()
                     raise
 
     def put_nowait(self, item):
@@ -254,14 +260,18 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                 break
             except queue.Full:
                 if self._downstream_crashed:
+                    self._run_done_callbacks()
                     raise DownstreamError
                 if self._closed:
+                    self._run_done_callbacks()
                     raise IterQueueClosedError(self)
                 if not block:
+                    self._run_done_callbacks()
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
                     await asyncio.sleep(self.PUT_SLEEP)
                 else:
+                    self._run_done_callbacks()
                     raise
 
     def get(self, block=True, timeout=None):
@@ -271,16 +281,21 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                 return self._q.get_nowait()
             except queue.Empty:
                 if self._downstream_crashed:
+                    self._run_done_callbacks()
                     raise DownstreamError
                 if self._upstream_error:
+                    self._run_done_callbacks()
                     raise self._upstream_error.exception()
                 if self._closed:
+                    self._run_done_callbacks()
                     raise EOFError
                 if not block:
+                    self._run_done_callbacks()
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
                     time.sleep(self.GET_SLEEP)
                 else:
+                    self._run_done_callbacks()
                     raise
 
     def get_nowait(self):
@@ -293,16 +308,21 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                 return self._q.get_nowait()
             except queue.Empty:
                 if self._downstream_crashed:
+                    self._run_done_callbacks()
                     raise DownstreamError
                 if self._upstream_error:
+                    self._run_done_callbacks()
                     raise self._upstream_error.exception()
                 if self._closed:
+                    self._run_done_callbacks()
                     raise EOFError
                 if not block:
+                    self._run_done_callbacks()
                     raise
                 if timeout is None or (time.perf_counter() - t0 < timeout):
                     await asyncio.sleep(self.GET_SLEEP)
                 else:
+                    self._run_done_callbacks()
                     raise
 
     def __next__(self):
@@ -333,6 +353,16 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
     def __aiter__(self):
         return self
 
+    def add_done_callback(self, cb: Callable):
+        self._done_callbacks.append(cb)
+
+    def _run_done_callbacks(self):
+        for f in self._done_callbacks:
+            try:
+                f()
+            except Exception as e:
+                logger.error(e)
+
 
 class FutureIterQueue(IterQueue):
     # Elements put in this object are `concurrent.futures.Future`
@@ -353,6 +383,7 @@ class FutureIterQueue(IterQueue):
             time.sleep(0.001)
         x, y = fut.result()
         if is_exception(y) and not self._return_exceptions:
+            self._run_done_callbacks()
             raise y
         if self._return_x:
             return x, y
@@ -365,6 +396,7 @@ class FutureIterQueue(IterQueue):
             await asyncio.sleep(0.001)
         x, y = fut.result()
         if is_exception(y) and not self._return_exceptions:
+            self._run_done_callbacks()
             raise y
         if self._return_x:
             return x, y
