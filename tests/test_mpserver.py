@@ -159,6 +159,19 @@ def test_sequential_stream():
         assert ss.collect() == [v*v for v in data]
 
 
+def test_sequential_stream2():
+    service = SequentialServer(cpus=[0])
+    service.add_servlet(Square, cpus=[1, 2, 3])
+    with service:
+        data = range(100)
+        ss = service.stream2(data)
+        assert list(ss) == [v*v for v in data]
+
+        ss = Stream(data).transform(service.call, workers=10)
+        assert ss.collect() == [v*v for v in data]
+
+
+
 class GetHead(Servlet):
     def call(self, x):
         return x[0]
@@ -293,6 +306,17 @@ def test_ensemble_stream():
     with service:
         data = range(100)
         ss = service.stream(data)
+        assert list(ss) == [[v + 1, v + 7] for v in data]
+
+        ss = Stream(data).transform(service.call, workers=10)
+        assert ss.collect() == [[v + 1, v + 7] for v in data]
+
+
+def test_ensemble_stream2():
+    service = HisWideServer(cpus=[0])
+    with service:
+        data = range(100)
+        ss = service.stream2(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
         ss = Stream(data).transform(service.call, workers=10)

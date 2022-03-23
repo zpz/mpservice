@@ -554,6 +554,86 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         return results
 
+
+    # After benchmarking in practice, one of `stream` and `stream2`
+    # will be removed, and the remaining one will be called `stream`.
+
+    # TODO: this is buggy.
+    def stream2(self, data_stream, /, *,
+                return_exceptions: bool = False,
+                return_x: bool = False,
+                backlog: int = 1024,
+                enqueue_timeout=None,
+                total_timeout=None
+                ):
+        # The order of elements in the stream is preserved, i.e.,
+        # elements in the output stream corresponds to elements
+        # in the input stream in the same order.
+
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
+
+        # For streaming, "timeout" is not a concern.
+        # The concern is overall throughput.
+
+        # TODO:
+        # use async tasks in another thread to do the 'wait'; this would
+        # continue to hold the timeout settings meaningful.
+        # https://stackoverflow.com/a/65780581/6178706
+
+        def _enqueue(q_out, loop):
+            Future = concurrent.futures.Future
+            enqueue = self._call_enqueue
+            run_coro = asyncio.run_coroutine_threadsafe
+            tasks = self._thread_tasks
+            cb = self._thread_tasks_done_callback
+            for x in data_stream:
+                ff = Future()
+                q_out.put(ff)
+                try:
+                    uid, fut = enqueue(x, enqueue_timeout=enqueue_timeout)
+                except Exception as e:
+                    ff.set_result((x, e))
+                else:
+                    t = run_coro(_wait(x, uid, fut, ff), loop=loop)
+                    t.add_done_callback(cb)
+                    tasks[t] = None
+            q_out.close()
+
+        async def _wait(x, uid, fut, ff):
+            try:
+                y = await self._async_call_wait_for_result(uid, fut, total_timeout=total_timeout)
+            except Exception as e:
+                y = e
+            ff.set_result((x, y))
+
+        def _async_thread(loop):
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        loop = asyncio.new_event_loop()
+        results = FutureIterQueue(
+            backlog, return_x=return_x, return_exceptions=return_exceptions)
+
+        t = self._thread_pool.submit(_async_thread, loop)
+        t.add_done_callback(self._thread_tasks_done_callback)
+        self._thread_tasks[t] = None
+
+        t = self._thread_pool.submit(_enqueue, results, loop)
+        t.add_done_callback(self._thread_tasks_done_callback)
+        self._thread_tasks[t] = None
+
+        def _stop_async_thread():
+            print('stopping the loop')
+            loop.stop()
+            while loop.is_running():
+                time.sleep(0.1)
+            loop.close()
+
+        results.add_done_callback(_stop_async_thread)
+
+        return results
+
     def _thread_tasks_done_callback(self, t):
         try:
             del self._thread_tasks[t]
