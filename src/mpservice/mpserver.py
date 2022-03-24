@@ -743,13 +743,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         '''
         if enqueue_timeout is None:
             enqueue_timeout = self.TIMEOUT_ENQUEUE
-        assert enqueue_timeout >= 0
         if total_timeout is None:
             total_timeout = max(self.TIMEOUT_TOTAL, enqueue_timeout * 10)
-        assert total_timeout > 0
         if enqueue_timeout > total_timeout:
             enqueue_timeout = total_timeout
         return enqueue_timeout, total_timeout
+        # Accidental negative values for these are OK.
 
     @abstractmethod
     def _input_queues(self):
@@ -794,10 +793,11 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         fut.data = {'t0': t0}
-        return uid, fut, t0
+        return uid, fut
 
     async def _async_call_enqueue(self, x, *, enqueue_timeout):
-        uid, fut, t0 = self._enqueue_future(x)
+        uid, fut = self._enqueue_future(x)
+        t0 = fut.data['t0']
 
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
@@ -838,7 +838,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # This could raise RemoteException.
 
     def _call_enqueue(self, x, *, enqueue_timeout):
-        uid, fut, t0 = self._enqueue_future(x)
+        uid, fut = self._enqueue_future(x)
+        t0 = fut.data['t0']
 
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
