@@ -393,16 +393,16 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if exc_type:
-            logger.error("Exiting %s with exception:\n%s\n%s\n%s",
-                         self.__class__.__name__,
-                         exc_type, exc_value,
-                         ''.join(traceback.format_tb(exc_traceback)),
-                         )
-            print(f"Exiting {self.__class__.__name__} with exception:")
-            print('exc_type:', exc_type)
-            print('exc_value:', exc_value)
-            print('traceback:')
-            traceback.print_tb(exc_traceback)
+            msg = "Exiting {} with exception: {}\n{}\n\n{}".format(
+                 self.__class__.__name__, exc_type,
+                 exc_value,
+                 ''.join(traceback.format_tb(exc_traceback)),
+                 )
+            if isinstance(exc_value, RemoteException):
+                msg = f"{msg}\n\nRemote traceback:\n\n{exc_value.format()}"
+            logger.error(msg)
+            print(msg)
+
         self.stop()
 
     def start(self, sequential: bool = True):
