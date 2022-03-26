@@ -197,10 +197,10 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                  upstream_error: ErrorBox = None,
                  ):
         self.maxsize = maxsize
-        self._q = queue.Queue(maxsize)
-        self._downstream_crashed = downstream_crashed
-        self._upstream_error = upstream_error
-        self._closed = False
+        self._q: queue.Queue = queue.Queue(maxsize)
+        self._downstream_crashed: EventUpstreamer = downstream_crashed
+        self._upstream_error: ErrorBox = upstream_error
+        self._closed: bool = False
         self._done_callbacks = []
 
     def __repr__(self):

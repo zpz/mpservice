@@ -393,15 +393,16 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if exc_type:
-            msg = "Exiting {} with exception: {}\n{}\n\n{}".format(
-                 self.__class__.__name__, exc_type,
-                 exc_value,
-                 ''.join(traceback.format_tb(exc_traceback)),
-                 )
+            msg = "Exiting {} with exception: {}\n{}".format(
+                self.__class__.__name__, exc_type, exc_value,
+            )
             if isinstance(exc_value, RemoteException):
-                msg = f"{msg}\n\nRemote traceback:\n\n{exc_value.format()}"
+                msg = "{}\n\n{}\n\n{}".format(
+                    msg, exc_value.format(),
+                    "The above exception was the direct cause of the following exception:")
+            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
             logger.error(msg)
-            print(msg)
+            # print(msg)
 
         self.stop()
 
@@ -413,7 +414,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             return
 
         t = self._thread_pool.submit(logger_thread, self._q_log)
-        t.add_done_callback(self._thread_tasks_done_callback)
+        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
         if sequential:
@@ -444,10 +445,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 logger.info(f"{k}/{n}: servlet <{name}> is ready")
 
         t = self._thread_pool.submit(self._gather_output)
-        t.add_done_callback(self._thread_tasks_done_callback)
+        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
         t = self._thread_pool.submit(self._gather_error)
-        t.add_done_callback(self._thread_tasks_done_callback)
+        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
     def stop(self):
@@ -515,11 +516,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
 
-        # TODO:
-        # use async tasks in another thread to do the 'wait'; this would
-        # continue to hold the timeout settings meaningful.
-        # https://stackoverflow.com/a/65780581/6178706
-
         def _enqueue():
             enqueue = self._call_enqueue
             for x in data_stream:
@@ -545,20 +541,18 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 ff.set_result((fut.data['x'], y))
 
         t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(self._thread_tasks_done_callback)
+        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
         t = self._thread_pool.submit(_wait)
-        t.add_done_callback(self._thread_tasks_done_callback)
+        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
         return results
 
-
     # After benchmarking in practice, one of `stream` and `stream2`
     # will be removed, and the remaining one will be called `stream`.
 
-    # TODO: this is buggy.
     def stream2(self, data_stream, /, *,
                 return_exceptions: bool = False,
                 return_x: bool = False,
@@ -573,11 +567,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
 
-        # For streaming, "timeout" is not a concern.
-        # The concern is overall throughput.
-
-        # TODO:
-        # use async tasks in another thread to do the 'wait'; this would
+        # Use async tasks in another thread to do the 'wait'; this would
         # continue to hold the timeout settings meaningful.
         # https://stackoverflow.com/a/65780581/6178706
 
@@ -586,7 +576,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             enqueue = self._call_enqueue
             run_coro = asyncio.run_coroutine_threadsafe
             tasks = self._thread_tasks
-            cb = self._thread_tasks_done_callback
+            cb = self._thread_task_done_callback
             for x in data_stream:
                 ff = Future()
                 q_out.put(ff)
@@ -607,34 +597,38 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 y = e
             ff.set_result((x, y))
 
-        def _async_thread(loop):
+        def _async_thread(loop, to_stop: threading.Event):
+            async def foo():
+                while not to_stop.is_set():
+                    await asyncio.sleep(0.01)
+
             asyncio.set_event_loop(loop)
-            loop.run_forever()
+            loop.run_until_complete(foo())
 
         loop = asyncio.new_event_loop()
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
-
-        t = self._thread_pool.submit(_async_thread, loop)
-        t.add_done_callback(self._thread_tasks_done_callback)
-        self._thread_tasks[t] = None
-
-        t = self._thread_pool.submit(_enqueue, results, loop)
-        t.add_done_callback(self._thread_tasks_done_callback)
-        self._thread_tasks[t] = None
+        to_stop = threading.Event()
 
         def _stop_async_thread():
             print('stopping the loop')
-            loop.stop()
+            to_stop.set()
             while loop.is_running():
-                time.sleep(0.1)
-            loop.close()
+                time.sleep(0.01)
 
         results.add_done_callback(_stop_async_thread)
 
+        t = self._thread_pool.submit(_async_thread, loop, to_stop)
+        t.add_done_callback(self._thread_task_done_callback)
+        self._thread_tasks[t] = None
+
+        t = self._thread_pool.submit(_enqueue, results, loop)
+        t.add_done_callback(self._thread_task_done_callback)
+        self._thread_tasks[t] = None
+
         return results
 
-    def _thread_tasks_done_callback(self, t):
+    def _thread_task_done_callback(self, t):
         try:
             del self._thread_tasks[t]
         except KeyError:
@@ -767,7 +761,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         should_stop = self._should_stop
         while self.started:
             try:
-                uid, err = q_err.get(timeout=1)
+                uid, err = q_err.get(timeout=0.1)
             except queue.Empty:
                 if should_stop.is_set():
                     break
@@ -810,7 +804,11 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     timenow = perf_counter()
                     if timenow >= t1:
                         fut.cancel()
-                        del self._uid_to_futures[uid]
+                        try:
+                            del self._uid_to_futures[uid]
+                        except KeyError:
+                            print(iq, q)
+                            raise
                         raise EnqueueTimeout(timenow - t0, iq)
                     await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
 
@@ -972,9 +970,9 @@ class EnsembleServer(MPServer):
 
     @overrides
     def _enqueue_future(self, x):
-        uid, fut, t0 = super()._enqueue_future(x)
+        uid, fut = super()._enqueue_future(x)
         fut.data.update(x=x, res=[None] * len(self._q_out), n=0)
-        return uid, fut, t0
+        return uid, fut
 
     @overrides
     def _gather_output(self):
@@ -1060,6 +1058,9 @@ class SimpleServer(SequentialServer):
                          **kwargs)
 
 
+# This is a demo implementation.
+# Since this is so simple, user may choose to create their own
+# implementation from scratch.
 class MPSocketServer(SocketServer):
     def __init__(self, server: MPServer, **kwargs):
         super().__init__(**kwargs)
@@ -1090,7 +1091,11 @@ class MPSocketServer(SocketServer):
 
     @overrides
     async def handle_request(self, data, writer):
-        y = await self._server.async_call(
-            data, enqueue_timeout=self._enqueue_timeout,
-            total_timeout=self._total_timeout)
-        await write_record(writer, y, encoder=self._encoder)
+        try:
+            y = await self._server.async_call(
+                data, enqueue_timeout=self._enqueue_timeout,
+                total_timeout=self._total_timeout)
+            await write_record(writer, y, encoder=self._encoder)
+        except Exception:
+            y = RemoteException()
+            await write_record(writer, y, encoder='pickle')

@@ -376,15 +376,16 @@ class SocketClient(EnforceOverrides):
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if exc_type:
-            msg = "Exiting {} with exception: {}\n{}\n\n{}".format(
-                 self.__class__.__name__, exc_type,
-                 exc_value,
-                 ''.join(traceback.format_tb(exc_traceback)),
-                 )
+            msg = "Exiting {} with exception: {}\n{}".format(
+                self.__class__.__name__, exc_type, exc_value,
+            )
             if isinstance(exc_value, RemoteException):
-                msg = f"{msg}\n\nRemote traceback:\n\n{exc_value.format()}"
+                msg = "{}\n\n{}\n\n{}".format(
+                    msg, exc_value.format(),
+                    "The above exception was the direct cause of the following exception:")
+            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
             logger.error(msg)
-            print(msg)
+            # print(msg)
 
         if self._socks:
             self._to_shutdown = True
