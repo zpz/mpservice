@@ -279,16 +279,17 @@ class SocketServer(EnforceOverrides):
         # In case of exception, if one wants to pass the exception object
         # to the client, send `RemoteException(e)` with `encoder='pickle'`.
 
-    async def set_server_option(self, name: str, value, writer) -> None:
+    async def set_server_option(self, name: str, value, *, writer) -> None:
         if name == 'encoder':
             self._encoder = value
             await write_record(writer, 'OK', encoder=self._encoder)
             return
         await write_record(
-            writer, RemoteException(ValueError(f"unknown option '{name}'")),
+            writer,
+            RemoteException(ValueError(f"unknown option '{name}'")),
             encoder='pickle')
 
-    async def get_server_info(self, name: str, writer) -> None:
+    async def get_server_info(self, name: str, *, writer) -> None:
         # Subclass should override and implement server info entries as needed.
         await write_record(
             writer,
@@ -310,6 +311,7 @@ class SocketServer(EnforceOverrides):
     async def _handle_connection(self, reader, writer):
         # This is called upon a new connection that is openned
         # at the request from a client to the server.
+        # This method handles requests in that connection.
         if self._socket_type == 'tcp':
             addr = writer.get_extra_info('peername')
         else:
@@ -364,6 +366,9 @@ class SocketClient(EnforceOverrides):
                  connection_timeout: int = 10,
                  backlog: int = 1024,
                  ):
+        '''
+        `connection_timeout`: how many seconds to wait for connecting to the server.
+        '''
         # Experiments showed `max_connections` can be up to 200.
         # This needs to be improved.
         if path:
@@ -461,25 +466,20 @@ class SocketClient(EnforceOverrides):
                 e=None,              # encoder of the next send_record
                 nr=0,                # number of reads taken to finish the record
                 t=None,              # time taken to read the record.
-                # `n` and `e` are in the 'header' part of the payloaded, ended
+                # `n` and `e` are in the 'header' part of the payload, ended
                 # by '\n'.
                 # Once `n` and `e` have been resolved, `d` will be reset
-                # to exclude the bytes for `n` and `e`.
+                # to exclude the header bytes, i.e. the bytes for `n` and `e`.
             )
         )
         self._socks.add(sock)
         logger.debug('connection %r openned to server', sock)
 
     def _enqueue(self, x):
-        # The client must know whether a specific request will get a response
-        # from the server. Some requests do not get a response, e.g.
-        # setting a config option. The client and server code must be designed
-        # in coordination regarding this response expectation.
-        # TODO: should we design it such that server always sends a response?
-
         fut = concurrent.futures.Future()
         # `x` is the payload to send.
         # `fut` will hold the corresponding response to be received.
+        # Every request will get a response from the server.
         self._in_queue.put((x, fut))
         return fut
 
@@ -526,14 +526,16 @@ class SocketClient(EnforceOverrides):
             if self._to_shutdown:
                 break
 
-    def request(self, data, *, timeout: Union[int, float] = None) -> Optional[dict]:
-        # If do not want result, pass in `timeout=0`.
+    def request(self, data, *, timeout: Optional[Union[int, float]] = None) -> Optional[dict]:
+        # If caller does not want result, pass in `timeout=0`.
         fut = self._enqueue(data)
         if timeout is not None and timeout <= 0:
             fut.cancel()
             return None
         try:
             return fut.result(timeout)[1]
+            # `[0]` is the input `data`. In this method, there is no need
+            # to return the input, because the caller has it in hand.
             # The return is the dict that is returned at the end
             # of `recv_record_inc`. Same for the method `stream`.
         except concurrent.futures.TimeoutError:
