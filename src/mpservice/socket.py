@@ -7,6 +7,7 @@ import random
 import selectors
 import socket
 import time
+import traceback
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from types import SimpleNamespace
 from typing import Callable, Iterable
@@ -15,7 +16,7 @@ from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disab
 from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, FutureIterQueue, MAX_THREADS
-
+from .remote_exception import RemoteException
 
 logger = logging.getLogger(__name__)
 
@@ -373,7 +374,19 @@ class SocketClient(EnforceOverrides):
         self._tasks.append(self._executor.submit(self._send_recv))
         return self
 
-    def __exit__(self, *args, **kwargs):
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        if exc_type:
+            msg = "Exiting {} with exception: {}\n{}".format(
+                self.__class__.__name__, exc_type, exc_value,
+            )
+            if isinstance(exc_value, RemoteException):
+                msg = "{}\n\n{}\n\n{}".format(
+                    msg, exc_value.format(),
+                    "The above exception was the direct cause of the following exception:")
+            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
+            logger.error(msg)
+            # print(msg)
+
         if self._socks:
             self._to_shutdown = True
             concurrent.futures.wait(self._tasks)

@@ -61,7 +61,7 @@ async def test_shutdown():
         response = await client.post(url + '/shutdown')
         assert response.status_code == 200
         assert response.text == SHUTDOWN_MSG
-        print('server state tasks:', server.server_state.tasks)
+        # print('server state tasks:', server.server_state.tasks)
 
         await asyncio.sleep(1)
 
