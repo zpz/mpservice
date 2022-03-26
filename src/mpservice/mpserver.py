@@ -1068,12 +1068,13 @@ class MPSocketServer(SocketServer):
         return self.__repr__()
 
     @overrides
-    async def set_server_option(self, name: str, value):
+    async def set_server_option(self, name: str, value, *, writer):
         if name == 'timeout':
             self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
                 enqueue_timeout=value[0], total_timeout=value[1])
+            await write_record(writer, 'OK', encoder=self._encoder)
             return
-        await super().set_server_option(name, value)
+        await super().set_server_option(name, value, writer=writer)
 
     @overrides
     async def before_startup(self):

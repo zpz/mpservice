@@ -9,8 +9,9 @@ import socket
 import time
 import traceback
 from pickle import dumps as pickle_dumps, loads as pickle_loads
+from time import perf_counter
 from types import SimpleNamespace
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Union, Optional
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
@@ -129,13 +130,19 @@ def recv_record_inc(sock, sock_data):
     if sock_data.n is None:
         # Still reading the header part.
 
+        if sock_data.d == b'':
+            # To start reading a new record.
+            sock_data.t = perf_counter()
+
         # TODO: if we read up to 2 bytes, there may be slight
         # performance gain. But it gets a little tricky if
-        # the length of a record can be 0.
+        # we allow the length of a record to be 0.
         x = sock.recv(1)
-
         if x == b'':
             return x
+
+        sock_data.nr += 1
+
         if x == b'\n':
             # Header part is complete.
             size, encoder = sock_data.d.decode().split()
@@ -152,17 +159,25 @@ def recv_record_inc(sock, sock_data):
     x = sock.recv(k)
     if x == b'':
         return x
+
+    sock_data.nr += 1
     sock_data.d += x
     if len(x) < k:
         # Added some more bytes to body; not done yet.
         return
 
     # Body part is finished. This record is complete.
-    z = decode(sock_data.d, sock_data.e)
+    z = decode(sock_data.d, sock_data.e)  # This is the Python value of this record.
+    t = perf_counter() - sock_data.t        # time taken
+    nr = sock_data.nr                     # number of reads taken
+
     sock_data.d = b''
     sock_data.n = None
     sock_data.e = None
-    return z  # This is the Python value of this record.
+    sock_data.t = None
+    sock_data.nr = 0
+
+    return {'data': z, 'time': t, 'reads': nr}
 
 
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
@@ -264,23 +279,33 @@ class SocketServer(EnforceOverrides):
         # In case of exception, if one wants to pass the exception object
         # to the client, send `RemoteException(e)` with `encoder='pickle'`.
 
-    async def set_server_option(self, name: str, value) -> None:
+    async def set_server_option(self, name: str, value, writer) -> None:
         if name == 'encoder':
             self._encoder = value
+            await write_record(writer, 'OK', encoder=self._encoder)
             return
-        raise ValueError(f"unknown option '{name}'")
+        await write_record(
+            writer, RemoteException(ValueError(f"unknown option '{name}'")),
+            encoder='pickle')
 
     async def get_server_info(self, name: str, writer) -> None:
         # Subclass should override and implement server info entries as needed.
-        await write_record(writer, f'unknown info item `{name}`')
+        await write_record(
+            writer,
+            RemoteException(ValueError(f'unknown info item `{name}`')),
+            encoder='pickle')
 
-    async def run_server_command(self, name: str, *args, **kwargs) -> None:
+    async def run_server_command(self, name: str, *args, writer, **kwargs) -> None:
         if name == 'shutdown':
             assert not args
             assert not kwargs
             self._to_shutdown = True
+            await write_record(writer, 'OK', encoder=self._encoder)
             return
-        raise ValueError(f"unknown command '{name}'")
+        await write_record(
+            writer,
+            RemoteException(ValueError(f'unknown command `{name}`')),
+            encoder='pickle')
 
     async def _handle_connection(self, reader, writer):
         # This is called upon a new connection that is openned
@@ -304,15 +329,19 @@ class SocketServer(EnforceOverrides):
                 if 'run_server_command' in data:
                     await self.run_server_command(
                         data['run_server_command'],
-                        *data['args'], **data['kwargs'])
+                        *data['args'],
+                        writer=writer,
+                        **data['kwargs'])
                     continue
                 elif 'set_server_option' in data:
                     await self.set_server_option(
-                        data['set_server_option'], data['value'])
+                        data['set_server_option'],
+                        data['value'],
+                        writer=writer)
                     continue
                 elif 'get_server_info' in data:
                     assert len(data) == 1
-                    await self.get_server_info(data['get_server_info'], writer)
+                    await self.get_server_info(data['get_server_info'], writer=writer)
                     continue
 
             await self.handle_request(data, writer)
@@ -402,23 +431,23 @@ class SocketClient(EnforceOverrides):
         if self._socket_type == 'tcp':
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setblocking(False)
-            t0 = time.perf_counter()
+            t0 = perf_counter()
             while True:
                 status = sock.connect_ex((self._host, self._port))
                 if status == 0:
                     break
-                if time.perf_counter() - t0 > self._connection_timeout:
+                if perf_counter() - t0 > self._connection_timeout:
                     raise ConnectionError('failed to connect to server')
                 time.sleep(random.uniform(0.2, 2))
         else:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.setblocking(False)
-            t0 = time.perf_counter()
+            t0 = perf_counter()
             while True:
                 status = sock.connect_ex(self._socket_path)
                 if status == 0:
                     break
-                if time.perf_counter() - t0 > self._connection_timeout:
+                if perf_counter() - t0 > self._connection_timeout:
                     raise ConnectionError('failed to connect to server')
                 time.sleep(random.uniform(0.2, 2))
         # To set buffer size, use `socket.setsockopt`.
@@ -430,18 +459,27 @@ class SocketClient(EnforceOverrides):
                 d=b'',               # bytes read so far for the next record
                 n=None,              # length of the next record
                 e=None,              # encoder of the next send_record
-                # Once `l` and `e` have been resolved, `d` will be reset
-                # to exclude the bytes for `l` and `e`.
+                nr=0,                # number of reads taken to finish the record
+                t=None,              # time taken to read the record.
+                # `n` and `e` are in the 'header' part of the payloaded, ended
+                # by '\n'.
+                # Once `n` and `e` have been resolved, `d` will be reset
+                # to exclude the bytes for `n` and `e`.
             )
         )
         self._socks.add(sock)
         logger.debug('connection %r openned to server', sock)
 
-    def _enqueue(self, x, *, expect_response: bool = True):
-        if expect_response:
-            fut = concurrent.futures.Future()
-        else:
-            fut = None
+    def _enqueue(self, x):
+        # The client must know whether a specific request will get a response
+        # from the server. Some requests do not get a response, e.g.
+        # setting a config option. The client and server code must be designed
+        # in coordination regarding this response expectation.
+        # TODO: should we design it such that server always sends a response?
+
+        fut = concurrent.futures.Future()
+        # `x` is the payload to send.
+        # `fut` will hold the corresponding response to be received.
         self._in_queue.put((x, fut))
         return fut
 
@@ -462,8 +500,18 @@ class SocketClient(EnforceOverrides):
                         continue
                     if z is None:
                         continue
+
+                    # The next (x, fut) item in the queue of this connection
+                    # must be the request that corresponds to this response
+                    # that has just been received.
                     x, fut = key.data.q.get()
-                    fut.set_result((x, z))
+                    try:
+                        fut.set_result((x, z))
+                    except concurrent.futures.InvalidStateError:
+                        print('already cancelled')
+                        assert fut.cancelled()
+                        # The requester did not expect response, and had cancelled
+                        # the Future in `request`.
                     continue
                 if mask & selectors.EVENT_WRITE:
                     try:
@@ -472,33 +520,46 @@ class SocketClient(EnforceOverrides):
                         pass
                     else:
                         send_record(sock, x, encoder=self._encoder)
-                        if fut is not None:
-                            key.data.q.put((x, fut))
+                        # The same connection will get response
+                        # to this request in order.
+                        key.data.q.put((x, fut))
             if self._to_shutdown:
                 break
 
-    def request(self, data, *, wait_for_response: bool = True):
-        fut = self._enqueue(data, expect_response=wait_for_response)
-        if wait_for_response:
-            return fut.result()[1]
+    def request(self, data, *, timeout: Union[int, float] = None) -> Optional[dict]:
+        # If do not want result, pass in `timeout=0`.
+        fut = self._enqueue(data)
+        if timeout is not None and timeout <= 0:
+            fut.cancel()
+            return None
+        try:
+            return fut.result(timeout)[1]
+            # The return is the dict that is returned at the end
+            # of `recv_record_inc`. Same for the method `stream`.
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            raise
 
-    def set_server_option(self, name: str, value):
-        self.request({'set_server_option': name, 'value': value},
-                     wait_for_response=False)
+    def set_server_option(self, name: str, value, *, timeout=0):
+        return self.request(
+            {'set_server_option': name, 'value': value},
+            timeout=timeout)
 
-    def get_server_info(self, name: str):
-        return self.request({'get_server_info': name})
+    def get_server_info(self, name: str, *, timeout=None):
+        return self.request({'get_server_info': name}, timeout=timeout)
 
-    def run_server_command(self, name: str, *args, **kwargs):
-        self.request({'run_server_command': name, 'args': args, 'kwargs': kwargs},
-                     wait_for_response=False)
+    def run_server_command(self, name: str, *args, timeout=0, **kwargs):
+        return self.request(
+            {'run_server_command': name, 'args': args, 'kwargs': kwargs},
+            timeout=timeout)
 
     def shutdown_server(self):
-        self.run_server_command('shutdown')
+        self.run_server_command('shutdown', timeout=0)
 
     def stream(self, data: Iterable, *,
                return_x: bool = False,
-               return_exceptions: bool = False):
+               return_exceptions: bool = False,
+               ):
         results = FutureIterQueue(maxsize=self._backlog,
                                   return_x=return_x,
                                   return_exceptions=return_exceptions)
