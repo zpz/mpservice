@@ -610,13 +610,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             backlog, return_x=return_x, return_exceptions=return_exceptions)
         to_stop = threading.Event()
 
-        def _stop_async_thread():
-            print('stopping the loop')
-            to_stop.set()
-            while loop.is_running():
-                time.sleep(0.01)
-
-        results.add_done_callback(_stop_async_thread)
+        results.add_done_callback(to_stop.set)
 
         t = self._thread_pool.submit(_async_thread, loop, to_stop)
         t.add_done_callback(self._thread_task_done_callback)
