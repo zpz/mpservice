@@ -152,6 +152,14 @@ class SocketServer(EnforceOverrides):
         self._n_connections = 0
         self.to_shutdown = False
 
+    def __repr__(self):
+        if self._path:
+            return f"{self.__class__.__name__}('{self._path}')"
+        return f"{self.__class__.__name__}('{self._host}:{self._port}')"
+
+    def __str__(self):
+        return self.__repr__()
+
     async def before_startup(self):
         pass
 
@@ -213,8 +221,8 @@ class SocketServer(EnforceOverrides):
             addr = writer.get_extra_info('sockname')
         else:
             addr = writer.get_extra_info('peername')
-        logger.debug('connection %r openned from client', addr)
         self._n_connections += 1
+        logger.info('connection %d openned from client %r', self._n_connections, addr)
         reqs = asyncio.Queue(self._backlog)
 
         async def _keep_receiving():
@@ -258,9 +266,11 @@ class SocketServer(EnforceOverrides):
         trec = asyncio.create_task(_keep_receiving())
         tres = asyncio.create_task(_keep_responding())
         try:
-            await asyncio.gather(trec, tres)
+            await trec
         except asyncio.IncompleteReadError:
             tres.cancel()
+        else:
+            await tres
 
         writer.close()
         logger.debug('connection %r closed from client', addr)
@@ -290,8 +300,9 @@ class SocketClient(EnforceOverrides):
             # `path` must be consistent with that passed to `run_unix_server`.
             assert not host
             assert not port
-            self._socket_type = 'unix'
-            self._socket_path = path
+            self._path = path
+            self._host = None
+            self._port = None
         else:
             # If both client and server run on the same machine
             # in separate Docker containers, `host` should be
@@ -299,7 +310,7 @@ class SocketClient(EnforceOverrides):
             assert port
             if not host:
                 host = get_docker_host_ip()  # in Docker
-            self._socket_type = 'tcp'
+            self._path = None
             self._host = host
             self._port = int(port)
 
@@ -314,6 +325,14 @@ class SocketClient(EnforceOverrides):
         self._pending_requests: queue.Queue = None
         self._active_requests = {}
         self._shutdown_timeout = 60
+
+    def __repr__(self):
+        if self._path:
+            return f"{self.__class__.__name__}('{self._path}')"
+        return f"{self.__class__.__name__}('{self._host}:{self._port}')"
+
+    def __str__(self):
+        return self.__repr__()
 
     def __enter__(self):
         self._pending_requests = queue.Queue(self._backlog)
@@ -332,20 +351,26 @@ class SocketClient(EnforceOverrides):
             msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
             logger.error(msg)
 
+        print('client exit 1')
         self._prepare_shutdown.set()
         t0 = perf_counter()
+        print('client exit 2')
         while not self._pending_requests.empty():
             if perf_counter() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
+        print('client exit 3')
         while self._active_requests:
             if perf_counter() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
+        print('client exit 4')
         self._to_shutdown.set()
         concurrent.futures.wait(self._tasks)
+        print('client exit 5')
         self._executor.shutdown()
         self._pending_requests = None
+        print('client exit 6')
 
     def _open_connections(self):
         async def _keep_sending(writer):
@@ -363,7 +388,7 @@ class SocketClient(EnforceOverrides):
                     continue
                 req_id = id(fut)
                 await write_record(writer, req_id, x, encoder=encoder)
-                active[req_id] = fut
+                active[req_id] = (x, fut)
 
         async def _keep_receiving(reader):
             active = self._active_requests
@@ -378,36 +403,34 @@ class SocketClient(EnforceOverrides):
                     continue
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
-                fut = active[req_id]
-                if isinstance(data, RemoteException):
-                    fut.set_exception(data)
-                else:
-                    fut.set_result(data)
+                x, fut = active[req_id]
+                fut.set_result((x, data))
 
-        async def _open_connection():
+        async def _open_connection(k):
             t0 = perf_counter()
             while True:
                 try:
-                    if self._socket_type == 'tcp':
-                        reader, writer = await asyncio.open_connection(self._host, self._port)
+                    if self._path:
+                        reader, writer = await asyncio.open_unix_connection(self._path)
                     else:
-                        reader, writer = await asyncio.open_unix_connection(self._socket_path)
+                        reader, writer = await asyncio.open_connection(self._host, self._port)
+                    addr = writer.get_extra_info('peername')
+                    logger.info('connection %d openned to server %r', k+1, addr)
                     break
                 except ConnectionRefusedError:
                     if perf_counter() - t0 > self._connection_timeout:
                         raise
                     await asyncio.sleep(0.1)
-            logger.info('connection openned to server')
             tw = asyncio.create_task(_keep_sending(writer))
             tr = asyncio.create_task(_keep_receiving(reader))
             try:
-                asyncio.gather(tr, tw)
+                await asyncio.gather(tr, tw)
             except asyncio.IncompleteReadError:
                 # Propagated from `tr` indicating server has closed the connection.
                 tw.cancel()
 
         async def _main():
-            tasks = [_open_connection() for _ in range(self._num_connections)]
+            tasks = [_open_connection(i) for i in range(self._num_connections)]
             await asyncio.gather(*tasks)
             # If any of the tasks raises exception, it will be propagated here.
 

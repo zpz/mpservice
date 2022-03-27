@@ -11,7 +11,6 @@ from zpz.logging import config_logger
 class MySocketServer(SocketServer):
     @overrides
     async def handle_request(self, data):
-        print('server got', data)
         if data == 'shutdown_server':
             self.to_shutdown = True
             return
@@ -32,30 +31,18 @@ def run_my_server():
 
 def test_simple():
     config_logger(level='info')   # this is for the server running in another process
-    print(1)
     mp = multiprocessing.get_context('spawn')
-    print(2)
     server = mp.Process(target=run_my_server)
-    print(3)
     server.start()
-    print(4)
     with MySocketClient(path='/tmp/sock_abc') as client:
-        print(5)
-        assert client.request(23)['data'] == 46
-        print(6)
-        #assert client.request('abc')['data'] == 'abcabc'
-        print(7)
-
-        #client.set_server_option('encoder', 'pickle')
-        print(8)
-
+        assert client.request(23) == 46
+        assert client.request('abc') == 'abcabc'
         data = range(10)
-        #for x, y in zip(data, client.stream(data)):
-        #    print(9)
-        #    assert y['data'] == x * 2
-        #for x, y in zip(data, client.stream(data, return_x=True)):
-        #    print(10)
-        #    assert (y[0], y[1]['data']) == (x, x * 2)
+        print(9)
+        for x, y in zip(data, client.stream(data)):
+            assert y == x * 2
+        for x, y in zip(data, client.stream(data, return_x=True)):
+            assert (y[0], y[1]) == (x, x * 2)
 
         print(11)
 
@@ -117,7 +104,7 @@ def run_mp_server():
     asyncio.run(server.run())
 
 
-def test_socket():
+def _test_mpserver():
     from zpz.logging import config_logger
     config_logger(level='info')   # this is for the server running in another process
     mp = multiprocessing.get_context('spawn')
