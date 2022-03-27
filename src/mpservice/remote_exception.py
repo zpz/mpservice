@@ -22,17 +22,26 @@ class RemoteException(Exception):
     info.
 
     Example:
-        try:
-            a = 0 / 1
-            return a
-        except:
-            return RemoteException()
+
+            try:
+                a = 0 / 1
+                return a
+            except:
+                return RemoteException()
+
+        This is equivalent to
+
+            try:
+                a = 0 / 1
+                return a
+            except exception as e:
+                return RemoteException(e)
 
         # In another process, this object, say `x`, is retrieved from a queue.
         # Then,
 
-        if isinstance(x, RemoteException):
-            raise x
+            if isinstance(x, RemoteException):
+                raise x
 
     The printout looks as if the exception has occurred this way:
 
