@@ -70,9 +70,9 @@ def decode(data, encoder):
 # of bytes, which should be decoded according to the 'encoder'.
 
 
-async def write_record(writer, data, *, encoder: str = 'orjson'):
+async def write_record(writer, request_id, data, *, encoder: str = 'orjson'):
     data_bytes = encode(data, encoder)
-    writer.write(f'{len(data_bytes)} {encoder}\n'.encode())
+    writer.write(f'{request_id} {len(data_bytes)} {encoder}\n'.encode())
     writer.write(data_bytes)
     await writer.drain()
 
@@ -80,104 +80,10 @@ async def write_record(writer, data, *, encoder: str = 'orjson'):
 async def read_record(reader):
     # This may raise `asyncio.IncompleteReadError`.
     data = await reader.readuntil(b'\n')
-    n, encoder = data[:-1].decode().split()
+    rid, n, encoder = data[:-1].decode().split()
     n = int(n)
     data = await reader.readexactly(n)
-    return decode(data, encoder)
-
-
-def send_record(sock, data, *, encoder: str = 'orjson'):
-    data_bytes = encode(data, encoder)
-    sock.sendall(f'{len(data_bytes)} {encoder}\n'.encode())
-    sock.sendall(data_bytes)
-
-
-def recv_record(sock):
-    # Returning `b''` indicates connection has been closed.
-    size = b''
-    while True:
-        x = sock.recv(1)
-        if x == b'':
-            return b''
-        if x == b'\n':
-            break
-        size += x
-    size, encoder = size.decode().split()
-    size = int(size)
-    data = b''
-    while True:
-        x = sock.recv(size)
-        if x == b'':
-            return b''
-        data += x
-        size -= len(x)
-        if size == 0:
-            break
-    return decode(data, encoder)
-
-
-def recv_record_inc(sock, sock_data):
-    # Incrementally read one record in multiple calls to this function.
-    # When `selectors.select` says a socket is ready for read, it must
-    # have something. But after the first read, there is no guarantee
-    # there is more available at the moment. When this happens, it's not
-    # that `socket.recv()` will get more after some waiting---things
-    # tend to lock up (I don't know whether it *always* locks up).
-    # That's why we need to do only one read, upon detection by
-    # `selectors.select`.
-
-    # Returning `b''` indicates connection has been closed.
-    if sock_data.n is None:
-        # Still reading the header part.
-
-        if sock_data.d == b'':
-            # To start reading a new record.
-            sock_data.t = perf_counter()
-
-        # TODO: if we read up to 2 bytes, there may be slight
-        # performance gain. But it gets a little tricky if
-        # we allow the length of a record to be 0.
-        x = sock.recv(1)
-        if x == b'':
-            return x
-
-        sock_data.nr += 1
-
-        if x == b'\n':
-            # Header part is complete.
-            size, encoder = sock_data.d.decode().split()
-            sock_data.n = int(size)   # length of body in bytes
-            sock_data.e = encoder
-            sock_data.d = b''
-            return
-
-        # More bytes for header; not finished yet.
-        sock_data.d += x
-        return
-
-    k = sock_data.n - len(sock_data.d)
-    x = sock.recv(k)
-    if x == b'':
-        return x
-
-    sock_data.nr += 1
-    sock_data.d += x
-    if len(x) < k:
-        # Added some more bytes to body; not done yet.
-        return
-
-    # Body part is finished. This record is complete.
-    z = decode(sock_data.d, sock_data.e)  # This is the Python value of this record.
-    t = perf_counter() - sock_data.t        # time taken
-    nr = sock_data.nr                     # number of reads taken
-
-    sock_data.d = b''
-    sock_data.n = None
-    sock_data.e = None
-    sock_data.t = None
-    sock_data.nr = 0
-
-    return {'data': z, 'time': t, 'reads': nr}
+    return rid, decode(data, encoder)
 
 
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
@@ -264,7 +170,7 @@ class SocketServer(EnforceOverrides):
                 break
             await asyncio.sleep(1)
 
-    async def handle_request(self, data, writer):
+    async def handle_request(self, data):
         # In one connection, "one round of interactions"
         # if for server to receive a request and send back a response.
         # This method handles one such round.
@@ -273,40 +179,8 @@ class SocketServer(EnforceOverrides):
 
         # Simple echo.
         await asyncio.sleep(0.5)
-        await write_record(writer, data, encoder=self._encoder)
+        return data
         # Subclass reimplementation: don't forget `encoder` in this call.
-
-        # In case of exception, if one wants to pass the exception object
-        # to the client, send `RemoteException(e)` with `encoder='pickle'`.
-
-    async def set_server_option(self, name: str, value, *, writer) -> None:
-        if name == 'encoder':
-            self._encoder = value
-            await write_record(writer, 'OK', encoder=self._encoder)
-            return
-        await write_record(
-            writer,
-            RemoteException(ValueError(f"unknown option '{name}'")),
-            encoder='pickle')
-
-    async def get_server_info(self, name: str, *, writer) -> None:
-        # Subclass should override and implement server info entries as needed.
-        await write_record(
-            writer,
-            RemoteException(ValueError(f'unknown info item `{name}`')),
-            encoder='pickle')
-
-    async def run_server_command(self, name: str, *args, writer, **kwargs) -> None:
-        if name == 'shutdown':
-            assert not args
-            assert not kwargs
-            self._to_shutdown = True
-            await write_record(writer, 'OK', encoder=self._encoder)
-            return
-        await write_record(
-            writer,
-            RemoteException(ValueError(f'unknown command `{name}`')),
-            encoder='pickle')
 
     async def _handle_connection(self, reader, writer):
         # This is called upon a new connection that is openned
@@ -318,35 +192,30 @@ class SocketServer(EnforceOverrides):
             addr = writer.get_extra_info('sockname')
         logger.debug('connection %r openned from client', addr)
         self._n_connections += 1
+        sem = asyncio.Semaphore(32)
+        tasks = set()
+
+        async def _handle_request(request_id, data):
+            try:
+                z = await self.handle_request(data)
+            except Exception as e:
+                if not isinstance(e, RemoteException):
+                    e = RemoteException(e)
+                await write_record(writer, request_id, e, encoder='pickle')
+            else:
+                await write_record(writer, request_id, z, encoder=self._encoder)
+
         while True:
             # Infinite loop to handle requests on this connection
             # until the connection is closed by the client.
             try:
-                data = await read_record(reader)
+                rid, data = await read_record(reader)
             except asyncio.IncompleteReadError:
                 # Client has closed the connection.
                 break
-
-            if isinstance(data, dict):
-                if 'run_server_command' in data:
-                    await self.run_server_command(
-                        data['run_server_command'],
-                        *data['args'],
-                        writer=writer,
-                        **data['kwargs'])
-                    continue
-                elif 'set_server_option' in data:
-                    await self.set_server_option(
-                        data['set_server_option'],
-                        data['value'],
-                        writer=writer)
-                    continue
-                elif 'get_server_info' in data:
-                    assert len(data) == 1
-                    await self.get_server_info(data['get_server_info'], writer=writer)
-                    continue
-
-            await self.handle_request(data, writer)
+            async with sem:
+                t = asyncio.create_task(_handle_request(rid, data))
+                t.add_done_callback(lambda fut: tasks.remove(fut))
 
         writer.close()
         logger.debug('connection %r closed from client', addr)
@@ -388,24 +257,17 @@ class SocketClient(EnforceOverrides):
             self._host = host
             self._port = int(port)
 
-        self._backlog = backlog
         self._max_connections = max_connections or MAX_THREADS
         self._connection_timeout = connection_timeout
         self._encoder = 'orjson'  # encoder when sending requests.
-        self._to_shutdown = False
-        self._in_queue = None
-        self._sel = None
-        self._socks = set()
-        self._executor = None
+        self._to_shutdown = asyncio.Event()
+        self._executor = concurrent.futures.ThreadPoolExecutor()
         self._tasks = []
+        self._pending_requests = queue.Queue(backlog)
+        self._active_requests = {}
 
     def __enter__(self):
-        self._in_queue = queue.Queue(self._backlog)
-        self._sel = selectors.DefaultSelector()
-        self._executor = concurrent.futures.ThreadPoolExecutor()
-        for _ in range(self._max_connections):
-            self._open_connection()
-        self._tasks.append(self._executor.submit(self._send_recv))
+        self._tasks.append(self._executor.submit(self._open_connections))
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
@@ -421,104 +283,51 @@ class SocketClient(EnforceOverrides):
             logger.error(msg)
             # print(msg)
 
-        if self._socks:
-            self._to_shutdown = True
-            concurrent.futures.wait(self._tasks)
-            self._executor.shutdown()
-            for sock in self._socks:
-                self._sel.unregister(sock)
-                sock.close()
-                logger.debug('connection %r closed at client', sock)
-            self._sel.close()
-            self._socks = set()
+        self._to_shutdown.set()
+        concurrent.futures.wait(self._tasks)
+        self._executor.shutdown()
 
-    def _open_connection(self):
-        if self._socket_type == 'tcp':
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setblocking(False)
-            t0 = perf_counter()
+    def _open_connections(self):
+        async def _keep_sending(writer):
+            inqueue = self._pending_requests
             while True:
-                status = sock.connect_ex((self._host, self._port))
-                if status == 0:
-                    break
-                if perf_counter() - t0 > self._connection_timeout:
-                    raise ConnectionError('failed to connect to server')
-                time.sleep(random.uniform(0.2, 2))
-        else:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.setblocking(False)
-            t0 = perf_counter()
+                x, fut = inqueue.get()
+
+
+        async def _open_connection():
+            try:
+                if self._socket_type == 'tcp':
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(self._host, self._port),
+                        self._connection_timeout)
+                else:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_unix_connection(self._socket_path),
+                        self._connection_timeout)
+            except asyncio.TimeoutError as e:
+                print(e)
+                raise
+            # logger.debug('connection %r openned to server', sock)
             while True:
-                status = sock.connect_ex(self._socket_path)
-                if status == 0:
-                    break
-                if perf_counter() - t0 > self._connection_timeout:
-                    raise ConnectionError('failed to connect to server')
-                time.sleep(random.uniform(0.2, 2))
-        # To set buffer size, use `socket.setsockopt`.
-        events = selectors.EVENT_READ | selectors.EVENT_WRITE
-        self._sel.register(
-            sock, events,
-            data=SimpleNamespace(
-                q=queue.Queue(512),  # input-data and future
-                d=b'',               # bytes read so far for the next record
-                n=None,              # length of the next record
-                e=None,              # encoder of the next send_record
-                nr=0,                # number of reads taken to finish the record
-                t=None,              # time taken to read the record.
-                # `n` and `e` are in the 'header' part of the payload, ended
-                # by '\n'.
-                # Once `n` and `e` have been resolved, `d` will be reset
-                # to exclude the header bytes, i.e. the bytes for `n` and `e`.
-            )
-        )
-        self._socks.add(sock)
-        logger.debug('connection %r openned to server', sock)
+                in_queue = self._in_queue
+                x, fut = in_queue.get()
+                await write_record(writer, x)
+                resp = await read_record(reader)
+                fut.set_result((x, resp))
+
+        async def _main():
+            tasks = [_open_connection() for _ in range(self._max_connections)]
+            await asyncio.gather(*tasks)
+
+        asyncio.run(_main())
 
     def _enqueue(self, x):
         fut = concurrent.futures.Future()
         # `x` is the payload to send.
         # `fut` will hold the corresponding response to be received.
         # Every request will get a response from the server.
-        self._in_queue.put((x, fut))
+        self._pending_requests.put((x, fut))
         return fut
-
-    def _send_recv(self):
-        # TODO: consider doing reading and writing in separate threads.
-        data_in = self._in_queue
-        sel = self._sel
-        socks = self._socks
-        while True:
-            for key, mask in sel.select(timeout=None):
-                sock = key.fileobj
-                if mask & selectors.EVENT_READ:
-                    z = recv_record_inc(sock, key.data)
-                    if z == b'':
-                        sel.unregister(sock)
-                        sock.close()
-                        socks.remove(sock)
-                        continue
-                    if z is None:
-                        continue
-
-                    # The next (x, fut) item in the queue of this connection
-                    # must be the request that corresponds to this response
-                    # that has just been received.
-                    x, fut = key.data.q.get()
-                    fut.set_result((x, z))
-                    continue
-                if mask & selectors.EVENT_WRITE:
-                    try:
-                        x, fut = data_in.get_nowait()
-                    except queue.Empty:
-                        pass
-                    else:
-                        send_record(sock, x, encoder=self._encoder)
-                        # The same connection will get response
-                        # to this request in order.
-                        key.data.q.put((x, fut))
-            if self._to_shutdown:
-                break
 
     def request(self, data, *, timeout: Optional[Union[int, float]] = None) -> Optional[dict]:
         # If caller does not want result, pass in `timeout=0`.
@@ -532,22 +341,6 @@ class SocketClient(EnforceOverrides):
         # of `recv_record_inc`. Same for the method `stream`.
         # This could raise Timeout error. The user would not be able
         # to get the result. Do not cancel the future.
-
-    def set_server_option(self, name: str, value, *, timeout=0):
-        return self.request(
-            {'set_server_option': name, 'value': value},
-            timeout=timeout)
-
-    def get_server_info(self, name: str, *, timeout=None):
-        return self.request({'get_server_info': name}, timeout=timeout)
-
-    def run_server_command(self, name: str, *args, timeout=0, **kwargs):
-        return self.request(
-            {'run_server_command': name, 'args': args, 'kwargs': kwargs},
-            timeout=timeout)
-
-    def shutdown_server(self):
-        self.run_server_command('shutdown', timeout=0)
 
     def stream(self, data: Iterable, *,
                return_x: bool = False,
