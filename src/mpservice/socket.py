@@ -351,26 +351,20 @@ class SocketClient(EnforceOverrides):
             msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
             logger.error(msg)
 
-        print('client exit 1')
         self._prepare_shutdown.set()
         t0 = perf_counter()
-        print('client exit 2')
         while not self._pending_requests.empty():
             if perf_counter() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
-        print('client exit 3')
         while self._active_requests:
             if perf_counter() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
-        print('client exit 4')
         self._to_shutdown.set()
         concurrent.futures.wait(self._tasks)
-        print('client exit 5')
         self._executor.shutdown()
         self._pending_requests = None
-        print('client exit 6')
 
     def _open_connections(self):
         async def _keep_sending(writer):
@@ -403,7 +397,7 @@ class SocketClient(EnforceOverrides):
                     continue
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
-                x, fut = active[req_id]
+                x, fut = active.pop(req_id)
                 fut.set_result((x, data))
 
         async def _open_connection(k):

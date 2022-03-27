@@ -30,7 +30,6 @@ def run_my_server():
 
 
 def test_simple():
-    config_logger(level='info')   # this is for the server running in another process
     mp = multiprocessing.get_context('spawn')
     server = mp.Process(target=run_my_server)
     server.start()
@@ -38,21 +37,12 @@ def test_simple():
         assert client.request(23) == 46
         assert client.request('abc') == 'abcabc'
         data = range(10)
-        print(9)
         for x, y in zip(data, client.stream(data)):
             assert y == x * 2
         for x, y in zip(data, client.stream(data, return_x=True)):
             assert (y[0], y[1]) == (x, x * 2)
-
-        print(11)
-
         client.shutdown_server()
-        print(12)
-
-    print(13)
-
     server.join()
-    print(14)
 
 
 # This is a demo implementation.
@@ -100,31 +90,36 @@ def double(x):
 
 
 def run_mp_server():
+    config_logger(level='info')   # this is for the server running in another process
     server = MPSocketServer(SimpleServer(double), path='/tmp/sock_abc')
     asyncio.run(server.run())
 
 
-def _test_mpserver():
-    from zpz.logging import config_logger
-    config_logger(level='info')   # this is for the server running in another process
+def test_mpserver():
     mp = multiprocessing.get_context('spawn')
     server = mp.Process(target=run_mp_server)
     server.start()
     with MySocketClient(path='/tmp/sock_abc') as client:
+        print('mpserver 1')
         assert client.request(23) == 46
+        print('mpserver 2')
         assert client.request('abc') == 'abcabc'
+        print('mpserver 3')
 
         data = range(10)
         for x, y in zip(data, client.stream(data)):
             assert y == x * 2
+        print('mpserver 4')
 
         client.request(
             {'set_server_option': 'timeout', 'value': (0.1, 1)})
 
         for x, y in zip(data, client.stream(data, return_x=True)):
             assert y == (x, x * 2)
+        print('mpserver 5')
 
         client.shutdown_server()
+        print('mpserver 6')
 
     server.join()
 
