@@ -505,13 +505,7 @@ class SocketClient(EnforceOverrides):
                     # must be the request that corresponds to this response
                     # that has just been received.
                     x, fut = key.data.q.get()
-                    try:
-                        fut.set_result((x, z))
-                    except concurrent.futures.InvalidStateError:
-                        print('already cancelled')
-                        assert fut.cancelled()
-                        # The requester did not expect response, and had cancelled
-                        # the Future in `request`.
+                    fut.set_result((x, z))
                     continue
                 if mask & selectors.EVENT_WRITE:
                     try:
@@ -530,17 +524,14 @@ class SocketClient(EnforceOverrides):
         # If caller does not want result, pass in `timeout=0`.
         fut = self._enqueue(data)
         if timeout is not None and timeout <= 0:
-            fut.cancel()
-            return None
-        try:
-            return fut.result(timeout)[1]
-            # `[0]` is the input `data`. In this method, there is no need
-            # to return the input, because the caller has it in hand.
-            # The return is the dict that is returned at the end
-            # of `recv_record_inc`. Same for the method `stream`.
-        except concurrent.futures.TimeoutError:
-            fut.cancel()
-            raise
+            return
+        return fut.result(timeout)[1]
+        # `[0]` is the input `data`. In this method, there is no need
+        # to return the input, because the caller has it in hand.
+        # The return is the dict that is returned at the end
+        # of `recv_record_inc`. Same for the method `stream`.
+        # This could raise Timeout error. The user would not be able
+        # to get the result. Do not cancel the future.
 
     def set_server_option(self, name: str, value, *, timeout=0):
         return self.request(
