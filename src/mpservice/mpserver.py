@@ -73,7 +73,6 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
-from .socket import SocketServer, write_record
 from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue
 
 
@@ -610,13 +609,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             backlog, return_x=return_x, return_exceptions=return_exceptions)
         to_stop = threading.Event()
 
-        def _stop_async_thread():
-            print('stopping the loop')
-            to_stop.set()
-            while loop.is_running():
-                time.sleep(0.01)
-
-        results.add_done_callback(_stop_async_thread)
+        results.add_done_callback(to_stop.set)
 
         t = self._thread_pool.submit(_async_thread, loop, to_stop)
         t.add_done_callback(self._thread_task_done_callback)
@@ -1056,46 +1049,3 @@ class SimpleServer(SequentialServer):
                          batch_size=batch_size,
                          func=func,
                          **kwargs)
-
-
-# This is a demo implementation.
-# Since this is so simple, user may choose to create their own
-# implementation from scratch.
-class MPSocketServer(SocketServer):
-    def __init__(self, server: MPServer, **kwargs):
-        super().__init__(**kwargs)
-        self._server = server
-        self._enqueue_timeout, self._total_timeout = server._resolve_timeout()
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}({repr(self._server)})'
-
-    def __str__(self):
-        return self.__repr__()
-
-    @overrides
-    async def set_server_option(self, name: str, value):
-        if name == 'timeout':
-            self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
-                enqueue_timeout=value[0], total_timeout=value[1])
-            return
-        await super().set_server_option(name, value)
-
-    @overrides
-    async def before_startup(self):
-        self._server.__enter__()
-
-    @overrides
-    async def after_shutdown(self):
-        self._server.__exit__(None, None, None)
-
-    @overrides
-    async def handle_request(self, data, writer):
-        try:
-            y = await self._server.async_call(
-                data, enqueue_timeout=self._enqueue_timeout,
-                total_timeout=self._total_timeout)
-            await write_record(writer, y, encoder=self._encoder)
-        except Exception:
-            y = RemoteException()
-            await write_record(writer, y, encoder='pickle')

@@ -22,7 +22,7 @@ def test_exception():
 
     y = q.get()
     assert isinstance(y, RemoteException)
-    assert str(y) == 'RemoteException: wrong value!'
+    assert str(y) == 'ValueError: wrong value!'
 
     print('')
     y.print()

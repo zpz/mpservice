@@ -22,17 +22,26 @@ class RemoteException(Exception):
     info.
 
     Example:
-        try:
-            a = 0 / 1
-            return a
-        except:
-            return RemoteException()
+
+            try:
+                a = 0 / 1
+                return a
+            except:
+                return RemoteException()
+
+        This is equivalent to
+
+            try:
+                a = 0 / 1
+                return a
+            except exception as e:
+                return RemoteException(e)
 
         # In another process, this object, say `x`, is retrieved from a queue.
         # Then,
 
-        if isinstance(x, RemoteException):
-            raise x
+            if isinstance(x, RemoteException):
+                raise x
 
     The printout looks as if the exception has occurred this way:
 
@@ -88,7 +97,7 @@ class RemoteException(Exception):
         )
 
     def __str__(self):
-        return f"{self.__class__.__name__}: {self.exc_value.__str__()}"
+        return f"{self.exc_type.__name__}: {self.exc_value.__str__()}"
 
     def __setstate__(self, data):
         # TODO: I tried to customize `__getstate__` as well,
