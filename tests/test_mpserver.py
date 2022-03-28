@@ -10,7 +10,6 @@ from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout, RemoteException,
 )
-from mpservice.socket import SocketClient
 from mpservice.streamer import Stream
 
 

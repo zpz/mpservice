@@ -1,3 +1,9 @@
+Release 0.10.4b1
+================
+
+- Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
+
+
 Release 0.10.3.post1, post2, post3, post4, post5
 ================================================
 

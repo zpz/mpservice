@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Union, Optional
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, FutureIterQueue, MAX_THREADS
+from .util import get_docker_host_ip, is_exception, FutureIterQueue, MAX_THREADS
 from .remote_exception import RemoteException
 
 logger = logging.getLogger(__name__)
@@ -120,6 +120,32 @@ async def run_unix_server(conn_handler: Callable, path: str):
         await server.serve_forever()
 
 
+async def open_tcp_connection(host, port, *, timeout=None):
+    t0 = perf_counter()
+    while True:
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            return reader, writer
+        except ConnectionRefusedError:
+            if timeout is not None:
+                if perf_counter() - t0 > timeout:
+                    raise
+            await asyncio.sleep(0.1)
+
+
+async def open_unix_connection(path, *, timeout=None):
+    t0 = perf_counter()
+    while True:
+        try:
+            reader, writer = await asyncio.open_unix_connection(path)
+            return reader, writer
+        except (ConnectionRefusedError, FileNotFoundError):
+            if timeout is not None:
+                if perf_counter() - t0 > timeout:
+                    raise
+            await asyncio.sleep(0.1)
+
+
 class SocketServer(EnforceOverrides):
     def __init__(self, *,
                  path: str = None,
@@ -130,6 +156,8 @@ class SocketServer(EnforceOverrides):
         '''
         `backlog`: max concurrent in-progress requests per connection.
             (Note, the client may open many connections.)
+            This "concurrency" is in terms of concurrent calls to
+            `handle_request`.
         '''
         if path:
             assert not host
@@ -191,26 +219,31 @@ class SocketServer(EnforceOverrides):
                     os.unlink(self._path)
                 logger.info('server %s is stopped', self)
                 break
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
 
         # Subclasses of `SocketServer` and `SocketClient` for a particular
         # application should design a message convention for the client
         # to tell the server to shut down, and for the server to act
         # accordingly.
 
-    async def handle_request(self, data):
-        # Subclass should override this method to do whatever they need to do
-        # about the request data `data` and return the response.
-        # The response should be serializable by the encoder.
-        # To be safe, return a object of Python native types.
-        # If `None` is returned, the response will be "OK".
-        # If exception is raised in this method, appropriate `RemoteException`
-        # object will be sent in the response.
-        # The method could also proactively return a `RemoteException` object.
+    async def handle_request(self, data: dict):
+        '''
+        Subclass should override this method to do whatever they need to do
+        about the request data `data` and return the response.
+        The response should be serializable by the encoder.
+        To be safe, return a object of Python native types.
+        If `None` is returned, the response will be "OK".
+        If exception is raised in this method, appropriate `RemoteException`
+        object will be sent in the response.
+        The method could also proactively return a `RemoteException` object.
+
+        `data`: a dict with element 'data'. More elements may be added
+        in the future.
+        '''
 
         # Simple echo.
         await asyncio.sleep(0.5)
-        return data
+        return data['data']
         # Subclass reimplementation: don't forget `encoder` in this call.
 
     async def _handle_connection(self, reader, writer):
@@ -222,7 +255,7 @@ class SocketServer(EnforceOverrides):
         else:
             addr = writer.get_extra_info('peername')
         self._n_connections += 1
-        logger.info('connection %d openned from client %r', self._n_connections, addr)
+        logger.info('connection %d is openned from client %r', self._n_connections, addr)
         reqs = asyncio.Queue(self._backlog)
 
         async def _keep_receiving():
@@ -236,7 +269,7 @@ class SocketServer(EnforceOverrides):
                         return
                     continue
                 # If `asyncio.IncompleteReadError` is raised, let it propage.
-                t = asyncio.create_task(self.handle_request(data))
+                t = asyncio.create_task(self.handle_request({'data': data}))
                 await reqs.put((req_id, t))
                 # The queue size will restrict how many concurrent calls
                 # to `handle_request` can be in progress.
@@ -248,7 +281,7 @@ class SocketServer(EnforceOverrides):
                 except asyncio.QueueEmpty:
                     if self.to_shutdown:
                         return
-                    await asyncio.sleep(0.005)
+                    await asyncio.sleep(0.0023)
                     continue
                 try:
                     z = await t
@@ -273,7 +306,8 @@ class SocketServer(EnforceOverrides):
             await tres
 
         writer.close()
-        logger.debug('connection %r closed from client', addr)
+        await writer.wait_closed()
+        logger.info('connection %d from client %r is closed', self._n_connections, addr)
         self._n_connections -= 1
 
 
@@ -292,7 +326,7 @@ class SocketClient(EnforceOverrides):
         `connection_timeout`: how many seconds to wait while connecting to the server.
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
-        `backlog`: queue size for in-progress requests.
+        `backlog`: size of quque for in-progress requests.
         '''
         # Experiments showed `max_connections` can be up to 200.
         # This needs to be improved.
@@ -336,7 +370,19 @@ class SocketClient(EnforceOverrides):
 
     def __enter__(self):
         self._pending_requests = queue.Queue(self._backlog)
-        self._tasks.append(self._executor.submit(self._open_connections))
+        q = queue.Queue()
+        self._tasks.append(self._executor.submit(self._open_connections, q))
+        n = 0
+        while n < self._num_connections:
+            z = q.get()
+            if z == 'OK':
+                n += 1
+            if is_exception(z):
+                self._to_shutdown.set()
+                concurrent.futures.wait(self._tasks)
+                self._executor.shutdown()
+                raise z
+        logger.info('client %s is ready', self)
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
@@ -366,7 +412,7 @@ class SocketClient(EnforceOverrides):
         self._executor.shutdown()
         self._pending_requests = None
 
-    def _open_connections(self):
+    def _open_connections(self, q: queue.Queue):
         async def _keep_sending(writer):
             pending = self._pending_requests
             active = self._active_requests
@@ -389,7 +435,7 @@ class SocketClient(EnforceOverrides):
             to_shutdown = self._to_shutdown
             while True:
                 try:
-                    req_id, data = await read_record(reader, timeout=0.005)
+                    req_id, data = await read_record(reader, timeout=0.0015)
                     req_id = int(req_id)
                 except asyncio.TimeoutError:
                     if to_shutdown.is_set():
@@ -398,30 +444,34 @@ class SocketClient(EnforceOverrides):
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
                 x, fut = active.pop(req_id)
-                fut.set_result((x, data))
+                fut.set_result((x, {'data': data}))
 
         async def _open_connection(k):
-            t0 = perf_counter()
-            while True:
-                try:
-                    if self._path:
-                        reader, writer = await asyncio.open_unix_connection(self._path)
-                    else:
-                        reader, writer = await asyncio.open_connection(self._host, self._port)
-                    addr = writer.get_extra_info('peername')
-                    logger.info('connection %d openned to server %r', k+1, addr)
-                    break
-                except ConnectionRefusedError:
-                    if perf_counter() - t0 > self._connection_timeout:
-                        raise
-                    await asyncio.sleep(0.1)
+            try:
+                if self._path:
+                    reader, writer = await open_unix_connection(
+                        self._path, timeout=self._connection_timeout)
+                else:
+                    reader, writer = await open_tcp_connection(
+                        self._host, self._port, timeout=self._connection_timeout)
+            except Exception as e:
+                q.put(e)
+                return
+            q.put('OK')
+            addr = writer.get_extra_info('peername')
+            logger.info('connection %d to server %r is openned', k + 1, addr)
             tw = asyncio.create_task(_keep_sending(writer))
             tr = asyncio.create_task(_keep_receiving(reader))
             try:
-                await asyncio.gather(tr, tw)
+                await tr
             except asyncio.IncompleteReadError:
                 # Propagated from `tr` indicating server has closed the connection.
                 tw.cancel()
+            else:
+                await tw
+            writer.close()
+            await writer.wait_closed()
+            logger.info('connection %d to server %r is closed', k + 1, addr)
 
         async def _main():
             tasks = [_open_connection(i) for i in range(self._num_connections)]
@@ -446,8 +496,8 @@ class SocketClient(EnforceOverrides):
 
     def request(self, data, *, timeout: Optional[Union[int, float]] = None) -> Optional[dict]:
         '''
-        Return the dict that is returned at the end
-        of `recv_record_inc`. Same for the method `stream`.
+        Return a dict with element 'data', and ponentially other elements.
+        Same for the method `stream`.
 
         This could raise `concurrent.futures.TimeoutError`.
         That means result is not available in the specified time,
@@ -455,6 +505,8 @@ class SocketClient(EnforceOverrides):
         However the user handles the exception, it will not affect
         the server's response to the request. The user will not be
         able to resume the wait for the result.
+
+        If caller does not need the response, use `timeout=0`.
         '''
         fut = self._enqueue(data)
         if timeout is not None and timeout <= 0:
@@ -467,6 +519,12 @@ class SocketClient(EnforceOverrides):
                return_x: bool = False,
                return_exceptions: bool = False,
                ):
+        '''
+        If `return_x` is `True`, return a stream of `(x, y)` tuples,
+        where `x` is the input data, and `y` is a dict with element 'data'.
+        If `return_x` is `False`, return a stream of `y`.
+        If `return_exceptions` is `True`, `y` could be an Exception object.
+        '''
         results = FutureIterQueue(maxsize=self._backlog,
                                   return_x=return_x,
                                   return_exceptions=return_exceptions)

@@ -73,7 +73,6 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
-from .socket import SocketServer, write_record
 from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue
 
 

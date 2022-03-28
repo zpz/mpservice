@@ -11,6 +11,7 @@ from zpz.logging import config_logger
 class MySocketServer(SocketServer):
     @overrides
     async def handle_request(self, data):
+        data = data['data']
         if data == 'shutdown_server':
             self.to_shutdown = True
             return
@@ -34,13 +35,13 @@ def test_simple():
     server = mp.Process(target=run_my_server)
     server.start()
     with MySocketClient(path='/tmp/sock_abc') as client:
-        assert client.request(23) == 46
-        assert client.request('abc') == 'abcabc'
+        assert client.request(23)['data'] == 46
+        assert client.request('abc')['data'] == 'abcabc'
         data = range(10)
         for x, y in zip(data, client.stream(data)):
-            assert y == x * 2
-        for x, y in zip(data, client.stream(data, return_x=True)):
-            assert (y[0], y[1]) == (x, x * 2)
+            assert y['data'] == x * 2
+        for x, (yx, yy) in zip(data, client.stream(data, return_x=True)):
+            assert (yx, yy['data']) == (x, x * 2)
         client.shutdown_server()
     server.join()
 
@@ -62,6 +63,7 @@ class MPSocketServer(SocketServer):
 
     @overrides
     async def handle_request(self, data):
+        data = data['data']
         if isinstance(data, dict):
             if 'set_server_option' in data:
                 if data['set_server_option'] == 'timeout':
@@ -70,6 +72,9 @@ class MPSocketServer(SocketServer):
                     self._enqueue_timeout, self._total_timeout = self._server._resolve_timeout(
                         enqueue_timeout=t1, total_timeout=t2)
                     return
+        if data == 'shutdown_server':
+            self.to_shutdown = True
+            return
 
         return await self._server.async_call(
             data, enqueue_timeout=self._enqueue_timeout,
@@ -100,26 +105,18 @@ def test_mpserver():
     server = mp.Process(target=run_mp_server)
     server.start()
     with MySocketClient(path='/tmp/sock_abc') as client:
-        print('mpserver 1')
-        assert client.request(23) == 46
-        print('mpserver 2')
-        assert client.request('abc') == 'abcabc'
-        print('mpserver 3')
+        assert client.request(23)['data'] == 46
+        assert client.request('abc')['data'] == 'abcabc'
 
         data = range(10)
         for x, y in zip(data, client.stream(data)):
-            assert y == x * 2
-        print('mpserver 4')
+            assert y['data'] == x * 2
 
         client.request(
             {'set_server_option': 'timeout', 'value': (0.1, 1)})
 
         for x, y in zip(data, client.stream(data, return_x=True)):
-            assert y == (x, x * 2)
-        print('mpserver 5')
+            assert (y[0], y[1]['data']) == (x, x * 2)
 
         client.shutdown_server()
-        print('mpserver 6')
-
     server.join()
-
