@@ -44,6 +44,15 @@ def is_async(func):
     )
 
 
+def full_class_name(cls):
+    if not isinstance(cls, type):
+        cls = cls.__class__
+    mod = cls.__module__
+    if mod is None or mod == 'builtins':
+        return cls.__name__
+    return mod + '.' + cls.__name__
+
+
 def logger_thread(q: multiprocessing.Queue):
     '''
     In main thread, start another thread with this function as `target`.

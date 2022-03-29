@@ -1,7 +1,8 @@
-Release 0.10.4b1
+Release 0.10.4
 ================
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
+- Rewrote `RemoteException`, especially for pickle-safety.
 
 
 Release 0.10.3.post1, post2, post3, post4, post5
