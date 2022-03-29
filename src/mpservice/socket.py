@@ -274,6 +274,10 @@ class SocketServer(EnforceOverrides):
                 # The queue size will restrict how many concurrent calls
                 # to `handle_request` can be in progress.
 
+        # `write_record` needs to be called sequentially because it's not atomic;
+        # that's why we don't use `add_done_callback` on the Futures to do
+        # response writing.
+
         async def _keep_responding():
             while True:
                 try:
@@ -437,6 +441,8 @@ class SocketClient(EnforceOverrides):
                 try:
                     req_id, data = await read_record(reader, timeout=0.0015)
                     req_id = int(req_id)
+                    if not is_exception(data):
+                        data = {'data': data}
                 except asyncio.TimeoutError:
                     if to_shutdown.is_set():
                         return
@@ -444,7 +450,7 @@ class SocketClient(EnforceOverrides):
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
                 x, fut = active.pop(req_id)
-                fut.set_result((x, {'data': data}))
+                fut.set_result((x, data))
 
         async def _open_connection(k):
             try:
@@ -511,9 +517,12 @@ class SocketClient(EnforceOverrides):
         fut = self._enqueue(data)
         if timeout is not None and timeout <= 0:
             return
-        return fut.result(timeout)[1]
+        y = fut.result(timeout)[1]
         # `[0]` is the input `data`. In this method, there is no need
         # to return the input, because the caller has it in hand.
+        if is_exception(y):
+            raise y
+        return y
 
     def stream(self, data: Iterable, *,
                return_x: bool = False,

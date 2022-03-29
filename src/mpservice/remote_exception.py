@@ -1,5 +1,9 @@
+import importlib
 import sys
 import traceback
+import warnings
+
+from .util import full_class_name
 
 
 # TODO
@@ -62,62 +66,140 @@ class RemoteException(Exception):
     and make it behave differently from the original class in a few places.
 
     To get the original exception object, reach for the `exc_value` attribute.
+
+    Efforts are made to support pickling; a pair of`to_dict/from_dict` methods
+    further enable using other serializations.
+    One peculiar case is that the producing environment used a custom
+    exception class that is not available in the consuming environment;
+    this is handled by the pickling support and `to_dict/from_dict`.
     '''
 
     def __init__(self, exc: BaseException = None, /):
         if exc is None:
-            self.exc_type, self.exc_value, tb = sys.exc_info()
+            exc_type, exc_value, tb = sys.exc_info()
         else:
             if type(exc) is type:
                 exc = exc()
-            self.exc_type, self.exc_value, tb = type(
-                exc), exc, exc.__traceback__
-        self.tb_exc_value = traceback.TracebackException(
-            self.exc_type, self.exc_value, tb
-        )
+            exc_type = type(exc)
+            exc_value = exc
+            tb = exc.__traceback__
 
-        self.__cause__ = Exception(self.format())
-        # This special attribute is not in `self.__dict__`
-        # and will not be pickled. This attribute makes the `raise`
-        # printout look like this:
+        self._exc_name = exc_type.__name__
+        self._exc_fullname = full_class_name(exc_type)
+        self._exc_repr = repr(exc_value)
+        self._exc_str = str(exc_value)
+        self._exc_args = exc_value.args
+
+        tb = traceback.TracebackException(exc_type, exc_value, tb)
+        tb = ''.join(tb.format(chain=True)).strip('\n')
+        if exc_type is RemoteException:
+            tb = exc_value._exc_tb + [tb]
+        else:
+            tb = [tb]
+        self._exc_tb = tb
+
+        # TODO: how to use the __cause__ attribute with a `self.exc_value`
+        # that has a traceback properly attached?
+
+        # There's a special attribute __cause__, which is not in `self.__dict__`.
+        # This attribute makes the `raise` printout look like this:
         #
         #   ....
         #
         #   The above exception was the direct cause of the following exception:
         #
         #   ....
+        # We are not using this attribute. The difficulty lies in attaching
+        # a traceback object to `self.exc_value`.
+        # Instead, we directly control the printout via customizing sys.excepthook.
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self._exc_repr})"
+
+    def __str__(self):
+        return f"{self._exc_name}: {self._exc_str}"
 
     @property
     def args(self):
-        return self.exc_value, self.exc_value.args
+        return (self.exc_value, )
 
-    def __repr__(self):
-        return '{}({!r})'.format(
-            self.__class__.__name__, self.exc_value
-        )
+    def to_dict(self):
+        return self.__dict__
 
-    def __str__(self):
-        return f"{self.exc_type.__name__}: {self.exc_value.__str__()}"
+    @classmethod
+    def from_dict(cls, state):
+        obj = cls.__new__(cls)
+        obj.__setstate__(state)
+        return obj
 
-    def __setstate__(self, data):
-        # TODO: I tried to customize `__getstate__` as well,
-        # but for unknown reasons the method did not get called.
-        super().__setstate__(data)
-        self.__cause__ = Exception(self.format())
+    def __reduce__(self):
+        return (Exception.__new__, (self.__class__,), self.to_dict())
+        # Customize the first 2 elements to be sure `__init__` is not called
+        # during unpickling, b/c the exception object expected by `__init__`
+        # may be unavailable in the unpickling environment.
+        # The 3rd element is the input to `__setstate__`.
+
+        # `Exception.__reduce__` is defined, hence `__getstate__` is never called.
+        # Don't try to define `__getstate__` in order to customize its pickling.
 
     @property
-    def stack(self):
-        # Return a `traceback.StackSummary` object
-        return self.tb_exc_value.stack
+    def exc_type(self):
+        fullname = self._exc_fullname
+        try:
+            if '.' not in fullname:
+                exc_type = eval(fullname)
+            else:
+                names = fullname.split('.')
+                if len(names) == 2 and names[0] == '__main__':
+                    __main__ = sys.modules['__main__']
+                    exc_type = getattr(__main__, names[1])
+                else:
+                    mod = '.'.join(names[:-1])
+                    try:
+                        m = sys.modules[mod]
+                    except KeyError:
+                        m = importlib.import_module(mod)
+                    exc_type = getattr(m, names[-1])
 
-    def format(self, *, chain=True):
-        '''
-        Return the traceback str of the original exception.
-        If one needs further control over the format of printing,
-        one may use `self.tb_exc_value.format` directly.
-        '''
-        z = ''.join(self.tb_exc_value.format(chain=chain))
-        return z.strip('\n')
+        except (NameError, ModuleNotFoundError, AttributeError) as e:
+            warnings.warn(str(e))
+            exc_type = Exception
 
-    def print(self, *, chain=True):
-        print(self.format(chain=chain), file=sys.stderr)
+        return exc_type
+
+    @property
+    def exc_value(self):
+        exc_type = self.exc_type
+        if exc_type is Exception and self._exc_name != 'Exception':
+            val = exc_type(self._exc_fullname, *self._exc_args)
+        else:
+            val = exc_type(*self._exc_args)
+        return val
+
+    def format(self) -> str:
+        delim = "\n\nThe above exception was the direct cause of the following exception:\n\n"
+        return delim.join(self._exc_tb)
+
+    def print(self):
+        print(self._exc_tb, file=sys.stderr)
+
+
+_excepthook_ = sys.excepthook
+
+
+def _my_excepthook(type_, value, tb):
+    # Customize the printout upon `raise RemoteException(...)`.
+    # This works in the default Python console but may not work in other
+    # interactive shells such as `ptpython`, `ipython`.
+    #
+    #  https://stackoverflow.com/q/1261668/6178706
+    #
+    if type_ is RemoteException:
+        print("{}\n\n{}\n".format(
+            value.format(),
+            "The above exception was the direct cause of the following exception:"),
+            file=sys.stderr)
+    _excepthook_(type_, value, tb)
+
+
+sys.excepthook = _my_excepthook
