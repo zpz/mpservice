@@ -92,10 +92,9 @@ class RemoteException(Exception):
 
         tb = traceback.TracebackException(exc_type, exc_value, tb)
         tb = ''.join(tb.format(chain=True)).strip('\n')
-        if exc_type is RemoteException:
-            tb = exc_value._exc_tb + [tb]
-        else:
-            tb = [tb]
+        tb = [tb]
+        if issubclass(exc_type, RemoteException):
+            tb = exc_value._exc_tb + tb
         self._exc_tb = tb
 
         # TODO: how to use the __cause__ attribute with a `self.exc_value`
@@ -181,7 +180,7 @@ class RemoteException(Exception):
         return delim.join(self._exc_tb)
 
     def print(self):
-        print(self._exc_tb, file=sys.stderr)
+        print(self.format(), file=sys.stderr)
 
 
 _excepthook_ = sys.excepthook
