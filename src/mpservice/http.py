@@ -72,6 +72,7 @@ def make_server(
         workers=workers,
         reload=debug and isinstance(app, str),
         **kwargs)
+
     server = uvicorn.Server(config=config)
 
     return server
