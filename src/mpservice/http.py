@@ -25,7 +25,7 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='auto',
-        workers=1,
+        workers: int = 1,
         **kwargs,
 ):
     '''

@@ -16,7 +16,7 @@ HOST = '0.0.0.0'
 PORT = 8000
 LOCALHOST = f'http://0.0.0.0:{PORT}'
 #LOCALHOST = f'http://{HOST}:{PORT}'
-SHUTDOWN_MSG = "server shutdown as requested"
+SHUTDOWN_MSG = "server shutdown"
 
 
 def make_app():
@@ -38,11 +38,11 @@ async def test_shutdown():
     app = make_app()
     server = make_server(app, host=HOST, port=PORT)
 
-    async def shutdown(request):
-        server.should_exit = True
-        return PlainTextResponse(SHUTDOWN_MSG)
+    # async def shutdown(request):
+    #     server.should_exit = True
+    #     return PlainTextResponse(SHUTDOWN_MSG)
 
-    app.add_route('/shutdown', shutdown, ['POST'])
+    # app.add_route('/shutdown', shutdown, ['POST'])
 
     service = asyncio.create_task(server.serve())
     await asyncio.sleep(1)
@@ -88,11 +88,11 @@ def _run_app():
     app = make_app()
     server = make_server(app, host=HOST, port=PORT)
 
-    async def shutdown(request):
-        server.should_exit = True
-        return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
+    # async def shutdown(request):
+    #     server.should_exit = True
+    #     return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
 
-    app.add_route('/shutdown', shutdown, ['POST'])
+    # app.add_route('/shutdown', shutdown, ['POST'])
     server.run()
 
 

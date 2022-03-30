@@ -8,12 +8,12 @@ import time
 import traceback
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from time import perf_counter
-from typing import Callable, Iterable, Union, Optional
+from typing import Iterable, Union, Optional, Sequence, Callable, Awaitable, Any
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, FutureIterQueue, MAX_THREADS
+from .util import get_docker_host_ip, is_exception, is_async, FutureIterQueue, MAX_THREADS
 from .remote_exception import RemoteException
 
 logger = logging.getLogger(__name__)
@@ -146,12 +146,44 @@ async def open_unix_connection(path, *, timeout=None):
             await asyncio.sleep(0.1)
 
 
-class SocketServer(EnforceOverrides):
+class SocketApplication(EnforceOverrides):
     def __init__(self, *,
+                 on_startup: Sequence[Callable] = None,
+                 on_shutdown: Sequence[Callable] = None,
+                 ):
+        self.on_startup = on_startup or []
+        self.on_shutdown = on_shutdown or []
+        self._routes = {}
+
+    def add_route(self, path: str,
+                  route: Union[Callable[[Any], Awaitable[Any]], Callable[[], Awaitable[Any]]]):
+        '''
+        `route` is an async function that takes a single positional arg,
+        and returns a response (which could be `None` if so desired).
+        The response should be serializable by the encoder.
+        To be safe, return a object of Python native types.
+        If exception is raised in this method, appropriate `RemoteException`
+        object will be sent in the response.
+        The method could also proactively return a `RemoteException` object.
+        '''
+        self._routes[path] = route
+
+    async def handle_request(self, path: str, data: Any = None):
+        if data is None:
+            return await self._routes[path]()
+        return await self._routes[path](data)
+
+
+# Usually user should not customize this class.
+class SocketServer(EnforceOverrides):
+    def __init__(self,
+                 app: SocketApplication,
+                 *,
                  path: str = None,
                  host: str = None,
                  port: int = None,
                  backlog: int = None,
+                 shutdown_path: str = '/shutdown',
                  ):
         '''
         `backlog`: max concurrent in-progress requests per connection.
@@ -159,6 +191,7 @@ class SocketServer(EnforceOverrides):
             This "concurrency" is in terms of concurrent calls to
             `handle_request`.
         '''
+        self.app = app
         if path:
             assert not host
             assert not port
@@ -178,6 +211,7 @@ class SocketServer(EnforceOverrides):
         self._backlog = backlog or 64
         self._encoder = 'orjson'  # encoder when sending responses
         self._n_connections = 0
+        self._shutdown_path = shutdown_path
         self.to_shutdown = False
 
     def __repr__(self):
@@ -188,63 +222,38 @@ class SocketServer(EnforceOverrides):
     def __str__(self):
         return self.__repr__()
 
-    async def before_startup(self):
-        pass
-
-    async def after_startup(self):
-        pass
-
-    async def before_shutdown(self):
-        pass
-
-    async def after_shutdown(self):
-        pass
-
     async def run(self):
-        await self.before_startup()
         if self._path:
             server_task = asyncio.create_task(
                 run_unix_server(self._handle_connection, self._path))
         else:
             server_task = asyncio.create_task(
                 run_tcp_server(self._handle_connection, self._host, self._port))
-        await self.after_startup()
+        for f in self.app.on_startup:
+            if is_async(f):
+                await f()
+            else:
+                f()
         logger.info('server %s is ready', self)
-        while True:
-            if self.to_shutdown and not self._n_connections:
-                await self.before_shutdown()
-                server_task.cancel()
-                await self.after_shutdown()
-                if self._path:
-                    os.unlink(self._path)
-                logger.info('server %s is stopped', self)
-                break
-            await asyncio.sleep(0.1)
-
-        # Subclasses of `SocketServer` and `SocketClient` for a particular
-        # application should design a message convention for the client
-        # to tell the server to shut down, and for the server to act
-        # accordingly.
-
-    async def handle_request(self, data: dict):
-        '''
-        Subclass should override this method to do whatever they need to do
-        about the request data `data` and return the response.
-        The response should be serializable by the encoder.
-        To be safe, return a object of Python native types.
-        If `None` is returned, the response will be "OK".
-        If exception is raised in this method, appropriate `RemoteException`
-        object will be sent in the response.
-        The method could also proactively return a `RemoteException` object.
-
-        `data`: a dict with element 'data'. More elements may be added
-        in the future.
-        '''
-
-        # Simple echo.
-        await asyncio.sleep(0.5)
-        return data['data']
-        # Subclass reimplementation: don't forget `encoder` in this call.
+        try:
+            while True:
+                if self.to_shutdown and not self._n_connections:
+                    raise Exception('shutdown requested')
+                await asyncio.sleep(0.1)
+        except BaseException as e:
+            # This should take care of keyboard interrupt and such.
+            # To be verified.
+            for f in self.app.on_shutdown:
+                if is_async(f):
+                    await f()
+                else:
+                    f()
+            server_task.cancel()
+            if self._path:
+                os.unlink(self._path)
+            logger.info('server %s is stopped', self)
+            if str(e) != 'shutdown requested':
+                raise
 
     async def _handle_connection(self, reader, writer):
         # This is called upon a new connection that is openned
@@ -269,10 +278,23 @@ class SocketServer(EnforceOverrides):
                         return
                     continue
                 # If `asyncio.IncompleteReadError` is raised, let it propage.
-                t = asyncio.create_task(self.handle_request({'data': data}))
-                await reqs.put((req_id, t))
-                # The queue size will restrict how many concurrent calls
-                # to `handle_request` can be in progress.
+                path = data[0]
+                data = data[1]
+                if path == self._shutdown_path:
+                    t = asyncio.Future()
+                    await reqs.put((req_id, t))
+                    self.to_shutdown = True
+                    t.set_result(None)
+                    break
+                else:
+                    if data is None:
+                        f = self.app.handle_request(path)
+                    else:
+                        f = self.app.handle_request(path, data)
+                    t = asyncio.create_task(f)
+                    await reqs.put((req_id, t))
+                    # The queue size will restrict how many concurrent calls
+                    # to `handle_request` can be in progress.
 
         # `write_record` needs to be called sequentially because it's not atomic;
         # that's why we don't use `add_done_callback` on the Futures to do
@@ -289,8 +311,6 @@ class SocketServer(EnforceOverrides):
                     continue
                 try:
                     z = await t
-                    if z is None:
-                        z = 'OK'
                 except Exception as e:
                     if isinstance(e, RemoteException):
                         z = e
@@ -313,6 +333,15 @@ class SocketServer(EnforceOverrides):
         await writer.wait_closed()
         logger.info('connection %d from client %r is closed', self._n_connections, addr)
         self._n_connections -= 1
+
+
+def make_server(app: SocketApplication, **kwargs):
+    return SocketServer(app, **kwargs)
+
+
+def run_app(app, **kwargs):
+    server = make_server(app, **kwargs)
+    asyncio.run(server.run())
 
 
 class SocketClient(EnforceOverrides):
@@ -389,7 +418,7 @@ class SocketClient(EnforceOverrides):
         logger.info('client %s is ready', self)
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
         if exc_type:
             msg = "Exiting {} with exception: {}\n{}".format(
                 self.__class__.__name__, exc_type, exc_value,
@@ -432,7 +461,8 @@ class SocketClient(EnforceOverrides):
                     continue
                 req_id = id(fut)
                 await write_record(writer, req_id, x, encoder=encoder)
-                active[req_id] = (x, fut)
+                active[req_id] = (x[1], fut)
+                # `x[0]` is path, `x[1]` is data.
 
         async def _keep_receiving(reader):
             active = self._active_requests
@@ -441,8 +471,6 @@ class SocketClient(EnforceOverrides):
                 try:
                     req_id, data = await read_record(reader, timeout=0.0015)
                     req_id = int(req_id)
-                    if not is_exception(data):
-                        data = {'data': data}
                 except asyncio.TimeoutError:
                     if to_shutdown.is_set():
                         return
@@ -488,23 +516,20 @@ class SocketClient(EnforceOverrides):
         # If `_main` raises exception, it will be propagated here,
         # hence stopping this thread.
 
-    def _enqueue(self, x):
+    def _enqueue(self, path: str, data):
         if not self._pending_requests:
             raise Exception("Client is not yet started. Please use it in a context manager")
         if self._prepare_shutdown.is_set() or self._to_shutdown.is_set():
             raise Exception("Client is closed")
         fut = concurrent.futures.Future()
-        # `x` is the payload to send.
+        # `data` is the payload to send.
         # `fut` will hold the corresponding response to be received.
         # Every request will get a response from the server.
-        self._pending_requests.put((x, fut))
+        self._pending_requests.put(((path, data), fut))
         return fut
 
-    def request(self, data, *, timeout: Optional[Union[int, float]] = None) -> Optional[dict]:
+    def request(self, path: str, data=None, *, timeout: Optional[Union[int, float]] = None):
         '''
-        Return a dict with element 'data', and ponentially other elements.
-        Same for the method `stream`.
-
         This could raise `concurrent.futures.TimeoutError`.
         That means result is not available in the specified time,
         but the request may have well been sent to the server.
@@ -513,8 +538,16 @@ class SocketClient(EnforceOverrides):
         able to resume the wait for the result.
 
         If caller does not need the response, use `timeout=0`.
+
+        In some cases, the request does not need to send data, e.g. if the request
+        if for certain info query. In such situations, the corresponding function on
+        the server side takes no argument, and in this call to `request`, `data` should be `None`.
+
+        Example:
+
+            request('/shutdown', timeout=0)
         '''
-        fut = self._enqueue(data)
+        fut = self._enqueue(path, data)
         if timeout is not None and timeout <= 0:
             return
         y = fut.result(timeout)[1]
@@ -524,7 +557,7 @@ class SocketClient(EnforceOverrides):
             raise y
         return y
 
-    def stream(self, data: Iterable, *,
+    def stream(self, path: str, data: Iterable, *,
                return_x: bool = False,
                return_exceptions: bool = False,
                ):
@@ -543,7 +576,7 @@ class SocketClient(EnforceOverrides):
             data_in = data
             fut_out = results
             for x in data_in:
-                fut = en(x)
+                fut = en(path, x)
                 fut_out.put(fut)
             fut_out.close()
 
