@@ -287,10 +287,7 @@ class SocketServer(EnforceOverrides):
                     t.set_result(None)
                     break
                 else:
-                    if data is None:
-                        f = self.app.handle_request(path)
-                    else:
-                        f = self.app.handle_request(path, data)
+                    f = self.app.handle_request(path, data)
                     t = asyncio.create_task(f)
                     await reqs.put((req_id, t))
                     # The queue size will restrict how many concurrent calls
