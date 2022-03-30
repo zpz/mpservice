@@ -16,7 +16,7 @@ HOST = '0.0.0.0'
 PORT = 8000
 LOCALHOST = f'http://0.0.0.0:{PORT}'
 #LOCALHOST = f'http://{HOST}:{PORT}'
-SHUTDOWN_MSG = "server shutdown as requested"
+SHUTDOWN_MSG = "server shutdown"
 
 
 def make_app():

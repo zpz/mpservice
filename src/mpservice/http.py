@@ -25,7 +25,7 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='auto',
-        workers=1,
+        workers: int = 1,
         **kwargs,
 ):
     '''
@@ -72,6 +72,7 @@ def make_server(
         workers=workers,
         reload=debug and isinstance(app, str),
         **kwargs)
+
     server = uvicorn.Server(config=config)
 
     return server

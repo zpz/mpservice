@@ -353,6 +353,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     def __init__(self, *,
                  max_queue_size: int = None,
                  cpus: Sequence[int] = None,
+                 sequential_start: bool = True,
                  ):
         '''
         `cpus`: specifies the cpu for the "main process",
@@ -365,6 +366,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
+        self._sequential_start = sequential_start
         self._should_stop = self.MP_CLASS.Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
@@ -379,33 +381,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # Pin this coordinating thread to the specified CPUs.
             psutil.Process().cpu_affinity(cpus=cpus)
 
-    def __del__(self):
-        if self.started:
-            self.stop()
-
     def __enter__(self):
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
-        # or `start`/`stop`.
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        if exc_type:
-            msg = "Exiting {} with exception: {}\n{}".format(
-                self.__class__.__name__, exc_type, exc_value,
-            )
-            if isinstance(exc_value, RemoteException):
-                msg = "{}\n\n{}\n\n{}".format(
-                    msg, exc_value.format(),
-                    "The above exception was the direct cause of the following exception:")
-            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
-            logger.error(msg)
-            # print(msg)
-
-        self.stop()
-
-    def start(self, sequential: bool = True):
         assert self._servlets
         self.started += 1
         if self.started > 1:
@@ -416,7 +394,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
-        if sequential:
+        if self._sequential_start:
             # Start the servlets one by one.
             n = len(self._servlets)
             k = 0
@@ -450,7 +428,21 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
-    def stop(self):
+        return self
+
+    def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
+        if exc_type:
+            msg = "Exiting {} with exception: {}\n{}".format(
+                self.__class__.__name__, exc_type, exc_value,
+            )
+            if isinstance(exc_value, RemoteException):
+                msg = "{}\n\n{}\n\n{}".format(
+                    msg, exc_value.format(),
+                    "The above exception was the direct cause of the following exception:")
+            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
+            logger.error(msg)
+            # print(msg)
+
         assert self.started > 0
         self.started -= 1
         if self.started > 0:
