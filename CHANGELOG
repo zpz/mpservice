@@ -1,4 +1,4 @@
-Release 0.10.4b1,2,3
+Release 0.10.4b1,2,3,4
 ================
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
@@ -6,6 +6,8 @@ Release 0.10.4b1,2,3
 - Rewrote `RemoteException`, especially for pickle-safety.
 - `SocketServer` shutdown handling.
 - Removed `MPServer.{start, stop}`; use `__enter__/__exit__`.
+- New function `mpservice.streamer.stream` (the class `Stream` stays).
+- Improvement to `util.FutureIterQueue`.
 
 
 Release 0.10.3.post1, post2, post3, post4, post5

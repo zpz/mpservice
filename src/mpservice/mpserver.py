@@ -73,7 +73,7 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
-from .util import forward_logs, logger_thread, IterQueue, FutureIterQueue
+from .util import forward_logs, logger_thread, FutureIterQueue
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -503,7 +503,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # For streaming, "timeout" is not a concern.
         # The concern is overall throughput.
 
-        data_in_pipe = IterQueue(backlog)
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
 
@@ -511,31 +510,17 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             enqueue = self._call_enqueue
             for x in data_stream:
                 ff = Future()
-                results.put(ff)
                 try:
-                    uid, fut = enqueue(x, enqueue_timeout=600)
+                    _, fut = enqueue(x, enqueue_timeout=600)
                 except Exception as e:
-                    ff.set_result((x, e))
+                    ff = Future()
+                    ff.set_exception(e)
+                    results.put((x, ff))
                 else:
-                    fut.data['x'] = x
-                    data_in_pipe.put((uid, fut, ff))
-            data_in_pipe.close()
+                    results.put((x, fut))
             results.close()
 
-        def _wait():
-            wait_for_result = self._call_wait_for_result
-            for uid, fut, ff in data_in_pipe:
-                try:
-                    y = wait_for_result(uid, fut, total_timeout=3600)
-                except Exception as e:
-                    y = e
-                ff.set_result((fut.data['x'], y))
-
         t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(self._thread_task_done_callback)
-        self._thread_tasks[t] = None
-
-        t = self._thread_pool.submit(_wait)
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
@@ -562,52 +547,24 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # continue to hold the timeout settings meaningful.
         # https://stackoverflow.com/a/65780581/6178706
 
-        def _enqueue(q_out, loop):
+        def _enqueue(q_out):
             Future = concurrent.futures.Future
             enqueue = self._call_enqueue
-            run_coro = asyncio.run_coroutine_threadsafe
-            tasks = self._thread_tasks
-            cb = self._thread_task_done_callback
             for x in data_stream:
-                ff = Future()
-                q_out.put(ff)
                 try:
-                    uid, fut = enqueue(x, enqueue_timeout=enqueue_timeout)
+                    _, fut = enqueue(x, enqueue_timeout=enqueue_timeout)
                 except Exception as e:
-                    ff.set_result((x, e))
+                    ff = Future()
+                    ff.set_exception(e)
+                    q_out.put((x, ff))
                 else:
-                    t = run_coro(_wait(x, uid, fut, ff), loop=loop)
-                    t.add_done_callback(cb)
-                    tasks[t] = None
+                    q_out.put((x, fut))
             q_out.close()
 
-        async def _wait(x, uid, fut, ff):
-            try:
-                y = await self._async_call_wait_for_result(uid, fut, total_timeout=total_timeout)
-            except Exception as e:
-                y = e
-            ff.set_result((x, y))
-
-        def _async_thread(loop, to_stop: threading.Event):
-            async def foo():
-                while not to_stop.is_set():
-                    await asyncio.sleep(0.01)
-
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(foo())
-
-        loop = asyncio.new_event_loop()
         results = FutureIterQueue(
             backlog, return_x=return_x, return_exceptions=return_exceptions)
-        to_stop = threading.Event()
 
-        results.add_done_callback(to_stop.set)
-
-        t = self._thread_pool.submit(_async_thread, loop, to_stop)
-        t.add_done_callback(self._thread_task_done_callback)
-        self._thread_tasks[t] = None
-
-        t = self._thread_pool.submit(_enqueue, results, loop)
+        t = self._thread_pool.submit(_enqueue, results)
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 

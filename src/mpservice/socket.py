@@ -443,6 +443,7 @@ class SocketClient(EnforceOverrides):
         self._pending_requests = None
 
     def _open_connections(self, q: queue.Queue):
+
         async def _keep_sending(writer):
             pending = self._pending_requests
             active = self._active_requests
@@ -458,8 +459,7 @@ class SocketClient(EnforceOverrides):
                     continue
                 req_id = id(fut)
                 await write_record(writer, req_id, x, encoder=encoder)
-                active[req_id] = (x[1], fut)
-                # `x[0]` is path, `x[1]` is data.
+                active[req_id] = fut
 
         async def _keep_receiving(reader):
             active = self._active_requests
@@ -474,8 +474,11 @@ class SocketClient(EnforceOverrides):
                     continue
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
-                x, fut = active.pop(req_id)
-                fut.set_result((x, data))
+                fut = active.pop(req_id)
+                if is_exception(data):
+                    fut.set_exception(data)
+                else:
+                    fut.set_result(data)
 
         async def _open_connection(k):
             try:
@@ -547,12 +550,7 @@ class SocketClient(EnforceOverrides):
         fut = self._enqueue(path, data)
         if timeout is not None and timeout <= 0:
             return
-        y = fut.result(timeout)[1]
-        # `[0]` is the input `data`. In this method, there is no need
-        # to return the input, because the caller has it in hand.
-        if is_exception(y):
-            raise y
-        return y
+        return fut.result(timeout)
 
     def stream(self, path: str, data: Iterable, *,
                return_x: bool = False,
@@ -574,7 +572,7 @@ class SocketClient(EnforceOverrides):
             fut_out = results
             for x in data_in:
                 fut = en(path, x)
-                fut_out.put(fut)
+                fut_out.put((x, fut))
             fut_out.close()
 
         self._tasks.append(self._executor.submit(enqueue))

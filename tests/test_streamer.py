@@ -1,10 +1,11 @@
+import asyncio
 import math
 import random
 from time import sleep
 
 import pytest
 
-from mpservice._streamer import Stream, _default_peek_func
+from mpservice._streamer import Stream, _default_peek_func, stream
 
 
 def test_stream():
@@ -279,3 +280,47 @@ def test_chain():
          .drop_exceptions()
          )
     assert z.collect() == [1, 2, 3, 4, 5, 6]
+
+
+def test_stream_func_sync():
+    def double(x):
+        sleep(random.uniform(0.1, 0.3))
+        return x * 2
+
+    s = stream(range(200), double, concurrency=100)
+    for x, y in zip(range(200), s):
+        assert y == x * 2
+
+
+def test_stream_func_sync_with_error():
+    def double(x):
+        if x > 100:
+            raise ValueError(x)
+        sleep(random.uniform(0.1, 0.3))
+        return x * 2
+
+    with pytest.raises(ValueError):
+        s = stream(range(200), double, concurrency=100)
+        for x, y in zip(range(200), s):
+            assert y == x * 2
+
+
+def test_stream_func_async():
+    async def double(x):
+        await asyncio.sleep(random.uniform(0.1, 0.3))
+        return x * 2
+
+    s = stream(range(200), double, concurrency=100)
+    for x, y in zip(range(200), s):
+        assert y == x * 2
+
+
+def test_stream_func_async_ret_x():
+    async def double(x):
+        await asyncio.sleep(random.uniform(0.1, 0.3))
+        return x * 2
+
+    s = stream(range(200), double, concurrency=100, return_x=True)
+    for x, y in zip(range(200), s):
+        assert y == (x, x * 2)
+

@@ -36,12 +36,14 @@ test = [
     "coverage[toml]",
     "flake8",
     "httpx",
+    "locust",
     "mypy",
     "pylint",
     "pytest",
     "pytest-asyncio",
     "requests",
     "starlette",
+    "uvloop",
     "zpz",
 ]
 

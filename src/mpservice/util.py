@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import concurrent.futures
 import functools
 import inspect
 import logging
@@ -193,13 +194,12 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
     '''
     A queue that supports iteration over its elements.
 
-    In order to support iteration, it adds a special value
-    to indicate end of data, which is inserted by calling
-    the method `put_end`.
+    In order to support iteration, it has an attribute that
+    indicates whether there are more elements in the queue.
+    The attribute is marked `True` by the method `close`.
     '''
     GET_SLEEP = 0.00026
     PUT_SLEEP = 0.00015
-    NO_MORE_DATA = object()
 
     def __init__(self, maxsize: int, *,
                  downstream_crashed: EventUpstreamer = None,
@@ -210,6 +210,7 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
         self._downstream_crashed: EventUpstreamer = downstream_crashed
         self._upstream_error: ErrorBox = upstream_error
         self._closed: bool = False
+        self._finished: bool = False
         self._done_callbacks = []
 
     def __repr__(self):
@@ -371,42 +372,66 @@ class IterQueue(collections.abc.Iterator, EnforceOverrides):
                 f()
             except Exception as e:
                 logger.error(e)
+        self._finished = True
 
 
 class FutureIterQueue(IterQueue):
-    # Elements put in this object are `concurrent.futures.Future`
-    # or `asyncio.Future` objects. In either case, one can use
-    # either `__next__` or `__anext__` to iterate the stream.
-    # The user of the Future object takes some data `x` and produces a result `y`,
-    # then calls `fut.set_result((x, y))`. If any error happens, use the exception
-    # object as `y`.
-    def __init__(self, maxsize: int, *, return_x: bool = False, return_exceptions: bool = False, **kwargs):
+    '''
+    Elements put in this object are length-two tuples.
+    The first element is a data element `x`; the second element
+    is a `concurrent.futures.Future` or `asyncio.Future` object.
+    The Future object will hold the result of some I/O-bound operation
+    that takes `x` as input.
+    '''
+
+    def __init__(self, maxsize: int, *,
+                 return_x: bool = False,
+                 return_exceptions: bool = False,
+                 **kwargs):
         super().__init__(maxsize=maxsize, **kwargs)
         self._return_x = return_x
         self._return_exceptions = return_exceptions
 
     @overrides
     def get(self, block=True, timeout=None):
-        fut = super().get(block=block, timeout=timeout)
+        t0 = time.perf_counter()
+        x, fut = super().get(block=block, timeout=timeout)
         while not fut.done():
+            if timeout is not None and time.perf_counter() - t0 > timeout:
+                raise concurrent.futures.TimeoutError
             time.sleep(0.001)
-        x, y = fut.result()
-        if is_exception(y) and not self._return_exceptions:
-            self._run_done_callbacks()
-            raise y
-        if self._return_x:
-            return x, y
-        return y
+        try:
+            y = fut.result()
+        except Exception as e:
+            if self._return_exceptions:
+                if self._return_x:
+                    return x, e
+                else:
+                    return e
+            raise
+        else:
+            if self._return_x:
+                return x, y
+            return y
 
     @overrides
     async def aget(self, block=True, timeout=None):
-        fut = await super().aget(block=block, timeout=timeout)
+        t0 = time.perf_counter()
+        x, fut = await super().aget(block=block, timeout=timeout)
         while not fut.done():
+            if timeout is not None and time.perf_counter() - t0 > timeout:
+                raise concurrent.futures.TimeoutError
             await asyncio.sleep(0.001)
-        x, y = fut.result()
-        if is_exception(y) and not self._return_exceptions:
-            self._run_done_callbacks()
-            raise y
-        if self._return_x:
-            return x, y
-        return y
+        try:
+            y = fut.result()
+        except Exception as e:
+            if self._return_exceptions:
+                if self._return_x:
+                    return x, e
+                else:
+                    return e
+            raise
+        else:
+            if self._return_x:
+                return x, y
+            return y
