@@ -158,6 +158,7 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 
+import asyncio
 import collections.abc
 import concurrent.futures
 import functools
@@ -168,14 +169,14 @@ import traceback
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
-    Tuple, Type,
+    Tuple, Type, Any, Awaitable,
 )
 
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException
 from .util import (
-    is_exception, IterQueue, FutureIterQueue,
+    is_exception, is_async, IterQueue, FutureIterQueue,
     ErrorBox, EventUpstreamer, MAX_THREADS)
 
 
@@ -616,54 +617,21 @@ class ConcurrentTransformer(Stream):
             downstream_crashed=self._crashed,
             upstream_error=self._upstream_err,
         )
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(workers)
-        self._thread_tasks = {}
-        self._start()
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(1)
+        self._enqueue_task = self._thread_pool.submit(self._start)
 
     def _start(self):
-        def func(x, fut):
-            try:
-                y = self.func(x)
-            except Exception as e:
-                y = e
-            fut.set_result((x, y))
-
-        def cb(t):
-            try:
-                del self._thread_tasks[t]
-            except KeyError:
-                pass
-                # warnings.warn(f"the task {t} was already removed")
-                # TODO: understand why this would happen.
-
-        def _enqueue():
-            outstream = self._outstream
-            Future = concurrent.futures.Future
-            try:
-                for x in self._instream:
-                    fut = Future()
-                    t = self._thread_pool.submit(func, x, fut)
-                    t.add_done_callback(cb)
-                    self._thread_tasks[t] = 'func'
-                    outstream.put(fut)
-            except Exception as e:
-                self._upstream_err.set_exception(e)
-            outstream.close()
-
-        def cb_with_error(t):
-            try:
-                del self._thread_tasks[t]
-            except KeyError:
-                pass
-                # warnings.warn(f"the task {t} was already removed")
-                # TODO: understand why this would happen.
+        outstream = self._outstream
+        try:
+            for x in self._instream:
+                t = self._thread_pool.submit(self.func, x)
+                outstream.put((x, t))
+        except Exception as e:
+            self._upstream_err.set_exception(e)
+        outstream.close()
 
         # Where `add_done_callback` callbacks are called:
         #   https://stackoverflow.com/a/26021772/6178706
-
-        t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(cb_with_error)
-        self._thread_tasks[t] = 'enqueue'
 
     def __del__(self):
         self._thread_pool.shutdown()
@@ -675,3 +643,79 @@ class ConcurrentTransformer(Stream):
         except Exception:
             self._crashed.set()
             raise
+
+
+def _stream_sync(data, func: Callable[[Any], Any], concurrency, results):
+
+    # TODO: how to cancel in case of exceptions?
+
+    def _enqueue():
+        f = func
+        zz = results
+        pool = executor  # concurrent.futures.ThreadPoolExecutor(concurrency)
+        for x in data:
+            t = pool.submit(f, x)
+            zz.put((x, t))
+        zz.close()
+
+        # TODO: tricky. If this callback is set at the beginning of
+        # `_enqueue` or outside of it, it does not work. Need to understand.
+        # I think it has to do with keeping the object `pool` around.
+        zz.add_done_callback(pool.shutdown)
+
+    executor = concurrent.futures.ThreadPoolExecutor(concurrency + 1)
+    executor.submit(_enqueue)
+
+
+def _stream_async(data, func: Callable[[Any], Awaitable[Any]], concurrency, results):
+
+    def _enqueue():
+        async def main():
+            sem = asyncio.Semaphore(concurrency)
+            zz = results
+            ff = func
+            tasks = set()
+
+            def cb(t):
+                tasks.remove(t)
+
+            for x in data:
+                async with sem:
+                    t = asyncio.create_task(ff(x))
+                    tasks.add(t)
+                    t.add_done_callback(cb)
+                zz.put((x, t))
+            zz.close()
+
+            while tasks:
+                await asyncio.sleep(0.01)
+            while not zz._finished:
+                await asyncio.sleep(0.01)
+
+        asyncio.run(main())
+
+    executor = concurrent.futures.ThreadPoolExecutor(1)
+    executor.submit(_enqueue)
+
+    # results.add_done_callback(executor.shutdown)
+    # TODO: this causes issues; why?
+
+
+def stream(data: Iterable[Any],
+           func: Union[Callable[[Any], Any], Callable[[Any], Awaitable[Any]]],
+           *,
+           return_x: bool = False,
+           return_exceptions: bool = False,
+           backlog: int = 1024,
+           concurrency: int = MAX_THREADS,
+           ):
+    '''
+    `backlog`: how many elements can stay in the pipeline at the same time?
+    `concurrency`: how many calls to `fun` can be ongoing at the same time?
+    '''
+    results = FutureIterQueue(backlog, return_x=return_x, return_exceptions=return_exceptions)
+    if is_async(func):
+        _stream_async(data, func, concurrency, results)
+    else:
+        _stream_sync(data, func, concurrency, results)
+    return results
