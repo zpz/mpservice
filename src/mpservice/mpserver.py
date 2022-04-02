@@ -61,19 +61,19 @@ import multiprocessing
 import queue
 import threading
 import time
-import traceback
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
 from multiprocessing import synchronize, Queue
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import List, Type, Sequence, Union, Callable
 
 import psutil
 from overrides import EnforceOverrides, overrides
 
-from .remote_exception import RemoteException
-from .util import forward_logs, logger_thread, FutureIterQueue
+from .remote_exception import RemoteException, exit_err_msg
+from .util import forward_logs, logger_thread
+from ._streamer import PUT_SLEEP, GET_SLEEP
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -431,17 +431,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         return self
 
     def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
-        if exc_type:
-            msg = "Exiting {} with exception: {}\n{}".format(
-                self.__class__.__name__, exc_type, exc_value,
-            )
-            if isinstance(exc_value, RemoteException):
-                msg = "{}\n\n{}\n\n{}".format(
-                    msg, exc_value.format(),
-                    "The above exception was the direct cause of the following exception:")
-            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
+        msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
+        if msg:
             logger.error(msg)
-            # print(msg)
 
         assert self.started > 0
         self.started -= 1
@@ -495,80 +487,98 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                return_exceptions: bool = False,
                return_x: bool = False,
                backlog: int = 1024,
+               enqueue_timeout=None,
+               total_timeout=None,
                ):
         # The order of elements in the stream is preserved, i.e.,
         # elements in the output stream corresponds to elements
         # in the input stream in the same order.
 
-        # For streaming, "timeout" is not a concern.
+        # For streaming, "timeout" is usually not a concern.
         # The concern is overall throughput.
 
-        results = FutureIterQueue(
-            backlog, return_x=return_x, return_exceptions=return_exceptions)
+        enqueue_timeout, total_timeout = self._resolve_timeout(
+            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
+        tasks = queue.Queue(backlog)
+        nomore = object()
 
         def _enqueue():
             enqueue = self._call_enqueue
+            tt = tasks
+            ret_ex = return_exceptions
+            et = enqueue_timeout
+            should_stop = self._should_stop
             for x in data_stream:
-                ff = Future()
                 try:
-                    _, fut = enqueue(x, enqueue_timeout=600)
+                    uid, fut = enqueue(x, enqueue_timeout=et)
                 except Exception as e:
-                    ff = Future()
-                    ff.set_exception(e)
-                    results.put((x, ff))
-                else:
-                    results.put((x, fut))
-            results.close()
+                    if ret_ex:
+                        uid = None
+                        fut = Future()
+                        fut.set_exception(e)
+                    else:
+                        logger.error("exception '%r' happened for input '%s'", e, x)
+                        raise
+                while True:
+                    try:
+                        tt.put_nowait((x, uid, fut))
+                        break
+                    except queue.Full:
+                        if should_stop.is_set():
+                            return
+                        sleep(PUT_SLEEP)
+            while True:
+                try:
+                    tt.put_nowait(nomore)
+                    break
+                except queue.Full:
+                    if should_stop.is_set():
+                        return
+                    sleep(PUT_SLEEP)
 
         t = self._thread_pool.submit(_enqueue)
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
-        return results
+        _wait = self._call_wait_for_result
 
-    # After benchmarking in practice, one of `stream` and `stream2`
-    # will be removed, and the remaining one will be called `stream`.
-
-    def stream2(self, data_stream, /, *,
-                return_exceptions: bool = False,
-                return_x: bool = False,
-                backlog: int = 1024,
-                enqueue_timeout=None,
-                total_timeout=None
-                ):
-        # The order of elements in the stream is preserved, i.e.,
-        # elements in the output stream corresponds to elements
-        # in the input stream in the same order.
-
-        enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
-
-        # Use async tasks in another thread to do the 'wait'; this would
-        # continue to hold the timeout settings meaningful.
-        # https://stackoverflow.com/a/65780581/6178706
-
-        def _enqueue(q_out):
-            Future = concurrent.futures.Future
-            enqueue = self._call_enqueue
-            for x in data_stream:
+        while True:
+            while True:
                 try:
-                    _, fut = enqueue(x, enqueue_timeout=enqueue_timeout)
-                except Exception as e:
-                    ff = Future()
-                    ff.set_exception(e)
-                    q_out.put((x, ff))
+                    z = tasks.get_nowait()
+                    break
+                except queue.Empty:
+                    if t.done():
+                        if self._should_stop.is_set():
+                            return
+                        raise t.exception()
+                    sleep(GET_SLEEP)
+
+            if z is nomore:
+                break
+            x, uid, fut = z
+            if uid is None:
+                if return_x:
+                    yield x, fut.exception()
                 else:
-                    q_out.put((x, fut))
-            q_out.close()
-
-        results = FutureIterQueue(
-            backlog, return_x=return_x, return_exceptions=return_exceptions)
-
-        t = self._thread_pool.submit(_enqueue, results)
-        t.add_done_callback(self._thread_task_done_callback)
-        self._thread_tasks[t] = None
-
-        return results
+                    yield fut.exception()
+            else:
+                try:
+                    y = _wait(uid, fut, total_timeout=total_timeout)
+                except Exception as e:
+                    if return_exceptions:
+                        if return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    else:
+                        logger.error("exception '%r' happened for input '%s'", e, x)
+                        raise
+                else:
+                    if return_x:
+                        yield x, y
+                    else:
+                        yield y
 
     def _thread_task_done_callback(self, t):
         try:

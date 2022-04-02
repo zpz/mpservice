@@ -31,6 +31,10 @@ def test_simple():
             assert y == x * 2
         for x, y in zip(data, client.stream('/', data, return_x=True)):
             assert y == (x, x * 2)
+        for x, y in zip(data, client.stream('/', data, return_x=True)):
+            assert y == (x, x * 2)
+            if x > 5:
+                break
         client.request('/shutdown')
     server.join()
 
@@ -67,5 +71,5 @@ def test_mpserver():
         for x, y in zip(data, client.stream('/', data, return_x=True)):
             assert y == (x, x * 2)
 
-        client.request('/shutdown', timeout=0)
+        client.request('/shutdown', response_timeout=0)
     server.join()
