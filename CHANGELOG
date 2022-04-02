@@ -3,10 +3,11 @@ Release 0.10.4b1,2,3,4
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
 - Refactored socket server side to make its usage similar to a web app.
+- Refactored `mpservice._streamer` for much improved robustness and simlicity.
+- `Stream.transform` can be accept an async `func` as operator.
 - Rewrote `RemoteException`, especially for pickle-safety.
 - `SocketServer` shutdown handling.
 - Removed `MPServer.{start, stop}`; use `__enter__/__exit__`.
-- New function `mpservice.streamer.stream` (the class `Stream` stays).
 - Improvement to `util.FutureIterQueue`.
 
 

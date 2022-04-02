@@ -13,16 +13,17 @@ unbatching, buffering, filtering, logging, etc.
 Basic usage
 ===========
 
-In a typical use case, one starts with a `Stream` object, and calls
-its methods in a "chained" fashion:
+In a typical use case, one starts with a `Stream` object, place it under
+context management, and calls its methods in a "chained" fashion:
 
     data = range(100)
-    pipeline = (
-        Stream(data)
-        .batch(10)
-        .transform(my_op_that_takes_a_batch, workers=4)
-        .unbatch()
-        )
+    with Stream(data) as s:
+        pipeline = (
+            s
+            .batch(10)
+            .transform(my_op_that_takes_a_batch, concurrency=4)
+            .unbatch()
+            )
 
 After this setup, there are several ways to use the object `pipeline`.
 
@@ -159,31 +160,32 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 
 import asyncio
-import collections.abc
 import concurrent.futures
-import functools
 import logging
 import random
 import threading
 import traceback
+from queue import Queue, Full as QueueFull, Empty as QueueEmpty
+from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
-    Tuple, Type, Any, Awaitable,
+    Tuple, Awaitable,
 )
 
-from overrides import EnforceOverrides, overrides
+from overrides import EnforceOverrides, overrides, final
 
-from .remote_exception import RemoteException
-from .util import (
-    is_exception, is_async, IterQueue, FutureIterQueue,
-    ErrorBox, EventUpstreamer, MAX_THREADS)
+from .remote_exception import RemoteException, exit_err_msg
+from .util import is_exception, is_async, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
-TT = TypeVar('TT')
+T = TypeVar('T')      # indicates input data element
+TT = TypeVar('TT')    # indicates output after an op on `T`
+
+GET_SLEEP = 0.00026
+PUT_SLEEP = 0.00015
 
 
 def _default_peek_func(i, x):
@@ -192,8 +194,102 @@ def _default_peek_func(i, x):
     print(x)
 
 
-class StreamMixin(EnforceOverrides):
+class Stream(EnforceOverrides):
+    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
+        if isinstance(instream, Stream):
+            self._instream = instream
+            self._thread_pool = instream._thread_pool
+            self._started = instream._started
+            self._stopped = instream._stopped
+        else:
+            if hasattr(instream, '__next__'):
+                self._instream = instream
+            else:
+                self._instream = iter(instream)
+            self._thread_pool: concurrent.futures.ThreadPoolExecutor = None
+            self._started = threading.Event()
+            self._stopped = threading.Event()
+        self.index = 0
+        # Index of the upcoming element; 0 based.
+        # This is also the count of finished elements.
+
+    def __enter__(self):
+        if self._thread_pool is None:
+            self._thread_pool = concurrent.futures.ThreadPoolExecutor()
+        self._started.set()
+        return self
+
+    def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
+        self._stopped.set()
+        self._started.clear()
+        msg = exit_err_msg(self, exc_type, exc_value, exc_tb)
+        if msg:
+            logger.error(msg)
+        self._thread_pool.shutdown()
+
+    @final
+    def __iter__(self):
+        if not self._started.is_set():
+            raise RuntimeError("iteration must be started within context manager, i.e. within a 'with ...:' block")
+        return self
+
+    def _get_next(self):
+        '''Produce the next element in the stream.
+
+        Subclasses refine this method rather than `__next__`.
+        In a subclass, almost always it will not get the next element
+        from `_instream`, but rather from some object that holds
+        results of transformations on its `_instream`.
+        Subclass should take efforts to handle exceptions in this method.
+        '''
+        return next(self._instream)
+
+    @final
+    def __next__(self):
+        z = self._get_next()
+        self.index += 1
+        return z
+
+    def collect(self) -> list:
+        '''
+        Gather the stream in a list. DO NOT do this on big data.
+        '''
+        return list(self)
+
+    def drain(self) -> Tuple[int, int]:
+        '''Drain off the stream.
+
+        Return a tuple of the number of elements processed
+        as well as the number of exceptions (hopefully 0!).
+
+        The number of exceptions could be non-zero only if
+        upstream transformers have set `return_exceptions` to True.
+        Otherwise, any exception would have propagated and
+        prevented this method from completing.
+        '''
+        n = 0
+        nexc = 0
+        for v in self:
+            n += 1
+            if is_exception(v):
+                nexc += 1
+        return n, nexc
+
+    def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
+        '''
+        `func`: a function that takes the data element index (`self.index`)
+            along with the element value, and returns `True` if the element
+            should be skipped, that is, not included in the output stream.
+        '''
+        return Dropper(self, func)
+
     def drop_exceptions(self):
+        '''
+        Used to skip exception objects that are produced in an upstream
+        transform that has `return_exceptions=True`. This way,
+        the previous op allows exceptions (i.e. do not crash), and
+        this op removes the exception objects from the output stream.
+        '''
         return self.drop_if(lambda i, x: is_exception(x))
 
     def drop_nones(self):
@@ -204,6 +300,10 @@ class StreamMixin(EnforceOverrides):
         return self.drop_if(lambda i, x: i < n)
 
     def keep_if(self, func: Callable[[int, T], bool]):
+        '''Keep an element in the stream only if a condition is met.
+
+        This is the opposite of `drop_if`.
+        '''
         return self.drop_if(lambda i, x: not func(i, x))
 
     def keep_every_nth(self, nth: int):
@@ -214,6 +314,32 @@ class StreamMixin(EnforceOverrides):
         assert 0 < frac <= 1
         rand = random.random
         return self.keep_if(lambda i, x: rand() < frac)
+
+    def head(self, n: int) -> Header:
+        '''
+        Takes the first `n` elements and ignore the rest.
+        '''
+        # This does not delegate to `keep`, because `keep`
+        # would need to walk throught the entire stream,
+        # which is not needed for `head`.
+        assert n > 0
+        return Header(self, n)
+
+    def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
+        '''Take a peek at the data element *before* it is sent
+        on for processing.
+
+        The function `func` takes the data index (`self.index`)
+        and the data element. Typical actions include print out
+        info or save the data for later inspection. Usually this
+        function should not modify the data element in the stream.
+
+        User has flexibilities in `func`, e.g. to not print anything
+        under certain conditions.
+        '''
+        if func is None:
+            func = _default_peek_func
+        return Peeker(self, func)
 
     def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None):
         assert nth > 0
@@ -270,99 +396,31 @@ class StreamMixin(EnforceOverrides):
 
         return self.peek(func)
 
-
-class Stream(collections.abc.Iterator, StreamMixin):
-    @classmethod
-    def register(cls, class_: Type[Stream], name: str):
-        def f(self, *args, **kwargs):
-            return class_(self, *args, **kwargs)
-
-        setattr(cls, name, f)
-
-    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
-        if isinstance(instream, Stream):
-            self._crashed = EventUpstreamer(instream._crashed)
-            # `self._crashed` is set when the current object encounters
-            # a problem; it also signals upstream that downstream has crashed.
-            self._instream = instream
-        else:
-            self._crashed = EventUpstreamer()
-            if hasattr(instream, '__next__'):
-                self._instream = instream
-            else:
-                self._instream = iter(instream)
-        self.index = 0
-        # Index of the upcoming element; 0 based.
-        # This is also the count of finished elements.
-
-    def __iter__(self):
-        return self
-
-    def _get_next(self):
-        # Subclasses refine this method rather than `__next__`.
-        return next(self._instream)
-
-    def __next__(self):
-        z = self._get_next()
-        self.index += 1
-        return z
-
-    def collect(self) -> list:
-        return list(self)
-
-    def drain(self) -> Union[int, Tuple[int, int]]:
-        '''Drain off the stream.
-
-        Return the number of elements processed.
-        When there are exceptions, return the total number of elements
-        as well as the number of exceptions.
-        '''
-        n = 0
-        nexc = 0
-        for v in self:
-            n += 1
-            if is_exception(v):
-                nexc += 1
-        if nexc:
-            return n, nexc
-        return n
-
     def batch(self, batch_size: int) -> Batcher:
-        '''Take elements from an input stream,
+        '''Bundle elements into batches, i.e. lists.
+
+        Take elements from an input stream,
         and bundle them up into batches up to a size limit,
         and produce the batches in an iterable.
 
-        The output batches are all of the specified size, except possibly the final batch.
-        There is no 'timeout' logic to produce a smaller batch.
+        The output batches are all of the specified size,
+        except possibly the final batch.
+        There is no 'timeout' logic to proceed eagerly with a partial batch .
         For efficiency, this requires the input stream to have a steady supply.
         If that is a concern, having a `buffer` on the input stream may help.
         '''
         return Batcher(self, batch_size)
 
     def unbatch(self) -> Unbatcher:
-        '''Reverse of "batch", turning a stream of batches into
-        a stream of individual elements.
+        '''Reverse of "batch".
+
+        Turn a stream of lists into a stream of individual elements.
+
+        This is usually used to correpond with a previous
+        `.batch()`, but that is not required. The only requirement
+        is that the input elements are lists.
         '''
         return Unbatcher(self)
-
-    def drop_if(self, func: Callable[[int, T], bool]) -> Dropper:
-        return Dropper(self, func)
-
-    def head(self, n: int) -> Header:
-        return Header(self, n)
-
-    def peek(self, func: Callable[[int, T], None] = None) -> Peeker:
-        '''Take a peek at the data element *before* it is sent
-        on for processing.
-
-        The function `func` takes the data index (0-based)
-        and the data element. Typical actions include print out
-        info or save the data for later inspection. Usually this
-        function should not modify the data element in the stream.
-        '''
-        if func is None:
-            func = _default_peek_func
-        return Peeker(self, func)
 
     def buffer(self, maxsize: int = None) -> Buffer:
         '''Buffer is used to stabilize and improve the speed of data flow.
@@ -374,28 +432,25 @@ class Stream(collections.abc.Iterator, StreamMixin):
         data. The buffer evens out unstabilities in the speeds of upstream
         production and downstream consumption.
         '''
-        if maxsize is None:
-            maxsize = 1024
-        else:
-            assert 1 <= maxsize <= 10_000
+        if not self._started.is_set():
+            raise RuntimeError("`buffer` requires the object to be in context manager")
         return Buffer(self, maxsize)
 
     def transform(self,
-                  func: Callable[[T], TT],
+                  func: Union[Callable[[T], TT], Callable[[T], Awaitable[TT]]],
                   *,
-                  workers: Optional[Union[int, str]] = None,
+                  concurrency: Optional[Union[int, str]] = None,
                   return_x: bool = False,
                   return_exceptions: bool = False,
-                  backlog: int = 1024,
-                  **func_args) -> Union[Transformer, ConcurrentTransformer]:
+                  **func_args) -> Transformer:
         '''Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
 
-        `func`: a sync function that takes a single input item
+        `func`: a sync or async function that takes a single input item
         as the first positional argument and produces a result.
         Additional keyword args can be passed in via `func_args`.
 
-        The outputs are in the order of the input elements in `self._instream`.
+        The outputs are in the order of the input elements.
 
         The main point of `func` does not have to be the output.
         It could rather be some side effect. For example,
@@ -406,34 +461,32 @@ class Stream(collections.abc.Iterator, StreamMixin):
         Exception objects (if `return_exceptions` is `True`), which may be
         counted, logged, or handled in other ways.
 
-        `workers`: max number of concurrent calls to `func`. By default
-        this is 0, i.e. there is no concurrency.
+        `concurrency`: max number of concurrent calls to `func`. By default
+        there is no concurrency, but this is usually *not* what you want,
+        because the point of this method is to run an I/O-bound operation
+        with concurrency.
 
-        `workers=0` and `workers=1` are different. The latter runs the
-        transformer in a separate thread whereas the former runs "inline".
+        `return_x`: if True, output stream will contain tuples `(x, y)`;
+        if False, output stream will contain `y` only.
 
-        When `workers = N > 0`, the worker threads are named 'transformer-0',
-        'transformer-1',..., 'transformer-<N-1>'.
+        `return_exceptions`: if True, exceptions raised by `func` will be
+        in the output stream as if they were regular results; if False,
+        they will propagate. Note that this does not absorbe exceptions
+        raised by previous components in the pipeline; it is concered about
+        exceptions raised by `func` only.
+
+        User may want to add a `buffer` to the output of this method,
+        esp if the `func` operations are slow.
         '''
-        if func_args:
-            func = functools.partial(func, **func_args)
-
-        if workers == 'max':
-            workers = MAX_THREADS
-
-        if workers is None or workers <= 1:
-            return Transformer(
-                self, func,
-                return_x=return_x,
-                return_exceptions=return_exceptions,
-            )
-
-        return ConcurrentTransformer(
-            self, func,
-            workers=workers,
+        if not self._started.is_set():
+            raise RuntimeError("`transform` requires the object to be in context manager")
+        return Transformer(
+            self,
+            func,
+            concurrency=concurrency,
             return_x=return_x,
             return_exceptions=return_exceptions,
-            backlog=backlog,
+            **func_args,
         )
 
 
@@ -517,52 +570,60 @@ class Peeker(Stream):
 
 
 class Buffer(Stream):
-    def __init__(self, instream: Stream, maxsize: int):
+    def __init__(self, instream: Stream, maxsize: int = None):
         super().__init__(instream)
-        assert 1 <= maxsize <= 10_000
+        if maxsize is None:
+            maxsize = 1024
+        else:
+            assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = IterQueue(maxsize, downstream_crashed=self._crashed)
-        self._upstream_err = None
-        self._thread = None
-        self._start()
+        self._q = Queue(maxsize)
+        self._nomore = object()
+        self._t = self._thread_pool.submit(self._start)
+        # This requires that `instream` is already context managed.
 
     def _start(self):
-        def foo(instream, q, crashed):
+        threading.current_thread().name = 'BufferThread'
+        q = self._q
+        instream = self._instream
+        stopped = self._stopped
+
+        for v in instream:
+            # If error happens in the line above,
+            # it will crash this thread and be reflected in the
+            # concurrent.futures.Future object.
+            while True:
+                try:
+                    q.put_nowait(v)
+                    break
+                except QueueFull:
+                    if stopped.is_set():
+                        return
+                    sleep(PUT_SLEEP)
+        while True:
             try:
-                for v in instream:
-                    if crashed.is_set():
-                        break
-                    q.put(v)
-                q.close()
-            except Exception as e:
-                # This should be exception while
-                # getting data from `instream`,
-                # not exception in the current object.
-                self._upstream_err = e
-                q.close()
-
-        self._thread = threading.Thread(
-            target=foo, args=(self._instream, self._q, self._crashed),
-            name='BufferThread')
-        self._thread.start()
-
-    def _stop(self):
-        if self._thread is not None:
-            self._thread.join()
-            self._thread = None
-
-    def __del__(self):
-        self._stop()
+                q.put_nowait(self._nomore)
+                break
+            except QueueFull:
+                if stopped.is_set():
+                    return
+                sleep(PUT_SLEEP)
 
     @overrides
     def _get_next(self):
-        try:
-            z = next(self._q)
-            return z
-        except StopIteration:
-            if self._upstream_err is not None:
-                raise self._upstream_err
-            raise
+        while True:
+            try:
+                z = self._q.get_nowait()
+                if z is self._nomore:
+                    raise StopIteration
+                return z
+            except QueueEmpty:
+                if self._t.done():
+                    if self._t.exception():
+                        raise self._t.exception()
+                    assert self._stopped.is_set()
+                    return
+                sleep(GET_SLEEP)
 
 
 class Transformer(Stream):
@@ -570,152 +631,116 @@ class Transformer(Stream):
                  instream: Stream,
                  func: Callable[[T], TT],
                  *,
+                 concurrency: Union[int, str] = None,
                  return_x: bool = False,
                  return_exceptions: bool = False,
+                 **func_args,
                  ):
         super().__init__(instream)
-        self.func = func
-        self.return_x = return_x
-        self.return_exceptions = return_exceptions
 
-    @overrides
-    def _get_next(self):
-        x = next(self._instream)
-        try:
-            y = self.func(x)
-        except Exception as e:
-            if self.return_exceptions:
-                y = e
-            else:
-                self._crashed.set()
-                raise
-        if self.return_x:
-            return x, y
-        return y
+        if concurrency is None:
+            concurrency = 1
+        elif concurrency == 'max':
+            concurrency = MAX_THREADS
+        else:
+            assert concurrency > 0
+        self._return_x = return_x
+        self._return_exceptions = return_exceptions
+        self._nomore = object()
+        self._tasks = Queue(concurrency)
 
+        if is_async(func):
+            self._t = self._thread_pool.submit(self._start_async, func, **func_args)
+        else:
+            self._t = self._thread_pool.submit(self._start_sync, func, **func_args)
 
-class ConcurrentTransformer(Stream):
-    def __init__(self,
-                 instream: Stream,
-                 func: Callable[[T], TT],
-                 *,
-                 workers: int,
-                 return_x: bool = False,
-                 return_exceptions: bool = False,
-                 backlog: int = 1024,
-                 ):
-        assert workers >= 1
-        super().__init__(instream)
-        self.func = func
-        self.return_x = return_x
-        self.return_exceptions = return_exceptions
-        self._upstream_err = ErrorBox()
-        self._outstream = FutureIterQueue(
-            backlog,
-            return_x=return_x,
-            return_exceptions=return_exceptions,
-            downstream_crashed=self._crashed,
-            upstream_error=self._upstream_err,
-        )
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(1)
-        self._enqueue_task = self._thread_pool.submit(self._start)
+    def _start_sync(self, func, **kwargs):
+        tasks = self._tasks
+        pool = self._thread_pool
+        stopped = self._stopped
+        for x in self._instream:
+            t = pool.submit(func, x, **kwargs)
+            while True:
+                try:
+                    tasks.put_nowait((x, t))
+                    break
+                except QueueFull:
+                    if stopped.is_set():
+                        return
+                    sleep(PUT_SLEEP)
+        while True:
+            try:
+                tasks.put_nowait(self._nomore)
+                break
+            except QueueFull:
+                if stopped.is_set():
+                    return
+                sleep(PUT_SLEEP)
 
-    def _start(self):
-        outstream = self._outstream
-        try:
-            for x in self._instream:
-                t = self._thread_pool.submit(self.func, x)
-                outstream.put((x, t))
-        except Exception as e:
-            self._upstream_err.set_exception(e)
-        outstream.close()
-
-        # Where `add_done_callback` callbacks are called:
-        #   https://stackoverflow.com/a/26021772/6178706
-
-    def __del__(self):
-        self._thread_pool.shutdown()
-
-    @overrides
-    def _get_next(self):
-        try:
-            return next(self._outstream)
-        except Exception:
-            self._crashed.set()
-            raise
-
-
-def _stream_sync(data, func: Callable[[Any], Any], concurrency, results):
-
-    # TODO: how to cancel in case of exceptions?
-
-    def _enqueue():
-        f = func
-        zz = results
-        pool = executor  # concurrent.futures.ThreadPoolExecutor(concurrency)
-        for x in data:
-            t = pool.submit(f, x)
-            zz.put((x, t))
-        zz.close()
-
-        # TODO: tricky. If this callback is set at the beginning of
-        # `_enqueue` or outside of it, it does not work. Need to understand.
-        # I think it has to do with keeping the object `pool` around.
-        zz.add_done_callback(pool.shutdown)
-
-    executor = concurrent.futures.ThreadPoolExecutor(concurrency + 1)
-    executor.submit(_enqueue)
-
-
-def _stream_async(data, func: Callable[[Any], Awaitable[Any]], concurrency, results):
-
-    def _enqueue():
+    def _start_async(self, func, **kwargs):
         async def main():
-            sem = asyncio.Semaphore(concurrency)
-            zz = results
+            tasks = self._tasks
             ff = func
-            tasks = set()
+            args = kwargs
+            stopped = self._stopped
 
-            def cb(t):
-                tasks.remove(t)
+            for x in self._instream:
+                t = asyncio.create_task(ff(x, **args))
+                while True:
+                    try:
+                        tasks.put_nowait((x, t))
+                        break
+                    except QueueFull:
+                        if stopped.is_set():
+                            return
+                        await asyncio.sleep(PUT_SLEEP)
+            while True:
+                try:
+                    tasks.put_nowait(self._nomore)
+                    break
+                except QueueFull:
+                    if stopped.is_set():
+                        return
+                    await asyncio.sleep(PUT_SLEEP)
 
-            for x in data:
-                async with sem:
-                    t = asyncio.create_task(ff(x))
-                    tasks.add(t)
-                    t.add_done_callback(cb)
-                zz.put((x, t))
-            zz.close()
-
-            while tasks:
-                await asyncio.sleep(0.01)
-            while not zz._finished:
-                await asyncio.sleep(0.01)
+            # If do not wait, `main` will exit, and unfinished tasks
+            # will be cancelled.
+            while not tasks.empty():
+                if stopped.is_set():
+                    return
+                await asyncio.sleep(0.001)
 
         asyncio.run(main())
 
-    executor = concurrent.futures.ThreadPoolExecutor(1)
-    executor.submit(_enqueue)
-
-    # results.add_done_callback(executor.shutdown)
-    # TODO: this causes issues; why?
-
-
-def stream(data: Iterable[Any],
-           func: Union[Callable[[Any], Any], Callable[[Any], Awaitable[Any]]],
-           *,
-           return_x: bool = False,
-           return_exceptions: bool = False,
-           backlog: int = 1024,
-           concurrency: int = MAX_THREADS,
-           ):
-    '''
-    `backlog`: how many elements can stay in the pipeline at the same time?
-    `concurrency`: how many calls to `fun` can be ongoing at the same time?
-    '''
-    results = FutureIterQueue(backlog, return_x=return_x, return_exceptions=return_exceptions)
-    if is_async(func):
-        _stream_async(data, func, concurrency, results)
-    else:
-        _stream_sync(data, func, concurrency, results)
-    return results
+    @overrides
+    def _get_next(self):
+        while True:
+            try:
+                z = self._tasks.get_nowait()
+                if z is self._nomore:
+                    raise StopIteration
+                break
+            except QueueEmpty:
+                if self._t.done():
+                    if self._t.exception():
+                        raise self._t.exception()
+                    assert self._stopped.is_set()
+                    return
+                sleep(GET_SLEEP)
+        x, fut = z
+        while not fut.done():
+            if self._stopped.is_set():
+                return
+            sleep(GET_SLEEP)
+        if fut.exception():
+            e = fut.exception()
+            if self._return_exceptions:
+                if self._return_x:
+                    return x, e
+                return e
+            logger.error("exception '%r' happened for input '%s'", e, x)
+            raise e
+        y = fut.result()
+        if self._return_x:
+            return x, y
+        return y

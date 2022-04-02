@@ -5,16 +5,16 @@ import os
 import queue
 import threading
 import time
-import traceback
 from pickle import dumps as pickle_dumps, loads as pickle_loads
-from time import perf_counter
-from typing import Iterable, Union, Optional, Sequence, Callable, Awaitable, Any
+from time import perf_counter, sleep
+from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, is_async, FutureIterQueue, MAX_THREADS
-from .remote_exception import RemoteException
+from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
+from .remote_exception import RemoteException, exit_err_msg
+from ._streamer import GET_SLEEP, PUT_SLEEP
 
 logger = logging.getLogger(__name__)
 
@@ -416,15 +416,8 @@ class SocketClient(EnforceOverrides):
         return self
 
     def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
-        if exc_type:
-            msg = "Exiting {} with exception: {}\n{}".format(
-                self.__class__.__name__, exc_type, exc_value,
-            )
-            if isinstance(exc_value, RemoteException):
-                msg = "{}\n\n{}\n\n{}".format(
-                    msg, exc_value.format(),
-                    "The above exception was the direct cause of the following exception:")
-            msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_traceback))}"
+        msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
+        if msg:
             logger.error(msg)
 
         self._prepare_shutdown.set()
@@ -516,7 +509,7 @@ class SocketClient(EnforceOverrides):
         # If `_main` raises exception, it will be propagated here,
         # hence stopping this thread.
 
-    def _enqueue(self, path: str, data):
+    def _enqueue(self, path: str, data, *, timeout=None):
         if not self._pending_requests:
             raise Exception("Client is not yet started. Please use it in a context manager")
         if self._prepare_shutdown.is_set() or self._to_shutdown.is_set():
@@ -525,10 +518,10 @@ class SocketClient(EnforceOverrides):
         # `data` is the payload to send.
         # `fut` will hold the corresponding response to be received.
         # Every request will get a response from the server.
-        self._pending_requests.put(((path, data), fut))
+        self._pending_requests.put(((path, data), fut), timeout=timeout)
         return fut
 
-    def request(self, path: str, data=None, *, timeout: Optional[Union[int, float]] = None):
+    def request(self, path: str, data=None, *, enqueue_timeout=None, response_timeout=None):
         '''
         This could raise `concurrent.futures.TimeoutError`.
         That means result is not available in the specified time,
@@ -545,16 +538,18 @@ class SocketClient(EnforceOverrides):
 
         Example:
 
-            request('/shutdown', timeout=0)
+            request('/shutdown', response_timeout=0)
         '''
-        fut = self._enqueue(path, data)
-        if timeout is not None and timeout <= 0:
+        fut = self._enqueue(path, data, timeout=enqueue_timeout)
+        if response_timeout is not None and response_timeout <= 0:
             return
-        return fut.result(timeout)
+        return fut.result(timeout=response_timeout)
 
     def stream(self, path: str, data: Iterable, *,
                return_x: bool = False,
                return_exceptions: bool = False,
+               enqueue_timeout=60,
+               response_timeout=60,
                ):
         '''
         If `return_x` is `True`, return a stream of `(x, y)` tuples,
@@ -562,18 +557,74 @@ class SocketClient(EnforceOverrides):
         If `return_x` is `False`, return a stream of `y`.
         If `return_exceptions` is `True`, `y` could be an Exception object.
         '''
-        results = FutureIterQueue(maxsize=self._backlog,
-                                  return_x=return_x,
-                                  return_exceptions=return_exceptions)
+        tasks = queue.Queue(self._backlog)
+        nomore = object()
 
-        def enqueue():
+        def _enqueue():
             en = self._enqueue
-            data_in = data
-            fut_out = results
-            for x in data_in:
-                fut = en(path, x)
-                fut_out.put((x, fut))
-            fut_out.close()
+            et = enqueue_timeout
+            tt = tasks
+            Future = concurrent.futures.Future
+            to_shutdown = self._to_shutdown
+            for x in data:
+                try:
+                    fut = en(path, x, timeout=et)
+                except Exception as e:
+                    if return_exceptions:
+                        fut = Future()
+                        fut.set_exception(e)
+                    else:
+                        logger.error("exception '%r' happened for input '%s'", e, x)
+                        raise
+                t0 = perf_counter()
+                while True:
+                    try:
+                        tt.put_nowait((x, fut, t0))
+                        break
+                    except queue.Full:
+                        if to_shutdown.is_set():
+                            return
+                        sleep(PUT_SLEEP)
+            while True:
+                try:
+                    tt.put_nowait(nomore)
+                    break
+                except queue.Full:
+                    if to_shutdown.is_set():
+                        return
+                    sleep(PUT_SLEEP)
 
-        self._tasks.append(self._executor.submit(enqueue))
-        return results
+        t = self._executor.submit(_enqueue)
+        self._tasks.append(t)
+
+        while True:
+            while True:
+                try:
+                    z = tasks.get_nowait()
+                    break
+                except queue.Empty:
+                    if t.done():
+                        if self._to_shutdown.is_set():
+                            return
+                        raise t.exception()
+                    sleep(GET_SLEEP)
+
+            if z is nomore:
+                break
+            x, fut, t0 = z
+            try:
+                y = fut.result(timeout=response_timeout - (perf_counter() - t0))
+            except Exception as e:
+                if return_exceptions:
+                    if return_x:
+                        yield x, e
+                    else:
+                        yield e
+                else:
+                    logger.error("exception '%r' happened for input '%s'", e, x)
+                    raise
+            else:
+                if return_x:
+                    yield x, y
+                else:
+                    yield y
