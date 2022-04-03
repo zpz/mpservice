@@ -176,7 +176,7 @@ from typing import (
 from overrides import EnforceOverrides, overrides, final
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, is_async, MAX_THREADS
+from .util import is_exception, is_async, MAX_THREADS, put_in_queue, a_put_in_queue
 
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,6 @@ T = TypeVar('T')      # indicates input data element
 TT = TypeVar('TT')    # indicates output after an op on `T`
 
 GET_SLEEP = 0.00026
-PUT_SLEEP = 0.00015
 
 
 def _default_peek_func(i, x):
@@ -592,22 +591,9 @@ class Buffer(Stream):
             # If error happens in the line above,
             # it will crash this thread and be reflected in the
             # concurrent.futures.Future object.
-            while True:
-                try:
-                    q.put_nowait(v)
-                    break
-                except QueueFull:
-                    if stopped.is_set():
-                        return
-                    sleep(PUT_SLEEP)
-        while True:
-            try:
-                q.put_nowait(self._nomore)
-                break
-            except QueueFull:
-                if stopped.is_set():
-                    return
-                sleep(PUT_SLEEP)
+            if not put_in_queue(q, v, stopped):
+                return
+        put_in_queue(q, self._nomore, stopped)
 
     @overrides
     def _get_next(self):
@@ -660,22 +646,9 @@ class Transformer(Stream):
         stopped = self._stopped
         for x in self._instream:
             t = pool.submit(func, x, **kwargs)
-            while True:
-                try:
-                    tasks.put_nowait((x, t))
-                    break
-                except QueueFull:
-                    if stopped.is_set():
-                        return
-                    sleep(PUT_SLEEP)
-        while True:
-            try:
-                tasks.put_nowait(self._nomore)
-                break
-            except QueueFull:
-                if stopped.is_set():
-                    return
-                sleep(PUT_SLEEP)
+            if not put_in_queue(tasks, (x, t), stopped):
+                return
+        put_in_queue(tasks, self._nomore, stopped)
 
     def _start_async(self, func, **kwargs):
         async def main():
@@ -686,22 +659,10 @@ class Transformer(Stream):
 
             for x in self._instream:
                 t = asyncio.create_task(ff(x, **args))
-                while True:
-                    try:
-                        tasks.put_nowait((x, t))
-                        break
-                    except QueueFull:
-                        if stopped.is_set():
-                            return
-                        await asyncio.sleep(PUT_SLEEP)
-            while True:
-                try:
-                    tasks.put_nowait(self._nomore)
-                    break
-                except QueueFull:
-                    if stopped.is_set():
-                        return
-                    await asyncio.sleep(PUT_SLEEP)
+                if not (await a_put_in_queue(tasks, (x, t), stopped)):
+                    return
+            if not (await a_put_in_queue(tasks, self._nomore, stopped)):
+                return
 
             # If do not wait, `main` will exit, and unfinished tasks
             # will be cancelled.

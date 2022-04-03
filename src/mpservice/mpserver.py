@@ -72,8 +72,8 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread
-from ._streamer import PUT_SLEEP, GET_SLEEP
+from .util import forward_logs, logger_thread, put_in_queue
+from ._streamer import GET_SLEEP
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -519,22 +519,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     else:
                         logger.error("exception '%r' happened for input '%s'", e, x)
                         raise
-                while True:
-                    try:
-                        tt.put_nowait((x, uid, fut))
-                        break
-                    except queue.Full:
-                        if should_stop.is_set():
-                            return
-                        sleep(PUT_SLEEP)
-            while True:
-                try:
-                    tt.put_nowait(nomore)
-                    break
-                except queue.Full:
-                    if should_stop.is_set():
-                        return
-                    sleep(PUT_SLEEP)
+                if not put_in_queue(tt, (x, uid, fut), should_stop):
+                    return
+            put_in_queue(tt, nomore, should_stop)
 
         t = self._thread_pool.submit(_enqueue)
         t.add_done_callback(self._thread_task_done_callback)
