@@ -72,8 +72,8 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread, put_in_queue
-from ._streamer import GET_SLEEP
+from .util import forward_logs, logger_thread
+from ._streamer import GET_SLEEP, put_in_queue
 
 
 # Set level for logs produced by the standard `multiprocessing` module.

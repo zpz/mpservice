@@ -95,25 +95,3 @@ def get_docker_host_ip():
     z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
     z = z.decode()[len('default via '):]
     return z[: z.find(' ')]
-
-
-def put_in_queue(q, x, stop_event, sleep_lenth=PUT_SLEEP):
-    while True:
-        try:
-            q.put_nowait(x)
-            return True
-        except QueueFull:
-            if stop_event.is_set():
-                return False
-            sleep(sleep_lenth)
-
-
-async def a_put_in_queue(q, x, stop_event, sleep_lenth=PUT_SLEEP):
-    while True:
-        try:
-            q.put_nowait(x)
-            return True
-        except QueueFull:
-            if stop_event.is_set():
-                return False
-            await asleep(sleep_lenth)

@@ -12,9 +12,9 @@ from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS, put_in_queue
+from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
-from ._streamer import GET_SLEEP
+from ._streamer import GET_SLEEP, put_in_queue
 
 logger = logging.getLogger(__name__)
 

@@ -165,7 +165,7 @@ import logging
 import random
 import threading
 import traceback
-from queue import Queue, Empty as QueueEmpty
+from queue import Queue, Empty as QueueEmpty, Full as QueueFull
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
@@ -191,6 +191,26 @@ def _default_peek_func(i, x):
     print('')
     print('#', i)
     print(x)
+
+
+def put_in_queue(q, x, stop_event):
+    while True:
+        try:
+            q.put(x, timeout=0.005)
+            return True
+        except QueueFull:
+            if stop_event.is_set():
+                return False
+
+
+async def a_put_in_queue(q, x, stop_event):
+    while True:
+        try:
+            q.put(x, timeout=0.005)
+            return True
+        except QueueFull:
+            if stop_event.is_set():
+                return False
 
 
 class Stream(EnforceOverrides):
