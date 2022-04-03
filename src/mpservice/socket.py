@@ -12,9 +12,9 @@ from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
+from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS, put_in_queue
 from .remote_exception import RemoteException, exit_err_msg
-from ._streamer import GET_SLEEP, PUT_SLEEP
+from ._streamer import GET_SLEEP
 
 logger = logging.getLogger(__name__)
 
@@ -577,22 +577,9 @@ class SocketClient(EnforceOverrides):
                         logger.error("exception '%r' happened for input '%s'", e, x)
                         raise
                 t0 = perf_counter()
-                while True:
-                    try:
-                        tt.put_nowait((x, fut, t0))
-                        break
-                    except queue.Full:
-                        if to_shutdown.is_set():
-                            return
-                        sleep(PUT_SLEEP)
-            while True:
-                try:
-                    tt.put_nowait(nomore)
-                    break
-                except queue.Full:
-                    if to_shutdown.is_set():
-                        return
-                    sleep(PUT_SLEEP)
+                if not put_in_queue(tt, (x, fut, t0), to_shutdown):
+                    return
+            put_in_queue(tt, nomore, to_shutdown)
 
         t = self._executor.submit(_enqueue)
         self._tasks.append(t)
