@@ -1,4 +1,4 @@
-'''Utilities for processing a continuous stream of data.
+'''Process a data stream through I/O-bound operations with concurrency.
 
 An input data stream goes through a series of operations.
 The target use case is that one or more operations is I/O bound,
@@ -59,7 +59,7 @@ After this setup, there are several ways to use the object `pipeline`.
 
     4. We can continue to add more operations to the pipeline, for example,
 
-            pipeline = pipeline.transform(another_op, workers=3)
+            pipeline = pipeline.transform(another_op, concurrency=3)
 
 ======================
 Handling of exceptions
@@ -165,7 +165,7 @@ import logging
 import random
 import threading
 import traceback
-from queue import Queue, Full as QueueFull, Empty as QueueEmpty
+from queue import Queue, Empty as QueueEmpty
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
