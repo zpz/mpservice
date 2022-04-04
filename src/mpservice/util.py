@@ -11,9 +11,6 @@ import logging.handlers
 import multiprocessing
 import subprocess
 import warnings
-from asyncio import sleep as asleep
-from queue import Full as QueueFull
-from time import sleep
 
 
 logger = logging.getLogger(__name__)
