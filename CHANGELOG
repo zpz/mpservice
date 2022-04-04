@@ -1,15 +1,19 @@
-Release 0.10.4b1-6
-================
+Release 0.10.4
+==============
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
 - Refactored socket server side to make its usage similar to a web app.
 - Refactored `mpservice._streamer` for much improved robustness and simplicity.
-- `Stream.transform` now accepts both sync and async `func`.
+- Streamer API changes, mainly:
+  1. use context manager;
+  2. operations modify the hosting object in-place, hence eliminating the need to assign
+     intermediate transforms to new names.
+- `Streamer.transform` now accepts both sync and async functions as the "operator".
 - Improved `MPServer.stream` and `SocketClient.stream`; removed `MPServer.stream2`.
 - Rewrote `RemoteException`, especially for pickle-safety.
 - `SocketServer` shutdown handling.
 - Removed `MPServer.{start, stop}`; use `__enter__/__exit__`.
-- Removed some content of `mpservice.util`.
+- Removed some contents of `mpservice.util`.
 
 
 Release 0.10.3.post1, post2, post3, post4, post5

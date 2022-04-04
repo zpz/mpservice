@@ -1,3 +1,3 @@
 from . import _streamer
 
-Stream = _streamer.Stream
+Streamer = _streamer.Streamer

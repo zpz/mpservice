@@ -175,6 +175,8 @@ class SocketApplication(EnforceOverrides):
 
 
 # Usually user should not customize this class.
+# Rather, they should design their worker class and "attach" it to
+# a SocketApplication instance.
 class SocketServer(EnforceOverrides):
     def __init__(self,
                  app: SocketApplication,
@@ -356,7 +358,7 @@ class SocketClient(EnforceOverrides):
         `connection_timeout`: how many seconds to wait while connecting to the server.
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
-        `backlog`: size of quque for in-progress requests.
+        `backlog`: size of queue for in-progress requests.
         '''
         # Experiments showed `max_connections` can be up to 200.
         # This needs to be improved.
