@@ -5,7 +5,7 @@ from time import sleep
 
 import pytest
 
-from mpservice._streamer import Stream, _default_peek_func
+from mpservice._streamer import Streamer, _default_peek_func
 
 
 def test_stream():
@@ -24,37 +24,37 @@ def test_stream():
             for x in [1, 2, 3]:
                 yield x
 
-    with Stream(range(4)) as s:
+    with Streamer(range(4)) as s:
         assert s.collect() == [0, 1, 2, 3]
-    with Stream(C()) as s:
+    with Streamer(C()) as s:
         assert s.collect() == [1, 2, 3, 4, 5]
-    with Stream(D()) as s:
+    with Streamer(D()) as s:
         assert s.collect() == [1, 2, 3]
-    with Stream(['a', 'b', 'c']) as s:
+    with Streamer(['a', 'b', 'c']) as s:
         assert s.collect() == ['a', 'b', 'c']
 
 
 def test_batch():
-    with Stream(range(11)) as s:
+    with Streamer(range(11)) as s:
         assert s.batch(3).collect() == [
             [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
         assert s.collect() == []
 
-    with Stream(list(range(11))) as s:
+    with Streamer(list(range(11))) as s:
         assert s.batch(3).unbatch().collect() == list(range(11))
         assert s.collect() == []
 
 
 def test_buffer():
-    with Stream(range(11)) as s:
+    with Streamer(range(11)) as s:
         assert s.buffer(5).collect() == list(range(11))
-    with Stream(range(11)) as s:
+    with Streamer(range(11)) as s:
         assert s.buffer(20).collect() == list(range(11))
 
 
 def test_buffer_batch():
-    with Stream(range(19)) as s:
+    with Streamer(range(19)) as s:
         n, _ = s.buffer(10).batch(5).unbatch().log_every_nth(1).drain()
         assert n == 19
 
@@ -62,41 +62,42 @@ def test_buffer_batch():
 def test_drop():
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
 
-    with Stream(data).drop_exceptions() as s:
+    with Streamer(data).drop_exceptions() as s:
         assert s.collect() == [0, 1, 2, 'a', 4, 6, 7]
 
-    s = Stream(data).drop_exceptions().drop_if(lambda i, x: isinstance(x, str))
+    s = Streamer(data).drop_exceptions().drop_if(lambda i, x: isinstance(x, str))
     with s:
         assert s.collect() == [0, 1, 2, 4, 6, 7]
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         assert s.drop_first_n(6).collect() == [6, 7]
 
-    with Stream((2, 3, 1, 5, 4, 7)) as s:
+    with Streamer((2, 3, 1, 5, 4, 7)) as s:
         assert s.drop_if(lambda i, x: x > i).collect() == [1, 4]
 
 
 def test_keep():
     data = [0, 1, 2, 3, 'a', 5]
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         assert s.keep_if(lambda i, x: isinstance(
             x, int)).collect() == [0, 1, 2, 3, 5]
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         assert s.keep_every_nth(2).collect() == [0, 2, 'a']
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         assert s.head(3).collect() == [0, 1, 2]
 
-    s = Stream(data).head(4).drop_first_n(3)
-    with s:
+    with Streamer(data) as s:
+        s.head(4)
+        s.drop_first_n(3)
         assert s.collect() == [3]
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         assert s.drop_first_n(3).head(1).collect() == [3]
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         ss = s.keep_random(0.5).collect()
         print(ss)
         assert 0 <= len(ss) <= len(data)
@@ -107,11 +108,11 @@ def test_peek():
 
     data = list(range(10))
 
-    with Stream(data) as s:
+    with Streamer(data) as s:
         n, _ = s.peek_every_nth(3).drain()
         assert n == 10
 
-    with Stream(data).peek_random(0.5, lambda i, x: print(f'--{i}--  {x}')) as s:
+    with Streamer(data).peek_random(0.5, lambda i, x: print(f'--{i}--  {x}')) as s:
         n, _ = s.drain()
         assert n == 10
 
@@ -119,23 +120,23 @@ def test_peek():
         if 4 < i < 7:
             _default_peek_func(i, x)
 
-    with Stream(data).peek(peek_func) as s:
+    with Streamer(data).peek(peek_func) as s:
         s.drain()
 
-    with Stream(data).log_every_nth(4) as s:
+    with Streamer(data).log_every_nth(4) as s:
         s.drain()
 
 
 def test_drain():
-    with Stream(range(10)) as s:
+    with Streamer(range(10)) as s:
         z, _ = s.drain()
         assert z == 10
 
-    with Stream(range(10)).log_every_nth(3) as s:
+    with Streamer(range(10)).log_every_nth(3) as s:
         z, _ = s.drain()
         assert z == 10
 
-    with Stream((1, 2, ValueError(3), 5, RuntimeError, 9)) as s:
+    with Streamer((1, 2, ValueError(3), 5, RuntimeError, 9)) as s:
         assert s.drain() == (6, 2)
 
 
@@ -152,20 +153,20 @@ def test_transform():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-    with Stream(SYNC_INPUT) as s:
-        vv = s.transform(f1, concurrency=1)
-        got = [v for v in vv]
+    with Streamer(SYNC_INPUT) as s:
+        s.transform(f1, concurrency=1)
+        got = [v for v in s]
         assert got == expected
 
-    with Stream(SYNC_INPUT) as s:
+    with Streamer(SYNC_INPUT) as s:
         assert s.transform(f1, concurrency=10).collect() == expected
 
-    with Stream(SYNC_INPUT) as ss:
+    with Streamer(SYNC_INPUT) as ss:
         s = ss.transform(f1, concurrency='max').collect()
         assert s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    with Stream(SYNC_INPUT) as ss:
+    with Streamer(SYNC_INPUT) as ss:
         s = ss.transform(f1).transform(f2)
         assert s.collect() == expected
 
@@ -178,7 +179,7 @@ def test_transform():
             self.result += x * 3
 
     mysink = MySink()
-    with Stream(SYNC_INPUT) as ss:
+    with Streamer(SYNC_INPUT) as ss:
         s = ss.transform(f1).transform(mysink)
         n, _ = s.drain()
         assert n == len(SYNC_INPUT)
@@ -199,20 +200,20 @@ def test_transform_with_error():
         return x + 2
 
     with pytest.raises(TypeError):
-        with Stream(corrupt_data()) as s:
-            z = s.transform(process, concurrency=2)
-            zz = z.collect()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process, concurrency=2)
+            zz = s.collect()
             print(zz)
 
-    with Stream(corrupt_data()) as s:
-        z = s.transform(process, concurrency=2, return_exceptions=True)
-        zz = z.collect()
+    with Streamer(corrupt_data()) as s:
+        s.transform(process, concurrency=2, return_exceptions=True)
+        zz = s.collect()
         print(zz)
         assert isinstance(zz[5], TypeError)
 
-    with Stream(corrupt_data()) as s:
-        z = s.transform(process, concurrency=2, return_exceptions=True)
-        zz = z.drain()
+    with Streamer(corrupt_data()) as s:
+        s.transform(process, concurrency=2, return_exceptions=True)
+        zz = s.drain()
         assert zz == (len(data), 1)
 
 
@@ -232,56 +233,49 @@ def test_chain():
         return x - 2
 
     with pytest.raises(TypeError):
-        with Stream(corrupt_data()) as s:
-            z = s.transform(process1, concurrency=2)
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process1, concurrency=2)
+            s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Stream(corrupt_data()) as s:
-            z = s.transform(process2, concurrency=3)
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process2, concurrency=3)
+            s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Stream(corrupt_data()) as s:
-            z = (s.transform(process1, concurrency=2, return_exceptions=True)
-                  .transform(process2, concurrency=4)
-                )
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process1, concurrency=2, return_exceptions=True)
+            s.transform(process2, concurrency=4)
+            s.drain()
 
     print('d')
     with pytest.raises(TypeError):
-        with Stream(corrupt_data()) as s:
-            z = (
-                 s.transform(process1, concurrency=2)
-                  .transform(process2, concurrency=4, return_exceptions=True)
-                )
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process1, concurrency=2)
+            s.transform(process2, concurrency=4, return_exceptions=True)
+            s.drain()
 
     print('e')
-    with Stream(corrupt_data()) as s:
-        z = (s.transform(process1, concurrency=2, return_exceptions=True)
-              .transform(process2, concurrency=4, return_exceptions=True)
-            )
-        z.drain()
+    with Streamer(corrupt_data()) as s:
+        s.transform(process1, concurrency=2, return_exceptions=True)
+        s.transform(process2, concurrency=4, return_exceptions=True)
+        s.drain()
 
     with pytest.raises((TypeError, ValueError)):
-        with Stream(corrupt_data()) as s:
-            z = (s.transform(process1, concurrency=2)
-                 .buffer(3)
-                 .transform(process2, concurrency=3)
-                 )
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process1, concurrency=2)
+            s.buffer(3)
+            s.transform(process2, concurrency=3)
+            s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Stream(corrupt_data()) as s:
-            z = (s
-                 .transform(process1, concurrency=2, return_exceptions=True)
-                 .buffer(2)
-                 .transform(process2, concurrency=3)
-                 )
-            z.drain()
+        with Streamer(corrupt_data()) as s:
+            s.transform(process1, concurrency=2, return_exceptions=True)
+            s.buffer(2)
+            s.transform(process2, concurrency=3)
+            s.drain()
 
-    with Stream(corrupt_data()) as s:
+    with Streamer(corrupt_data()) as s:
         z = (s
              .transform(process1, concurrency=2, return_exceptions=True)
              .buffer(3)
@@ -289,16 +283,14 @@ def test_chain():
              .peek_every_nth(1))
         print(z.collect())
 
-    with Stream(corrupt_data()) as s:
-        z = (s
-             .transform(process1, concurrency=2, return_exceptions=True)
-             .drop_exceptions()
-             .buffer(3)
-             .transform(process2, concurrency=3, return_exceptions=True)
-             .log_exceptions()
-             .drop_exceptions()
-             )
-        assert z.collect() == [1, 2, 3, 4, 5, 6]
+    with Streamer(corrupt_data()) as s:
+        s.transform(process1, concurrency=2, return_exceptions=True)
+        s.drop_exceptions()
+        s.buffer(3)
+        s.transform(process2, concurrency=3, return_exceptions=True)
+        s.log_exceptions()
+        s.drop_exceptions()
+        assert s.collect() == [1, 2, 3, 4, 5, 6]
 
 
 def test_early_stop():
@@ -307,7 +299,7 @@ def test_early_stop():
         return x * 2
 
 
-    with Stream(range(300000)) as s:
+    with Streamer(range(300000)) as s:
         z = s.transform(double, concurrency=3)
         n = 0
         for x in z:
@@ -323,7 +315,7 @@ def test_async_func():
         await asyncio.sleep(random.uniform(0.1, 0.3))
         return x * 2
 
-    with Stream(range(200)) as s:
+    with Streamer(range(200)) as s:
         z = s.transform(double, concurrency=100)
         for x, y in zip(range(200), z):
             assert y == x * 2
@@ -334,7 +326,7 @@ def test_async_func_ret_x():
         await asyncio.sleep(random.uniform(0.1, 0.3))
         return x * 2
 
-    with Stream(range(200)) as s:
+    with Streamer(range(200)) as s:
         z = s.transform(double, concurrency=100, return_x=True)
         for x, y in zip(range(200), z):
             assert y == (x, x * 2)
