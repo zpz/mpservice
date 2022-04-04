@@ -165,7 +165,7 @@ import logging
 import random
 import threading
 import traceback
-from queue import Queue, Empty as QueueEmpty
+from queue import Queue, Empty as QueueEmpty, Full as QueueFull
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
@@ -176,15 +176,13 @@ from typing import (
 from overrides import EnforceOverrides, overrides, final
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, is_async, MAX_THREADS, put_in_queue, a_put_in_queue
+from .util import is_exception, is_async, MAX_THREADS
 
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')      # indicates input data element
 TT = TypeVar('TT')    # indicates output after an op on `T`
-
-GET_SLEEP = 0.00026
 
 
 def _default_peek_func(i, x):
@@ -568,6 +566,43 @@ class Peeker(Stream):
         return z
 
 
+GET_SLEEP = 0.00026
+PUT_SLEEP = 0.00015
+
+
+def put_in_queue(q, x, stop_event):
+    while True:
+        try:
+            q.put(x, timeout=PUT_SLEEP)
+            return True
+        except QueueFull:
+            if stop_event.is_set():
+                return False
+
+
+async def a_put_in_queue(q, x, stop_event):
+    while True:
+        try:
+            q.put_nowait(x)
+            return True
+        except QueueFull:
+            if stop_event.is_set():
+                return False
+            await asyncio.sleep(PUT_SLEEP)
+
+
+def get_from_queue(q, stop_event, worker):
+    while True:
+        try:
+            return q.get(timeout=GET_SLEEP)
+        except QueueEmpty:
+            if worker.done():
+                if worker.exception():
+                    raise worker.exception()
+                assert stop_event.is_set()
+                return
+
+
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int = None):
         super().__init__(instream)
@@ -597,19 +632,10 @@ class Buffer(Stream):
 
     @overrides
     def _get_next(self):
-        while True:
-            try:
-                z = self._q.get_nowait()
-                if z is self._nomore:
-                    raise StopIteration
-                return z
-            except QueueEmpty:
-                if self._t.done():
-                    if self._t.exception():
-                        raise self._t.exception()
-                    assert self._stopped.is_set()
-                    return
-                sleep(GET_SLEEP)
+        z = get_from_queue(self._q, self._stopped, self._t)
+        if z is self._nomore:
+            raise StopIteration
+        return z
 
 
 class Transformer(Stream):
@@ -675,19 +701,12 @@ class Transformer(Stream):
 
     @overrides
     def _get_next(self):
-        while True:
-            try:
-                z = self._tasks.get_nowait()
-                if z is self._nomore:
-                    raise StopIteration
-                break
-            except QueueEmpty:
-                if self._t.done():
-                    if self._t.exception():
-                        raise self._t.exception()
-                    assert self._stopped.is_set()
-                    return
-                sleep(GET_SLEEP)
+        z = get_from_queue(self._tasks, self._stopped, self._t)
+        if z is self._nomore:
+            raise StopIteration
+        if z is None:
+            return
+
         x, fut = z
         while not fut.done():
             if self._stopped.is_set():

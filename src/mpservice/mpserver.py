@@ -65,15 +65,15 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
 from multiprocessing import synchronize, Queue
-from time import perf_counter, sleep
+from time import perf_counter
 from typing import List, Type, Sequence, Union, Callable
 
 import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread, put_in_queue
-from ._streamer import GET_SLEEP
+from .util import forward_logs, logger_thread
+from ._streamer import put_in_queue, get_from_queue
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -530,19 +530,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         _wait = self._call_wait_for_result
 
         while True:
-            while True:
-                try:
-                    z = tasks.get_nowait()
-                    break
-                except queue.Empty:
-                    if t.done():
-                        if self._should_stop.is_set():
-                            return
-                        raise t.exception()
-                    sleep(GET_SLEEP)
-
+            z = get_from_queue(tasks, self._should_stop, t)
             if z is nomore:
                 break
+            if z is None:
+                return
+
             x, uid, fut = z
             if uid is None:
                 if return_x:

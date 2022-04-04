@@ -6,15 +6,15 @@ import queue
 import threading
 import time
 from pickle import dumps as pickle_dumps, loads as pickle_loads
-from time import perf_counter, sleep
+from time import perf_counter
 from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 
 from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS, put_in_queue
+from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
-from ._streamer import GET_SLEEP
+from ._streamer import put_in_queue, get_from_queue
 
 logger = logging.getLogger(__name__)
 
@@ -585,18 +585,10 @@ class SocketClient(EnforceOverrides):
         self._tasks.append(t)
 
         while True:
-            while True:
-                try:
-                    z = tasks.get_nowait()
-                    break
-                except queue.Empty:
-                    if t.done():
-                        if self._to_shutdown.is_set():
-                            return
-                        raise t.exception()
-                    sleep(GET_SLEEP)
-
+            z = get_from_queue(tasks, self._to_shutdown, t)
             if z is nomore:
+                break
+            if z is None:
                 break
             x, fut, t0 = z
             try:
