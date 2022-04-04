@@ -10,7 +10,7 @@ from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout, RemoteException,
 )
-from mpservice.streamer import Stream
+from mpservice.streamer import Streamer
 
 
 class Double(Servlet):
@@ -152,9 +152,9 @@ def test_sequential_stream():
         ss = service.stream(data)
         assert list(ss) == [v*v for v in data]
 
-        with Stream(data) as s:
-            ss = s.transform(service.call, concurrency=10)
-            assert ss.collect() == [v*v for v in data]
+        with Streamer(data) as s:
+            s.transform(service.call, concurrency=10)
+            assert s.collect() == [v*v for v in data]
 
 
 class GetHead(Servlet):
@@ -293,9 +293,9 @@ def test_ensemble_stream():
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
-        with Stream(data) as s:
-            ss = s.transform(service.call, concurrency=10)
-            assert ss.collect() == [[v + 1, v + 7] for v in data]
+        with Streamer(data) as s:
+            s.transform(service.call, concurrency=10)
+            assert s.collect() == [[v + 1, v + 7] for v in data]
 
 
 def func1(x, shift):

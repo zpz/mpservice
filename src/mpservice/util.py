@@ -15,6 +15,7 @@ import warnings
 
 logger = logging.getLogger(__name__)
 
+
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
 # This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
