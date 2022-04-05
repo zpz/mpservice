@@ -25,9 +25,10 @@ context management, and calls its methods in a "chained" fashion:
             .unbatch()
             )
 
-The methods `batch`, `transform`, and `unbatch` all modify the object `stream`
-"in-place" and return the original object, hence it's fine to add these operations
-one at a time, and it's not necessary to the intermediate results to new identifiers.
+The methods `batch`, `transform`, and `unbatch` (and some others)
+all modify the object `stream` "in-place" and return the original object,
+hence it's fine to add these operations one at a time,
+and it's not necessary to assign the intermediate results to new identifiers.
 The above is equivalent to the following:
 
     with Streamer(range(100)) as stream:
@@ -77,6 +78,20 @@ After this setup, there are several ways to use the object `stream`.
     4. We can continue to add more operations to the pipeline, for example,
 
             stream.transform(another_op, concurrency=3)
+
+Of all the methods on a Streamer instance, two will start new threads, namely
+`.buffer()` and `.transform()`. In order to guarantee proper startup and shutdown
+of the threads, these two methods require the Streamer object to be context-managed,
+that is, within the `with` block:
+
+    with Streamer(...) as streamer:
+        streamer.buffer(...)
+        streamer.transform(...)
+
+The other methods do not start new threads, hence do not require context manager.
+However, to reduce memory load, one may as well always enter the context manager
+right upon the creation of a Streamer instance.
+
 
 ======================
 Handling of exceptions
@@ -329,15 +344,22 @@ class Streamer(EnforceOverrides):
         self.streamlets.append(Peeker(self.streamlets[-1], func))
         return self
 
-    def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None):
+    def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None,
+            *, base: int = 0, first: int = 0, last: int = None):
         assert nth > 0
+        assert base in (0, 1)
 
         if peek_func is None:
             peek_func = _default_peek_func
 
         def foo(i, x):
-            if i % nth == 0:
-                peek_func(i, x)
+            k = i + base
+            if k < first:
+                return
+            if last and k > last:
+                return
+            if k % nth == 0:
+                peek_func(k, x)
 
         return self.peek(foo)
 
@@ -354,14 +376,14 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def log_every_nth(self, nth: int, level: str = 'info'):
+    def log_every_nth(self, nth: int, level: str = 'info', **kwargs):
         assert nth > 0
         flog = getattr(logger, level)
 
         def foo(i, x):
             flog('#%d:  %r', i, x)
 
-        return self.peek_every_nth(nth, foo)
+        return self.peek_every_nth(nth, foo, **kwargs)
 
     def log_exceptions(self, level: str = 'error', with_trace: bool = True):
         flog = getattr(logger, level)
@@ -503,8 +525,6 @@ class Stream(EnforceOverrides):
 
     @final
     def __iter__(self):
-        if not self._started.is_set():
-            raise RuntimeError("iteration must be started within context manager, i.e. within a 'with ...:' block")
         return self
 
     def _get_next(self):
@@ -604,14 +624,10 @@ class Peeker(Stream):
         return z
 
 
-GET_SLEEP = 0.00026
-PUT_SLEEP = 0.00015
-
-
-def put_in_queue(q, x, stop_event):
+def put_in_queue(q, x, stop_event, timeout=0.1):
     while True:
         try:
-            q.put(x, timeout=PUT_SLEEP)
+            q.put(x, timeout=timeout)
             return True
         except QueueFull:
             if stop_event.is_set():
@@ -626,19 +642,27 @@ async def a_put_in_queue(q, x, stop_event):
         except QueueFull:
             if stop_event.is_set():
                 return False
-            await asyncio.sleep(PUT_SLEEP)
+            await asyncio.sleep(0.001)
 
 
-def get_from_queue(q, stop_event, worker):
+def get_from_queue(q, stop_event, worker=None, timeout=0.1):
     while True:
         try:
-            return q.get(timeout=GET_SLEEP)
+            return q.get(timeout=timeout)
+            # In our use cases of this function,
+            # the elements in `q` is never None,
+            # hence this can be distinguished
+            # from the `return` below.
         except QueueEmpty:
-            if worker.done():
-                if worker.exception():
-                    raise worker.exception()
-                assert stop_event.is_set()
-                return
+            if worker is not None:
+                if worker.done():
+                    if worker.exception():
+                        raise worker.exception()
+                    assert stop_event.is_set()
+                    return
+            else:
+                if stop_event.is_set():
+                    return
 
 
 class Buffer(Stream):
@@ -710,6 +734,8 @@ class Transformer(Stream):
         stopped = self._stopped
         for x in self._instream:
             t = pool.submit(func, x, **kwargs)
+            # The size of the queue `tasks` regulates how many
+            # concurrent calls to `func` there can be.
             if not put_in_queue(tasks, (x, t), stopped):
                 return
         put_in_queue(tasks, self._nomore, stopped)
@@ -723,6 +749,8 @@ class Transformer(Stream):
 
             for x in self._instream:
                 t = asyncio.create_task(ff(x, **args))
+                # The size of the queue `tasks` regulates how many
+                # concurrent calls to `func` there can be.
                 if not (await a_put_in_queue(tasks, (x, t), stopped)):
                     return
             if not (await a_put_in_queue(tasks, self._nomore, stopped)):
@@ -749,7 +777,7 @@ class Transformer(Stream):
         while not fut.done():
             if self._stopped.is_set():
                 return
-            sleep(GET_SLEEP)
+            sleep(0.001)
         if fut.exception():
             e = fut.exception()
             if self._return_exceptions:

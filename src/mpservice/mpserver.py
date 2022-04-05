@@ -201,53 +201,51 @@ class Servlet(metaclass=ABCMeta):
     def _start_single(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
         while True:
-            try:
-                uid, x = q_in.get(timeout=0.5)
-            except queue.Empty:
-                if should_stop.is_set():
-                    break
-                continue
+            z = get_from_queue(q_in, should_stop)
+            if z is None:
+                break
+            uid, x = z
 
             try:
                 if batch_size:
                     y = self.call([x])[0]
                 else:
                     y = self.call(x)
-                q_out.put((uid, y))
+                if not put_in_queue(q_out, (uid, y), should_stop):
+                    return
 
             except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
                 err = RemoteException()
-                q_err.put((uid, err))
+                if not put_in_queue(q_err, (uid, err), should_stop):
+                    return
 
     def _start_batch(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
         batch_size = self.batch_size
         batch_wait_time = self.batch_wait_time
 
-        batch_size_max = -1
-        batch_size_min = 1000000
-        batch_size_mean = 0.0
         n_batches = 0
-
         while True:
+            if n_batches == 0:
+                batch_size_max = -1
+                batch_size_min = 1000000
+                batch_size_mean = 0.0
+
             batch = []
             uids = []
             n = 0
             with q_in_lock:
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
-                while True:
-                    try:
-                        uid, x = q_in.get(timeout=0.5)
-                        break
-                    except queue.Empty:
-                        if should_stop.is_set():
-                            if n_batches and n_batches % 1000 != 0:
-                                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
-                                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
-                            return
+                z = get_from_queue(q_in, should_stop)
+                if z is None:
+                    if n_batches:
+                        logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
+                                    n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                    return
+                uid, x = z
 
                 batch.append(x)
                 uids.append(uid)
@@ -268,7 +266,7 @@ class Servlet(metaclass=ABCMeta):
                         # are already over time. That is, if supply
                         # has piled up, then will get up to the
                         # batch capacity.
-                        if time_left > 0.001:
+                        if time_left > 0.005:
                             uid, x = q_in.get(timeout=time_left)
                         else:
                             uid, x = q_in.get_nowait()
@@ -285,10 +283,12 @@ class Servlet(metaclass=ABCMeta):
             except Exception:
                 err = RemoteException()
                 for uid in uids:
-                    q_err.put((uid, err))
+                    if not put_in_queue(q_err, (uid, err), should_stop):
+                        return
             else:
                 for uid, y in zip(uids, results):
-                    q_out.put((uid, y))
+                    if not put_in_queue(q_out, (uid, y), should_stop):
+                        return
 
             n_batches += 1
             batch_size_max = max(batch_size_max, n)
@@ -297,6 +297,7 @@ class Servlet(metaclass=ABCMeta):
             if n_batches % 1000 == 0:
                 logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
                             n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                n_batches = 0
 
     @abstractmethod
     def call(self, x):
@@ -373,7 +374,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # at the beginning of their `__init__` rather than
         # at the end.
 
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(128)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor()
         self._thread_tasks = {}
 
         self.started = 0
@@ -463,7 +464,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             enqueue_timeout=enqueue_timeout, total_timeout=total_timeout,
         )
         uid, fut = await self._async_call_enqueue(x, enqueue_timeout=enqueue_timeout)
+        # This could raise EnqueueTimeout.
         return await self._async_call_wait_for_result(uid, fut, total_timeout=total_timeout)
+        # This could raise TotalTimeout or RemoteException.
 
     def call(self, x, /, *,
              enqueue_timeout: Union[int, float] = None,
@@ -481,18 +484,25 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         )
 
         uid, fut = self._call_enqueue(x, enqueue_timeout=enqueue_timeout)
+        # This could raise EnqueueTimeout.
         return self._call_wait_for_result(uid, fut, total_timeout=total_timeout)
+        # This could raise TotalTimeout or RemoteException.
 
     def stream(self, data_stream, /, *,
-               return_exceptions: bool = False,
                return_x: bool = False,
+               return_exceptions: bool = False,
                backlog: int = 1024,
                enqueue_timeout=None,
                total_timeout=None,
                ):
-        # The order of elements in the stream is preserved, i.e.,
-        # elements in the output stream corresponds to elements
-        # in the input stream in the same order.
+        '''
+        `backlog`: lengths of queue that holds in-progress elements:
+            either element waiting for result or result waiting for consumption.
+
+        The order of elements in the stream is preserved, i.e.,
+        elements in the output stream corresponds to elements
+        in the input stream in the same order.
+        '''
 
         # For streaming, "timeout" is usually not a concern.
         # The concern is overall throughput.
@@ -503,16 +513,17 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         nomore = object()
 
         def _enqueue():
+            # Putting input data in the queue does not need concurrency.
+            # The speed of sequential push is as fast as it can go.
             enqueue = self._call_enqueue
             tt = tasks
-            ret_ex = return_exceptions
             et = enqueue_timeout
             should_stop = self._should_stop
             for x in data_stream:
                 try:
                     uid, fut = enqueue(x, enqueue_timeout=et)
                 except Exception as e:
-                    if ret_ex:
+                    if return_exceptions:
                         uid = None
                         fut = Future()
                         fut.set_exception(e)
@@ -522,6 +533,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 if not put_in_queue(tt, (x, uid, fut), should_stop):
                     return
             put_in_queue(tt, nomore, should_stop)
+            # Exceptions in `fut` is covered by `return_exceptions`.
+            # Uncaptured exceptions will propagate and cause the thread to exit in
+            # exception state. This exception is not covered by `return_exceptions`;
+            # it will be propagated in the main thread.
 
         t = self._thread_pool.submit(_enqueue)
         t.add_done_callback(self._thread_task_done_callback)
@@ -531,6 +546,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         while True:
             z = get_from_queue(tasks, self._should_stop, t)
+            # This could raise exception if `t` exited with error,
+            # which will propagate.
             if z is nomore:
                 break
             if z is None:
@@ -538,6 +555,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
             x, uid, fut = z
             if uid is None:
+                # This happens only when `return_exceptions` is True.
                 if return_x:
                     yield x, fut.exception()
                 else:
@@ -545,6 +563,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             else:
                 try:
                     y = _wait(uid, fut, total_timeout=total_timeout)
+                    # May raise RemoteException or TotalTimeout.
                 except Exception as e:
                     if return_exceptions:
                         if return_x:
@@ -795,6 +814,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t2 = t0 + total_timeout
         try:
             res = fut.result(timeout=t2 - perf_counter())
+            # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
             self._uid_to_futures.pop(uid, None)
@@ -852,7 +872,8 @@ class SequentialServer(MPServer):
                     fut.set_result(y)
                 except asyncio.InvalidStateError as e:
                     if fut.cancelled():
-                        logger.warning('Future object is already cancelled')
+                        # Could have been cancelled due to TotalTimeout.
+                        logger.info('Future object is already cancelled')
                     else:
                         logger.exception(e)
                         raise
