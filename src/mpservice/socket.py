@@ -147,6 +147,24 @@ async def open_unix_connection(path, *, timeout=None):
 
 
 class SocketApplication(EnforceOverrides):
+    '''
+    SocketApplication is designed to to used similar to the "application" in a
+    HTTP framework. The main API is to register "endpoint" functions by the method
+    `add_route`. This allows to back the socket service by multiple functions
+    for different purposes. Usually there is only one main function, which involves
+    transmitting substantial amount of data between the server and the client.
+    For simplicity, one may use '/' for the `path` of this route.
+    The other routes are usually supportivies, for example, getting server info
+    or setting options. For example
+
+        app.add_route('/', make_prediction)
+        app.add_route('/server-info', get_server_info)
+        app.add_route('/set-option', set_server_option)
+
+    This class is the intended interface between a socket server and a particular
+    application (functions). Usually, user should not customizer the class
+    SocketServer.
+    '''
     def __init__(self, *,
                  on_startup: Sequence[Callable] = None,
                  on_shutdown: Sequence[Callable] = None,
@@ -165,7 +183,14 @@ class SocketApplication(EnforceOverrides):
         If exception is raised in this method, appropriate `RemoteException`
         object will be sent in the response.
         The method could also proactively return a `RemoteException` object.
+
+        `path` is any string. The route is identified by this string. For familiarity,
+        it may be a good idea to start the string with '/', although this is in no
+        way necessary.
+
+        There is no GET/POST distinction like in the case of HTTP.
         '''
+        # TODO: support sync "endpoint" functions, if they are I/O bound.
         self._routes[path] = route
 
     async def handle_request(self, path: str, data: Any = None):
@@ -174,9 +199,6 @@ class SocketApplication(EnforceOverrides):
         return await self._routes[path](data)
 
 
-# Usually user should not customize this class.
-# Rather, they should design their worker class and "attach" it to
-# a SocketApplication instance.
 class SocketServer(EnforceOverrides):
     def __init__(self,
                  app: SocketApplication,
@@ -306,7 +328,7 @@ class SocketServer(EnforceOverrides):
                 except asyncio.QueueEmpty:
                     if self.to_shutdown:
                         return
-                    await asyncio.sleep(0.0023)
+                    await asyncio.sleep(0.0012)
                     continue
                 try:
                     z = await t
@@ -559,6 +581,7 @@ class SocketClient(EnforceOverrides):
         If `return_x` is `False`, return a stream of `y`.
         If `return_exceptions` is `True`, `y` could be an Exception object.
         '''
+        # Refer to `mpserver.MPServer.stream` for in-code documentation.
         tasks = queue.Queue(self._backlog)
         nomore = object()
 
