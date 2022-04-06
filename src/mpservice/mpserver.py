@@ -54,6 +54,17 @@ Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/bat
 This article describes roughly version 0.7.2.
 '''
 
+# Queue performance benchmarking:
+#   https://stackoverflow.com/questions/8463008/multiprocessing-pipe-vs-queue
+# quick-quque: https://github.com/Invarato/quick_queue_project
+# queue/pipe/zmq benchmarking: https://gist.github.com/kylemcdonald/a2f0dcb86f01d4c57b68ac6a6c7a3068
+# https://stackoverflow.com/questions/47085458/why-is-multiprocessing-queue-get-so-slow
+# https://stackoverflow.com/questions/43439194/python-multiprocessing-queue-vs-multiprocessing-manager-queue/45236748#45236748
+# https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
+
+
+
+
 import asyncio
 import concurrent.futures
 import logging
