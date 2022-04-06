@@ -162,7 +162,7 @@ class SocketApplication(EnforceOverrides):
         app.add_route('/set-option', set_server_option)
 
     This class is the intended interface between a socket server and a particular
-    application (functions). Usually, user should not customizer the class
+    application (functions). Usually, user should not customize the class
     SocketServer.
     '''
     def __init__(self, *,

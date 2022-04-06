@@ -54,6 +54,17 @@ Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/bat
 This article describes roughly version 0.7.2.
 '''
 
+# Queue performance benchmarking:
+#   https://stackoverflow.com/questions/8463008/multiprocessing-pipe-vs-queue
+# quick-quque: https://github.com/Invarato/quick_queue_project
+# queue/pipe/zmq benchmarking: https://gist.github.com/kylemcdonald/a2f0dcb86f01d4c57b68ac6a6c7a3068
+# https://stackoverflow.com/questions/47085458/why-is-multiprocessing-queue-get-so-slow
+# https://stackoverflow.com/questions/43439194/python-multiprocessing-queue-vs-multiprocessing-manager-queue/45236748#45236748
+# https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
+
+
+
+
 import asyncio
 import concurrent.futures
 import logging
@@ -232,6 +243,8 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
+                n_batch_last_waits = 0
+                batch_last_wait = 0.0
 
             batch = []
             uids = []
@@ -242,41 +255,41 @@ class Servlet(metaclass=ABCMeta):
                 z = get_from_queue(q_in, should_stop)
                 if z is None:
                     if n_batches:
-                        logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
-                                    n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                        logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
+                                    n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
                     return
                 uid, x = z
-
                 batch.append(x)
                 uids.append(uid)
                 n += 1
 
-                time_left = batch_wait_time
-                wait_until = perf_counter() + time_left
+                wait_until = perf_counter() + batch_wait_time
                 # Wait time starts after getting the first item,
                 # because however long the first item takes to come
                 # is not the worker's fault.
 
                 while n < batch_size:
-                    try:
-                        # If there is remaining time, wait up to
-                        # that long.
-                        # Otherwise, get the next item if it is there
-                        # right now (i.e. no waiting) even if we
-                        # are already over time. That is, if supply
-                        # has piled up, then will get up to the
-                        # batch capacity.
-                        if time_left > 0.005:
-                            uid, x = q_in.get(timeout=time_left)
-                        else:
-                            uid, x = q_in.get_nowait()
-                    except queue.Empty:
-                        break
+                    if not q_in.empty():
+                        uid, x = q_in.get_nowait()
+                    else:
+                        try:
+                            # If there is remaining time, wait up to
+                            # that long.
+                            # Otherwise, get the next item if it is there
+                            # right now (i.e. no waiting) even if we
+                            # are already over time. That is, if supply
+                            # has piled up, then will get up to the
+                            # batch capacity.
+                            t = max(0, wait_until - perf_counter())
+                            uid, x = q_in.get(timeout=max(0, t))
+                        except queue.Empty:
+                            n_batch_last_waits += 1
+                            batch_last_wait += t
+                            break
 
                     batch.append(x)
                     uids.append(uid)
                     n += 1
-                    time_left = wait_until - perf_counter()
 
             try:
                 results = self.call(batch)
@@ -295,8 +308,8 @@ class Servlet(metaclass=ABCMeta):
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
             if n_batches % 1000 == 0:
-                logger.info('batch size stats (count, max, min, mean): %d, %d, %d, %.1f',
-                            n_batches, batch_size_max, batch_size_min, batch_size_mean)
+                logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
+                            n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
                 n_batches = 0
 
     @abstractmethod
@@ -442,7 +455,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # Exiting one nested level.
             return
 
-        self._q_log.put(None)
         self._should_stop.set()
         for m in self._servlets:
             m.join()
@@ -450,6 +462,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         for t in not_done:
             t.cancel()
 
+        self._q_log.put(None)
         self._thread_pool.shutdown()
         # TODO: in Python 3.9+, use argument `cancel_futures=True`.
 
@@ -711,33 +724,29 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         futures = self._uid_to_futures
         should_stop = self._should_stop
         while self.started:
+            z = get_from_queue(q_err, should_stop)
+            if z is None:
+                break
+            uid, err = z
+            fut = futures.pop(uid, None)
+            if fut is None:  # timed-out in `call` or `async_call`
+                logger.debug('got error for an already-cancelled task: %r', err)
+                continue
             try:
-                uid, err = q_err.get(timeout=0.1)
-            except queue.Empty:
-                if should_stop.is_set():
-                    break
-            else:
-                fut = futures.pop(uid, None)
-                if fut is None:  # timed-out in `call` or `async_call`
-                    logger.info(
-                        'got error for an already-cancelled task: %r', err)
-                    continue
-                try:
-                    # `err` is a RemoteException object.
-                    fut.set_exception(err)
-                except asyncio.InvalidStateError as e:
-                    if fut.cancelled():
-                        logger.warning('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
+                # `err` is a RemoteException object.
+                fut.set_exception(err)
+            except asyncio.InvalidStateError as e:
+                if fut.cancelled():
+                    logger.warning('Future object is already cancelled')
+                else:
+                    logger.exception(e)
+                    raise
 
     def _enqueue_future(self, x):
-        t0 = perf_counter()
         fut = Future()
         uid = id(fut)
         self._uid_to_futures[uid] = fut
-        fut.data = {'t0': t0}
+        fut.data = {'t0': perf_counter()}
         return uid, fut
 
     async def _async_call_enqueue(self, x, *, enqueue_timeout):
@@ -797,14 +806,11 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             try:
                 # `enqueue_timeout` is the combined time across input queues,
                 # not time per queue.
-                if timenow >= t1:
-                    q.put_nowait((uid, x))
-                else:
-                    q.put((uid, x), timeout=t1 - timenow)
+                q.put((uid, x), timeout=max(0, t1 - timenow))
             except queue.Full:
                 fut.cancel()
                 del self._uid_to_futures[uid]
-                raise EnqueueTimeout(perf_counter() - t0, iq)
+                raise EnqueueTimeout(timenow - t0, iq)
 
         fut.data['t1'] = perf_counter()
         return uid, fut
@@ -858,25 +864,23 @@ class SequentialServer(MPServer):
         should_stop = self._should_stop
 
         while self.started:
+            z = get_from_queue(q_out, should_stop)
+            if z is None:
+                break
+            uid, y = z
+            fut = futures.pop(uid, None)
+            if fut is None:
+                # timed-out in `async_call` or `call`.
+                continue
             try:
-                uid, y = q_out.get(timeout=1)
-            except queue.Empty:
-                if should_stop.is_set():
-                    break
-            else:
-                fut = futures.pop(uid, None)
-                if fut is None:
-                    # timed-out in `async_call` or `call`.
-                    continue
-                try:
-                    fut.set_result(y)
-                except asyncio.InvalidStateError as e:
-                    if fut.cancelled():
-                        # Could have been cancelled due to TotalTimeout.
-                        logger.info('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
+                fut.set_result(y)
+            except asyncio.InvalidStateError as e:
+                if fut.cancelled():
+                    # Could have been cancelled due to TotalTimeout.
+                    logger.debug('Future object is already cancelled')
+                else:
+                    logger.exception(e)
+                    raise
 
     @overrides
     def _input_queues(self):
@@ -955,14 +959,14 @@ class EnsembleServer(MPServer):
                             fut.set_result(z)
                         except asyncio.InvalidStateError as e:
                             if fut.cancelled():
-                                logger.warning(
-                                    'Future object is already cancelled')
+                                logger.debug('Future object is already cancelled')
                             else:
                                 logger.exception(e)
                                 raise
                         except Exception as e:
                             fut.set_exception(e)
                     # No sleep. Get results out of the queue as quickly as possible.
+                    # TODO: check `should_stop`?
             time.sleep(self.SLEEP_DEQUEUE)
 
     @overrides
@@ -971,8 +975,8 @@ class EnsembleServer(MPServer):
 
 
 class SimpleServlet(Servlet):
-    def __init__(self, *, func, batch_size: int = None, **kwargs):
-        super().__init__(batch_size=batch_size)
+    def __init__(self, *, func, batch_size=None, batch_wait_time=None, **kwargs):
+        super().__init__(batch_size=batch_size, batch_wait_time=batch_wait_time)
         self._kwargs = kwargs
         self._func = func
 
@@ -986,14 +990,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self,
-                 func: Callable, /, *,
-                 max_queue_size: int = None,
-                 cpus: list = None,
-                 workers: int = None,
-                 batch_size: int = 0,
-                 **kwargs
-                 ):
+    def __init__(self, func: Callable, /, *, max_queue_size: int = None, **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,
@@ -1001,11 +998,6 @@ class SimpleServer(SequentialServer):
             level (can't be defined within a function), and can't be
             a lambda.
         '''
-        super().__init__(max_queue_size=max_queue_size)
+        super().__init__(max_queue_size=max_queue_size, cpus=[0])
 
-        self.add_servlet(SimpleServlet,
-                         cpus=cpus,
-                         workers=workers,
-                         batch_size=batch_size,
-                         func=func,
-                         **kwargs)
+        self.add_servlet(SimpleServlet, func=func, **kwargs)
