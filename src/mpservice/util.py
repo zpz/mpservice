@@ -9,7 +9,9 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing
+import queue
 import subprocess
+import threading
 import warnings
 
 
@@ -90,3 +92,44 @@ def get_docker_host_ip():
     z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
     z = z.decode()[len('default via '):]
     return z[: z.find(' ')]
+
+
+class BoundedSimpleQueue(queue.SimpleQueue):
+    '''
+    The standard `queue.SimpleQueue` is much faster than `queue.Queue` but
+    lacks the capability of maxsize control. This class adds a `maxsize`
+    parameter to `SimpleQueue`.
+
+    QPS (items transmitted per second) in a simple benchmark:
+        Queue:
+        SimpleQueue:
+        BoundedSimpleQueue:
+    '''
+    def __init__(self, maxsize=0):
+        super().__init__()
+        self.maxsize= maxsize
+        if maxsize > 0:
+            self._sem = threading.BoundedSemaphore(maxsize)
+        else:
+            self._sem = None
+
+    def put(self, item, block=True, timeout=None):
+        if self._sem is None:
+            return super().put(item)
+        if self._sem.acquire(blocking=block, timeout=timeout):
+            super().put(item)
+        else:
+            raise queue.Full()
+
+    def put_nowait(self, item):
+        return self.put(item, block=False)
+
+    def get(self, block=True, timeout=None):
+        z = super().get(block=block, timeout=timeout)
+        if self._sem is not None:
+            self._sem.release()
+        return z
+
+    def get_nowait(self):
+        return self.get(block=False)
+

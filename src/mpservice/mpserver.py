@@ -61,6 +61,7 @@ This article describes roughly version 0.7.2.
 # https://stackoverflow.com/questions/47085458/why-is-multiprocessing-queue-get-so-slow
 # https://stackoverflow.com/questions/43439194/python-multiprocessing-queue-vs-multiprocessing-manager-queue/45236748#45236748
 # https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
+# https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
 
 
 
@@ -75,7 +76,6 @@ import time
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
-from multiprocessing import synchronize, Queue
 from time import perf_counter
 from typing import List, Type, Sequence, Union, Callable
 
@@ -91,6 +91,13 @@ from ._streamer import put_in_queue, get_from_queue
 multiprocessing.log_to_stderr(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+mp = multiprocessing.get_context('spawn')
+Process = mp.Process
+Queue = mp.Queue
+Lock = mp.Lock
+Event = mp.Event
 
 
 class TimeoutError(Exception):
@@ -122,9 +129,9 @@ class Servlet(metaclass=ABCMeta):
             q_in: Queue,
             q_out: Queue,
             q_err: Queue,
-            q_in_lock: synchronize.Lock,
+            q_in_lock: Lock,
             q_log: Queue,
-            should_stop: multiprocessing.Event,
+            should_stop: Event,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -229,7 +236,7 @@ class Servlet(metaclass=ABCMeta):
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
-                err = RemoteException()
+                err = RemoteException().to_dict()
                 if not put_in_queue(q_err, (uid, err), should_stop):
                     return
 
@@ -243,8 +250,6 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
-                n_batch_last_waits = 0
-                batch_last_wait = 0.0
 
             batch = []
             uids = []
@@ -255,8 +260,8 @@ class Servlet(metaclass=ABCMeta):
                 z = get_from_queue(q_in, should_stop)
                 if z is None:
                     if n_batches:
-                        logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
-                                    n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
+                        logger.info('%d batches with sizes %d--%d, mean %.1f',
+                                    n_batches, batch_size_min, batch_size_max, batch_size_mean)
                     return
                 uid, x = z
                 batch.append(x)
@@ -283,8 +288,6 @@ class Servlet(metaclass=ABCMeta):
                             t = max(0, wait_until - perf_counter())
                             uid, x = q_in.get(timeout=max(0, t))
                         except queue.Empty:
-                            n_batch_last_waits += 1
-                            batch_last_wait += t
                             break
 
                     batch.append(x)
@@ -294,7 +297,7 @@ class Servlet(metaclass=ABCMeta):
             try:
                 results = self.call(batch)
             except Exception:
-                err = RemoteException()
+                err = RemoteException().to_dict()
                 for uid in uids:
                     if not put_in_queue(q_err, (uid, err), should_stop):
                         return
@@ -308,8 +311,8 @@ class Servlet(metaclass=ABCMeta):
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
             if n_batches % 1000 == 0:
-                logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
-                            n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
+                logger.info('%d batches with sizes %d--%d, mean %.1f',
+                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
                 n_batches = 0
 
     @abstractmethod
@@ -352,13 +355,6 @@ class Servlet(metaclass=ABCMeta):
 
 
 class MPServer(EnforceOverrides, metaclass=ABCMeta):
-    MP_CLASS = multiprocessing.get_context('spawn')
-    # This class attribute is provided because in some cases
-    # one may want to use `torch.multiprocessing`, which is
-    # a drop-in replacement for the standard `multiprocessing`
-    # with some enhancements related to data sharing between
-    # processes.
-
     SLEEP_ENQUEUE = 0.00015
     SLEEP_DEQUEUE = 0.00011
     TIMEOUT_ENQUEUE = 1
@@ -374,14 +370,14 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         i.e. the process in which this server objects resides.
         '''
         self.max_queue_size = max_queue_size or 1024
-        self._q_in_lock: List[synchronize.Lock] = []
-        self._q_err: Queue = self.MP_CLASS.Queue(self.max_queue_size)
-        self._q_log: Queue = self.MP_CLASS.Queue()
-        self._servlets: List[multiprocessing.Process] = []
+        self._q_in_lock: List[Lock] = []
+        self._q_err: Queue = Queue(self.max_queue_size)
+        self._q_log: Queue = Queue()
+        self._servlets: List[Process] = []
         self._uid_to_futures = {}
 
         self._sequential_start = sequential_start
-        self._should_stop = self.MP_CLASS.Event()
+        self._should_stop = Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
         # at the beginning of their `__init__` rather than
@@ -610,7 +606,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # `servlet` is the class object, not instance.
         assert not self.started
 
-        q_in_lock = self.MP_CLASS.Lock()
+        q_in_lock = Lock()
         self._q_in_lock.append(q_in_lock)
         q_err = self._q_err
         q_log = self._q_log
@@ -625,7 +621,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             logger.info('adding servlet <%s> at CPU %s', sname, cpu)
 
             self._servlets.append(
-                self.MP_CLASS.Process(
+                Process(
                     target=servlet.run,
                     name=sname,
                     kwargs={
@@ -728,6 +724,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             if z is None:
                 break
             uid, err = z
+            err = RemoteException.from_dict(err)
             fut = futures.pop(uid, None)
             if fut is None:  # timed-out in `call` or `async_call`
                 logger.debug('got error for an already-cancelled task: %r', err)
@@ -841,12 +838,11 @@ class SequentialServer(MPServer):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._q_in_out: List[Queue] = [
-            self.MP_CLASS.Queue(self.max_queue_size)]
+        self._q_in_out: List[Queue] = [Queue(self.max_queue_size)]
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = self._q_in_out[-1]
-        q_out: Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        q_out: Queue = Queue(self.max_queue_size)
         self._q_in_out.append(q_out)
 
         self._add_servlet(
@@ -900,8 +896,8 @@ class EnsembleServer(MPServer):
         self._q_out: List[Queue] = []
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
-        q_in: Queue = self.MP_CLASS.Queue(self.max_queue_size)
-        q_out: Queue = self.MP_CLASS.Queue(self.max_queue_size)
+        q_in: Queue = Queue(self.max_queue_size)
+        q_out: Queue = Queue(self.max_queue_size)
         self._q_in.append(q_in)
         self._q_out.append(q_out)
 

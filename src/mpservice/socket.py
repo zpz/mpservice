@@ -176,7 +176,7 @@ class SocketApplication(EnforceOverrides):
     def add_route(self, path: str,
                   route: Union[Callable[[Any], Awaitable[Any]], Callable[[], Awaitable[Any]]]):
         '''
-        `route` is an async function that takes a single positional arg,
+        `route` is an *async* function that takes a single positional arg,
         and returns a response (which could be `None` if so desired).
         The response should be serializable by the encoder.
         To be safe, return a object of Python native types.
@@ -214,6 +214,9 @@ class SocketServer(EnforceOverrides):
             (Note, the client may open many connections.)
             This "concurrency" is in terms of concurrent calls to
             `handle_request`.
+
+        The type of the service, between 'tcp' and 'unix', is determined
+        by the parameters `path`, `host`, and `port`. See code for details.
         '''
         self.app = app
         if path:
@@ -233,7 +236,7 @@ class SocketServer(EnforceOverrides):
             self._host = host
             self._port = int(port)
         self._backlog = backlog or 64
-        self._encoder = 'orjson'  # encoder when sending responses
+        self._encoder = 'pickle'  # encoder when sending responses
         self._n_connections = 0
         self._shutdown_path = shutdown_path
         self.to_shutdown = False
@@ -361,6 +364,10 @@ def make_server(app: SocketApplication, **kwargs):
 
 
 def run_app(app, **kwargs):
+    '''
+    End user typicall call this function to start the server.
+    The server will stay up until the client requests its shutdown.
+    '''
     server = make_server(app, **kwargs)
     asyncio.run(server.run())
 
@@ -377,6 +384,8 @@ class SocketClient(EnforceOverrides):
         '''
         `path`, `host`, `port`: either `path` is given (for Unix socket),
             or `port` (plus optionally `host`) is given (for Tcp socket).
+            These values should, of course, be consistent with the corresponding
+            server.
         `connection_timeout`: how many seconds to wait while connecting to the server.
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
@@ -405,7 +414,7 @@ class SocketClient(EnforceOverrides):
         self._num_connections = num_connections or MAX_THREADS
         self._connection_timeout = connection_timeout
         self._backlog = backlog
-        self._encoder = 'orjson'  # encoder when sending requests.
+        self._encoder = 'pickle'  # encoder when sending requests.
         self._prepare_shutdown = threading.Event()
         self._to_shutdown = threading.Event()
         self._executor = concurrent.futures.ThreadPoolExecutor()
