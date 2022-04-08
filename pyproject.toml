@@ -35,10 +35,12 @@ Source = "https://github.com/zpz/mpservice"
 test = [
     "bandit",
     "coverage[toml]",
+    "Faker",
     "flake8",
     "httpx",
     "locust",
     "mypy",
+    "numpy",
     "pylint",
     "pytest",
     "pytest-asyncio",

@@ -250,8 +250,6 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
-                n_batch_last_waits = 0
-                batch_last_wait = 0.0
 
             batch = []
             uids = []
@@ -262,8 +260,8 @@ class Servlet(metaclass=ABCMeta):
                 z = get_from_queue(q_in, should_stop)
                 if z is None:
                     if n_batches:
-                        logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
-                                    n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
+                        logger.info('%d batches with sizes %d--%d, mean %.1f',
+                                    n_batches, batch_size_min, batch_size_max, batch_size_mean)
                     return
                 uid, x = z
                 batch.append(x)
@@ -290,8 +288,6 @@ class Servlet(metaclass=ABCMeta):
                             t = max(0, wait_until - perf_counter())
                             uid, x = q_in.get(timeout=max(0, t))
                         except queue.Empty:
-                            n_batch_last_waits += 1
-                            batch_last_wait += t
                             break
 
                     batch.append(x)
@@ -315,8 +311,8 @@ class Servlet(metaclass=ABCMeta):
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
             if n_batches % 1000 == 0:
-                logger.info('%d batches with sizes %d--%d, mean %.1f, last wait %.4f',
-                            n_batches, batch_size_min, batch_size_max, batch_size_mean, batch_last_wait/n_batch_last_waits)
+                logger.info('%d batches with sizes %d--%d, mean %.1f',
+                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
                 n_batches = 0
 
     @abstractmethod

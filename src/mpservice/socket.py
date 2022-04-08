@@ -233,7 +233,7 @@ class SocketServer(EnforceOverrides):
             self._host = host
             self._port = int(port)
         self._backlog = backlog or 64
-        self._encoder = 'orjson'  # encoder when sending responses
+        self._encoder = 'pickle'  # encoder when sending responses
         self._n_connections = 0
         self._shutdown_path = shutdown_path
         self.to_shutdown = False
@@ -405,7 +405,7 @@ class SocketClient(EnforceOverrides):
         self._num_connections = num_connections or MAX_THREADS
         self._connection_timeout = connection_timeout
         self._backlog = backlog
-        self._encoder = 'orjson'  # encoder when sending requests.
+        self._encoder = 'pickle'  # encoder when sending requests.
         self._prepare_shutdown = threading.Event()
         self._to_shutdown = threading.Event()
         self._executor = concurrent.futures.ThreadPoolExecutor()
