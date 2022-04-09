@@ -8,8 +8,9 @@ from overrides import overrides
 from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    EnqueueTimeout, TotalTimeout, RemoteException,
+    EnqueueTimeout, TotalTimeout
 )
+from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 

@@ -69,6 +69,20 @@ def dequeue(q):
         n += 1
 
 
+def dequeue_many(q):
+    n = 0
+    while True:
+        z = q.get_many(max_messages_to_get=100, timeout=60)
+        # sleep(0.0002)
+        n += len(z) - 1
+        if z is None:
+            if isinstance(q, (queue.Queue, queue.SimpleQueue)):
+                print('got', n, 'items in', threading.current_thread().name)
+            else:
+                print('got', n, 'items in', mp.current_process().name)
+            return
+
+
 def enqueue_orjson(q):
     x = data
     for _ in range(N):
@@ -140,13 +154,16 @@ def main_all():
     q = BoundedSimpleQueue(1000)
     main(q, threading.Thread, enqueue, dequeue)
 
-    # print('\nmultiprocessing\n')
+    print('\nmultiprocessing\n')
 
-    # q = mp.Queue(1000)
-    # main(q, mp.Process, enqueue, dequeue)
+    q = mp.Queue(1000)
+    main(q, mp.Process, enqueue, dequeue)
 
-    # q = faster_fifo.Queue()
-    # main(q, mp.Process, enqueue, dequeue)
+    q = faster_fifo.Queue()
+    main(q, mp.Process, enqueue, dequeue)
+
+    q = faster_fifo.Queue()
+    main(q, mp.Process, enqueue, dequeue_many)
 
     # q = mp.Queue(1000)
     # main(q, mp.Process, enqueue_orjson, dequeue_orjson)

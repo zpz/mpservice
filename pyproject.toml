@@ -9,7 +9,6 @@ authors = [
     {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
 ]
 dependencies = [
-    "faster-fifo >= 1.3.1",
     "orjson",
     "overrides",
     "psutil",
@@ -36,6 +35,7 @@ test = [
     "bandit",
     "coverage[toml]",
     "Faker",
+    "faster-fifo >= 1.3.1",
     "flake8",
     "httpx",
     "locust",

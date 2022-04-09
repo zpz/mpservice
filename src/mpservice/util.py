@@ -94,6 +94,9 @@ def get_docker_host_ip():
     return z[: z.find(' ')]
 
 
+# `SimpleQueue` is much faster than `Queue`, but it is unbounded.
+# This class adds bound to it, but with bounds, the speed is not better
+# then `Queue`. If this continues to be the case, this class will be removed.
 class BoundedSimpleQueue(queue.SimpleQueue):
     '''
     The standard `queue.SimpleQueue` is much faster than `queue.Queue` but
