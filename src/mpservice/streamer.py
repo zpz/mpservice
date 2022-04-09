@@ -1,3 +1,3 @@
-from . import _streamer
+from ._streamer import Streamer
 
-Streamer = _streamer.Streamer
+__all__ = ['Streamer']
