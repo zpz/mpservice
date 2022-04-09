@@ -2,7 +2,7 @@ import multiprocessing
 import pickle
 import queue
 import threading
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 import numpy
@@ -27,7 +27,7 @@ data = {
     'attributes': {fake.name(): fake.sentence() for _ in range(500)},
     'details': [fake.text() for _ in range(200)],
     }
-N = 1000
+N = 10000
 
 
 class OrjsonPickler:
@@ -51,6 +51,7 @@ def orjson_dumps(x):
 def enqueue(q):
     x = data
     for _ in range(N):
+        # sleep(0.0001)
         q.put(x)
 
 
@@ -58,6 +59,7 @@ def dequeue(q):
     n = 0
     while True:
         z = q.get()
+        # sleep(0.0002)
         if z is None:
             if isinstance(q, (queue.Queue, queue.SimpleQueue)):
                 print('got', n, 'items in', threading.current_thread().name)

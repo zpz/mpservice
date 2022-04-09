@@ -104,6 +104,12 @@ async def run_tcp_server(conn_handler: Callable, host: str, port: int):
 
 
 async def run_unix_server(conn_handler: Callable, path: str):
+    '''
+    `path`: a file path accessible by both the server and the client,
+        which run on the same machine. This is not a regular file,
+        and it (including parent directories) does not need to exist.
+        In fact, if the file exists, it will be removed first.
+    '''
     try:
         os.unlink(path)
     except FileNotFoundError:
@@ -133,7 +139,10 @@ async def open_tcp_connection(host, port, *, timeout=None):
             await asyncio.sleep(0.1)
 
 
-async def open_unix_connection(path, *, timeout=None):
+async def open_unix_connection(path: str, *, timeout=None):
+    '''
+    `path`: the same string that has been used by `run_unix_server`.
+    '''
     t0 = perf_counter()
     while True:
         try:
@@ -154,7 +163,7 @@ class SocketApplication(EnforceOverrides):
     for different purposes. Usually there is only one main function, which involves
     transmitting substantial amount of data between the server and the client.
     For simplicity, one may use '/' for the `path` of this route.
-    The other routes are usually supportivies, for example, getting server info
+    The other routes are usually supportive, for example, getting server info
     or setting options. For example
 
         app.add_route('/', make_prediction)
@@ -194,6 +203,9 @@ class SocketApplication(EnforceOverrides):
         self._routes[path] = route
 
     async def handle_request(self, path: str, data: Any = None):
+        '''
+        Dispatch the request to a registered route function.
+        '''
         if data is None:
             return await self._routes[path]()
         return await self._routes[path](data)
@@ -250,6 +262,9 @@ class SocketServer(EnforceOverrides):
         return self.__repr__()
 
     async def run(self):
+        '''
+        Start the server and let it stay up until shutdown conditions are met.
+        '''
         if self._path:
             server_task = asyncio.create_task(
                 run_unix_server(self._handle_connection, self._path))
@@ -365,7 +380,7 @@ def make_server(app: SocketApplication, **kwargs):
 
 def run_app(app, **kwargs):
     '''
-    End user typicall call this function to start the server.
+    End user typicall calls this function to start the server.
     The server will stay up until the client requests its shutdown.
     '''
     server = make_server(app, **kwargs)
@@ -386,6 +401,8 @@ class SocketClient(EnforceOverrides):
             or `port` (plus optionally `host`) is given (for Tcp socket).
             These values should, of course, be consistent with the corresponding
             server.
+        `num_connections`: this is expected to have a direct impact on the performance,
+            hence needs experimentations.
         `connection_timeout`: how many seconds to wait while connecting to the server.
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
@@ -563,7 +580,7 @@ class SocketClient(EnforceOverrides):
         the server's response to the request. The user will not be
         able to resume the wait for the result.
 
-        If caller does not need the response, use `timeout=0`.
+        If caller does not need the response, use `response_timeout=0`.
 
         In some cases, the request does not need to send data, e.g. if the request
         if for certain info query. In such situations, the corresponding function on

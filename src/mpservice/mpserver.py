@@ -63,9 +63,6 @@ This article describes roughly version 0.7.2.
 # https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
 # https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
 
-
-
-
 import asyncio
 import concurrent.futures
 import logging
@@ -98,6 +95,39 @@ Process = mp.Process
 Queue = mp.Queue
 Lock = mp.Lock
 Event = mp.Event
+
+
+def put_many_in_queue(q, xs: Sequence, should_stop: multiprocessing.Event):
+    for x in xs:
+        if not put_in_queue(q, x, should_stop):
+            return False
+    return True
+
+
+def get_many_from_queue(q, n_max: int, timeout: float) -> list:
+    batch = []
+    n = 0
+    wait_until = perf_counter() + timeout
+    while n < n_max:
+        if not q.empty():
+            x = q.get_nowait()
+        else:
+            try:
+                # If there is remaining time, wait up to
+                # that long.
+                # Otherwise, get the next item if it is there
+                # right now (i.e. no waiting) even if we
+                # are already over time. That is, if supply
+                # has piled up, then will get up to the
+                # batch capacity.
+                t = max(0, wait_until - perf_counter())
+                x = q.get(timeout=max(0, t))
+            except queue.Empty:
+                break
+
+        batch.append(x)
+        n += 1
+    return batch
 
 
 class TimeoutError(Exception):
@@ -253,7 +283,6 @@ class Servlet(metaclass=ABCMeta):
 
             batch = []
             uids = []
-            n = 0
             with q_in_lock:
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
@@ -264,47 +293,29 @@ class Servlet(metaclass=ABCMeta):
                                     n_batches, batch_size_min, batch_size_max, batch_size_mean)
                     return
                 uid, x = z
-                batch.append(x)
                 uids.append(uid)
-                n += 1
+                batch.append(x)
 
-                wait_until = perf_counter() + batch_wait_time
                 # Wait time starts after getting the first item,
                 # because however long the first item takes to come
                 # is not the worker's fault.
 
-                while n < batch_size:
-                    if not q_in.empty():
-                        uid, x = q_in.get_nowait()
-                    else:
-                        try:
-                            # If there is remaining time, wait up to
-                            # that long.
-                            # Otherwise, get the next item if it is there
-                            # right now (i.e. no waiting) even if we
-                            # are already over time. That is, if supply
-                            # has piled up, then will get up to the
-                            # batch capacity.
-                            t = max(0, wait_until - perf_counter())
-                            uid, x = q_in.get(timeout=max(0, t))
-                        except queue.Empty:
-                            break
+                more = get_many_from_queue(q_in, batch_size - 1, batch_wait_time)
+                if more:
+                    uids.extend((v[0] for v in more))
+                    batch.extend((v[1] for v in more))
 
-                    batch.append(x)
-                    uids.append(uid)
-                    n += 1
+            n = len(batch)
 
             try:
                 results = self.call(batch)
             except Exception:
                 err = RemoteException().to_dict()
-                for uid in uids:
-                    if not put_in_queue(q_err, (uid, err), should_stop):
-                        return
+                if not put_many_in_queue(q_err, [(uid, err) for uid in uids], should_stop):
+                    return
             else:
-                for uid, y in zip(uids, results):
-                    if not put_in_queue(q_out, (uid, y), should_stop):
-                        return
+                if not put_many_in_queue(q_out, list(zip(uids, results)), should_stop):
+                    return
 
             n_batches += 1
             batch_size_max = max(batch_size_max, n)

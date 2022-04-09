@@ -344,8 +344,9 @@ class Streamer(EnforceOverrides):
         self.streamlets.append(Peeker(self.streamlets[-1], func))
         return self
 
-    def peek_every_nth(self, nth: int, peek_func: Callable[[int, T], None] = None,
-            *, base: int = 0, first: int = 0, last: int = None):
+    def peek_every_nth(self, nth: int,
+                       peek_func: Callable[[int, T], None] = None,
+                       *, base: int = 0, first: int = 0, last: int = None):
         assert nth > 0
         assert base in (0, 1)
 

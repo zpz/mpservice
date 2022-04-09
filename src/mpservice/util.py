@@ -106,30 +106,37 @@ class BoundedSimpleQueue(queue.SimpleQueue):
         BoundedSimpleQueue:
     '''
     def __init__(self, maxsize=0):
+        '''
+        `maxsize`: default 0, meaning unlimited.
+        '''
         super().__init__()
-        self.maxsize= maxsize
+        self.maxsize = maxsize
         if maxsize > 0:
-            self._sem = threading.BoundedSemaphore(maxsize)
-        else:
-            self._sem = None
+            self._put_lock = threading.Lock()
+            self._notfull = threading.Condition()
 
     def put(self, item, block=True, timeout=None):
-        if self._sem is None:
+        if self.maxsize == 0:
             return super().put(item)
-        if self._sem.acquire(blocking=block, timeout=timeout):
-            super().put(item)
-        else:
-            raise queue.Full()
+        with self._put_lock:
+            if self.qsize() < self.maxsize:
+                super().put(item)
+                return
+            with self._notfull:
+                if self._notfull.wait(timeout=timeout):
+                    super().put(item)
+                else:
+                    raise queue.Full()
 
     def put_nowait(self, item):
         return self.put(item, block=False)
 
     def get(self, block=True, timeout=None):
         z = super().get(block=block, timeout=timeout)
-        if self._sem is not None:
-            self._sem.release()
+        if self.qsize() == self.maxsize - 1:
+            with self._notfull:
+                self._notfull.notify()
         return z
 
     def get_nowait(self):
         return self.get(block=False)
-
