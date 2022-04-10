@@ -31,15 +31,14 @@ def main(model):
 if __name__ == '__main__':
     config_logger(with_process_name=True)
 
-    # print('use std queue')
-    # _mpserver.USE_FASTER_FIFO = False
-    # model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01, max_queue_size=1000)
-    # main(model)
+    print('use std queue')
+    _mpserver.USE_FASTER_FIFO = False
+    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
+    main(model)
 
     print('')
     print('use faster_fifo')
     _mpserver.USE_FASTER_FIFO = True
-    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01,
-            max_queue_size_bytes=1000)
+    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
     main(model)
 
