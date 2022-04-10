@@ -9,7 +9,6 @@ from pickle import dumps as pickle_dumps, loads as pickle_loads
 from time import perf_counter
 from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 
-from orjson import loads as orjson_loads, dumps as orjson_dumps  # pylint: disable=no-name-in-module
 from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
@@ -37,8 +36,6 @@ logger = logging.getLogger(__name__)
 
 
 def encode(data, encoder):
-    if encoder == 'orjson':
-        return orjson_dumps(data)
     if encoder == 'pickle':
         return pickle_dumps(data)
     if encoder == 'utf8':
@@ -48,8 +45,6 @@ def encode(data, encoder):
 
 
 def decode(data, encoder):
-    if encoder == 'orjson':
-        return orjson_loads(data)
     if encoder == 'pickle':
         return pickle_loads(data)
     if encoder == 'utf8':
@@ -70,7 +65,7 @@ def decode(data, encoder):
 # of bytes, which should be decoded by `decode` according to the 'encoder'.
 
 
-async def write_record(writer, request_id, data, *, encoder: str = 'orjson'):
+async def write_record(writer, request_id, data, *, encoder: str = 'pickle'):
     data_bytes = encode(data, encoder)
     writer.write(f'{request_id} {len(data_bytes)} {encoder}\n'.encode())
     writer.write(data_bytes)
