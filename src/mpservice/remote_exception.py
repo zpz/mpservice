@@ -186,15 +186,15 @@ class RemoteException(Exception):
 def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
     if exc_type is None:
         return
-    msg = "Exiting {} with exception: {}\n{}".format(
-        obj.__class__.__name__, exc_type, exc_value,
-    )
     if isinstance(exc_value, RemoteException):
+        msg = "Exiting {} with exception: {}\n{}".format(
+            obj.__class__.__name__, exc_type, exc_value,
+        )
         msg = "{}\n\n{}\n\n{}".format(
             msg, exc_value.format(),
             "The above exception was the direct cause of the following exception:")
-    msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
-    return msg
+        msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
+        return msg
 
 
 _excepthook_ = sys.excepthook

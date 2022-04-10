@@ -55,32 +55,37 @@ def enqueue(q):
         q.put(x)
 
 
-def dequeue(q):
+def dequeue(q, to_stop):
     n = 0
     while True:
-        z = q.get()
-        # sleep(0.0002)
-        if z is None:
-            if isinstance(q, (queue.Queue, queue.SimpleQueue)):
-                print('got', n, 'items in', threading.current_thread().name)
-            else:
-                print('got', n, 'items in', mp.current_process().name)
-            return
-        n += 1
+        try:
+            z = q.get(timeout=0.01)
+            # sleep(0.0002)
+            n += 1
+        except queue.Empty:
+            if to_stop.is_set():
+                if isinstance(q, (queue.Queue, queue.SimpleQueue)):
+                    print('got', n, 'items in', threading.current_thread().name)
+                else:
+                    print('got', n, 'items in', mp.current_process().name)
+                return
 
 
-def dequeue_many(q):
+
+def dequeue_many(q, to_stop):
     n = 0
     while True:
-        z = q.get_many(max_messages_to_get=100, timeout=60)
-        # sleep(0.0002)
-        n += len(z) - 1
-        if z is None:
-            if isinstance(q, (queue.Queue, queue.SimpleQueue)):
-                print('got', n, 'items in', threading.current_thread().name)
-            else:
-                print('got', n, 'items in', mp.current_process().name)
-            return
+        try:
+            z = q.get_many(max_messages_to_get=100, timeout=0.01)
+            # sleep(0.0002)
+            n += len(z)
+        except queue.Empty:
+            if to_stop.is_set():
+                if isinstance(q, (queue.Queue, queue.SimpleQueue)):
+                    print('got', n, 'items in', threading.current_thread().name)
+                else:
+                    print('got', n, 'items in', mp.current_process().name)
+                return
 
 
 def enqueue_orjson(q):
@@ -89,26 +94,29 @@ def enqueue_orjson(q):
         q.put(OrjsonPickler(x))
 
 
-def dequeue_orjson(q):
+def dequeue_orjson(q, to_stop):
     n = 0
     while True:
-        z = q.get()
-        if z is None:
-            print('got', n, 'items in process', mp.current_process().name)
-            return
-        z = z.value
-        n += 1
+        try:
+            z = q.get(timeout=0.1)
+            z = z.value
+            n += 1
+        except queue.Empty:
+            if to_stop.is_set():
+                print('got', n, 'items in process', mp.current_process().name)
+                return
 
 
 def main(q, P, enq, deq):
+    to_stop = multiprocessing.Event()
     p1 = P(target=enq, args=(q,))
     p2 = P(target=enq, args=(q,))
     p3 = P(target=enq, args=(q,))
     p4 = P(target=enq, args=(q,))
-    p10 = P(target=deq, args=(q,))
-    p20 = P(target=deq, args=(q,))
-    p30 = P(target=deq, args=(q,))
-    p40 = P(target=deq, args=(q,))
+    p10 = P(target=deq, args=(q, to_stop))
+    p20 = P(target=deq, args=(q, to_stop))
+    p30 = P(target=deq, args=(q, to_stop))
+    p40 = P(target=deq, args=(q, to_stop))
     p1.start()
     p2.start()
     p3.start()
@@ -122,10 +130,7 @@ def main(q, P, enq, deq):
     p2.join()
     p3.join()
     p4.join()
-    q.put(None)
-    q.put(None)
-    q.put(None)
-    q.put(None)
+    to_stop.set()
     p10.join()
     p20.join()
     p30.join()

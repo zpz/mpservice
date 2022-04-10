@@ -9,7 +9,6 @@ authors = [
     {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
 ]
 dependencies = [
-    "orjson",
     "overrides",
     "psutil",
     "uvicorn[standard] >=0.15.0,<1.0",
@@ -41,9 +40,12 @@ test = [
     "locust",
     "mypy",
     "numpy",
+    "orjson",
     "pylint",
+    "pynng",
     "pytest",
     "pytest-asyncio",
+    "pyzmq",
     "requests",
     "starlette",
     "uvloop",
