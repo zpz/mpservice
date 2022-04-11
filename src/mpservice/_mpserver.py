@@ -63,18 +63,19 @@ This article describes roughly version 0.7.2.
 # https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
 # https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
 
+
 import asyncio
 import concurrent.futures
 import logging
 import multiprocessing
 import os
+import pickle
 import queue
 import threading
-import time
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import List, Type, Sequence, Union, Callable
 
 import psutil
@@ -103,11 +104,45 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+# About changing pickle protocol for multiprocessing:
+#  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
+
+# class ForkingPickler2(multiprocessing.reduction.ForkingPickler):
+#     def __init__(self, *args):
+#         if len(args) > 1:
+#             a = list(args)
+#             a[1] = pickle.HIGHEST_PROTOCOL
+#             args = tuple(a)
+#         else:
+#             args = args + (pickle.HIGHEST_PROTOCOL,)
+#         print('args:', args)
+#         super().__init__(*args)
+#
+#     @classmethod
+#     def dumps(cls, obj, protocol=pickle.HIGHEST_PROTOCOL):
+#         return super().dumps(obj, protocol)
+#
+#
+# def _dump(obj, file, protocol=pickle.HIGHEST_PROTOCOL):
+#     ForkingPickler2(file, protocol).dump(obj)
+#
+#
+# class Reducer(multiprocessing.reduction.AbstractReducer):
+#     ForkingPickler = ForkingPickler2
+#     register = ForkingPickler2.register
+#     dump = _dump
+
+
 mp = multiprocessing.get_context('spawn')
+# mp.reducer = Reducer()
 Process = mp.Process
 Lock = mp.Lock
 Event = mp.Event
 Queue = mp.Queue
+
+
+def pickle_dumps(obj):
+    return pickle.dumps(obj, protocol=5)
 
 
 def put_many_in_queue(q, xs: Sequence, should_stop: multiprocessing.Event):
@@ -137,21 +172,29 @@ def put_many_in_queue(q, xs: Sequence, should_stop: multiprocessing.Event):
 
 
 def get_many_from_queue(q, n_max: int, timeout: float) -> list:
+    # This code is the only accessor to the `get` side
+    # of the queue `q` during the execution of this function.
+    # This is guaranteed by locking or by logic.
+
+    # I tried pre-allocate the output list and fill data into it.
+    # Didn't help much.
+
+    wait_until = perf_counter() + timeout
+    batch = []
+    n = 0
     if q.__class__.__module__ == 'faster_fifo':
-        wait_until = perf_counter() + timeout
-        data = []
-        while len(data) < n_max:
+        while n < n_max:
             try:
-                z = q.get_many(max_messages_to_get=n_max - len(data),
-                               timeout=max(0, wait_until - perf_counter()))
-                data.extend(z)
+                t = perf_counter()
+                z = q.get_many(max_messages_to_get=n_max - n,
+                               timeout=max(0, wait_until - t))
+                batch.extend(z)
+                n += len(z)
+                if t < wait_until:
+                    sleep(0.001)
             except queue.Empty:
                 break
-        return data
     else:
-        batch = []
-        n = 0
-        wait_until = perf_counter() + timeout
         while n < n_max:
             if not q.empty():
                 x = q.get_nowait()
@@ -164,14 +207,12 @@ def get_many_from_queue(q, n_max: int, timeout: float) -> list:
                     # are already over time. That is, if supply
                     # has piled up, then will get up to the
                     # batch capacity.
-                    t = max(0, wait_until - perf_counter())
-                    x = q.get(timeout=max(0, t))
+                    x = q.get(timeout=max(0, wait_until - perf_counter()))
                 except queue.Empty:
                     break
-
             batch.append(x)
             n += 1
-        return batch
+    return batch
 
 
 class TimeoutError(Exception):
@@ -324,10 +365,13 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
+                # qsizes = []
 
             batch = []
             uids = []
             with q_in_lock:
+                # qsize_start = q_in.qsize()
+
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
                 z = get_from_queue(q_in, should_stop)
@@ -335,6 +379,7 @@ class Servlet(metaclass=ABCMeta):
                     if n_batches:
                         logger.info('%d batches with sizes %d--%d, mean %.1f',
                                     n_batches, batch_size_min, batch_size_max, batch_size_mean)
+                        # logger.info('queue/batch sizes: %s', qsizes)
                     return
                 uid, x = z
                 uids.append(uid)
@@ -345,9 +390,11 @@ class Servlet(metaclass=ABCMeta):
                 # is not the worker's fault.
 
                 more = get_many_from_queue(q_in, batch_size - 1, batch_wait_time)
-                if more:
-                    uids.extend((v[0] for v in more))
-                    batch.extend((v[1] for v in more))
+                # qsize_end = q_in.qsize()
+
+            if more:
+                uids.extend((v[0] for v in more))
+                batch.extend((v[1] for v in more))
 
             n = len(batch)
 
@@ -365,9 +412,11 @@ class Servlet(metaclass=ABCMeta):
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+            # qsizes.append((qsize_start, n, qsize_end))
             if n_batches % 1000 == 0:
                 logger.info('%d batches with sizes %d--%d, mean %.1f',
                             n_batches, batch_size_min, batch_size_max, batch_size_mean)
+                # logger.info('queue/batch sizes: %s', qsizes)
                 n_batches = 0
 
     @abstractmethod
@@ -435,7 +484,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 if max_queue_size_bytes < 1000 * 1000:
                     warnings.warn(f"queue size {max_queue_size_bytes} bytes is likely too small, unless you are experimenting")
             self.max_queue_size = max_queue_size_bytes
-            self._q_err = faster_fifo.Queue(self.max_queue_size)
+            self._q_err = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
         else:
             if max_queue_size is None:
                 max_queue_size = 1024
@@ -445,7 +494,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             self.max_queue_size = max_queue_size
             self._q_err = mp.Queue(self.max_queue_size)
         self._q_log = mp.Queue()  # This does not need the performance optim of fast_fifo.
-        self._q_in_lock: List[Lock] = []
+        self._q_in_lock: List[Lock] = None
         self._servlets: List[Process] = []
         self._uid_to_futures = {}
 
@@ -671,6 +720,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                      servlet: Type[Servlet],
                      *,
                      q_in,
+                     q_in_lock,
                      q_out,
                      cpus: list = None,
                      workers: int = None,
@@ -679,8 +729,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # `servlet` is the class object, not instance.
         assert not self.started
 
-        q_in_lock = Lock()
-        self._q_in_lock.append(q_in_lock)
         q_err = self._q_err
         q_log = self._q_log
 
@@ -912,14 +960,18 @@ class SequentialServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if USE_FASTER_FIFO:
-            self._q_in_out = [faster_fifo.Queue(self.max_queue_size)]
+            q_in = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
         else:
-            self._q_in_out = [mp.Queue(self.max_queue_size)]
+            q_in = mp.Queue(self.max_queue_size)
+        self._q_in_out = [q_in]
+        self._q_in_lock = [Lock()]
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = self._q_in_out[-1]
+        q_in_lock = self._q_in_lock[-1]
         if USE_FASTER_FIFO:
-            q_out = faster_fifo.Queue(self.max_queue_size)
+            q_in.reallocate_msg_buffer(1000_000)
+            q_out = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
         else:
             q_out = mp.Queue(self.max_queue_size)
         self._q_in_out.append(q_out)
@@ -927,6 +979,7 @@ class SequentialServer(MPServer):
         self._add_servlet(
             servlet,
             q_in=q_in,
+            q_in_lock=q_in_lock,
             q_out=q_out,
             **kwargs,
         )
@@ -939,24 +992,23 @@ class SequentialServer(MPServer):
         should_stop = self._should_stop
 
         while self.started:
-            zz = get_many_from_queue(q_out, 1000, 0.002)
-            if not zz and should_stop.is_set():
+            z = get_from_queue(q_out, should_stop)
+            if z is None:
                 break
-            for z in zz:
-                uid, y = z
-                fut = futures.pop(uid, None)
-                if fut is None:
-                    # timed-out in `async_call` or `call`.
-                    continue
-                try:
-                    fut.set_result(y)
-                except asyncio.InvalidStateError as e:
-                    if fut.cancelled():
-                        # Could have been cancelled due to TotalTimeout.
-                        logger.debug('Future object is already cancelled')
-                    else:
-                        logger.exception(e)
-                        raise
+            uid, y = z
+            fut = futures.pop(uid, None)
+            if fut is None:
+                # timed-out in `async_call` or `call`.
+                continue
+            try:
+                fut.set_result(y)
+            except asyncio.InvalidStateError as e:
+                if fut.cancelled():
+                    # Could have been cancelled due to TotalTimeout.
+                    logger.debug('Future object is already cancelled')
+                else:
+                    logger.exception(e)
+                    raise
 
     @overrides
     def _input_queues(self):
@@ -973,21 +1025,27 @@ class EnsembleServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._q_in: List[Queue] = []
+        self._q_in_lock: List[Lock] = []
         self._q_out: List[Queue] = []
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         if USE_FASTER_FIFO:
-            q_in = faster_fifo.Queue(self.max_queue_size)
-            q_out = faster_fifo.Queue(self.max_queue_size)
+            q_in = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_in.reallocate_msg_buffer(1000_000)
+            q_out = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_out.reallocate_msg_buffer(1000_000)
         else:
             q_in = mp.Queue(self.max_queue_size)
             q_out = mp.Queue(self.max_queue_size)
+        q_in_lock = Lock()
         self._q_in.append(q_in)
+        self._q_in_lock.append(q_in_lock)
         self._q_out.append(q_out)
 
         self._add_servlet(
             servlet,
             q_in=q_in,
+            q_in_lock=q_in_lock,
             q_out=q_out,
             **kwargs,
         )
@@ -1047,7 +1105,7 @@ class EnsembleServer(MPServer):
                             fut.set_exception(e)
                     # No sleep. Get results out of the queue as quickly as possible.
                     # TODO: check `should_stop`?
-            time.sleep(self.SLEEP_DEQUEUE)
+            sleep(self.SLEEP_DEQUEUE)
 
     @overrides
     def _input_queues(self):

@@ -8,7 +8,7 @@ from zpz.logging import config_logger
 seed(100)
 
 def double(x):
-    sleep(uniform(0.1, 0.3))
+    sleep(uniform(0.05, 0.2))
     if isinstance(x, list):
         return [v * 2 for v in x]
     return x * 2

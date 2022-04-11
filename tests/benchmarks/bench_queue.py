@@ -49,21 +49,30 @@ def orjson_dumps(x):
 
 
 def enqueue(q):
+    t0 = perf_counter()
     x = data
     for _ in range(N):
         # sleep(0.0001)
         q.put(x)
+    t1 = perf_counter()
+    print('enqueue took', t1 - t0, 'seconds')
 
 
 def dequeue(q, to_stop):
+    t0 = perf_counter()
     n = 0
+    print('starting dequeue')
     while True:
         try:
             z = q.get(timeout=0.01)
             # sleep(0.0002)
             n += 1
         except queue.Empty:
+            print('to stop dequeue')
             if to_stop.is_set():
+                print('stopping dequeue')
+                t1 = perf_counter()
+                print('dequeue took', t1 - t0, 'seconds')
                 if isinstance(q, (queue.Queue, queue.SimpleQueue)):
                     print('got', n, 'items in', threading.current_thread().name)
                 else:
@@ -73,6 +82,7 @@ def dequeue(q, to_stop):
 
 
 def dequeue_many(q, to_stop):
+    t0 = perf_counter()
     n = 0
     while True:
         try:
@@ -81,6 +91,8 @@ def dequeue_many(q, to_stop):
             n += len(z)
         except queue.Empty:
             if to_stop.is_set():
+                t1 = perf_counter()
+                print('dequeue took', t1 - t0, 'seconds')
                 if isinstance(q, (queue.Queue, queue.SimpleQueue)):
                     print('got', n, 'items in', threading.current_thread().name)
                 else:
@@ -147,17 +159,17 @@ def main(q, P, enq, deq):
 def main_all():
     print('\nthreading\n')
 
-    q = queue.Queue()
-    main(q, threading.Thread, enqueue, dequeue)
+    # q = queue.Queue()
+    # main(q, threading.Thread, enqueue, dequeue)
 
-    q = queue.SimpleQueue()
-    main(q, threading.Thread, enqueue, dequeue)
+    # q = queue.SimpleQueue()
+    # main(q, threading.Thread, enqueue, dequeue)
 
-    q = queue.Queue(1000)
-    main(q, threading.Thread, enqueue, dequeue)
+    # q = queue.Queue(1000)
+    # main(q, threading.Thread, enqueue, dequeue)
 
-    q = BoundedSimpleQueue(1000)
-    main(q, threading.Thread, enqueue, dequeue)
+    # q = BoundedSimpleQueue(1000)
+    # main(q, threading.Thread, enqueue, dequeue)
 
     print('\nmultiprocessing\n')
 
