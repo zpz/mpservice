@@ -1,4 +1,4 @@
-Release 0.10.x
+Release 0.10.6b1
 ==============
 
 - Add `faster_fifo` to `mpservide._mpserver`, in an attempt to improve service batching.
