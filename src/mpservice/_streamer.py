@@ -670,7 +670,7 @@ class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int = None):
         super().__init__(instream)
         if maxsize is None:
-            maxsize = 1024
+            maxsize = 2048
         else:
             assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize

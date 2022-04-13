@@ -76,6 +76,9 @@ class FastQueue(queues.SimpleQueue):
                 raise BrokenPipeError(f"Queue {self!r} is closed")
             raise
 
+    def put_nowait(self, obj):
+        self.put(obj, False)
+
     def close(self):
         # Based on very limited testing, after calling `close()`,
         # in the same process (on the same object), `get` and `put`

@@ -5,6 +5,7 @@ from time import perf_counter
 
 import faster_fifo
 import faster_fifo_reduction
+import mpservice.multiprocessing
 
 from util import make_message
 

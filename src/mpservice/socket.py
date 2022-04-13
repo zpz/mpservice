@@ -389,7 +389,7 @@ class SocketClient(EnforceOverrides):
                  port: int = None,
                  num_connections: int = None,
                  connection_timeout: int = 60,
-                 backlog: int = 1024,
+                 backlog: int = 2048,
                  ):
         '''
         `path`, `host`, `port`: either `path` is given (for Unix socket),
