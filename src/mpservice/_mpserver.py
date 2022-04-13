@@ -84,7 +84,7 @@ from overrides import EnforceOverrides, overrides
 from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
 from ._streamer import put_in_queue, get_from_queue
-from .multiprocessing import FastQueue
+from .multiprocessing import FastQueue  # noqa: F401
 
 
 use_faster_fifo = os.environ.get('MPSERVICE_USE_FASTER_FIFO', None)  # '0' or '1' or None
