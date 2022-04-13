@@ -84,6 +84,8 @@ from overrides import EnforceOverrides, overrides
 from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
 from ._streamer import put_in_queue, get_from_queue
+from .multiprocessing import FastQueue  # noqa: F401
+
 
 use_faster_fifo = os.environ.get('MPSERVICE_USE_FASTER_FIFO', None)  # '0' or '1' or None
 if use_faster_fifo == '0':
@@ -138,7 +140,7 @@ mp = multiprocessing.get_context('spawn')
 Process = mp.Process
 Lock = mp.Lock
 Event = mp.Event
-Queue = mp.Queue
+Queue = mp.FastQueue
 
 
 def pickle_dumps(obj):
@@ -465,35 +467,18 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     TIMEOUT_TOTAL = 10
 
     def __init__(self, *,
-                 max_queue_size: int = None,
-                 max_queue_size_bytes: int = None,
                  cpus: Sequence[int] = None,
                  sequential_start: bool = True,
                  ):
         '''
         `cpus`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
-
-        `max_queue_size`: if `USE_FASTER_FIFO` is True, this is size in bytes,
-            otherwise, this is size in element count.
         '''
         if USE_FASTER_FIFO:
-            if max_queue_size_bytes is None:
-                max_queue_size_bytes = 10 * 1000 * 1000  # 10 MB
-            else:
-                if max_queue_size_bytes < 1000 * 1000:
-                    warnings.warn(f"queue size {max_queue_size_bytes} bytes is likely too small, unless you are experimenting")
-            self.max_queue_size = max_queue_size_bytes
-            self._q_err = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            self._q_err = faster_fifo.Queue(10_000_000, dumps=pickle_dumps)
         else:
-            if max_queue_size is None:
-                max_queue_size = 1024
-            else:
-                if max_queue_size < 100:
-                    warnings.warn(f"queue size {max_queue_size} is likely too small, unless you are experimenting")
-            self.max_queue_size = max_queue_size
-            self._q_err = mp.Queue(self.max_queue_size)
-        self._q_log = mp.Queue()  # This does not need the performance optim of fast_fifo.
+            self._q_err = Queue()
+        self._q_log = Queue()  # This does not need the performance optim of fast_fifo.
         self._q_in_lock: List[Lock] = None
         self._servlets: List[Process] = []
         self._uid_to_futures = {}
@@ -960,9 +945,9 @@ class SequentialServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if USE_FASTER_FIFO:
-            q_in = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_in = faster_fifo.Queue(10_000_000, dumps=pickle_dumps)
         else:
-            q_in = mp.Queue(self.max_queue_size)
+            q_in = Queue()
         self._q_in_out = [q_in]
         self._q_in_lock = [Lock()]
 
@@ -971,9 +956,9 @@ class SequentialServer(MPServer):
         q_in_lock = self._q_in_lock[-1]
         if USE_FASTER_FIFO:
             q_in.reallocate_msg_buffer(1000_000)
-            q_out = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_out = faster_fifo.Queue(10_000_000, dumps=pickle_dumps)
         else:
-            q_out = mp.Queue(self.max_queue_size)
+            q_out = Queue()
         self._q_in_out.append(q_out)
 
         self._add_servlet(
@@ -1030,13 +1015,13 @@ class EnsembleServer(MPServer):
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         if USE_FASTER_FIFO:
-            q_in = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_in = faster_fifo.Queue(10_000_000, dumps=pickle_dumps)
             q_in.reallocate_msg_buffer(1000_000)
-            q_out = faster_fifo.Queue(self.max_queue_size, dumps=pickle_dumps)
+            q_out = faster_fifo.Queue(10_000_000, dumps=pickle_dumps)
             q_out.reallocate_msg_buffer(1000_000)
         else:
-            q_in = mp.Queue(self.max_queue_size)
-            q_out = mp.Queue(self.max_queue_size)
+            q_in = Queue()
+            q_out = Queue()
         q_in_lock = Lock()
         self._q_in.append(q_in)
         self._q_in_lock.append(q_in_lock)
@@ -1128,10 +1113,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self, func: Callable, /, *,
-                 max_queue_size: int = None,
-                 max_queue_size_bytes: int = None,
-                 **kwargs):
+    def __init__(self, func: Callable, /, **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,
@@ -1139,8 +1121,6 @@ class SimpleServer(SequentialServer):
             level (can't be defined within a function), and can't be
             a lambda.
         '''
-        super().__init__(max_queue_size=max_queue_size,
-                         max_queue_size_bytes=max_queue_size_bytes,
-                         cpus=[0])
+        super().__init__(cpus=[0])
 
         self.add_servlet(SimpleServlet, func=func, **kwargs)
