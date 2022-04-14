@@ -2,7 +2,6 @@ Release 0.10.6b3
 ==============
 
 - Add `faster_fifo` to `mpservide._mpserver`, in an attempt to improve service batching.
-  This ignores the parameter `max_queue_size`, and uses `max_queue_size_bytes` instead.
 - Change socket encoder from 'orjson' to 'pickle'.
 - Add `FastQueue` as an enhancement to the standard `SimpleQueue`.
 - Remove `max_queue_size` parameter of `MPServer`; use unbounded queues.
