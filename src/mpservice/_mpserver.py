@@ -95,6 +95,22 @@ else:
         import faster_fifo
         import faster_fifo_reduction  # noqa: F401
         USE_FASTER_FIFO = True
+
+        # Hack default timeout to make behavior consistent with standard lib.
+
+        def _fifo_put(self, x, block=True, timeout=None):
+            if timeout is None:
+                timeout = float(3600)
+            return self.put_many([x], block, timeout)
+
+        def _fifo_get(self, block=True, timeout=None):
+            if timeout is None:
+                timeout = float(3600)
+            return self.get_many(block=block, timeout=timeout, max_messages_to_get=1)[0]
+
+        faster_fifo.Queue.put = _fifo_put
+        faster_fifo.Queue.get = _fifo_get
+
     except ImportError:
         if use_faster_fifo == '1':
             raise
@@ -607,7 +623,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     def stream(self, data_stream, /, *,
                return_x: bool = False,
                return_exceptions: bool = False,
-               backlog: int = 1024,
+               backlog: int = 2048,
                enqueue_timeout=None,
                total_timeout=None,
                ):
