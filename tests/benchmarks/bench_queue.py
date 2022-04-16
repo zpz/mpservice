@@ -5,7 +5,6 @@ import threading
 from time import perf_counter, sleep
 from typing import Any
 
-import orjson
 import faster_fifo
 import faster_fifo_reduction
 from mpservice.util import BoundedSimpleQueue
@@ -17,24 +16,6 @@ mp = multiprocessing.get_context('spawn')
 
 data = make_message()
 N = 10000
-
-
-class OrjsonPickler:
-    def __init__(self, x: Any):
-        self.value = x
-
-    def __getstate__(self):
-        return orjson.dumps(
-            self.value,
-            option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_PASSTHROUGH_DATACLASS)
-
-    def __setstate__(self, data):
-        self.value = orjson.loads(data)
-
-
-def orjson_dumps(x):
-    return orjson.dumps(x,
-        option=orjson.OPT_SERIALIZE_NUMPY)
 
 
 def enqueue(q):
@@ -86,25 +67,6 @@ def dequeue_many(q, to_stop):
                     print('got', n, 'items in', threading.current_thread().name)
                 else:
                     print('got', n, 'items in', mp.current_process().name)
-                return
-
-
-def enqueue_orjson(q):
-    x = data
-    for _ in range(N):
-        q.put(OrjsonPickler(x))
-
-
-def dequeue_orjson(q, to_stop):
-    n = 0
-    while True:
-        try:
-            z = q.get(timeout=0.1)
-            z = z.value
-            n += 1
-        except queue.Empty:
-            if to_stop.is_set():
-                print('got', n, 'items in process', mp.current_process().name)
                 return
 
 
@@ -171,32 +133,6 @@ def main_all():
     q = faster_fifo.Queue()
     main(q, mp.Process, enqueue, dequeue_many)
 
-    # q = mp.Queue(1000)
-    # main(q, mp.Process, enqueue_orjson, dequeue_orjson)
-
-    # q = faster_fifo.Queue()
-    # main(q, mp.Process, enqueue_orjson, dequeue_orjson)
-
-    # q = faster_fifo.Queue(loads=orjson.loads, dumps=orjson_dumps)
-    # main(q, mp.Process, enqueue, dequeue)
-
 
 if __name__ == '__main__':
     main_all()
-
-    print('')
-    dumps, loads = pickle.dumps, pickle.loads
-    t0 = perf_counter()
-    for _ in range(1000):
-        z = loads(dumps(data))
-    t1 = perf_counter()
-    print('pickle', t1 - t0)
-
-    print('')
-    dumps, loads = orjson_dumps, orjson.loads
-    t0 = perf_counter()
-    for _ in range(1000):
-        z = loads(dumps(data))
-    t1 = perf_counter()
-    print('orjson', t1 - t0)
-

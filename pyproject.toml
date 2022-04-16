@@ -30,7 +30,7 @@ Source = "https://github.com/zpz/mpservice"
 
 
 [project.optional-dependencies]
-fast-fifo = [
+faster-fifo = [
     "faster-fifo >=1.3.1,<1.4.0",
 ]
 test = [
@@ -42,7 +42,6 @@ test = [
     "locust",
     "mypy",
     "numpy",
-    "orjson",
     "pylint",
     "pynng",
     "pytest",
