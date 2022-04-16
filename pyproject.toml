@@ -42,7 +42,6 @@ test = [
     "locust",
     "mypy",
     "numpy",
-    "orjson",
     "pylint",
     "pynng",
     "pytest",
