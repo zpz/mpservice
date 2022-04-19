@@ -19,7 +19,7 @@ def worker_get(q):
     z = q.get()
     assert z == 1
     print('got 1')
-    z = q.get(timeout=1)
+    z = q.get(timeout=60)
     assert z == 'ab'
     assert q.get() == ['1', 'yes', [2, 3]]
     assert q.get_bytes() == b'none'
@@ -92,6 +92,7 @@ def put_many(q, n0, n):
         q.put(x)
         print(multiprocessing.current_process().name, 'put', x)
     print(multiprocessing.current_process().name, 'put', n, 'items')
+    q.close()
 
 
 def get_many(q, done):
@@ -107,7 +108,28 @@ def get_many(q, done):
     print(multiprocessing.current_process().name, 'got', n, 'items')
 
 
-def test_may_to_many():
+def test_many():
+    mp = multiprocessing
+    done = mp.Event()
+    q = ZeroQueue(5566, 5577)
+    pp = []
+    pp.append(mp.Process(target=put_many, args=(q, 0, 1000)))
+    pp.append(mp.Process(target=put_many, args=(q, 1000, 1000)))
+    pp.append(mp.Process(target=get_many, args=(q, done)))
+    pp.append(mp.Process(target=get_many, args=(q, done)))
+    pp.append(mp.Process(target=get_many, args=(q, done)))
+    for p in pp:
+        p.start()
+    pp[0].join()
+    pp[1].join()
+    done.set()
+    pp[2].join()
+    pp[3].join()
+    pp[4].join()
+
+
+
+def test_many_spawn():
     mp = multiprocessing.get_context('spawn')
     done = mp.Event()
     q = mp.ZeroQueue(5566, 5577)

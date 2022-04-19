@@ -43,7 +43,6 @@ test = [
     "mypy",
     "numpy",
     "pylint",
-    "pynng",
     "pytest",
     "pytest-asyncio",
     "pyzmq",

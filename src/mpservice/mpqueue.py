@@ -7,7 +7,7 @@ from queue import Empty, Full
 from time import monotonic, sleep
 
 import zmq
-from zmq import ZMQError
+from zmq import ZMQError, devices as zmq_devices
 
 
 class _FastQueue(queues.SimpleQueue):
@@ -197,13 +197,12 @@ class ZeroQueue:
         # not only in "current" process.
         if ctx is None:
             ctx = multiprocessing.get_context()
-        # self._n_writers_opened = ctx.Value('i', 0)
-        # self._n_writers_closed = ctx.Value('i', 0)
-        self._n_writers_opened = multiprocessing.Value('i', 0)
-        self._n_writers_closed = multiprocessing.Value('i', 0)
+        self._n_writers_opened = ctx.Value('i', 0)
+        self._n_writers_closed = ctx.Value('i', 0)
 
         # The following are used only in the "originating" object.
         self._collector = self._start(writer_hwm, reader_hwm)
+        self._to_shutdown = False
 
     def __del__(self):
         print(multiprocessing.current_process().name, '__del__')
@@ -215,8 +214,8 @@ class ZeroQueue:
             else:
                 while self._n_writers_closed.value < self._n_writers_opened.value:
                     sleep(0.01)
-            # self._collector[0].close(10)
-            # self._collector[1].close(10)
+            self._to_shutdown = True
+            self._collector.join()
 
     def _start(self, writer_hwm, reader_hwm):
         # This is called by `__init__` when this object is constructed
@@ -227,6 +226,16 @@ class ZeroQueue:
         # remain valid throughout the life of this queue.
 
         # TODO: look into "proxy" or "device" of the "queue" type.
+        # dev = zmq_devices.ThreadProxy(zmq.PULL, zmq.PUSH)
+        # dev.bind_in(f'{self.host}:{self.writer_port}')
+        # dev.bind_out(f'{self.host}:{self.reader_port}')
+        # dev.setsockopt_in(zmq.IMMEDIATE, True)
+        # dev.setsockopt_in(zmq.RCVHWM, writer_hwm)
+        # dev.setsockopt_out(zmq.IMMEDIATE, True)
+        # dev.setsockopt_out(zmq.SNDHWM, reader_hwm)
+        # dev.start()
+        # return dev
+
         context = zmq.Context.instance()
         receiver = context.socket(zmq.PULL)
         receiver.set(zmq.IMMEDIATE, True)
@@ -240,12 +249,20 @@ class ZeroQueue:
         def foo():
             print('-- foo --')
             while True:
-                z = receiver.recv()
-                sender.send(z)
+                if receiver.poll(10, zmq.POLLIN):
+                    z = receiver.recv()
+                    while True:
+                        if sender.poll(10, zmq.POLLOUT):
+                            sender.send(z)
+                            return
+                        if self._to_shutdown:
+                            return
+                if self._to_shutdown:
+                    return
 
-        t = threading.Thread(target=foo, daemon=True)
+        t = threading.Thread(target=foo)
         t.start()
-        return (receiver, sender)
+        return t
 
     def __getstate__(self):
         multiprocessing.context.assert_spawning(self)
