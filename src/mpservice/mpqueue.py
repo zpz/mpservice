@@ -229,12 +229,12 @@ class ZeroQueue:
         # TODO: look into "proxy" or "device" of the "queue" type.
         context = zmq.Context.instance()
         receiver = context.socket(zmq.PULL)
-        # receiver.set(zmq.IMMEDIATE, True)
-        # receiver.hwm = writer_hwm
+        receiver.set(zmq.IMMEDIATE, True)
+        receiver.hwm = writer_hwm
         receiver.bind(f'{self.host}:{self.writer_port}')
         sender = context.socket(zmq.PUSH)
-        # sender.set(zmq.IMMEDIATE, True)
-        # sender.hwm = reader_hwm
+        sender.set(zmq.IMMEDIATE, True)
+        sender.hwm = reader_hwm
         sender.bind(f'{self.host}:{self.reader_port}')
 
         def foo():
