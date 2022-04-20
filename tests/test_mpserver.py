@@ -47,11 +47,8 @@ class Delay(Servlet):
         return x
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
 @pytest.mark.asyncio
-async def test_sequential_server_async(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+async def test_sequential_server_async():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -65,10 +62,7 @@ async def test_sequential_server_async(use_faster_fifo):
         assert y == [v * 2 + 3 for v in x]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_sequential_server(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_sequential_server():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -81,10 +75,7 @@ def test_sequential_server(use_faster_fifo):
         assert y == [v * 2 + 3 for v in x]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_sequential_batch(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_sequential_batch():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
     with service:
@@ -96,10 +87,7 @@ def test_sequential_batch(use_faster_fifo):
         assert y == [v + 4 for v in x]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_sequential_error(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_sequential_error():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3], stepsize=4)
@@ -112,10 +100,8 @@ def test_sequential_error(use_faster_fifo):
 
 
 @pytest.mark.skip(reason='no longer works; needs a new design')
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
 @pytest.mark.asyncio
-async def test_sequential_timeout_async(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
+async def test_sequential_timeout_async():
 
     queue_size = 4
     service = SequentialServer(cpus=[0])
@@ -141,10 +127,7 @@ async def test_sequential_timeout_async(use_faster_fifo):
 
 
 @pytest.mark.skip(reason='no longer works; needs a new design')
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_sequential_timeout(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_sequential_timeout():
     queue_size = 4
     service = SequentialServer(cpus=[0])
 
@@ -168,10 +151,7 @@ def test_sequential_timeout(use_faster_fifo):
             z = service.call(8.2, enqueue_timeout=0, total_timeout=2)
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_sequential_stream(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_sequential_stream():
     service = SequentialServer(cpus=[0])
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
@@ -211,11 +191,8 @@ class MyWideServer(EnsembleServer):
         return (results[0] + results[1]) * results[2]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
 @pytest.mark.asyncio
-async def test_ensemble_server_async(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+async def test_ensemble_server_async():
     service = MyWideServer(cpus=[0])
 
     with service:
@@ -228,10 +205,7 @@ async def test_ensemble_server_async(use_faster_fifo):
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_ensemble_server(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_ensemble_server():
     service = MyWideServer(cpus=[0])
 
     with service:
@@ -260,11 +234,8 @@ class YourWideServer(EnsembleServer):
 
 
 @pytest.mark.skip(reason='no longer works; needs a new design')
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
 @pytest.mark.asyncio
-async def test_ensemble_timeout_async(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+async def test_ensemble_timeout_async():
     queue_size = 2
     service = YourWideServer(cpus=[0])
 
@@ -288,10 +259,7 @@ async def test_ensemble_timeout_async(use_faster_fifo):
 
 
 @pytest.mark.skip(reason='no longer works; needs a new design')
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_ensemble_timeout(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_ensemble_timeout():
     queue_size = 2
     service = YourWideServer(cpus=[0])
 
@@ -327,10 +295,7 @@ class HisWideServer(EnsembleServer):
         return [min(results), max(results)]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_ensemble_stream(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_ensemble_stream():
     service = HisWideServer(cpus=[0])
     with service:
         data = range(100)
@@ -350,10 +315,7 @@ def func2(x, shift):
     return [_ + shift for _ in x]
 
 
-@pytest.mark.parametrize('use_faster_fifo', [True, False])
-def test_simple_server(use_faster_fifo):
-    _mpserver.USE_FASTER_FIFO = use_faster_fifo
-
+def test_simple_server():
     server = SimpleServer(func1, shift=3)
     with server:
         data = range(1000)

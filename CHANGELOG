@@ -1,9 +1,10 @@
 Release 0.10.6b3
 ==============
 
-- Add `faster_fifo` to `mpservide._mpserver`, in an attempt to improve service batching.
+- Added two alternatives to `multiprocessing.Queue`, `FastQueue` and `ZeroQueue`,
+  based on `faster_fifo` and `ZeroMQ`, respectively, in an attempt to improve service
+  speed, expecially batching. This topic is still under experimentations.
 - Change socket encoder from 'orjson' to 'pickle'.
-- Add `FastQueue` as an enhancement to the standard `SimpleQueue`.
 - Remove `max_queue_size` parameter of `MPServer`; use unbounded queues.
 
 

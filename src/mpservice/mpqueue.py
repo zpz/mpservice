@@ -1,171 +1,94 @@
-import concurrent.futures
 import multiprocessing
-import threading
 from multiprocessing import queues
-from pickle import dumps as pickle_dumps, loads as pickle_loads, HIGHEST_PROTOCOL
+from pickle import dumps as _pickle_dumps, loads as pickle_loads, HIGHEST_PROTOCOL
 from queue import Empty, Full
-from time import monotonic, sleep
+from time import monotonic
+from typing import Sequence
 
+import faster_fifo
+import faster_fifo_reduction  # noqa: F401
 import zmq
 from zmq import ZMQError, devices as zmq_devices
 
 
-class _FastQueue(queues.SimpleQueue):
-    def __init__(self, *, ctx):
-        # if ctx is None:
-        #    ctx = context._default_context
-        super().__init__(ctx=ctx)
-        self._closed = ctx.Event()
+def pickle_dumps(x):
+    return _pickle_dumps(x, protocol=HIGHEST_PROTOCOL)
 
-    def __getstate__(self):
-        z = super().__getstate__()
-        return (*z, self._closed)
 
-    def __setstate__(self, state):
-        self._closed = state[-1]
-        super().__setstate__(state[:-1])
+class BasicQueue(queues.Queue):
+    def __init__(self, maxsize=0, *, ctx=None):
+        if ctx is None:
+            ctx = multiprocessing.get_context()
+        super().__init__(maxsize, ctx=ctx)
 
-    def get_bytes(self, block=True, timeout=None):
-        try:
-            if block and timeout is None:
-                with self._rlock:
-                    return self._reader.recv_bytes()
+    def put_many(self, xs: Sequence, block=True, timeout=None):
+        if not block:
+            for x in xs:
+                self.put_nowait(x)
+            return
+
+        if timeout is None:
+            for x in xs:
+                self.put(x)
+            return
+
+        deadline = monotonic() + timeout
+        for x in xs:
+            timeout = deadline - monotonic()
+            if timeout > 0:
+                self.put(x, timeout=timeout)
+            else:
+                self.put_nowait(x)
+
+    def put_many_nowait(self, xs: Sequence):
+        return self.put_many(xs, False)
+
+    def get_many(self, max_n: int, block=True, timeout=None):
+        # Adapted from code of cpython.
+        if self._closed:
+            raise ValueError(f"Queue {self!r} is closed")
+        out = []
+        n = 0
+        if block and timeout is None:
+            with self._rlock:
+                while n < max_n:
+                    out.append(self._recv_bytes())
+                    n += 1
+                    self._sem.release()
+        else:
             if block:
                 deadline = monotonic() + timeout
             if not self._rlock.acquire(block, timeout):
-                raise Empty
+                return []
             try:
-                if block:
-                    timeout = deadline - monotonic()
-                    if not self._poll(timeout):
-                        raise Empty
-                elif not self._poll():
-                    raise Empty
-                return self._reader.recv_bytes()
-            finally:
-                self._rlock.release()
-        except OSError as e:
-            if str(e) == 'handle is closed':
-                # `.close()` has been called in the same process.
-                raise BrokenPipeError(f"Queue {self!r} is closed") from e
-            raise
-        except Empty:
-            if self.closed():
-                # `.close()` has been called in another process.
-                raise BrokenPipeError(f"Queue {self!r} is closed")
-            raise
-
-    def get_bytes_nowait(self):
-        return self.get_bytes(False)
-
-    def get(self, block=True, timeout=None):
-        res = self.get_bytes(block, timeout)
-        return pickle_loads(res)
-
-    def get_nowait(self):
-        return self.get(False)
-
-    def get_many(self, nmax: int, block=True, timeout=None) -> list:
-        out = []
-        try:
-            if block and timeout is not None:
-                deadline = monotonic() + timeout
-            if not self._rlock.acquire(block, timeout):
-                raise Empty
-            try:
-                n = 0
-                while n < nmax:
+                while n < max_n:
+                    # If there is remaining time, wait up to
+                    # that long.
+                    # Otherwise, get the next item if it is there
+                    # right now (i.e. no waiting) even if we
+                    # are already over time. That is, if supply
+                    # has piled up, then will get up to the
+                    # batch capacity.
                     if block:
-                        if timeout is None:
-                            x = self._reader.recv_bytes()
-                        else:
-                            if not self._poll(max(0, deadline - monotonic())):
-                                raise Empty
-                            x = self._reader.recv_bytes()
+                        timeout = max(0, deadline - monotonic())
+                        ready = self._poll(timeout)
                     else:
-                        if not self._poll():
-                            raise Empty
-                        x = self._reader.recv_bytes()
-                    out.append(x)
+                        ready = self._poll()
+                    if not ready:
+                        break
+                    out.append(self._recv_bytes())
                     n += 1
+                    self._sem.release()
             finally:
                 self._rlock.release()
-        except OSError as e:
-            if str(e) == 'handle is closed':
-                # `.close()` has been called in the same process.
-                raise BrokenPipeError(f"Queue {self!r} is closed") from e
-            raise
-        except Empty:
-            if self.closed():
-                # `.close()` has been called in another process.
-                raise BrokenPipeError(f"Queue {self!r} is closed")
+        return [pickle_loads(v) for v in out]
 
-        if out:
-            return [pickle_loads(o) for o in out]
-        raise Empty()
-
-    def get_many_nowait(self, nmax: int) -> list:
-        return self.get_many(nmax, False)
-
-    def put_bytes(self, obj, block=True, timeout=None):
-        try:
-            if self._wlock is None:
-                self._writer.send_bytes(obj)
-            else:
-                if not self._wlock.acquire(block, timeout):
-                    raise Full
-                try:
-                    self._writer.send_bytes(obj)
-                finally:
-                    self._wlock.release()
-        except OSError as e:
-            if str(e) == 'handle is closed':
-                # `.close()` has been called in the same process.
-                raise BrokenPipeError(f"Queue {self!r} is closed") from e
-            raise
-        except Full:
-            if self.closed():
-                # `.close()` has been called in another process.
-                raise BrokenPipeError(f"Queue {self!r} is closed")
-            raise
-
-    def put_bytes_nowait(self, obj):
-        self.put_bytes(obj, False)
-
-    def put(self, obj, block=True, timeout=None):
-        obj = pickle_dumps(obj, protocol=5)
-        self.put_bytes(obj, block, timeout)
-
-    def put_nowait(self, obj):
-        self.put(obj, False)
-
-    def close(self):
-        # Based on very limited testing, after calling `close()`,
-        # in the same process (on the same object), `get` and `put`
-        # will raise OSError; in another process, however, `get`
-        # and `put` will block forever unless `timeout` is used
-        # (upon timeout, closed-ness is checked).
-        self._reader.close()
-        self._writer.close()
-        self._closed.set()
-
-    def closed(self):
-        return self._closed.is_set()
-
-
-def _FastQueue_(self):
-    return _FastQueue(ctx=self.get_context())
-
-
-multiprocessing.context.BaseContext.FastQueue = _FastQueue_
-FastQueue = multiprocessing.context.BaseContext.FastQueue
+    def get_many_nowait(self, max_n):
+        return self.get_many(max_n, False)
 
 
 class ZeroQueue:
-    def __init__(self,
-                 writer_port: int,
-                 reader_port: int,
-                 *,
+    def __init__(self, *,
                  writer_hwm: int = 1000,
                  reader_hwm: int = 1000,
                  ctx=None,
@@ -184,9 +107,8 @@ class ZeroQueue:
         relationship, this collector socket many be unnecessary, hence
         the use of it may incur a small overhead.
         '''
-        assert writer_port != reader_port
-        self.writer_port = writer_port
-        self.reader_port = reader_port
+        self.writer_port = None
+        self.reader_port = None
         self.host = host
 
         self._writer = None
@@ -200,69 +122,19 @@ class ZeroQueue:
         self._n_writers_opened = ctx.Value('i', 0)
         self._n_writers_closed = ctx.Value('i', 0)
 
-        # The following are used only in the "originating" object.
-        self._collector = self._start(writer_hwm, reader_hwm)
-        self._to_shutdown = False
+        # The following happens only in the "originating" object.
+        dev = zmq_devices.ThreadDevice(zmq.STREAMER, zmq.PULL, zmq.PUSH)  # pylint: disable=no-member
+        self.writer_port = dev.bind_in_to_random_port(self.host)
+        self.reader_port = dev.bind_out_to_random_port(self.host)
+        dev.setsockopt_in(zmq.IMMEDIATE, True)  # pylint: disable=no-member
+        dev.setsockopt_in(zmq.RCVHWM, writer_hwm)  # pylint: disable=no-member
+        dev.setsockopt_out(zmq.IMMEDIATE, True)  # pylint: disable=no-member
+        dev.setsockopt_out(zmq.SNDHWM, reader_hwm)  # pylint: disable=no-member
+        dev.start()
+        self._collector = dev
 
     def __del__(self):
-        print(multiprocessing.current_process().name, '__del__')
         self.close()
-        if self._collector is not None:
-            # This is the "originating" object.
-            if self._n_writers_opened.value < 1:
-                assert self._n_writers_closed.value == 0
-            else:
-                while self._n_writers_closed.value < self._n_writers_opened.value:
-                    sleep(0.01)
-            self._to_shutdown = True
-            self._collector.join()
-
-    def _start(self, writer_hwm, reader_hwm):
-        # This is called by `__init__` when this object is constructed
-        # "fresh" in a process. This is not called when this object
-        # is passed into another process and re-created via unpickling
-        # in the other process.
-        # The "original" object in the initiating process should
-        # remain valid throughout the life of this queue.
-
-        # TODO: look into "proxy" or "device" of the "queue" type.
-        # dev = zmq_devices.ThreadProxy(zmq.PULL, zmq.PUSH)
-        # dev.bind_in(f'{self.host}:{self.writer_port}')
-        # dev.bind_out(f'{self.host}:{self.reader_port}')
-        # dev.setsockopt_in(zmq.IMMEDIATE, True)
-        # dev.setsockopt_in(zmq.RCVHWM, writer_hwm)
-        # dev.setsockopt_out(zmq.IMMEDIATE, True)
-        # dev.setsockopt_out(zmq.SNDHWM, reader_hwm)
-        # dev.start()
-        # return dev
-
-        context = zmq.Context.instance()
-        receiver = context.socket(zmq.PULL)
-        receiver.set(zmq.IMMEDIATE, True)
-        receiver.hwm = writer_hwm
-        receiver.bind(f'{self.host}:{self.writer_port}')
-        sender = context.socket(zmq.PUSH)
-        sender.set(zmq.IMMEDIATE, True)
-        sender.hwm = reader_hwm
-        sender.bind(f'{self.host}:{self.reader_port}')
-
-        def foo():
-            print('-- foo --')
-            while True:
-                if receiver.poll(10, zmq.POLLIN):
-                    z = receiver.recv()
-                    while True:
-                        if sender.poll(10, zmq.POLLOUT):
-                            sender.send(z)
-                            return
-                        if self._to_shutdown:
-                            return
-                if self._to_shutdown:
-                    return
-
-        t = threading.Thread(target=foo)
-        t.start()
-        return t
 
     def __getstate__(self):
         multiprocessing.context.assert_spawning(self)
@@ -271,47 +143,86 @@ class ZeroQueue:
 
     def __setstate__(self, state):
         (self.writer_port, self.reader_port, self.host,
-                self._n_writers_opened, self._n_writers_closed) = state
-        self._writer, self._reader, self._closed = None, None, False
+            self._n_writers_opened, self._n_writers_closed) = state
+        self._writer, self._reader = None, None
+        self._closed = False
         self._collector = None
+
+    def _get_writer(self):
+        writer = self._writer
+        if writer is None:
+            context = zmq.Context()
+            writer = context.socket(zmq.PUSH)  # pylint: disable=no-member
+            writer.connect(f'{self.host}:{self.writer_port}')
+            self._writer = writer
+            with self._n_writers_opened.get_lock():
+                self._n_writers_opened.value += 1
+        return writer
+
+    def _get_reader(self):
+        reader = self._reader
+        if reader is None:
+            context = zmq.Context()
+            reader = context.socket(zmq.PULL)  # pylint: disable=no-member
+            reader.connect(f'{self.host}:{self.reader_port}')
+            self._reader = reader
+        return reader
 
     def put_bytes(self, data: bytes, block: bool = True, timeout: float = None):
         '''
         `timeout`: seconds
         '''
-        print('put_bytes, host', self.host, 'writer_port', self.writer_port, 'reader_port', self.reader_port)
         if self._closed:
             raise ValueError(f"{self.__class__.__name__} {self!r} is closed")
-        writer = self._writer
-        if writer is None:
-            context = zmq.Context.instance()
-            writer = context.socket(zmq.PUSH)
-            writer.connect(f'{self.host}:{self.writer_port}')
-            self._writer = writer
-            with self._n_writers_opened.get_lock():
-                self._n_writers_opened.value += 1
+        writer = self._get_writer()
 
         if not block:
             try:
-                return writer.send(data, zmq.NOBLOCK)
+                return writer.send(data, zmq.NOBLOCK)  # pylint: disable=no-member
             except ZMQError as e:
                 # TODO: there can be other error conditions than Full.
-                raise Full() from e
+                raise Full from e
         if timeout is not None:
             timeout *= 1000
         if writer.poll(timeout, zmq.POLLOUT):
             return writer.send(data)
-        raise Full()
+        raise Full
 
     def put_bytes_nowait(self, data):
         return self.put_bytes(data, False)
 
-    def put(self, obj, block=True, timeout=None):
-        data = pickle_dumps(obj, protocol=HIGHEST_PROTOCOL)
-        return self.put_bytes(data, block, timeout)
+    def put_many_bytes(self, data: Sequence, block=True, timeout=None):
+        '''
+        `timeout`: seconds
+        '''
+        if self._closed:
+            raise ValueError(f"{self.__class__.__name__} {self!r} is closed")
+        writer = self._get_writer()
 
-    def put_nowait(self, obj):
-        return self.put(obj, False)
+        if not block:
+            try:
+                for v in data:
+                    writer.send(v, zmq.NOBLOCK)  # pylint: disable=no-member
+                return
+            except ZMQError as e:
+                # TODO: there can be other error conditions than Full.
+                raise Full from e
+
+        if timeout is None:
+            for v in data:
+                writer.send(v)
+            return
+
+        deadline = monotonic() + timeout
+        for v in data:
+            t = max(0, deadline - monotonic()) * 1000
+            if writer.poll(t, zmq.POLLOUT):
+                writer.send(v)
+            else:
+                raise Full
+
+    def put_many_bytes_nowait(self, data):
+        return self.put_many_bytes(data, False)
 
     def close(self, linger=60):
         '''
@@ -327,33 +238,78 @@ class ZeroQueue:
             with self._n_writers_closed.get_lock():
                 self._n_writers_closed.value += 1
         self._closed = True
-        print(multiprocessing.current_process().name,
-                'close, n_writers:', self._n_writers_opened.value, self._n_writers_closed.value)
 
     def get_bytes(self, block: bool = True, timeout: float = None):
         '''
         `timeout`: seconds.
         '''
-        reader = self._reader
-        if reader is None:
-            context = zmq.Context.instance()
-            reader = context.socket(zmq.PULL)
-            reader.connect(f'{self.host}:{self.reader_port}')
-            self._reader = reader
+        reader = self._get_reader()
 
         if not block:
             try:
-                return reader.recv(zmq.NOBLOCK)
+                return reader.recv(zmq.NOBLOCK)  # pylint: disable=no-member
             except ZMQError as e:
-                raise Empty() from e
+                raise Empty from e
         if timeout is not None:
             timeout *= 1000
         if reader.poll(timeout, zmq.POLLIN):
             return reader.recv()
-        raise Empty()
+        raise Empty
 
     def get_bytes_nowait(self):
         return self.get_bytes(False)
+
+    def get_many_bytes(self, max_n: int, block=True, timeout=None) -> list:
+        '''
+        `timeout`: seconds.
+        '''
+        reader = self._get_reader()
+        out = []
+        n = 0
+
+        if not block:
+            try:
+                while n < max_n:
+                    out.append(reader.recv(zmq.NOBLOCK))  # pylint: disable=no-member
+                    n += 1
+                return out
+            except ZMQError:
+                if n:
+                    return out
+                return []
+
+        if timeout is None:
+            while n < max_n:
+                out.append(reader.recv())
+                n += 1
+            return out
+
+        deadline = monotonic() + timeout
+        while n < max_n:
+            t = max(0, deadline - monotonic()) * 1000
+            if reader.poll(t, zmq.POLLIN):
+                out.append(reader.recv())
+                n += 1
+            else:
+                break
+        return out
+
+    def get_many_bytes_nowait(self, max_n: int):
+        return self.get_many_bytes(max_n, False)
+
+    def put(self, obj, block=True, timeout=None):
+        data = pickle_dumps(obj)
+        return self.put_bytes(data, block, timeout)
+
+    def put_nowait(self, obj):
+        return self.put(obj, False)
+
+    def put_many(self, xs, block=True, timeout=None):
+        data = [pickle_dumps(x) for x in xs]
+        return self.put_many_bytes(data, block, timeout)
+
+    def put_many_nowait(self, xs):
+        return self.put_many(xs, False)
 
     def get(self, block=True, timeout=None):
         data = self.get_bytes(block, timeout)
@@ -362,9 +318,96 @@ class ZeroQueue:
     def get_nowait(self):
         return self.get(False)
 
+    def get_many(self, max_n: int, block=True, timeout=None) -> list:
+        z = self.get_many_bytes(max_n, block=block, timeout=timeout)
+        return [pickle_loads(v) for v in z]
 
-def _ZeroQueue(self, writer_port, reader_port, *, host='tcp://0.0.0.0'):
-    return ZeroQueue(writer_port, reader_port, host=host, ctx=self.get_context())
+    def get_many_nowait(self, max_n: int) -> list:
+        return self.get_many(max_n, False)
+
+
+class FastQueue:
+    def __init__(self, maxsize_bytes=10_000_000):
+        self._q = faster_fifo.Queue(
+            max_size_bytes=maxsize_bytes,
+            dumps=pickle_dumps, loads=pickle_loads)
+        self._q.reallocate_msg_buffer(1_000_000)
+
+    def put(self, x, block=True, timeout=None):
+        if timeout is None:
+            timeout = float(3600)
+        return self._q.put_many([x], block, timeout)
+
+    def put_nowait(self, x):
+        return self.put(x, False)
+
+    def put_many(self, xs: Sequence, block=True, timeout=None):
+        if block:
+            if timeout is None:
+                timeout = float(3600)
+            deadline = monotonic() + timeout
+        else:
+            deadline = monotonic()
+
+        xs = [xs]
+        while xs:
+            try:
+                self._q.put_many(xs[0], timeout=0.01)
+            except Full:
+                if monotonic() > deadline:
+                    raise Full
+                if len(xs[0]) > 1:
+                    k = int(len(xs[0]) / 2)
+                    xs = [xs[0][:k], xs[0][k:]] + xs[1:]
+                    # Split the data batch into smaller batches.
+                    # This is in case the buffer is too small for the whole batch,
+                    # hence would never succeed unless we split the batch into
+                    # smaller chunks.
+            else:
+                xs = xs[1:]
+
+    def put_many_nowait(self, xs):
+        return self.put_many(xs, False)
+
+    def get(self, block=True, timeout=None):
+        if timeout is None:
+            timeout = float(3600)
+        z = self.get_many(1, block=block, timeout=timeout)
+        if z:
+            return z[0]
+        raise Empty
+
+    def get_nowait(self):
+        return self.get(False)
+
+    def get_many(self, max_n: int, block=True, timeout=None):
+        if timeout is None:
+            timeout = float(3600)
+        try:
+            return self._q.get_many(block=block, timeout=timeout, max_messages_to_get=max_n)
+        except Empty:
+            return []
+
+    def get_many_nowait(self, max_n):
+        return self.get_many(max_n, False)
+
+
+def _BasicQueue(self, maxsize=0):
+    return BasicQueue(maxsize=maxsize, ctx=self.get_context())
+
+
+multiprocessing.context.BaseContext.BasicQueue = _BasicQueue
+
+
+def _ZeroQueue(self, **kwargs):
+    return ZeroQueue(ctx=self.get_context(), **kwargs)
 
 
 multiprocessing.context.BaseContext.ZeroQueue = _ZeroQueue
+
+
+def _FastQueue(self, **kwargs):
+    return FastQueue(**kwargs)
+
+
+multiprocessing.context.BaseContext.FastQueue = _FastQueue

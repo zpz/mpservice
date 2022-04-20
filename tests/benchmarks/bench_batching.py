@@ -1,8 +1,6 @@
-import pickle
 from time import sleep, perf_counter
 from random import uniform, seed
 from mpservice.mpserver import SimpleServer
-from mpservice import _mpserver
 from zpz.logging import config_logger
 
 seed(100)
@@ -30,15 +28,6 @@ def main(model):
 
 if __name__ == '__main__':
     config_logger(with_process_name=True)
-
-    print('use std queue')
-    _mpserver.USE_FASTER_FIFO = False
-    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
-    main(model)
-
-    print('')
-    print('use faster_fifo')
-    _mpserver.USE_FASTER_FIFO = True
     model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
     main(model)
 

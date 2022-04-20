@@ -4,45 +4,42 @@ from mpservice.mpqueue import ZeroQueue
 
 
 def worker_put(q):
-    print('\nworker_put starting')
+    # print('\nworker_put starting')
     q.put(1)
-    print('put 1')
     q.put('ab')
     q.put(['1', 'yes', [2, 3]])
     q.put_bytes(b'none')
     q.close()
-    print('worker_put done')
+    # print('worker_put done')
 
 
 def worker_get(q):
-    print('\nworker_get starting')
+    # print('\nworker_get starting')
     z = q.get()
     assert z == 1
-    print('got 1')
-    z = q.get(timeout=60)
+    z = q.get(timeout=5)
     assert z == 'ab'
     assert q.get() == ['1', 'yes', [2, 3]]
     assert q.get_bytes() == b'none'
-    print('worker_get done')
+    # print('worker_get done')
 
 
 def test_basic1():
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     worker_put(q)
     worker_get(q)
 
 
 def test_basic2():
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     p = multiprocessing.Process(target=worker_put, args=(q,))
     p.start()
     worker_get(q)
     p.join()
-    print('joined')
 
 
 def test_basic3():
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     p = multiprocessing.Process(target=worker_get, args=(q,))
     p.start()
     worker_put(q)
@@ -50,7 +47,7 @@ def test_basic3():
 
 
 def test_basic4():
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     pp = [
         multiprocessing.Process(target=worker_put, args=(q,)),
         multiprocessing.Process(target=worker_get, args=(q,)),
@@ -62,7 +59,7 @@ def test_basic4():
 
 
 def test_basic5():
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     pp = [
         multiprocessing.Process(target=worker_put, args=(q,)),
         multiprocessing.Process(target=worker_get, args=(q,)),
@@ -75,7 +72,7 @@ def test_basic5():
 
 def test_basic_spawn():
     mp = multiprocessing.get_context('spawn')
-    q = mp.ZeroQueue(5566, 5577)
+    q = mp.ZeroQueue()
     pp = [
         mp.Process(target=worker_put, args=(q,)),
         mp.Process(target=worker_get, args=(q,)),
@@ -87,10 +84,8 @@ def test_basic_spawn():
 
 
 def put_many(q, n0, n):
-    print('put_many starting')
     for x in range(n0, n0 + n):
         q.put(x)
-        print(multiprocessing.current_process().name, 'put', x)
     print(multiprocessing.current_process().name, 'put', n, 'items')
     q.close()
 
@@ -99,9 +94,9 @@ def get_many(q, done):
     n = 0
     while True:
         try:
-            z = q.get(timeout=0.1)
+            z = q.get(timeout=1)
         except Empty:
-            if done.is_set() and n > 10:
+            if done.is_set():
                 break
         else:
             n += 1
@@ -111,7 +106,7 @@ def get_many(q, done):
 def test_many():
     mp = multiprocessing
     done = mp.Event()
-    q = ZeroQueue(5566, 5577)
+    q = ZeroQueue()
     pp = []
     pp.append(mp.Process(target=put_many, args=(q, 0, 1000)))
     pp.append(mp.Process(target=put_many, args=(q, 1000, 1000)))
@@ -132,7 +127,7 @@ def test_many():
 def test_many_spawn():
     mp = multiprocessing.get_context('spawn')
     done = mp.Event()
-    q = mp.ZeroQueue(5566, 5577)
+    q = mp.ZeroQueue()
     pp = []
     pp.append(mp.Process(target=put_many, args=(q, 0, 1000)))
     pp.append(mp.Process(target=put_many, args=(q, 1000, 1000)))
@@ -144,6 +139,7 @@ def test_many_spawn():
     pp[0].join()
     pp[1].join()
     done.set()
+    print('done set')
     pp[2].join()
     pp[3].join()
     pp[4].join()
