@@ -9,7 +9,7 @@ from collections.abc import Hashable
 from datetime import datetime
 from typing import Optional, Union, Dict
 
-from ._streamer import MAX_THREADS
+from .util import MAX_THREADS
 
 
 class Task:

@@ -6,14 +6,14 @@ import queue
 import threading
 import time
 from pickle import dumps as pickle_dumps, loads as pickle_loads
-from time import perf_counter
+from time import monotonic
 from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 
 from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
-from ._streamer import put_in_queue, get_from_queue
+from .streamer import put_in_queue, get_from_queue
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +122,14 @@ async def run_unix_server(conn_handler: Callable, path: str):
 
 
 async def open_tcp_connection(host, port, *, timeout=None):
-    t0 = perf_counter()
+    t0 = monotonic()
     while True:
         try:
             reader, writer = await asyncio.open_connection(host, port)
             return reader, writer
         except ConnectionRefusedError:
             if timeout is not None:
-                if perf_counter() - t0 > timeout:
+                if monotonic() - t0 > timeout:
                     raise
             await asyncio.sleep(0.1)
 
@@ -138,14 +138,14 @@ async def open_unix_connection(path: str, *, timeout=None):
     '''
     `path`: the same string that has been used by `run_unix_server`.
     '''
-    t0 = perf_counter()
+    t0 = monotonic()
     while True:
         try:
             reader, writer = await asyncio.open_unix_connection(path)
             return reader, writer
         except (ConnectionRefusedError, FileNotFoundError):
             if timeout is not None:
-                if perf_counter() - t0 > timeout:
+                if monotonic() - t0 > timeout:
                     raise
             await asyncio.sleep(0.1)
 
@@ -466,13 +466,13 @@ class SocketClient(EnforceOverrides):
             logger.error(msg)
 
         self._prepare_shutdown.set()
-        t0 = perf_counter()
+        t0 = monotonic()
         while not self._pending_requests.empty():
-            if perf_counter() - t0 > self._shutdown_timeout:
+            if monotonic() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
         while self._active_requests:
-            if perf_counter() - t0 > self._shutdown_timeout:
+            if monotonic() - t0 > self._shutdown_timeout:
                 break
             time.sleep(0.1)
         self._to_shutdown.set()
@@ -622,7 +622,7 @@ class SocketClient(EnforceOverrides):
                     else:
                         logger.error("exception '%r' happened for input '%s'", e, x)
                         raise
-                t0 = perf_counter()
+                t0 = monotonic()
                 if not put_in_queue(tt, (x, fut, t0), to_shutdown):
                     return
             put_in_queue(tt, nomore, to_shutdown)
@@ -638,7 +638,7 @@ class SocketClient(EnforceOverrides):
                 break
             x, fut, t0 = z
             try:
-                y = fut.result(timeout=response_timeout - (perf_counter() - t0))
+                y = fut.result(timeout=response_timeout - (monotonic() - t0))
             except Exception as e:
                 if return_exceptions:
                     if return_x:

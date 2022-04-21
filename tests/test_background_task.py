@@ -41,10 +41,10 @@ def test_task():
     assert task2.task_id == task.task_id
     assert task.callers == 2
 
-    t0 = time.perf_counter()
+    t0 = time.monotonic()
     while not task.done():
         time.sleep(0.001)
-    t1 = time.perf_counter()
+    t1 = time.monotonic()
 
     assert task.exception() is None
     assert 1.5 - 0.1 < t1 - t0 < 1.5 + 0.1
