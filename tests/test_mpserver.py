@@ -1,7 +1,5 @@
 import asyncio
 import concurrent.futures
-import os
-import pickle
 import time
 
 import pytest
@@ -12,7 +10,6 @@ from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout
 )
-from mpservice import _mpserver
 from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
@@ -49,7 +46,7 @@ class Delay(Servlet):
 
 @pytest.mark.asyncio
 async def test_sequential_server_async():
-    service = SequentialServer(cpus=[0])
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
@@ -63,7 +60,7 @@ async def test_sequential_server_async():
 
 
 def test_sequential_server():
-    service = SequentialServer(cpus=[0])
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
@@ -76,7 +73,7 @@ def test_sequential_server():
 
 
 def test_sequential_batch():
-    service = SequentialServer(cpus=[0])
+    service = SequentialServer()
     service.add_servlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
     with service:
         z = service.call(3)
@@ -88,7 +85,7 @@ def test_sequential_batch():
 
 
 def test_sequential_error():
-    service = SequentialServer(cpus=[0])
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3], stepsize=4)
     with service:
@@ -99,60 +96,27 @@ def test_sequential_error():
             z = service.call('a')
 
 
-@pytest.mark.skip(reason='no longer works; needs a new design')
 @pytest.mark.asyncio
 async def test_sequential_timeout_async():
-
-    queue_size = 4
-    service = SequentialServer(cpus=[0])
-
+    service = SequentialServer()
     service.add_servlet(Delay)
     with service:
-        z = await service.async_call(3.1)
-        assert z == 3.1
-
-        tasks = [asyncio.create_task(service.async_call(2.1, enqueue_timeout=6))
-                 for _ in range(queue_size*2)]
-        await asyncio.sleep(0.5)
-
-        with pytest.raises(EnqueueTimeout):
-            z = await service.async_call(1.5, enqueue_timeout=0)
-        with pytest.raises(EnqueueTimeout):
-            z = await service.async_call(1.5, enqueue_timeout=0.1)
-
-        await asyncio.wait(tasks)
-
         with pytest.raises(TotalTimeout):
-            z = await service.async_call(8.1, enqueue_timeout=0, total_timeout=2)
+            z = await service.async_call(2.2, total_timeout=1)
 
 
-@pytest.mark.skip(reason='no longer works; needs a new design')
 def test_sequential_timeout():
-    queue_size = 4
-    service = SequentialServer(cpus=[0])
-
+    # TODO: it's hard to test for EnqueueTimeout because
+    # the servers don't have a parameter to control backlog.
+    service = SequentialServer()
     service.add_servlet(Delay)
-    with service, concurrent.futures.ThreadPoolExecutor(10) as pool:
-        z = service.call(3.1)
-        assert z == 3.1
-
-        tasks = [pool.submit(service.call, 2.1, enqueue_timeout=6)
-                 for _ in range(queue_size*2)]
-        time.sleep(0.5)
-
-        with pytest.raises(EnqueueTimeout):
-            z = service.call(1.5, enqueue_timeout=0)
-        with pytest.raises(EnqueueTimeout):
-            z = service.call(1.5, enqueue_timeout=0.1)
-
-        concurrent.futures.wait(tasks)
-
+    with service:
         with pytest.raises(TotalTimeout):
-            z = service.call(8.2, enqueue_timeout=0, total_timeout=2)
+            z = service.call(2.2, total_timeout=1)
 
 
 def test_sequential_stream():
-    service = SequentialServer(cpus=[0])
+    service = SequentialServer()
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
         data = range(100)
@@ -193,7 +157,7 @@ class MyWideServer(EnsembleServer):
 
 @pytest.mark.asyncio
 async def test_ensemble_server_async():
-    service = MyWideServer(cpus=[0])
+    service = MyWideServer()
 
     with service:
         z = await service.async_call('abcde')
@@ -206,7 +170,7 @@ async def test_ensemble_server_async():
 
 
 def test_ensemble_server():
-    service = MyWideServer(cpus=[0])
+    service = MyWideServer()
 
     with service:
         z = service.call('abcde')
@@ -233,53 +197,19 @@ class YourWideServer(EnsembleServer):
         return results[0] + results[1] + x
 
 
-@pytest.mark.skip(reason='no longer works; needs a new design')
 @pytest.mark.asyncio
 async def test_ensemble_timeout_async():
-    queue_size = 2
-    service = YourWideServer(cpus=[0])
-
+    service = YourWideServer()
     with service:
-        z = await service.async_call(2.1)
-        assert z == 2.1 + 3 + 2.1 + 2.1
-
-        tasks = [asyncio.create_task(service.async_call(2.2, enqueue_timeout=6))
-                 for _ in range(queue_size*2)]
-        await asyncio.sleep(0.5)
-
-        with pytest.raises(EnqueueTimeout):
-            z = await service.async_call(1.5, enqueue_timeout=0)
-        with pytest.raises(EnqueueTimeout):
-            z = await service.async_call(1.5, enqueue_timeout=0.1)
-
-        await asyncio.wait(tasks)
-
         with pytest.raises(TotalTimeout):
-            z = await service.async_call(8.1, enqueue_timeout=0, total_timeout=2)
+            z = await service.async_call(8.2, total_timeout=1)
 
 
-@pytest.mark.skip(reason='no longer works; needs a new design')
 def test_ensemble_timeout():
-    queue_size = 2
-    service = YourWideServer(cpus=[0])
-
-    with service, concurrent.futures.ThreadPoolExecutor(10) as pool:
-        z = service.call(2.1)
-        assert z == 2.1 + 3 + 2.1 + 2.1
-
-        tasks = [pool.submit(service.call, 3.1, enqueue_timeout=6)
-                 for _ in range(queue_size * 2)]
-        time.sleep(0.5)
-
-        with pytest.raises(EnqueueTimeout):
-            z = service.call(1.5, enqueue_timeout=0)
-        with pytest.raises(EnqueueTimeout):
-            z = service.call(1.5, enqueue_timeout=0.1)
-
-        concurrent.futures.wait(tasks)
-
+    service = YourWideServer()
+    with service:
         with pytest.raises(TotalTimeout):
-            z = service.call(8.2, enqueue_timeout=0, total_timeout=2)
+            z = service.call(8.2, total_timeout=1)
 
 
 class HisWideServer(EnsembleServer):
@@ -296,7 +226,7 @@ class HisWideServer(EnsembleServer):
 
 
 def test_ensemble_stream():
-    service = HisWideServer(cpus=[0])
+    service = HisWideServer()
     with service:
         data = range(100)
         ss = service.stream(data)

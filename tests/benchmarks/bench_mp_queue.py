@@ -1,6 +1,6 @@
 from queue import Empty
 import multiprocessing
-from time import perf_counter, sleep
+from time import monotonic, sleep
 import mpservice.mpqueue
 
 
@@ -49,10 +49,10 @@ def bench_push():
         pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
-        t0 = perf_counter()
+        t0 = monotonic()
         for p in pp:
             p.join()
-        t1 = perf_counter()
+        t1 = monotonic()
         print(q.__class__.__name__, round(t1 - t0, 2), 'seconds')
 
     print('---- pull one ----')
@@ -77,10 +77,10 @@ def bench_push():
         pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
-        t0 = perf_counter()
+        t0 = monotonic()
         for p in pp:
             p.join()
-        t1 = perf_counter()
+        t1 = monotonic()
         print(q.__class__.__name__, round(t1 - t0, 2), 'seconds')
 
     print('---- pull many ----')

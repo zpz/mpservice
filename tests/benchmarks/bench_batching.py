@@ -1,4 +1,4 @@
-from time import sleep, perf_counter
+from time import sleep, monotonic
 from random import uniform, seed
 from mpservice.mpserver import SimpleServer
 from zpz.logging import config_logger
@@ -16,13 +16,13 @@ def main(model):
     seed(100)
     data = range(100000)
     with model:
-        t0 = perf_counter()
+        t0 = monotonic()
         s = model.stream(data)
         n = 0
         for _ in enumerate(s):
             n += 1
             pass
-        t1 = perf_counter()
+        t1 = monotonic()
         print('finished', n, 'items in', t1 - t0, 'seconds')
 
 

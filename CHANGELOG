@@ -1,11 +1,12 @@
-Release 0.10.6b3
-==============
+Release 0.10.6b4
+================
 
-- Added two alternatives to `multiprocessing.Queue`, `FastQueue` and `ZeroQueue`,
-  based on `faster_fifo` and `ZeroMQ`, respectively, in an attempt to improve service
-  speed, expecially batching. This topic is still under experimentations.
-- Change socket encoder from 'orjson' to 'pickle'.
-- Remove `max_queue_size` parameter of `MPServer`; use unbounded queues.
+- Added alternative multiprocessing queues, namely `BasicQueue`, `FastQueue` and `ZeroQueue`,
+  in an attempt to improve service speed, expecially batching.
+  This topic is still under experimentations. `MPServer` uses `FastQueue` by default.
+- Changed socket encoder from 'orjson' to 'pickle'.
+- Removed `max_queue_size` parameter of `MPServer`; use unbounded queues.
+- `MPServer` parameter `cpus` renamed to `main_cpu` with default value `0`.
 
 
 Release 0.10.5

@@ -5,7 +5,7 @@ from time import sleep
 
 import pytest
 
-from mpservice._streamer import Streamer, _default_peek_func
+from mpservice.streamer import Streamer, _default_peek_func
 
 
 def test_stream():
