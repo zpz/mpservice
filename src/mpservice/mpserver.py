@@ -247,13 +247,14 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
-                # qsizes = []
+
+            def print_batching_info():
+                logger.info('%d batches with sizes %d--%d, mean %.1f',
+                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
 
             batch = []
             uids = []
             with q_in_lock:
-                # qsize_start = q_in.qsize()
-
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
                 while True:
@@ -262,15 +263,10 @@ class Servlet(metaclass=ABCMeta):
                         break
                     except queue.Empty:
                         if should_stop.is_set():
-                            z = None
-                            break
+                            if n_batches:
+                                print_batching_info()
+                            return
 
-                if z is None:
-                    if n_batches:
-                        logger.info('%d batches with sizes %d--%d, mean %.1f',
-                                    n_batches, batch_size_min, batch_size_max, batch_size_mean)
-                        # logger.info('queue/batch sizes: %s', qsizes)
-                    return
                 uid, x = z
                 uids.append(uid)
                 batch.append(x)
@@ -299,14 +295,13 @@ class Servlet(metaclass=ABCMeta):
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-            # qsizes.append((qsize_start, n, qsize_end))
             if n_batches % 1000 == 0:
-                logger.info('%d batches with sizes %d--%d, mean %.1f',
-                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
-                # logger.info('queue/batch sizes: %s', qsizes)
+                print_batching_info()
                 n_batches = 0
 
             if should_stop.is_set():
+                if n_batches and n_batches % 1000 != 0:
+                    print_batching_info()
                 return
 
     @abstractmethod
@@ -514,7 +509,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # The concern is overall throughput.
 
         enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
+            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
+            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10)
         tasks = queue.Queue(backlog)
         nomore = object()
 
@@ -728,6 +724,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             try:
                 # `err` is a RemoteException object.
                 fut.set_exception(err)
+                fut.data['t2'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     logger.warning('Future object is already cancelled')
@@ -784,7 +781,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - monotonic())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
-        fut.data['t2'] = monotonic()
         return fut.result()
         # This could raise RemoteException.
 
@@ -795,15 +791,14 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            timenow = monotonic()
             try:
                 # `enqueue_timeout` is the combined time across input queues,
                 # not time per queue.
-                q.put((uid, x), timeout=max(0, t1 - timenow))
+                q.put((uid, x), timeout=max(0, t1 - monotonic()))
             except queue.Full:
                 fut.cancel()
                 del self._uid_to_futures[uid]
-                raise EnqueueTimeout(timenow - t0, iq)
+                raise EnqueueTimeout(monotonic() - t0, iq)
 
         fut.data['t1'] = monotonic()
         return uid, fut
@@ -812,7 +807,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t0 = fut.data['t0']
         t2 = t0 + total_timeout
         try:
-            res = fut.result(timeout=t2 - monotonic())
+            return fut.result(timeout=max(0, t2 - monotonic()))
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
@@ -821,8 +816,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # `gather_results` during very subtle
             # timing coincidence.
             raise TotalTimeout(monotonic() - t0)
-        fut.data['t2'] = monotonic()
-        return res
 
 
 class SequentialServer(MPServer):
@@ -870,10 +863,12 @@ class SequentialServer(MPServer):
                 continue
             try:
                 fut.set_result(y)
+                fut.data['t2'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TotalTimeout.
-                    logger.debug('Future object is already cancelled')
+                    # logger.debug('Future object is already cancelled')
+                    pass
                 else:
                     logger.exception(e)
                     raise
@@ -959,12 +954,14 @@ class EnsembleServer(MPServer):
                             fut.set_result(z)
                         except asyncio.InvalidStateError as e:
                             if fut.cancelled():
-                                logger.debug('Future object is already cancelled')
+                                # logger.debug('Future object is already cancelled')
+                                pass
                             else:
                                 logger.exception(e)
                                 raise
                         except Exception as e:
                             fut.set_exception(e)
+                        fut.data['t2'] = monotonic()
                     # No sleep. Get results out of the queue as quickly as possible.
                     # TODO: check `should_stop`?
             sleep(self.SLEEP_DEQUEUE)
