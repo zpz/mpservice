@@ -247,13 +247,14 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_max = -1
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
-                # qsizes = []
+
+            def print_batching_info():
+                logger.info('%d batches with sizes %d--%d, mean %.1f',
+                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
 
             batch = []
             uids = []
             with q_in_lock:
-                # qsize_start = q_in.qsize()
-
                 # Hold the lock to let one worker get as many
                 # as possible in order to leverage batching.
                 while True:
@@ -262,15 +263,10 @@ class Servlet(metaclass=ABCMeta):
                         break
                     except queue.Empty:
                         if should_stop.is_set():
-                            z = None
-                            break
+                            if n_batches:
+                                print_batching_info()
+                            return
 
-                if z is None:
-                    if n_batches:
-                        logger.info('%d batches with sizes %d--%d, mean %.1f',
-                                    n_batches, batch_size_min, batch_size_max, batch_size_mean)
-                        # logger.info('queue/batch sizes: %s', qsizes)
-                    return
                 uid, x = z
                 uids.append(uid)
                 batch.append(x)
@@ -299,14 +295,13 @@ class Servlet(metaclass=ABCMeta):
             batch_size_max = max(batch_size_max, n)
             batch_size_min = min(batch_size_min, n)
             batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-            # qsizes.append((qsize_start, n, qsize_end))
             if n_batches % 1000 == 0:
-                logger.info('%d batches with sizes %d--%d, mean %.1f',
-                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
-                # logger.info('queue/batch sizes: %s', qsizes)
+                print_batching_info()
                 n_batches = 0
 
             if should_stop.is_set():
+                if n_batches and n_batches % 1000 != 0:
+                    print_batching_info()
                 return
 
     @abstractmethod
@@ -873,7 +868,7 @@ class SequentialServer(MPServer):
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TotalTimeout.
-                    logger.debug('Future object is already cancelled')
+                    # logger.debug('Future object is already cancelled')
                 else:
                     logger.exception(e)
                     raise
