@@ -509,7 +509,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # The concern is overall throughput.
 
         enqueue_timeout, total_timeout = self._resolve_timeout(
-            enqueue_timeout=enqueue_timeout, total_timeout=total_timeout)
+            enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
+            total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10)
         tasks = queue.Queue(backlog)
         nomore = object()
 
@@ -723,6 +724,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             try:
                 # `err` is a RemoteException object.
                 fut.set_exception(err)
+                fut.data['t2'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     logger.warning('Future object is already cancelled')
@@ -779,7 +781,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - monotonic())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
-        fut.data['t2'] = monotonic()
         return fut.result()
         # This could raise RemoteException.
 
@@ -790,15 +791,14 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         qs = self._input_queues()
         t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
-            timenow = monotonic()
             try:
                 # `enqueue_timeout` is the combined time across input queues,
                 # not time per queue.
-                q.put((uid, x), timeout=max(0, t1 - timenow))
+                q.put((uid, x), timeout=max(0, t1 - monotonic()))
             except queue.Full:
                 fut.cancel()
                 del self._uid_to_futures[uid]
-                raise EnqueueTimeout(timenow - t0, iq)
+                raise EnqueueTimeout(monotonic() - t0, iq)
 
         fut.data['t1'] = monotonic()
         return uid, fut
@@ -807,7 +807,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t0 = fut.data['t0']
         t2 = t0 + total_timeout
         try:
-            res = fut.result(timeout=t2 - monotonic())
+            return fut.result(timeout=max(0, t2 - monotonic()))
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
@@ -816,8 +816,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # `gather_results` during very subtle
             # timing coincidence.
             raise TotalTimeout(monotonic() - t0)
-        fut.data['t2'] = monotonic()
-        return res
 
 
 class SequentialServer(MPServer):
@@ -865,10 +863,12 @@ class SequentialServer(MPServer):
                 continue
             try:
                 fut.set_result(y)
+                fut.data['t2'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TotalTimeout.
                     # logger.debug('Future object is already cancelled')
+                    pass
                 else:
                     logger.exception(e)
                     raise
@@ -954,12 +954,14 @@ class EnsembleServer(MPServer):
                             fut.set_result(z)
                         except asyncio.InvalidStateError as e:
                             if fut.cancelled():
-                                logger.debug('Future object is already cancelled')
+                                # logger.debug('Future object is already cancelled')
+                                pass
                             else:
                                 logger.exception(e)
                                 raise
                         except Exception as e:
                             fut.set_exception(e)
+                        fut.data['t2'] = monotonic()
                     # No sleep. Get results out of the queue as quickly as possible.
                     # TODO: check `should_stop`?
             sleep(self.SLEEP_DEQUEUE)
