@@ -73,6 +73,7 @@ import threading
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
+from queue import Empty, Full
 from time import monotonic, sleep
 from typing import List, Type, Sequence, Union, Callable
 
@@ -81,7 +82,7 @@ from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
-from .streamer import put_in_queue, get_from_queue
+from .streamer import put_in_queue
 from . import mpqueue  # noqa: F401
 
 
@@ -96,9 +97,8 @@ logger = logging.getLogger(__name__)
 
 mp = multiprocessing.get_context('spawn')
 Process = mp.Process
-Lock = mp.Lock
 Event = mp.Event
-Queue = mp.FastQueue
+Queue = mp.StandardQueue
 
 
 class EnqueueTimeout(Exception):
@@ -126,7 +126,6 @@ class Servlet(metaclass=ABCMeta):
             q_in: Queue,
             q_out: Queue,
             q_err: Queue,
-            q_in_lock: Lock,
             q_log: Queue,
             should_stop: Event,
             cpus: Sequence[int] = None,
@@ -148,7 +147,6 @@ class Servlet(metaclass=ABCMeta):
         obj.start(q_in=q_in,
                   q_out=q_out,
                   q_err=q_err,
-                  q_in_lock=q_in_lock,
                   should_stop=should_stop,
                   )
 
@@ -205,20 +203,23 @@ class Servlet(metaclass=ABCMeta):
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
-    def start(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
+    def start(self, *, q_in, q_out, q_err, should_stop):
         q_err.put(self.name)
         if self.batch_size > 1:
             self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
-                              q_in_lock=q_in_lock, should_stop=should_stop)
+                              should_stop=should_stop)
         else:
             self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
 
     def _start_single(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
         while True:
-            z = get_from_queue(q_in, should_stop)
-            if z is None:
-                break
+            try:
+                z = q_in.get(timeout=1)
+            except Empty:
+                if should_stop.is_set():
+                    break
+                continue
             uid, x = z
 
             try:
@@ -237,9 +238,13 @@ class Servlet(metaclass=ABCMeta):
                 if not put_in_queue(q_err, (uid, err), should_stop):
                     return
 
-    def _start_batch(self, *, q_in, q_out, q_err, q_in_lock, should_stop):
+    def _start_batch(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
         batch_wait_time = self.batch_wait_time
+
+        def print_batching_info():
+            logger.info('%d batches with sizes %d--%d, mean %.1f',
+                        n_batches, batch_size_min, batch_size_max, batch_size_mean)
 
         n_batches = 0
         while True:
@@ -248,39 +253,16 @@ class Servlet(metaclass=ABCMeta):
                 batch_size_min = 1000000
                 batch_size_mean = 0.0
 
-            def print_batching_info():
-                logger.info('%d batches with sizes %d--%d, mean %.1f',
-                            n_batches, batch_size_min, batch_size_max, batch_size_mean)
-
-            batch = []
-            uids = []
-            with q_in_lock:
-                # Hold the lock to let one worker get as many
-                # as possible in order to leverage batching.
-                while True:
-                    try:
-                        z = q_in.get(timeout=1)
-                        break
-                    except queue.Empty:
-                        if should_stop.is_set():
-                            if n_batches:
-                                print_batching_info()
-                            return
-
-                uid, x = z
-                uids.append(uid)
-                batch.append(x)
-
-                # Wait time starts after getting the first item,
-                # because however long the first item takes to come
-                # is not the worker's fault.
-
-                more = q_in.get_many(batch_size - 1, timeout=batch_wait_time)
-
-            if more:
-                uids.extend((v[0] for v in more))
-                batch.extend((v[1] for v in more))
-
+            try:
+                batch = q_in.get_many(batch_size, first_timeout=0.5, extra_timeout=batch_wait_time)
+            except Empty:
+                if should_stop.is_set():
+                    if n_batches:
+                        print_batching_info()
+                    return
+                continue
+            uids = [v[0] for v in batch]
+            batch = [v[1] for v in batch]
             n = len(batch)
 
             try:
@@ -359,7 +341,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         '''
         self._q_err = Queue()
         self._q_log = Queue()  # This does not need the performance optim of fast_fifo.
-        self._q_in_lock: List[Lock] = None
         self._servlets: List[Process] = []
         self._uid_to_futures = {}
 
@@ -547,14 +528,20 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         _wait = self._call_wait_for_result
 
         while True:
-            z = get_from_queue(tasks, self._should_stop, t)
-            # This could raise exception if `t` exited with error,
-            # which will propagate.
+            try:
+                z = tasks.get(timeout=1)
+            except Empty:
+                if t.done():
+                    if t.exception():
+                        raise t.exception()
+                    assert self._should_stop.is_set()
+                    return
+                if self._should_stop.is_set():
+                    return
+                continue
+
             if z is nomore:
                 break
-            if z is None:
-                return
-
             x, uid, fut = z
             if uid is None:
                 # This happens only when `return_exceptions` is True.
@@ -591,7 +578,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                      servlet: Type[Servlet],
                      *,
                      q_in,
-                     q_in_lock,
                      q_out,
                      cpus: list = None,
                      workers: int = None,
@@ -621,7 +607,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                         'q_out': q_out,
                         'q_err': q_err,
                         'cpus': cpu,
-                        'q_in_lock': q_in_lock,
                         'q_log': q_log,
                         'should_stop': self._should_stop,
                         **init_kwargs,
@@ -712,9 +697,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         futures = self._uid_to_futures
         should_stop = self._should_stop
         while self.started:
-            z = get_from_queue(q_err, should_stop)
-            if z is None:
-                break
+            try:
+                z = q_err.get(timeout=1)
+            except Empty:
+                if should_stop.is_set():
+                    break
+                continue
             uid, err = z
             err = RemoteException.from_dict(err)
             fut = futures.pop(uid, None)
@@ -750,7 +738,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 try:
                     q.put_nowait((uid, x))
                     break
-                except queue.Full:
+                except Full:
                     timenow = monotonic()
                     if timenow >= t1:
                         fut.cancel()
@@ -795,7 +783,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 # `enqueue_timeout` is the combined time across input queues,
                 # not time per queue.
                 q.put((uid, x), timeout=max(0, t1 - monotonic()))
-            except queue.Full:
+            except Full:
                 fut.cancel()
                 del self._uid_to_futures[uid]
                 raise EnqueueTimeout(monotonic() - t0, iq)
@@ -829,18 +817,15 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         q_in = Queue()
         self._q_in_out = [q_in]
-        self._q_in_lock = [Lock()]
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = self._q_in_out[-1]
-        q_in_lock = self._q_in_lock[-1]
         q_out = Queue()
         self._q_in_out.append(q_out)
 
         self._add_servlet(
             servlet,
             q_in=q_in,
-            q_in_lock=q_in_lock,
             q_out=q_out,
             **kwargs,
         )
@@ -853,9 +838,12 @@ class SequentialServer(MPServer):
         should_stop = self._should_stop
 
         while self.started:
-            z = get_from_queue(q_out, should_stop)
-            if z is None:
-                break
+            try:
+                z = q_out.get(timeout=1)
+            except Empty:
+                if should_stop.is_set():
+                    break
+                continue
             uid, y = z
             fut = futures.pop(uid, None)
             if fut is None:
@@ -888,21 +876,17 @@ class EnsembleServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._q_in: List[Queue] = []
-        self._q_in_lock: List[Lock] = []
         self._q_out: List[Queue] = []
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         q_in = Queue()
         q_out = Queue()
-        q_in_lock = Lock()
         self._q_in.append(q_in)
-        self._q_in_lock.append(q_in_lock)
         self._q_out.append(q_out)
 
         self._add_servlet(
             servlet,
             q_in=q_in,
-            q_in_lock=q_in_lock,
             q_out=q_out,
             **kwargs,
         )

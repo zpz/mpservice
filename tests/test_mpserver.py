@@ -6,12 +6,21 @@ import pytest
 from overrides import overrides
 
 from mpservice.remote_exception import RemoteException
+import mpservice.mpserver
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     EnqueueTimeout, TotalTimeout
 )
 from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
+
+
+#@pytest.fixture(params=['StandardQueue', 'FastQueue', 'ZeroQueue'])
+@pytest.fixture(params=['StandardQueue', 'FastQueue'])
+#@pytest.fixture(params=['ZeroQueue'])
+def qtype(request):
+    mpservice.mpserver.Queue = getattr(mpservice.mpserver.mp, request.param)
+    yield
 
 
 class Double(Servlet):
@@ -45,7 +54,7 @@ class Delay(Servlet):
 
 
 @pytest.mark.asyncio
-async def test_sequential_server_async():
+async def test_sequential_server_async(qtype):
     service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -59,7 +68,7 @@ async def test_sequential_server_async():
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_sequential_server():
+def test_sequential_server(qtype):
     service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
@@ -72,7 +81,7 @@ def test_sequential_server():
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_sequential_batch():
+def test_sequential_batch(qtype):
     service = SequentialServer()
     service.add_servlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
     with service:
@@ -84,7 +93,7 @@ def test_sequential_batch():
         assert y == [v + 4 for v in x]
 
 
-def test_sequential_error():
+def test_sequential_error(qtype):
     service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3], stepsize=4)
@@ -97,7 +106,7 @@ def test_sequential_error():
 
 
 @pytest.mark.asyncio
-async def test_sequential_timeout_async():
+async def test_sequential_timeout_async(qtype):
     service = SequentialServer()
     service.add_servlet(Delay)
     with service:
@@ -105,7 +114,7 @@ async def test_sequential_timeout_async():
             z = await service.async_call(2.2, total_timeout=1)
 
 
-def test_sequential_timeout():
+def test_sequential_timeout(qtype):
     # TODO: it's hard to test for EnqueueTimeout because
     # the servers don't have a parameter to control backlog.
     service = SequentialServer()
@@ -115,7 +124,7 @@ def test_sequential_timeout():
             z = service.call(2.2, total_timeout=1)
 
 
-def test_sequential_stream():
+def test_sequential_stream(qtype):
     service = SequentialServer()
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
@@ -156,7 +165,7 @@ class MyWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_ensemble_server_async():
+async def test_ensemble_server_async(qtype):
     service = MyWideServer()
 
     with service:
@@ -169,7 +178,7 @@ async def test_ensemble_server_async():
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
-def test_ensemble_server():
+def test_ensemble_server(qtype):
     service = MyWideServer()
 
     with service:
@@ -198,14 +207,14 @@ class YourWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_ensemble_timeout_async():
+async def test_ensemble_timeout_async(qtype):
     service = YourWideServer()
     with service:
         with pytest.raises(TotalTimeout):
             z = await service.async_call(8.2, total_timeout=1)
 
 
-def test_ensemble_timeout():
+def test_ensemble_timeout(qtype):
     service = YourWideServer()
     with service:
         with pytest.raises(TotalTimeout):
@@ -225,7 +234,7 @@ class HisWideServer(EnsembleServer):
         return [min(results), max(results)]
 
 
-def test_ensemble_stream():
+def test_ensemble_stream(qtype):
     service = HisWideServer()
     with service:
         data = range(100)
@@ -245,7 +254,7 @@ def func2(x, shift):
     return [_ + shift for _ in x]
 
 
-def test_simple_server():
+def test_simple_server(qtype):
     server = SimpleServer(func1, shift=3)
     with server:
         data = range(1000)

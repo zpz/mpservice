@@ -1,9 +1,8 @@
 from time import sleep, monotonic
 from random import uniform, seed
+import mpservice.mpserver
 from mpservice.mpserver import SimpleServer
 from zpz.logging import config_logger
-
-seed(100)
 
 def double(x):
     sleep(uniform(0.05, 0.2))
@@ -27,7 +26,12 @@ def main(model):
 
 
 if __name__ == '__main__':
-    config_logger(with_process_name=True)
-    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
-    main(model)
+    for q in ('StandardQueue', 'FastQueue'):
+        print('')
+        print('using', q)
+        seed(100)
+        mpservice.mpserver.Queue = getattr(mpservice.mpserver.mp, q)
+        config_logger(with_process_name=True)
+        model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
+        main(model)
 
