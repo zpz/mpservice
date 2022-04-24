@@ -1,5 +1,4 @@
 import asyncio
-import concurrent.futures
 import time
 
 import pytest
@@ -15,8 +14,8 @@ from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 
-#@pytest.fixture(params=['StandardQueue', 'FastQueue', 'ZeroQueue'])
-@pytest.fixture(params=['StandardQueue', 'FastQueue'])
+#@pytest.fixture(params=['BasicQueue', 'FastQueue', 'ZeroQueue'])
+@pytest.fixture(params=['BasicQueue', 'FastQueue'])
 #@pytest.fixture(params=['ZeroQueue'])
 def qtype(request):
     mpservice.mpserver.Queue = getattr(mpservice.mpserver.mp, request.param)

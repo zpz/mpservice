@@ -98,7 +98,7 @@ logger = logging.getLogger(__name__)
 mp = multiprocessing.get_context('spawn')
 Process = mp.Process
 Event = mp.Event
-Queue = mp.StandardQueue
+Queue = mp.BasicQueue
 
 
 class EnqueueTimeout(Exception):
@@ -269,9 +269,9 @@ class Servlet(metaclass=ABCMeta):
                 results = self.call(batch)
             except Exception:
                 err = RemoteException().to_dict()
-                q_err.put_many([(uid, err) for uid in uids], timeout=10)
+                q_err.put_many([(uid, err) for uid in uids])
             else:
-                q_out.put_many(list(zip(uids, results)), timeout=10)
+                q_out.put_many(list(zip(uids, results)))
 
             n_batches += 1
             batch_size_max = max(batch_size_max, n)

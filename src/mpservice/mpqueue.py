@@ -1,4 +1,5 @@
 import multiprocessing
+from types import SimpleNamespace
 from multiprocessing import queues as mp_queues, context as mp_context
 from queue import Empty, Full
 from time import monotonic
@@ -12,18 +13,28 @@ from zmq import ZMQError, devices as zmq_devices
 _ForkingPickler = mp_context.reduction.ForkingPickler
 
 
-class StandardQueue:
-    def __init__(self, maxsize=0, *, ctx=None):
+class BasicQueue:
+    def __init__(self, *, ctx=None):
         if ctx is None:
             ctx = multiprocessing.get_context()
-        self._q = ctx.Queue(maxsize)
+        self._q = ctx.Queue()
+        self._disable_semaphore()
+
+    def _disable_semaphore(self):
+        self._q._sem = SimpleNamespace()
+        self._q._sem.acquire = lambda *args: True
+        self._q._sem.release = lambda: True
 
     def __getstate__(self):
-        return self._q.__getstate__()
+        self._q._sem = None
+        z = self._q.__getstate__()
+        self._disable_semaphore()
+        return z
 
     def __setstate__(self, state):
         self._q = object.__new__(mp_queues.Queue)
         self._q.__setstate__(state)
+        self._disable_semaphore()
 
     def empty(self):
         return self._q.empty()
@@ -42,20 +53,16 @@ class StandardQueue:
             timeout = 3600
         return self._q.get(block, timeout)
 
-    def put_many(self, objs, timeout=None):
-        if timeout is None:
-            timeout = 3600
-        deadline = monotonic() + timeout
-        for obj in objs:
-            timeout = deadline - monotonic()
-            if timeout > 0:
-                self._q.put(obj, timeout=timeout)
-            else:
-                self._q.put_nowait(obj)
-            # TODO: this is inefficient as `self.put`
-            # needs to acquire the writer lock every time.
-            # But hacking that is a little complicated,
-            # so doing this naive way for now.
+    def put_many(self, objs):
+        if self._q._closed:
+            raise ValueError(f"Queue {self!r} is closed")
+
+        with self._q._notempty:
+            if self._q._thread is None:
+                self._q._start_thread()
+            for obj in objs:
+                self._q._buffer.append(obj)
+                self._q._notempty.notify()
 
     def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
         # Adapted from code of cpython.
@@ -74,7 +81,6 @@ class StandardQueue:
                 raise Empty
             out.append(self._q._recv_bytes())
             n += 1
-            self._q._sem.release()
             if extra_timeout is None:
                 extra_timeout = 3600
             deadline = monotonic() + extra_timeout
@@ -90,7 +96,6 @@ class StandardQueue:
                     break
                 out.append(self._q._recv_bytes())
                 n += 1
-                self._q._sem.release()
         finally:
             self._q._rlock.release()
         return [_ForkingPickler.loads(v) for v in out]
@@ -100,9 +105,6 @@ class StandardQueue:
 
     def get_nowait(self):
         return self.get(False)
-
-    def put_many_nowait(self, objs):
-        return self.put_many(objs, 0)
 
     def get_many_nowait(self, max_n):
         return self.get_many(max_n, 0, 0)
@@ -252,23 +254,12 @@ class ZeroQueue:
             return _ForkingPickler.loads(z)
         raise Empty
 
-    def put_many(self, objs, timeout=None):
-        '''
-        `timeout`: seconds
-        '''
+    def put_many(self, objs):
         if self._closed:
             raise ValueError(f"{self!r} is closed")
         writer = self._get_writer()
-
-        if timeout is None:
-            timeout = 3600
-        deadline = monotonic() + timeout
         for v in objs:
-            t = max(0, deadline - monotonic())
-            if writer.poll(t * 1000, zmq.POLLOUT):
-                writer.send(_ForkingPickler.dumps(v))
-            else:
-                raise Full
+            writer.send(_ForkingPickler.dumps(v))
 
     def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
         reader = self._get_reader()
@@ -299,9 +290,6 @@ class ZeroQueue:
     def get_nowait(self):
         return self.get(False)
 
-    def put_many_nowait(self, objs):
-        return self.put_many(objs, 0)
-
     def get_many_nowait(self, max_n: int):
         return self.get_many(max_n, 0, 0)
 
@@ -330,20 +318,15 @@ class FastQueue:
             self._q.reallocate_msg_buffer(1_000_000)
         return self._q.get(block, timeout)
 
-    def put_many(self, objs, timeout=None):
+    def put_many(self, objs):
         if self._q.is_closed():
             raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = float(3600)
-        deadline = monotonic() + timeout
 
         objs = [list(objs)]
         while objs:
             try:
                 self._q.put_many(objs[0], timeout=0.01)
             except Full:
-                if monotonic() > deadline:
-                    raise Full
                 if len(objs[0]) > 1:
                     k = int(len(objs[0]) / 2)
                     objs = [objs[0][:k], objs[0][k:]] + objs[1:]
@@ -375,18 +358,15 @@ class FastQueue:
     def get_nowait(self):
         return self.get(False)
 
-    def put_many_nowait(self, objs):
-        return self.put_many(objs, 0)
-
     def get_many_nowait(self, max_n):
         return self.get_many(max_n, 0, 0)
 
 
-def _StandardQueue(self, maxsize=0):
-    return StandardQueue(maxsize=maxsize, ctx=self.get_context())
+def _BasicQueue(self):
+    return BasicQueue(ctx=self.get_context())
 
 
-mp_context.BaseContext.StandardQueue = _StandardQueue
+mp_context.BaseContext.BasicQueue = _BasicQueue
 
 
 def _ZeroQueue(self, **kwargs):
