@@ -7,7 +7,7 @@ from mpservice.streamer import Streamer
 import pytest
 
 methods = [None, 'spawn']
-names = ['StandardQueue', 'FastQueue', 'ZeroQueue']
+names = ['BasicQueue', 'FastQueue', 'ZeroQueue']
 
 
 @pytest.mark.parametrize('method', methods)
@@ -20,7 +20,7 @@ def test_basic0(method, name):
     assert q.get() == 3
     with pytest.raises(Empty):
         _ = q.get(timeout=0.8)
-    q.put_many_nowait(range(8))
+    q.put_many(range(8))
     assert q.get_many(3) == [0, 1, 2]
     assert q.get_many(4) == [3, 4, 5, 6]
     assert q.get_many(4, first_timeout=0.2, extra_timeout=0.2) == [7]

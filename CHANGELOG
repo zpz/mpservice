@@ -1,7 +1,7 @@
 Release 0.10.6b5
 ================
 
-- Added alternative multiprocessing queues, namely `standardQueue`, `FastQueue` and `ZeroQueue`,
+- Added alternative multiprocessing queues, namely `BasicQueue`, `FastQueue` and `ZeroQueue`,
   in an attempt to improve service speed, expecially batching.
   This topic is still under experimentation.
 - Changed socket encoder from 'orjson' to 'pickle'.
