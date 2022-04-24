@@ -12,7 +12,7 @@ from zmq import ZMQError, devices as zmq_devices
 _ForkingPickler = mp_context.reduction.ForkingPickler
 
 
-class BasicQueue:
+class StandardQueue:
     def __init__(self, maxsize=0, *, ctx=None):
         if ctx is None:
             ctx = multiprocessing.get_context()
@@ -42,12 +42,7 @@ class BasicQueue:
             timeout = 3600
         return self._q.get(block, timeout)
 
-    def put_many(self, objs, block=True, timeout=None):
-        if not block:
-            for obj in objs:
-                self._q.put_nowait(obj)
-            return
-
+    def put_many(self, objs, timeout=None):
         if timeout is None:
             timeout = 3600
         deadline = monotonic() + timeout
@@ -62,18 +57,27 @@ class BasicQueue:
             # But hacking that is a little complicated,
             # so doing this naive way for now.
 
-    def get_many(self, max_n: int, block=True, timeout=None):
+    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
         # Adapted from code of cpython.
         if self._q._closed:
             raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = 3600
-        deadline = monotonic() + timeout
         out = []
         n = 0
-        if not self._q._rlock.acquire(block, timeout):
-            return []
+        if first_timeout is None:
+            first_timeout = 3600
+        deadline = monotonic() + first_timeout
+        if not self._q._rlock.acquire(block=True, timeout=first_timeout):
+            raise Empty
+        # Now with the read lock
         try:
+            if not self._q._poll(max(0, deadline - monotonic())):
+                raise Empty
+            out.append(self._q._recv_bytes())
+            n += 1
+            self._q._sem.release()
+            if extra_timeout is None:
+                extra_timeout = 3600
+            deadline = monotonic() + extra_timeout
             while n < max_n:
                 # If there is remaining time, wait up to
                 # that long.
@@ -82,12 +86,7 @@ class BasicQueue:
                 # are already over time. That is, if supply
                 # has piled up, then will get up to the
                 # batch capacity.
-                if block:
-                    timeout = max(0, deadline - monotonic())
-                    ready = self._q._poll(timeout)
-                else:
-                    ready = self._q._poll()
-                if not ready:
+                if not self._q._poll(max(0, deadline - monotonic())):
                     break
                 out.append(self._q._recv_bytes())
                 n += 1
@@ -103,10 +102,10 @@ class BasicQueue:
         return self.get(False)
 
     def put_many_nowait(self, objs):
-        return self.put_many(objs, False)
+        return self.put_many(objs, 0)
 
     def get_many_nowait(self, max_n):
-        return self.get_many(max_n, False)
+        return self.get_many(max_n, 0, 0)
 
 
 class ZeroQueue:
@@ -253,22 +252,13 @@ class ZeroQueue:
             return _ForkingPickler.loads(z)
         raise Empty
 
-    def put_many(self, objs, block=True, timeout=None):
+    def put_many(self, objs, timeout=None):
         '''
         `timeout`: seconds
         '''
         if self._closed:
             raise ValueError(f"{self!r} is closed")
         writer = self._get_writer()
-
-        if not block:
-            try:
-                for v in objs:
-                    writer.send(_ForkingPickler.dumps(v), zmq.NOBLOCK)  # pylint: disable=no-member
-            except ZMQError as e:
-                # TODO: there can be other error conditions than Full.
-                raise Full from e
-            return
 
         if timeout is None:
             timeout = 3600
@@ -280,34 +270,28 @@ class ZeroQueue:
             else:
                 raise Full
 
-    def get_many(self, max_n: int, block=True, timeout=None):
-        '''
-        `timeout`: seconds.
-        '''
+    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
         reader = self._get_reader()
         out = []
         n = 0
 
-        if not block:
-            while n < max_n:
-                try:
-                    out.append(_ForkingPickler.loads(reader.recv(zmq.NOBLOCK)))  # pylint: disable=no-member
-                except ZMQError:
-                    break
-                n += 1
-            return out
-
-        if timeout is None:
-            timeout = 3600
-        deadline = monotonic() + timeout
+        if first_timeout is None:
+            first_timeout = 3600
+        if not reader.poll(first_timeout * 1000, zmq.POLLIN):
+            raise Empty
+        out.append(reader.recv())
+        n += 1
+        if extra_timeout is None:
+            extra_timeout = 3600
+        deadline = monotonic() + extra_timeout
         while n < max_n:
             t = max(0, deadline - monotonic())
             if reader.poll(t * 1000, zmq.POLLIN):
-                out.append(_ForkingPickler.loads(reader.recv()))
+                out.append(reader.recv())
                 n += 1
             else:
                 break
-        return out
+        return [_ForkingPickler.loads(v) for v in out]
 
     def put_nowait(self, obj):
         return self.put(obj, False)
@@ -316,10 +300,10 @@ class ZeroQueue:
         return self.get(False)
 
     def put_many_nowait(self, objs):
-        return self.put_many(objs, False)
+        return self.put_many(objs, 0)
 
     def get_many_nowait(self, max_n: int):
-        return self.get_many(max_n, False)
+        return self.get_many(max_n, 0, 0)
 
 
 class FastQueue:
@@ -346,15 +330,12 @@ class FastQueue:
             self._q.reallocate_msg_buffer(1_000_000)
         return self._q.get(block, timeout)
 
-    def put_many(self, objs, block=True, timeout=None):
+    def put_many(self, objs, timeout=None):
         if self._q.is_closed():
             raise ValueError(f"{self!r} is closed")
-        if block:
-            if timeout is None:
-                timeout = float(3600)
-            deadline = monotonic() + timeout
-        else:
-            deadline = monotonic() + 0.01
+        if timeout is None:
+            timeout = float(3600)
+        deadline = monotonic() + timeout
 
         objs = [list(objs)]
         while objs:
@@ -373,15 +354,20 @@ class FastQueue:
             else:
                 objs = objs[1:]
 
-    def get_many(self, max_n: int, block=True, timeout=None):
-        if timeout is None:
-            timeout = float(3600)
+    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+        if first_timeout is None:
+            first_timeout = float(3600)
         if self._q.message_buffer is None:
             self._q.reallocate_msg_buffer(1_000_000)
+        out = self._q.get_many(block=True, timeout=first_timeout, max_messages_to_get=1)
+        if extra_timeout is None:
+            extra_timeout = float(3600)
         try:
-            return self._q.get_many(block=block, timeout=timeout, max_messages_to_get=max_n)
+            more = self._q.get_many(block=True, timeout=extra_timeout, max_messages_to_get=max_n - 1)
         except Empty:
-            return []
+            more = []
+        out.extend(more)
+        return out
 
     def put_nowait(self, obj):
         self.put(obj, False)
@@ -390,17 +376,17 @@ class FastQueue:
         return self.get(False)
 
     def put_many_nowait(self, objs):
-        return self.put_many(objs, False)
+        return self.put_many(objs, 0)
 
     def get_many_nowait(self, max_n):
-        return self.get_many(max_n, False)
+        return self.get_many(max_n, 0, 0)
 
 
-def _BasicQueue(self, maxsize=0):
-    return BasicQueue(maxsize=maxsize, ctx=self.get_context())
+def _StandardQueue(self, maxsize=0):
+    return StandardQueue(maxsize=maxsize, ctx=self.get_context())
 
 
-mp_context.BaseContext.BasicQueue = _BasicQueue
+mp_context.BaseContext.StandardQueue = _StandardQueue
 
 
 def _ZeroQueue(self, **kwargs):

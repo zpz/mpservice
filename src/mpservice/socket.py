@@ -13,7 +13,7 @@ from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
-from .streamer import put_in_queue, get_from_queue
+from .streamer import put_in_queue
 
 logger = logging.getLogger(__name__)
 
@@ -631,10 +631,19 @@ class SocketClient(EnforceOverrides):
         self._tasks.append(t)
 
         while True:
-            z = get_from_queue(tasks, self._to_shutdown, t)
+            try:
+                z = tasks.get(timeout=0.1)
+            except queue.Empty:
+                if t.done():
+                    if t.exception():
+                        raise t.exception()
+                    assert self._to_shutdown.is_set()
+                    break
+                if self._to_shutdown.is_set():
+                    break
+                continue
+
             if z is nomore:
-                break
-            if z is None:
                 break
             x, fut, t0 = z
             try:
