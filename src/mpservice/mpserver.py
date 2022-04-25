@@ -345,6 +345,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         '''
         self._q_err = Queue()
         self._q_log = Queue()  # This does not need the performance optim of fast_fifo.
+        self._servlet_configs = []
         self._servlets: List[Process] = []
         self._uid_to_futures = {}
 
@@ -380,6 +381,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t = self._thread_pool.submit(logger_thread, self._q_log)
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
+
+        self._add_servlets()
 
         if self._sequential_start:
             # Start the servlets one by one.
@@ -441,6 +444,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
+
+    def add_servlet(self, servlet: Type[Servlet], **kwargs):
+        self._servlet_configs.append((servlet, kwargs))
 
     async def async_call(self, x, /, *,
                          enqueue_timeout: Union[int, float] = None,
@@ -577,6 +583,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             del self._thread_tasks[t]
         except KeyError:
             warnings.warn(f"the Future object `{t}` was already removed")
+
+    @abstractmethod
+    def _add_servlets(self):
+        raise NotImplementedError
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -823,21 +833,22 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         self._q_in_out = []
 
-    def add_servlet(self, servlet: Type[Servlet], **kwargs):
-        if not self._q_in_out:
-            q_in = Queue()
-            self._q_in_out.append(q_in)
-        else:
-            q_in = self._q_in_out[-1]
-        q_out = Queue()
-        self._q_in_out.append(q_out)
+    def _add_servlets(self):
+        for servlet, kwargs in self._servlet_configs:
+            if not self._q_in_out:
+                q_in = Queue()
+                self._q_in_out.append(q_in)
+            else:
+                q_in = self._q_in_out[-1]
+            q_out = Queue()
+            self._q_in_out.append(q_out)
 
-        self._add_servlet(
-            servlet,
-            q_in=q_in,
-            q_out=q_out,
-            **kwargs,
-        )
+            self._add_servlet(
+                servlet,
+                q_in=q_in,
+                q_out=q_out,
+                **kwargs,
+            )
 
     @overrides
     def _gather_output(self):
@@ -887,18 +898,19 @@ class EnsembleServer(MPServer):
         self._q_in: List[Queue] = []
         self._q_out: List[Queue] = []
 
-    def add_servlet(self, servlet: Type[Servlet], **kwargs):
-        q_in = Queue()
-        q_out = Queue()
-        self._q_in.append(q_in)
-        self._q_out.append(q_out)
+    def _add_servlets(self):
+        for servlet, kwargs in self._servlet_configs:
+            q_in = Queue()
+            q_out = Queue()
+            self._q_in.append(q_in)
+            self._q_out.append(q_out)
 
-        self._add_servlet(
-            servlet,
-            q_in=q_in,
-            q_out=q_out,
-            **kwargs,
-        )
+            self._add_servlet(
+                servlet,
+                q_in=q_in,
+                q_out=q_out,
+                **kwargs,
+            )
 
     @abstractmethod
     def ensemble(self, x, results: list):
