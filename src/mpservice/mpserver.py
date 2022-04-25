@@ -261,6 +261,10 @@ class Servlet(metaclass=ABCMeta):
                         print_batching_info()
                     return
                 continue
+            except Exception as e:
+                print(type(e), repr(e), str(e))
+                raise
+
             uids = [v[0] for v in batch]
             batch = [v[1] for v in batch]
             n = len(batch)
@@ -739,6 +743,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     q.put_nowait((uid, x))
                     break
                 except Full:
+                    print('\n\n\ngot Full error\n\n\n')
+
                     timenow = monotonic()
                     if timenow >= t1:
                         fut.cancel()
@@ -815,11 +821,14 @@ class SequentialServer(MPServer):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        q_in = Queue()
-        self._q_in_out = [q_in]
+        self._q_in_out = []
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
-        q_in = self._q_in_out[-1]
+        if not self._q_in_out:
+            q_in = Queue()
+            self._q_in_out.append(q_in)
+        else:
+            q_in = self._q_in_out[-1]
         q_out = Queue()
         self._q_in_out.append(q_out)
 

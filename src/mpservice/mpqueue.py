@@ -1,14 +1,16 @@
+import logging
 import multiprocessing
 from types import SimpleNamespace
 from multiprocessing import queues as mp_queues, context as mp_context
 from queue import Empty, Full
-from time import monotonic
+from time import monotonic, sleep
 
 import faster_fifo
 import faster_fifo_reduction  # noqa: F401
 import zmq
 from zmq import ZMQError, devices as zmq_devices
 
+logger = logging.getLogger(__name__)
 
 _ForkingPickler = mp_context.reduction.ForkingPickler
 
@@ -55,7 +57,7 @@ class BasicQueue:
 
     def put_many(self, objs):
         if self._q._closed:
-            raise ValueError(f"Queue {self!r} is closed")
+            raise ValueError(f"{self!r} is closed")
 
         with self._q._notempty:
             if self._q._thread is None:
@@ -106,13 +108,10 @@ class BasicQueue:
     def get_nowait(self):
         return self.get(False)
 
-    def get_many_nowait(self, max_n):
-        return self.get_many(max_n, 0, 0)
-
 
 class ZeroQueue:
     def __init__(self, *,
-                 hwm: int = 1000,
+                 hwm: int = 100,
                  ctx=None,
                  host: str = 'tcp://0.0.0.0'):
         '''
@@ -224,11 +223,17 @@ class ZeroQueue:
         data = _ForkingPickler.dumps(obj)
 
         if not block:
-            try:
-                return writer.send(data, zmq.NOBLOCK)  # pylint: disable=no-member
-            except ZMQError as e:
-                # TODO: there can be other error conditions than Full.
-                raise Full from e
+            while True:
+                try:
+                    # return writer.send(data, zmq.NOBLOCK)  # pylint: disable=no-member
+                    return writer.send(data)
+                    # https://stackoverflow.com/a/22027139/6178706
+                except ZMQError as e:
+                    if isinstance(e, zmq.error.Again):
+                        logger.error(repr(e))
+                    # TODO: there can be other error conditions than Full.
+                    raise Full from e
+
         if timeout is None:
             timeout = 3600
         if writer.poll(timeout * 1000, zmq.POLLOUT):
@@ -289,9 +294,6 @@ class ZeroQueue:
 
     def get_nowait(self):
         return self.get(False)
-
-    def get_many_nowait(self, max_n: int):
-        return self.get_many(max_n, 0, 0)
 
 
 class FastQueue:
@@ -357,9 +359,6 @@ class FastQueue:
 
     def get_nowait(self):
         return self.get(False)
-
-    def get_many_nowait(self, max_n):
-        return self.get_many(max_n, 0, 0)
 
 
 def _BasicQueue(self):
