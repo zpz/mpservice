@@ -38,6 +38,13 @@ class BasicQueue:
         self._q.__setstate__(state)
         self._disable_semaphore()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        sleep(0.1)  # to prevent 'BrokenPipe' error. TODO: how to get rid of this?
+        self.close()
+
     def empty(self):
         return self._q.empty()
 
@@ -111,7 +118,7 @@ class BasicQueue:
 
 class ZeroQueue:
     def __init__(self, *,
-                 hwm: int = 100,
+                 hwm: int = 1000,
                  ctx=None,
                  host: str = 'tcp://0.0.0.0'):
         '''
@@ -137,6 +144,9 @@ class ZeroQueue:
         self._reader = None
         self._closed = False
 
+        self._copy_on_write = False
+        self._copy_on_read = False
+
         # Keep track of writers on this queue across processes,
         # not only in "current" process.
         if ctx is None:
@@ -146,9 +156,9 @@ class ZeroQueue:
 
         # The following happens only in the "originating" object.
         dev = zmq_devices.ThreadDevice(zmq.STREAMER, zmq.PULL, zmq.PUSH)  # pylint: disable=no-member
-        dev.setsockopt_in(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+        # dev.setsockopt_in(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
         # dev.setsockopt_in(zmq.RCVHWM, 1) # writer_hwm)  # pylint: disable=no-member
-        dev.setsockopt_out(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+        # dev.setsockopt_out(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
         dev.setsockopt_out(zmq.SNDHWM, hwm)  # pylint: disable=no-member
         self.writer_port = dev.bind_in_to_random_port(self.host)
         self.reader_port = dev.bind_out_to_random_port(self.host)
@@ -170,6 +180,8 @@ class ZeroQueue:
         self._writer, self._reader = None, None
         self._closed = False
         self._collector = None
+        self._copy_on_write = False
+        self._copy_on_read = False
 
     def _get_writer(self):
         writer = self._writer
@@ -194,6 +206,14 @@ class ZeroQueue:
             self._reader = reader
         return reader
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.close()
+        if self._collector is not None:
+            pass  # don't know how to close it
+
     def empty(self):
         reader = self._get_reader()
         return reader.poll(0, zmq.POLLIN) == 0
@@ -211,6 +231,9 @@ class ZeroQueue:
             self._writer = None
             with self._n_writers_closed.get_lock():
                 self._n_writers_closed.value += 1
+        if self._reader is not None:
+            self._reader.close(linger)
+            self._reader = None
         self._closed = True
 
     def put(self, obj, block=True, timeout=None):
@@ -226,7 +249,7 @@ class ZeroQueue:
             while True:
                 try:
                     # return writer.send(data, zmq.NOBLOCK)  # pylint: disable=no-member
-                    return writer.send(data)
+                    return writer.send(data, copy=self._copy_on_write)
                     # https://stackoverflow.com/a/22027139/6178706
                 except ZMQError as e:
                     if isinstance(e, zmq.error.Again):
@@ -237,7 +260,7 @@ class ZeroQueue:
         if timeout is None:
             timeout = 3600
         if writer.poll(timeout * 1000, zmq.POLLOUT):
-            return writer.send(data)
+            return writer.send(data, copy=self._copy_on_write)
         raise Full
 
     def get(self, block=True, timeout=None):
@@ -248,14 +271,14 @@ class ZeroQueue:
 
         if not block:
             try:
-                z = reader.recv(zmq.NOBLOCK)  # pylint: disable=no-member
+                z = reader.recv(zmq.NOBLOCK, copy=self._copy_on_read)  # pylint: disable=no-member
                 return _ForkingPickler.loads(z)
             except ZMQError as e:
                 raise Empty from e
         if timeout is None:
             timeout = 3600
         if reader.poll(timeout * 1000, zmq.POLLIN):
-            z = reader.recv()
+            z = reader.recv(copy=self._copy_on_read)
             return _ForkingPickler.loads(z)
         raise Empty
 
@@ -264,7 +287,7 @@ class ZeroQueue:
             raise ValueError(f"{self!r} is closed")
         writer = self._get_writer()
         for v in objs:
-            writer.send(_ForkingPickler.dumps(v))
+            writer.send(_ForkingPickler.dumps(v), copy=self._copy_on_write)
 
     def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
         reader = self._get_reader()
@@ -275,7 +298,7 @@ class ZeroQueue:
             first_timeout = 3600
         if not reader.poll(first_timeout * 1000, zmq.POLLIN):
             raise Empty
-        out.append(reader.recv())
+        out.append(reader.recv(copy=self._copy_on_read))
         n += 1
         if extra_timeout is None:
             extra_timeout = 3600
@@ -283,7 +306,7 @@ class ZeroQueue:
         while n < max_n:
             t = max(0, deadline - monotonic())
             if reader.poll(t * 1000, zmq.POLLIN):
-                out.append(reader.recv())
+                out.append(reader.recv(copy=self._copy_on_read))
                 n += 1
             else:
                 break
@@ -299,6 +322,12 @@ class ZeroQueue:
 class FastQueue:
     def __init__(self, maxsize_bytes=10_000_000):
         self._q = faster_fifo.Queue(max_size_bytes=maxsize_bytes)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.close()
 
     def empty(self):
         return self._q.empty()

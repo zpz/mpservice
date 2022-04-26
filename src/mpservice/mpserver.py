@@ -140,15 +140,16 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        forward_logs(q_log)
-        if cpus:
-            psutil.Process().cpu_affinity(cpus=cpus)
-        obj = cls(**init_kwargs)
-        obj.start(q_in=q_in,
-                  q_out=q_out,
-                  q_err=q_err,
-                  should_stop=should_stop,
-                  )
+        with q_in, q_out, q_err, q_log:
+            forward_logs(q_log)
+            if cpus:
+                psutil.Process().cpu_affinity(cpus=cpus)
+            obj = cls(**init_kwargs)
+            obj.start(q_in=q_in,
+                      q_out=q_out,
+                      q_err=q_err,
+                      should_stop=should_stop,
+                      )
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -335,21 +336,17 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
-    def __init__(self, *,
-                 main_cpu: int = 0,
-                 sequential_start: bool = True,
-                 ):
+    def __init__(self, *, main_cpu: int = 0):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
         '''
-        self._q_err = Queue()
-        self._q_log = Queue()  # This does not need the performance optim of fast_fifo.
+        self._q_err = mp.BasicQueue()
+        self._q_log = mp.BasicQueue()  # This does not need the performance optim of fast_fifo.
         self._servlet_configs = []
         self._servlets: List[Process] = []
         self._uid_to_futures = {}
 
-        self._sequential_start = sequential_start
         self._should_stop = Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
@@ -359,7 +356,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_pool = concurrent.futures.ThreadPoolExecutor()
         self._thread_tasks = {}
 
-        self.started = 0
+        self.started = False
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
             if isinstance(main_cpu, int):
@@ -372,44 +369,17 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     def __enter__(self):
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
-        assert self._servlets
-        self.started += 1
-        if self.started > 1:
-            # Re-entry.
-            return
+        assert not self.started
+
+        self._q_log.__enter__()
+        self._q_err.__enter__()
 
         t = self._thread_pool.submit(logger_thread, self._q_log)
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
-        self._add_servlets()
-
-        if self._sequential_start:
-            # Start the servlets one by one.
-            n = len(self._servlets)
-            k = 0
-            for m in self._servlets:
-                logger.debug(f"starting servlet in Process {m}")
-                m.start()
-                name = self._q_err.get()
-                k += 1
-                logger.info(f"{k}/{n}: servlet <{name}> is ready")
-        else:
-            # Start the servlets concurrently.
-            # In some situations, concurrent servlet launch
-            # may have issues, e.g. all servlets read the same
-            # large file on startup, or all servlets download
-            # the same dataset on startup.
-            n = 0
-            for m in self._servlets:
-                logger.debug(f"starting servlet in Process {m}")
-                m.start()
-                n += 1
-            k = 0
-            while k < n:
-                name = self._q_err.get()
-                k += 1
-                logger.info(f"{k}/{n}: servlet <{name}> is ready")
+        self._start_servlets()
+        assert self._servlets
 
         t = self._thread_pool.submit(self._gather_output)
         t.add_done_callback(self._thread_task_done_callback)
@@ -418,6 +388,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
+        self.started = True
         return self
 
     def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
@@ -425,15 +396,13 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         if msg:
             logger.error(msg)
 
-        assert self.started > 0
-        self.started -= 1
-        if self.started > 0:
-            # Exiting one nested level.
-            return
+        assert self.started
+        self.started = False
 
         self._should_stop.set()
-        for m in self._servlets:
-            m.join()
+
+        self._stop_servlets()
+
         done, not_done = concurrent.futures.wait(list(self._thread_tasks), timeout=10)
         for t in not_done:
             t.cancel()
@@ -442,8 +411,30 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_pool.shutdown()
         # TODO: in Python 3.9+, use argument `cancel_futures=True`.
 
+        self._q_err.__exit__()
+        self._q_log.__exit__()
+
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
+
+    def _start_servlets(self):
+        # Subclass needs to add code to create
+        # the servlet processes before executing
+        # the code below.
+
+        # Start the servlets one by one.
+        n = len(self._servlets)
+        k = 0
+        for m in self._servlets:
+            logger.debug(f"starting servlet in Process {m}")
+            m.start()
+            name = self._q_err.get()
+            k += 1
+            logger.info(f"{k}/{n}: servlet <{name}> is ready")
+
+    def _stop_servlets(self):
+        for m in self._servlets:
+            m.join()
 
     def add_servlet(self, servlet: Type[Servlet], **kwargs):
         self._servlet_configs.append((servlet, kwargs))
@@ -583,10 +574,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             del self._thread_tasks[t]
         except KeyError:
             warnings.warn(f"the Future object `{t}` was already removed")
-
-    @abstractmethod
-    def _add_servlets(self):
-        raise NotImplementedError
 
     def _add_servlet(self,
                      servlet: Type[Servlet],
@@ -833,7 +820,8 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         self._q_in_out = []
 
-    def _add_servlets(self):
+    @overrides
+    def _start_servlets(self):
         for servlet, kwargs in self._servlet_configs:
             if not self._q_in_out:
                 q_in = Queue()
@@ -849,6 +837,15 @@ class SequentialServer(MPServer):
                 q_out=q_out,
                 **kwargs,
             )
+        for q in self._q_in_out:
+            q.__enter__()
+        super()._start_servlets()
+
+    @overrides
+    def _stop_servlets(self):
+        super()._stop_servlets()
+        for q in self._q_in_out:
+            q.__exit__()
 
     @overrides
     def _gather_output(self):
@@ -898,7 +895,8 @@ class EnsembleServer(MPServer):
         self._q_in: List[Queue] = []
         self._q_out: List[Queue] = []
 
-    def _add_servlets(self):
+    @overrides
+    def _start_servlets(self):
         for servlet, kwargs in self._servlet_configs:
             q_in = Queue()
             q_out = Queue()
@@ -911,6 +909,20 @@ class EnsembleServer(MPServer):
                 q_out=q_out,
                 **kwargs,
             )
+        for q in self._q_in:
+            q.__enter__()
+        for q in self._q_out:
+            q.__enter__()
+        super()._start_servlets()
+
+    @overrides
+    def _stop_servlets(self):
+        super()._stop_servlets()
+        for q in self._q_in:
+            q.__exit__()
+        for q in self._q_out:
+            q.__exit__()
+
 
     @abstractmethod
     def ensemble(self, x, results: list):

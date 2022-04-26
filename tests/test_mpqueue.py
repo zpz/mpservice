@@ -46,14 +46,18 @@ def worker_put(q):
 
 
 def worker_get(q):
-    # print('\nworker_get starting')
+    print('\nworker_get starting')
     z = q.get()
+    print('got', z)
     assert z == 1
     z = q.get(timeout=5)
+    print('got', z)
     assert z == 'ab'
     z = q.get()
+    print('got', z)
     assert z == ['1', 'yes', [2, 3]]
     z = q.get()
+    print('got', z)
     assert z == b'none'
     print('worker_get done')
 
@@ -153,3 +157,20 @@ def test_many(method, name):
     pp[3].join()
     pp[4].join()
 
+
+@pytest.mark.parametrize('method', methods)
+@pytest.mark.parametrize('name', names)
+def test_cm(method, name):
+    print('')
+    mp = multiprocessing.get_context(method)
+    q = getattr(mp, name)()
+    with q:
+        q.put(3)
+        assert q.get() == 3
+        with pytest.raises(Empty):
+            _ = q.get(timeout=0.8)
+        q.put_many(range(8))
+        assert q.get_many(8) == list(range(8))
+
+        assert q.empty()
+        q.put_nowait('abc')
