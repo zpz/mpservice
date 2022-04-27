@@ -26,7 +26,7 @@ def main(model):
 
 
 if __name__ == '__main__':
-    for q in ('StandardQueue', 'FastQueue'):
+    for q in ('BasicQueue', 'FastQueue', 'ZeroQueue'):
         print('')
         print('using', q)
         seed(100)

@@ -242,7 +242,7 @@ class SocketServer(EnforceOverrides):
             self._path = None
             self._host = host
             self._port = int(port)
-        self._backlog = backlog or 64
+        self._backlog = backlog or 512
         self._encoder = 'pickle'  # encoder when sending responses
         self._n_connections = 0
         self._shutdown_path = shutdown_path
@@ -337,11 +337,10 @@ class SocketServer(EnforceOverrides):
         async def _keep_responding():
             while True:
                 try:
-                    req_id, t = reqs.get_nowait()
-                except asyncio.QueueEmpty:
+                    req_id, t = await asyncio.wait_for(reqs.get(), 0.1)
+                except asyncio.TimeoutError:
                     if self.to_shutdown:
                         return
-                    await asyncio.sleep(0.0012)
                     continue
                 try:
                     z = await t
@@ -367,6 +366,29 @@ class SocketServer(EnforceOverrides):
         await writer.wait_closed()
         logger.info('connection %d from client %r is closed', self._n_connections, addr)
         self._n_connections -= 1
+
+
+class TcpSocketServer(SocketServer):
+    def __init__(self,
+                 app: SocketApplication,
+                 *,
+                 port,
+                 host=None,
+                 backlog=None,
+                 shutdown_path='/shutdown',
+                 ):
+        super().__init__(app, port=port, host=host, backlog=backlog, shutdown_path=shutdown_path)
+
+
+class UnixSocketServer(SocketServer):
+    def __init__(self,
+                 app: SocketApplication,
+                 *,
+                 path,
+                 backlog=None,
+                 shutdown_path='/shutdown',
+                 ):
+        super().__init__(app, path=path, backlog=backlog, shutdown_path=shutdown_path)
 
 
 def make_server(app: SocketApplication, **kwargs):
@@ -662,3 +684,26 @@ class SocketClient(EnforceOverrides):
                     yield x, y
                 else:
                     yield y
+
+
+class TcpSocketClient(SocketClient):
+    def __init__(self, *,
+                 port,
+                 host=None,
+                 num_connections=None,
+                 connection_timeout=60,
+                 backlog=2048,
+                 ):
+        super().__init__(port=port, host=host, num_connections=num_connections,
+                         connection_timeout=connection_timeout, backlog=backlog)
+
+
+class UnixSocketClient(SocketClient):
+    def __init__(self, *,
+                 path,
+                 num_connections=None,
+                 connection_timeout=60,
+                 backlog=2048,
+                 ):
+        super().__init__(path=path, num_connections=num_connections,
+                         connection_timeout=connection_timeout, backlog=backlog)

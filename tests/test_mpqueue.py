@@ -46,7 +46,7 @@ def worker_put(q):
 
 
 def worker_get(q):
-    # print('\nworker_get starting')
+    print('\nworker_get starting')
     z = q.get()
     assert z == 1
     z = q.get(timeout=5)
@@ -152,4 +152,3 @@ def test_many(method, name):
     pp[2].join()
     pp[3].join()
     pp[4].join()
-
