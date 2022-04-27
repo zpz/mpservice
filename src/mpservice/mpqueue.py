@@ -1,9 +1,17 @@
+'''
+This module defines a few alternatives to the standard `multiprocessing.queues.Queue`.
+The goal is to improve performance over the standard Queue.
+Once a clear winner emerges, the others may be removed.
+'''
+
 import logging
 import multiprocessing
+import os
 from types import SimpleNamespace
 from multiprocessing import queues as mp_queues, context as mp_context
 from queue import Empty, Full
-from time import monotonic, sleep
+from time import monotonic
+from uuid import uuid4
 
 import faster_fifo
 import faster_fifo_reduction  # noqa: F401
@@ -38,19 +46,13 @@ class BasicQueue:
         self._q.__setstate__(state)
         self._disable_semaphore()
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        sleep(0.1)  # to prevent 'BrokenPipe' error. TODO: how to get rid of this?
-        self.close()
-
     def empty(self):
         return self._q.empty()
 
     def close(self):
+        # sleep(0.1)  # to prevent 'BrokenPipe' error. TODO: how to get rid of this?
         self._q.close()
-        self._q.join_thread()
+        # self._q.join_thread()
 
     def put(self, obj, block=True, timeout=None):
         if timeout is None:
@@ -117,16 +119,8 @@ class BasicQueue:
 
 
 class ZeroQueue:
-    def __init__(self, *,
-                 hwm: int = 1000,
-                 ctx=None,
-                 host: str = 'tcp://0.0.0.0'):
+    def __init__(self, *, hwm: int = 1000):
         '''
-        Usually there is no need to name the two parameters `writer_port` and `reader_port`.
-        The two ports will be used in a consistent way within this object, but
-        externally it does not matter which one is for writing and which one is
-        for reading.
-
         This class is meant for a many-many relationship, that is,
         multiple parties (processes) will put items in the queue,
         and multiple parties (processes) will get items from the queue.
@@ -135,10 +129,6 @@ class ZeroQueue:
         relationship, this collector socket many be unnecessary, hence
         the use of it may incur a small overhead.
         '''
-        self.writer_port = None
-        self.reader_port = None
-        self.host = host
-
         self._hwm = hwm
         self._writer = None
         self._reader = None
@@ -147,36 +137,43 @@ class ZeroQueue:
         self._copy_on_write = False
         self._copy_on_read = False
 
-        # Keep track of writers on this queue across processes,
-        # not only in "current" process.
-        if ctx is None:
-            ctx = multiprocessing.get_context()
-        self._n_writers_opened = ctx.Value('i', 0)
-        self._n_writers_closed = ctx.Value('i', 0)
+        self.writer_path, self.reader_path, self._collector = self._start_device()
 
-        # The following happens only in the "originating" object.
+    def _start_device(self):
+        path = '/tmp/unixsockets/'
+        os.makedirs(path, exist_ok=True)
+        writer_path = path + str(uuid4())
+        try:
+            os.unlink(writer_path)
+        except FileNotFoundError:
+            pass
+        reader_path = path + str(uuid4())
+        try:
+            os.unlink(reader_path)
+        except FileNotFoundError:
+            pass
+        writer_path = 'ipc://' + writer_path
+        reader_path = 'ipc://' + reader_path
+
         dev = zmq_devices.ThreadDevice(zmq.STREAMER, zmq.PULL, zmq.PUSH)  # pylint: disable=no-member
         # dev.setsockopt_in(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
         # dev.setsockopt_in(zmq.RCVHWM, 1) # writer_hwm)  # pylint: disable=no-member
         # dev.setsockopt_out(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
-        dev.setsockopt_out(zmq.SNDHWM, hwm)  # pylint: disable=no-member
-        self.writer_port = dev.bind_in_to_random_port(self.host)
-        self.reader_port = dev.bind_out_to_random_port(self.host)
+        dev.setsockopt_out(zmq.SNDHWM, self._hwm)  # pylint: disable=no-member
+        # self.writer_port = dev.bind_in_to_random_port('ipc://*')  # self.host)
+        # self.reader_port = dev.bind_out_to_random_port('ipc://*')  # self.host)
+        dev.bind_in(writer_path)
+        dev.bind_out(reader_path)
         dev.start()
-        self._collector = dev
 
-    def __del__(self):
-        self.close()
+        return writer_path, reader_path, dev
 
     def __getstate__(self):
         multiprocessing.context.assert_spawning(self)
-        return (self.writer_port, self.reader_port, self.host,
-                self._n_writers_opened, self._n_writers_closed, self._hwm)
+        return (self.writer_path, self.reader_path, self._hwm)
 
     def __setstate__(self, state):
-        (self.writer_port, self.reader_port, self.host,
-            self._n_writers_opened, self._n_writers_closed,
-            self._hwm) = state
+        (self.writer_path, self.reader_path, self._hwm) = state
         self._writer, self._reader = None, None
         self._closed = False
         self._collector = None
@@ -188,11 +185,9 @@ class ZeroQueue:
         if writer is None:
             context = zmq.Context()
             writer = context.socket(zmq.PUSH)  # pylint: disable=no-member
-            writer.set(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
-            writer.connect(f'{self.host}:{self.writer_port}')
+            # writer.set(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+            writer.connect(self.writer_path)  # f'{self.host}:{self.writer_port}')
             self._writer = writer
-            with self._n_writers_opened.get_lock():
-                self._n_writers_opened.value += 1
         return writer
 
     def _get_reader(self):
@@ -200,19 +195,11 @@ class ZeroQueue:
         if reader is None:
             context = zmq.Context()
             reader = context.socket(zmq.PULL)  # pylint: disable=no-member
-            reader.set(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
-            # reader.set(zmq.RCVHWM, self._hwm)
-            reader.connect(f'{self.host}:{self.reader_port}')
+            # reader.set(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+            reader.set(zmq.RCVHWM, self._hwm)
+            reader.connect(self.reader_path)  # f'{self.host}:{self.reader_port}')
             self._reader = reader
         return reader
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        self.close()
-        if self._collector is not None:
-            pass  # don't know how to close it
 
     def empty(self):
         reader = self._get_reader()
@@ -229,8 +216,6 @@ class ZeroQueue:
         if self._writer is not None:
             self._writer.close(linger)
             self._writer = None
-            with self._n_writers_closed.get_lock():
-                self._n_writers_closed.value += 1
         if self._reader is not None:
             self._reader.close(linger)
             self._reader = None
@@ -323,12 +308,6 @@ class FastQueue:
     def __init__(self, maxsize_bytes=10_000_000):
         self._q = faster_fifo.Queue(max_size_bytes=maxsize_bytes)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        self.close()
-
     def empty(self):
         return self._q.empty()
 
@@ -398,7 +377,7 @@ mp_context.BaseContext.BasicQueue = _BasicQueue
 
 
 def _ZeroQueue(self, **kwargs):
-    return ZeroQueue(ctx=self.get_context(), **kwargs)
+    return ZeroQueue(**kwargs)
 
 
 mp_context.BaseContext.ZeroQueue = _ZeroQueue

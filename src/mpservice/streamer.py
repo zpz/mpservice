@@ -646,26 +646,6 @@ async def a_put_in_queue(q, x, stop_event):
             await asyncio.sleep(0.001)
 
 
-def get_from_queue(q, stop_event, worker=None, timeout=0.1):
-    while True:
-        try:
-            return q.get(timeout=timeout)
-            # In our use cases of this function,
-            # the elements in `q` is never None,
-            # hence this can be distinguished
-            # from the `return` below.
-        except QueueEmpty:
-            if worker is not None:
-                if worker.done():
-                    if worker.exception():
-                        raise worker.exception()
-                    assert stop_event.is_set()
-                    return
-            else:
-                if stop_event.is_set():
-                    return
-
-
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int = None):
         super().__init__(instream)
@@ -695,10 +675,20 @@ class Buffer(Stream):
 
     @overrides
     def _get_next(self):
-        z = get_from_queue(self._q, self._stopped, self._t)
-        if z is self._nomore:
-            raise StopIteration
-        return z
+        while True:
+            try:
+                z = self._q.get(timeout=0.1)
+                if z is self._nomore:
+                    raise StopIteration
+                return z
+            except QueueEmpty:
+                if self._t.done():
+                    if self._t.exception():
+                        raise self._t.exception()
+                    assert self._stopped.is_set()
+                    return
+                elif self._stopped.is_set():
+                    return
 
 
 class Transformer(Stream):
@@ -768,11 +758,21 @@ class Transformer(Stream):
 
     @overrides
     def _get_next(self):
-        z = get_from_queue(self._tasks, self._stopped, self._t)
+        while True:
+            try:
+                z = self._tasks.get(timeout=0.1)
+                break
+            except QueueEmpty:
+                if self._t.done():
+                    if self._t.exception():
+                        raise self._t.exception()
+                    assert self._stopped.is_set()
+                    return
+                elif self._stopped.is_set():
+                    return
+
         if z is self._nomore:
             raise StopIteration
-        if z is None:
-            return
 
         x, fut = z
         while not fut.done():

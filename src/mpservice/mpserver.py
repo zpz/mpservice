@@ -140,7 +140,7 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        with q_in, q_out, q_err, q_log:
+        try:
             forward_logs(q_log)
             if cpus:
                 psutil.Process().cpu_affinity(cpus=cpus)
@@ -150,6 +150,11 @@ class Servlet(metaclass=ABCMeta):
                       q_err=q_err,
                       should_stop=should_stop,
                       )
+        finally:
+            q_in.close()
+            q_out.close()
+            q_err.close()
+            q_log.close()
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -230,7 +235,6 @@ class Servlet(metaclass=ABCMeta):
                     y = self.call(x)
                 if not put_in_queue(q_out, (uid, y), should_stop):
                     return
-
             except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
@@ -356,7 +360,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_pool = concurrent.futures.ThreadPoolExecutor()
         self._thread_tasks = {}
 
-        self.started = False
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
             if isinstance(main_cpu, int):
@@ -369,10 +372,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     def __enter__(self):
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
-        assert not self.started
-
-        self._q_log.__enter__()
-        self._q_err.__enter__()
 
         t = self._thread_pool.submit(logger_thread, self._q_log)
         t.add_done_callback(self._thread_task_done_callback)
@@ -388,16 +387,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
 
-        self.started = True
         return self
 
     def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
         msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
         if msg:
             logger.error(msg)
-
-        assert self.started
-        self.started = False
 
         self._should_stop.set()
 
@@ -411,8 +406,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_pool.shutdown()
         # TODO: in Python 3.9+, use argument `cancel_futures=True`.
 
-        self._q_err.__exit__()
-        self._q_log.__exit__()
+        self._q_err.close()
+        self._q_log.close()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -585,7 +580,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                      name: str = None,
                      **init_kwargs):
         # `servlet` is the class object, not instance.
-        assert not self.started
 
         q_err = self._q_err
         q_log = self._q_log
@@ -696,13 +690,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         threading.current_thread().name = 'ErrorCollector'
         q_err = self._q_err
         futures = self._uid_to_futures
-        should_stop = self._should_stop
-        while self.started:
+        while not self._should_stop.is_set():
             try:
                 z = q_err.get(timeout=1)
             except Empty:
-                if should_stop.is_set():
-                    break
                 continue
             uid, err = z
             err = RemoteException.from_dict(err)
@@ -716,7 +707,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 fut.data['t2'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
-                    logger.warning('Future object is already cancelled')
+                    # Could have been canceled due to TotalTimeout.
+                    # logger.debug('Future object is already cancelled')
+                    pass
                 else:
                     logger.exception(e)
                     raise
@@ -740,16 +733,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     q.put_nowait((uid, x))
                     break
                 except Full:
-                    print('\n\n\ngot Full error\n\n\n')
-
                     timenow = monotonic()
                     if timenow >= t1:
                         fut.cancel()
-                        try:
-                            del self._uid_to_futures[uid]
-                        except KeyError:
-                            # print(iq, q)
-                            raise
+                        self._uid_to_futures.pop(uid, None)
                         raise EnqueueTimeout(timenow - t0, iq)
                     await asyncio.sleep(min(self.SLEEP_ENQUEUE, t1 - timenow))
 
@@ -763,10 +750,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             timenow = monotonic()
             if timenow >= t2:
                 fut.cancel()
-                self._uid_to_futures.pop(uid, None)
-                # `uid` could have been deleted by
-                # `gather_results` during very subtle
-                # timing coincidence.
                 raise TotalTimeout(timenow - t0)
             await asyncio.sleep(min(self.SLEEP_DEQUEUE, t2 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - monotonic())
@@ -788,7 +771,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 q.put((uid, x), timeout=max(0, t1 - monotonic()))
             except Full:
                 fut.cancel()
-                del self._uid_to_futures[uid]
+                self._uid_to_futures.pop(uid, None)
                 raise EnqueueTimeout(monotonic() - t0, iq)
 
         fut.data['t1'] = monotonic()
@@ -802,10 +785,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
-            self._uid_to_futures.pop(uid, None)
-            # `uid` could have been deleted by
-            # `gather_results` during very subtle
-            # timing coincidence.
             raise TotalTimeout(monotonic() - t0)
 
 
@@ -822,14 +801,30 @@ class SequentialServer(MPServer):
 
     @overrides
     def _start_servlets(self):
-        for servlet, kwargs in self._servlet_configs:
-            if not self._q_in_out:
-                q_in = Queue()
-                self._q_in_out.append(q_in)
+        for k, (servlet, kwargs) in enumerate(self._servlet_configs):
+            if Queue is mp.ZeroQueue:
+                batch_size = kwargs.get('batch_size', 0)
+                hwm = max(batch_size, 10)
+                if not self._q_in_out:
+                    q_in = Queue(hwm=hwm)
+                    self._q_in_out.append(q_in)
+                else:
+                    q_in = self._q_in_out[-1]
+                if k < len(self._servlet_configs) - 1:
+                    batch_size = self._servlet_configs[k + 1][1].get('batch_size', 0)
+                    hwm = max(batch_size, 10)
+                    q_out = Queue(hwm=hwm)
+                else:
+                    q_out = Queue()
+                self._q_in_out.append(q_out)
             else:
-                q_in = self._q_in_out[-1]
-            q_out = Queue()
-            self._q_in_out.append(q_out)
+                if not self._q_in_out:
+                    q_in = Queue()
+                    self._q_in_out.append(q_in)
+                else:
+                    q_in = self._q_in_out[-1]
+                q_out = Queue()
+                self._q_in_out.append(q_out)
 
             self._add_servlet(
                 servlet,
@@ -837,29 +832,25 @@ class SequentialServer(MPServer):
                 q_out=q_out,
                 **kwargs,
             )
-        for q in self._q_in_out:
-            q.__enter__()
+
         super()._start_servlets()
 
     @overrides
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in_out:
-            q.__exit__()
+            q.close()
 
     @overrides
     def _gather_output(self):
         threading.current_thread().name = 'ResultCollector'
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
-        should_stop = self._should_stop
 
-        while self.started:
+        while not self._should_stop.is_set():
             try:
                 z = q_out.get(timeout=1)
             except Empty:
-                if should_stop.is_set():
-                    break
                 continue
             uid, y = z
             fut = futures.pop(uid, None)
@@ -898,7 +889,12 @@ class EnsembleServer(MPServer):
     @overrides
     def _start_servlets(self):
         for servlet, kwargs in self._servlet_configs:
-            q_in = Queue()
+            if Queue is mp.ZeroQueue:
+                batch_size = kwargs.get('batch_size', 0)
+                hwm = max(10, batch_size)
+                q_in = Queue(hmw=hwm)
+            else:
+                q_in = Queue()
             q_out = Queue()
             self._q_in.append(q_in)
             self._q_out.append(q_out)
@@ -909,20 +905,15 @@ class EnsembleServer(MPServer):
                 q_out=q_out,
                 **kwargs,
             )
-        for q in self._q_in:
-            q.__enter__()
-        for q in self._q_out:
-            q.__enter__()
         super()._start_servlets()
 
     @overrides
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in:
-            q.__exit__()
+            q.close()
         for q in self._q_out:
-            q.__exit__()
-
+            q.close()
 
     @abstractmethod
     def ensemble(self, x, results: list):
@@ -949,7 +940,7 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
-        while self.started:
+        while not self._should_stop.is_set():
             for idx, q_out in enumerate(self._q_out):
                 while not q_out.empty():
                     # Get all available results out of this queue.
@@ -965,7 +956,7 @@ class EnsembleServer(MPServer):
                     extra['n'] += 1
                     if extra['n'] == n_results_needed:
                         # All results for this request have been collected.
-                        del futures[uid]
+                        futures.pop(uid, None)
                         try:
                             z = self.ensemble(extra['x'], extra['res'])
                             fut.set_result(z)
@@ -976,8 +967,6 @@ class EnsembleServer(MPServer):
                             else:
                                 logger.exception(e)
                                 raise
-                        except Exception as e:
-                            fut.set_exception(e)
                         fut.data['t2'] = monotonic()
                     # No sleep. Get results out of the queue as quickly as possible.
                     # TODO: check `should_stop`?

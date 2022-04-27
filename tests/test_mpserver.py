@@ -8,15 +8,13 @@ from mpservice.remote_exception import RemoteException
 import mpservice.mpserver
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    EnqueueTimeout, TotalTimeout
+    TotalTimeout
 )
 from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 
 @pytest.fixture(params=['BasicQueue', 'FastQueue', 'ZeroQueue'])
-#@pytest.fixture(params=['BasicQueue', 'FastQueue'])
-#@pytest.fixture(params=['ZeroQueue'])
 def qtype(request):
     mpservice.mpserver.Queue = getattr(mpservice.mpserver.mp, request.param)
     yield
