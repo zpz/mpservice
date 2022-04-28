@@ -14,24 +14,23 @@ def double(x):
 def main(model):
     seed(100)
     data = range(100000)
-    with model:
-        t0 = monotonic()
-        s = model.stream(data)
-        n = 0
-        for _ in enumerate(s):
-            n += 1
-            pass
-        t1 = monotonic()
-        print('finished', n, 'items in', t1 - t0, 'seconds')
+    t0 = monotonic()
+    s = model.stream(data)
+    n = 0
+    for _ in enumerate(s):
+        n += 1
+        pass
+    t1 = monotonic()
+    print('finished', n, 'items in', t1 - t0, 'seconds')
 
 
 if __name__ == '__main__':
-    for q in ('BasicQueue', 'FastQueue', 'ZeroQueue'):
+    for qtype in ('BasicQueue', 'FastQueue', 'ZeroQueue'):
         print('')
-        print('using', q)
+        print('using', qtype)
         seed(100)
-        mpservice.mpserver.Queue = getattr(mpservice.mpserver.mp, q)
         config_logger(with_process_name=True)
-        model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
-        main(model)
+        model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01, queue_type=qtype)
+        with model:
+            main(model)
 

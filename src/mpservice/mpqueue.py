@@ -4,6 +4,15 @@ The goal is to improve performance over the standard Queue.
 Once a clear winner emerges, the others may be removed.
 '''
 
+# Queue performance benchmarking:
+#   https://stackoverflow.com/questions/8463008/multiprocessing-pipe-vs-queue
+# quick-quque: https://github.com/Invarato/quick_queue_project
+# queue/pipe/zmq benchmarking: https://gist.github.com/kylemcdonald/a2f0dcb86f01d4c57b68ac6a6c7a3068
+# https://stackoverflow.com/questions/47085458/why-is-multiprocessing-queue-get-so-slow
+# https://stackoverflow.com/questions/43439194/python-multiprocessing-queue-vs-multiprocessing-manager-queue/45236748#45236748
+# https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
+# https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
+
 import logging
 import multiprocessing
 import os
@@ -21,6 +30,10 @@ from zmq import ZMQError, devices as zmq_devices
 logger = logging.getLogger(__name__)
 
 _ForkingPickler = mp_context.reduction.ForkingPickler
+
+
+# About changing pickle protocol for multiprocessing:
+#  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
 
 
 class BasicQueue:
