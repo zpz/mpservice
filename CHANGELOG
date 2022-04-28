@@ -1,5 +1,5 @@
-Release 0.10.6b6
-================
+Release 0.10.6
+==============
 
 - Added alternative multiprocessing queues, namely `BasicQueue`, `FastQueue` and `ZeroQueue`,
   in an attempt to improve service speed, expecially batching.
