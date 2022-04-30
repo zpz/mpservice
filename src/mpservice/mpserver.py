@@ -54,16 +54,6 @@ Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/bat
 This article describes roughly version 0.7.2.
 '''
 
-# Queue performance benchmarking:
-#   https://stackoverflow.com/questions/8463008/multiprocessing-pipe-vs-queue
-# quick-quque: https://github.com/Invarato/quick_queue_project
-# queue/pipe/zmq benchmarking: https://gist.github.com/kylemcdonald/a2f0dcb86f01d4c57b68ac6a6c7a3068
-# https://stackoverflow.com/questions/47085458/why-is-multiprocessing-queue-get-so-slow
-# https://stackoverflow.com/questions/43439194/python-multiprocessing-queue-vs-multiprocessing-manager-queue/45236748#45236748
-# https://stackoverflow.com/questions/23961669/how-can-i-speed-up-simultaneous-read-and-write-of-multiprocessing-queues
-# https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
-
-
 import asyncio
 import concurrent.futures
 import logging
@@ -73,6 +63,7 @@ import threading
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
+from multiprocessing import synchronize, queues
 from queue import Empty, Full
 from time import monotonic, sleep
 from typing import List, Type, Sequence, Union, Callable
@@ -90,15 +81,6 @@ from . import mpqueue  # noqa: F401
 multiprocessing.log_to_stderr(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-
-# About changing pickle protocol for multiprocessing:
-#  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
-
-mp = multiprocessing.get_context('spawn')
-Process = mp.Process
-Event = mp.Event
-Queue = mp.BasicQueue
 
 
 class EnqueueTimeout(Exception):
@@ -123,11 +105,11 @@ class Servlet(metaclass=ABCMeta):
 
     @classmethod
     def run(cls, *,
-            q_in: Queue,
-            q_out: Queue,
-            q_err: Queue,
-            q_log: Queue,
-            should_stop: Event,
+            q_in: queues.Queue,
+            q_out: queues.Queue,
+            q_err: queues.Queue,
+            q_log: queues.Queue,
+            should_stop: synchronize.Event,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -336,22 +318,28 @@ class Servlet(metaclass=ABCMeta):
 
 class MPServer(EnforceOverrides, metaclass=ABCMeta):
     SLEEP_ENQUEUE = 0.00015
-    SLEEP_DEQUEUE = 0.00011
+    # Sleep when queue is full. It is not disastrous if this is a little
+    # long, because this happens only occasionally.
+    SLEEP_DEQUEUE = 0.00004
+    SLEEP_FUTURE = SLEEP_DEQUEUE
+    # Sleep when future is not done yet or queue is empty.
+    # This may better be short, because we want to go once things are available.
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
-    def __init__(self, *, main_cpu: int = 0):
+    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'BasicQueue'):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
         '''
-        self._q_err = mp.BasicQueue()
-        self._q_log = mp.BasicQueue()  # This does not need the performance optim of fast_fifo.
+        self._queue_type = queue_type
+        self._q_err = self.get_mpcontext().BasicQueue()
+        self._q_log = self.get_mpcontext().BasicQueue()  # This does not need the performance optim of fast_fifo.
         self._servlet_configs = []
-        self._servlets: List[Process] = []
+        self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
-        self._should_stop = Event()
+        self._should_stop = self.get_mpcontext().Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
         # at the beginning of their `__init__` rather than
@@ -368,6 +356,13 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                 assert isinstance(main_cpu, list)
                 cpus = main_cpu
             psutil.Process().cpu_affinity(cpus=cpus)
+
+    def get_mpcontext(self):
+        # If subclasses need to use additional Queues, Locks, Conditions, etc,
+        # they should create them out of this context.
+        # This method does not create a new object.
+        # It returns the same object.
+        return multiprocessing.get_context('spawn')
 
     def __enter__(self):
         # After adding servlets, all other methods of this object
@@ -594,7 +589,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             logger.info('adding servlet <%s> at CPU %s', sname, cpu)
 
             self._servlets.append(
-                Process(
+                self.get_mpcontext().Process(
                     target=servlet.run,
                     name=sname,
                     kwargs={
@@ -751,7 +746,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             if timenow >= t2:
                 fut.cancel()
                 raise TotalTimeout(timenow - t0)
-            await asyncio.sleep(min(self.SLEEP_DEQUEUE, t2 - timenow))
+            await asyncio.sleep(min(self.SLEEP_FUTURE, t2 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - monotonic())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
@@ -802,28 +797,29 @@ class SequentialServer(MPServer):
     @overrides
     def _start_servlets(self):
         for k, (servlet, kwargs) in enumerate(self._servlet_configs):
-            if Queue is mp.ZeroQueue:
+            qtype = getattr(self.get_mpcontext(), self._queue_type)
+            if self._queue_type == 'ZeroQueue':
                 batch_size = kwargs.get('batch_size', 0)
                 hwm = max(batch_size, 10)
                 if not self._q_in_out:
-                    q_in = Queue(hwm=hwm)
+                    q_in = qtype(hwm=hwm)
                     self._q_in_out.append(q_in)
                 else:
                     q_in = self._q_in_out[-1]
                 if k < len(self._servlet_configs) - 1:
                     batch_size = self._servlet_configs[k + 1][1].get('batch_size', 0)
                     hwm = max(batch_size, 10)
-                    q_out = Queue(hwm=hwm)
+                    q_out = qtype(hwm=hwm)
                 else:
-                    q_out = Queue()
+                    q_out = qtype()
                 self._q_in_out.append(q_out)
             else:
                 if not self._q_in_out:
-                    q_in = Queue()
+                    q_in = qtype()
                     self._q_in_out.append(q_in)
                 else:
                     q_in = self._q_in_out[-1]
-                q_out = Queue()
+                q_out = qtype()
                 self._q_in_out.append(q_out)
 
             self._add_servlet(
@@ -883,19 +879,20 @@ class EnsembleServer(MPServer):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._q_in: List[Queue] = []
-        self._q_out: List[Queue] = []
+        self._q_in: List[queues.Queue] = []
+        self._q_out: List[queues.Queue] = []
 
     @overrides
     def _start_servlets(self):
+        qtype = getattr(self.get_mpcontext(), self._queue_type)
         for servlet, kwargs in self._servlet_configs:
-            if Queue is mp.ZeroQueue:
+            if self._queue_type == 'ZeroQueue':
                 batch_size = kwargs.get('batch_size', 0)
                 hwm = max(10, batch_size)
-                q_in = Queue(hmw=hwm)
+                q_in = qtype(hwm=hwm)
             else:
-                q_in = Queue()
-            q_out = Queue()
+                q_in = qtype()
+            q_out = qtype()
             self._q_in.append(q_in)
             self._q_out.append(q_out)
 
@@ -993,7 +990,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self, func: Callable, /, **kwargs):
+    def __init__(self, func: Callable, /, queue_type='BasicQueue', **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,
@@ -1001,6 +998,6 @@ class SimpleServer(SequentialServer):
             level (can't be defined within a function), and can't be
             a lambda.
         '''
-        super().__init__()
+        super().__init__(queue_type=queue_type)
 
         self.add_servlet(SimpleServlet, func=func, **kwargs)

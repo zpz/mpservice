@@ -368,29 +368,6 @@ class SocketServer(EnforceOverrides):
         self._n_connections -= 1
 
 
-class TcpSocketServer(SocketServer):
-    def __init__(self,
-                 app: SocketApplication,
-                 *,
-                 port,
-                 host=None,
-                 backlog=None,
-                 shutdown_path='/shutdown',
-                 ):
-        super().__init__(app, port=port, host=host, backlog=backlog, shutdown_path=shutdown_path)
-
-
-class UnixSocketServer(SocketServer):
-    def __init__(self,
-                 app: SocketApplication,
-                 *,
-                 path,
-                 backlog=None,
-                 shutdown_path='/shutdown',
-                 ):
-        super().__init__(app, path=path, backlog=backlog, shutdown_path=shutdown_path)
-
-
 def make_server(app: SocketApplication, **kwargs):
     return SocketServer(app, **kwargs)
 
@@ -526,7 +503,7 @@ class SocketClient(EnforceOverrides):
             to_shutdown = self._to_shutdown
             while True:
                 try:
-                    req_id, data = await read_record(reader, timeout=0.0015)
+                    req_id, data = await read_record(reader, timeout=0.1)
                     req_id = int(req_id)
                 except asyncio.TimeoutError:
                     if to_shutdown.is_set():
@@ -684,26 +661,3 @@ class SocketClient(EnforceOverrides):
                     yield x, y
                 else:
                     yield y
-
-
-class TcpSocketClient(SocketClient):
-    def __init__(self, *,
-                 port,
-                 host=None,
-                 num_connections=None,
-                 connection_timeout=60,
-                 backlog=2048,
-                 ):
-        super().__init__(port=port, host=host, num_connections=num_connections,
-                         connection_timeout=connection_timeout, backlog=backlog)
-
-
-class UnixSocketClient(SocketClient):
-    def __init__(self, *,
-                 path,
-                 num_connections=None,
-                 connection_timeout=60,
-                 backlog=2048,
-                 ):
-        super().__init__(path=path, num_connections=num_connections,
-                         connection_timeout=connection_timeout, backlog=backlog)

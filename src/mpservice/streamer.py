@@ -635,17 +635,6 @@ def put_in_queue(q, x, stop_event, timeout=0.1):
                 return False
 
 
-async def a_put_in_queue(q, x, stop_event):
-    while True:
-        try:
-            q.put_nowait(x)
-            return True
-        except QueueFull:
-            if stop_event.is_set():
-                return False
-            await asyncio.sleep(0.001)
-
-
 class Buffer(Stream):
     def __init__(self, instream: Stream, maxsize: int = None):
         super().__init__(instream)
@@ -732,6 +721,17 @@ class Transformer(Stream):
         put_in_queue(tasks, self._nomore, stopped)
 
     def _start_async(self, func, **kwargs):
+
+        async def a_put_in_queue(q, x, stop_event):
+            while True:
+                try:
+                    q.put_nowait(x)
+                    return True
+                except QueueFull:
+                    if stop_event.is_set():
+                        return False
+                    await asyncio.sleep(0.001)
+
         async def main():
             tasks = self._tasks
             ff = func
@@ -747,7 +747,7 @@ class Transformer(Stream):
             if not (await a_put_in_queue(tasks, self._nomore, stopped)):
                 return
 
-            # If do not wait, `main` will exit, and unfinished tasks
+            # If we do not wait here, `main` will exit, and unfinished tasks
             # will be cancelled.
             while not tasks.empty():
                 if stopped.is_set():
@@ -778,7 +778,7 @@ class Transformer(Stream):
         while not fut.done():
             if self._stopped.is_set():
                 return
-            sleep(0.001)
+            sleep(0.0002)
         if fut.exception():
             e = fut.exception()
             if self._return_exceptions:
