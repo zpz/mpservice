@@ -503,7 +503,7 @@ class SocketClient(EnforceOverrides):
             to_shutdown = self._to_shutdown
             while True:
                 try:
-                    req_id, data = await read_record(reader, timeout=0.0015)
+                    req_id, data = await read_record(reader, timeout=0.1)
                     req_id = int(req_id)
                 except asyncio.TimeoutError:
                     if to_shutdown.is_set():

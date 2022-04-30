@@ -318,7 +318,12 @@ class Servlet(metaclass=ABCMeta):
 
 class MPServer(EnforceOverrides, metaclass=ABCMeta):
     SLEEP_ENQUEUE = 0.00015
-    SLEEP_DEQUEUE = 0.00011
+    # Sleep when queue is full. It is not disastrous if this is a little
+    # long, because this happens only occasionally.
+    SLEEP_DEQUEUE = 0.00004
+    SLEEP_FUTURE = SLEEP_DEQUEUE
+    # Sleep when future is not done yet or queue is empty.
+    # This may better be short, because we want to go once things are available.
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
@@ -741,7 +746,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             if timenow >= t2:
                 fut.cancel()
                 raise TotalTimeout(timenow - t0)
-            await asyncio.sleep(min(self.SLEEP_DEQUEUE, t2 - timenow))
+            await asyncio.sleep(min(self.SLEEP_FUTURE, t2 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + total_timeout - monotonic())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
         # `timeout` even after result is available.
