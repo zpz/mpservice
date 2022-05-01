@@ -483,6 +483,7 @@ class SocketClient(EnforceOverrides):
 
         async def _keep_sending(writer):
             pending = self._pending_requests
+            # This queue is populated by `_enqueue`.
             active = self._active_requests
             encoder = self._encoder
             to_shutdown = self._to_shutdown
@@ -493,6 +494,10 @@ class SocketClient(EnforceOverrides):
                     if to_shutdown.is_set():
                         return
                     await asyncio.sleep(0.0012)
+                    # This sleep should be short, but the length
+                    # is not critical, because this happens only when
+                    # the queue is empty. In a busy application,
+                    # the queue should be rarely empty.
                     continue
                 req_id = id(fut)
                 await write_record(writer, req_id, x, encoder=encoder)

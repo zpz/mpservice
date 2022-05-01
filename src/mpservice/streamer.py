@@ -197,7 +197,7 @@ import logging
 import random
 import threading
 import traceback
-from queue import Queue, Empty as QueueEmpty, Full as QueueFull
+from queue import Queue, Empty, Full
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
@@ -524,6 +524,9 @@ class Stream(EnforceOverrides):
         # Index of the upcoming element; 0 based.
         # This is also the count of finished elements.
 
+        # `started`, `stopped`, and `thread_pool` are shared
+        # by all Stream objects in a "chain".
+
     @final
     def __iter__(self):
         return self
@@ -626,11 +629,25 @@ class Peeker(Stream):
 
 
 def put_in_queue(q, x, stop_event, timeout=0.1):
+    '''
+    `q` is either a `threading.Queue` or a `multiprocessing.queues.Queue`,
+    but not an `asyncio.Queue`, because the latter does not take
+    the `timeout` argument.
+
+    This is used in a blocking mode to put `x` in the queue
+    till success. It checks for any request of early-stop indicated by
+    `stop_event`, which is either `threading.Event` or `multiprocessing.synchronize.Event`.
+    Usually there is not need to customize the value of `timeout`,
+    because in this usecase it's OK to try a little long before checking
+    early-stop.
+
+    Return `True` if successfully put in queue; `False` if early-stop is detected.
+    '''
     while True:
         try:
             q.put(x, timeout=timeout)
             return True
-        except QueueFull:
+        except Full:
             if stop_event.is_set():
                 return False
 
@@ -670,7 +687,7 @@ class Buffer(Stream):
                 if z is self._nomore:
                     raise StopIteration
                 return z
-            except QueueEmpty:
+            except Empty:
                 if self._t.done():
                     if self._t.exception():
                         raise self._t.exception()
@@ -704,21 +721,26 @@ class Transformer(Stream):
         self._tasks = Queue(concurrency)
 
         if is_async(func):
+            self._is_async = True
             self._t = self._thread_pool.submit(self._start_async, func, **func_args)
         else:
+            self._is_async = False
             self._t = self._thread_pool.submit(self._start_sync, func, **func_args)
 
     def _start_sync(self, func, **kwargs):
-        tasks = self._tasks
-        pool = self._thread_pool
-        stopped = self._stopped
-        for x in self._instream:
-            t = pool.submit(func, x, **kwargs)
-            # The size of the queue `tasks` regulates how many
-            # concurrent calls to `func` there can be.
-            if not put_in_queue(tasks, (x, t), stopped):
-                return
-        put_in_queue(tasks, self._nomore, stopped)
+        try:
+            tasks = self._tasks
+            stopped = self._stopped
+            for x in self._instream:
+                t = self._thread_pool.submit(func, x, **kwargs)
+                # The size of the queue `tasks` regulates how many
+                # concurrent calls to `func` there can be.
+                if not put_in_queue(tasks, (x, t), stopped):
+                    return
+            put_in_queue(tasks, self._nomore, stopped)
+        except Exception as e:
+            logger.exception(e)
+            raise
 
     def _start_async(self, func, **kwargs):
 
@@ -727,32 +749,39 @@ class Transformer(Stream):
                 try:
                     q.put_nowait(x)
                     return True
-                except QueueFull:
+                except Full:
                     if stop_event.is_set():
                         return False
-                    await asyncio.sleep(0.001)
+                    await asyncio.sleep(0.01)
+                    # The length of this sleep is not critical, because
+                    # it happens only when the queue is full.
+                    # It should be relatively short.
 
         async def main():
-            tasks = self._tasks
-            ff = func
-            args = kwargs
-            stopped = self._stopped
+            try:
+                tasks = self._tasks
+                ff = func
+                args = kwargs
+                stopped = self._stopped
 
-            for x in self._instream:
-                t = asyncio.create_task(ff(x, **args))
-                # The size of the queue `tasks` regulates how many
-                # concurrent calls to `func` there can be.
-                if not (await a_put_in_queue(tasks, (x, t), stopped)):
+                for x in self._instream:
+                    t = asyncio.create_task(ff(x, **args))
+                    # The size of the queue `tasks` regulates how many
+                    # concurrent calls to `func` there can be.
+                    if not (await a_put_in_queue(tasks, (x, t), stopped)):
+                        return
+                if not (await a_put_in_queue(tasks, self._nomore, stopped)):
                     return
-            if not (await a_put_in_queue(tasks, self._nomore, stopped)):
-                return
 
-            # If we do not wait here, `main` will exit, and unfinished tasks
-            # will be cancelled.
-            while not tasks.empty():
-                if stopped.is_set():
-                    return
-                await asyncio.sleep(0.001)
+                # If we do not wait here, `main` will exit, and unfinished tasks
+                # will be cancelled.
+                while not tasks.empty():
+                    if stopped.is_set():
+                        return
+                    await asyncio.sleep(0.001)
+            except Exception as e:
+                logger.exception(e)
+                raise
 
         asyncio.run(main())
 
@@ -762,7 +791,7 @@ class Transformer(Stream):
             try:
                 z = self._tasks.get(timeout=0.1)
                 break
-            except QueueEmpty:
+            except Empty:
                 if self._t.done():
                     if self._t.exception():
                         raise self._t.exception()
@@ -779,6 +808,9 @@ class Transformer(Stream):
             if self._stopped.is_set():
                 return
             sleep(0.0002)
+            # This sleep should be short, but I don't know what would be
+            # an optimal duration.
+
         if fut.exception():
             e = fut.exception()
             if self._return_exceptions:
