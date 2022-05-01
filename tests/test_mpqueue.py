@@ -1,12 +1,13 @@
 import multiprocessing
 import time
-from queue import Empty
-import mpservice.mpqueue
+from queue import Empty, Full
+from mpservice.mpqueue import NaiveQueue
 from mpservice.streamer import Streamer
 
 import pytest
 
-methods = [None, 'spawn']
+#methods = [None, 'spawn']
+methods = ['spawn']
 names = ['BasicQueue', 'FastQueue', 'ZeroQueue']
 
 
@@ -152,3 +153,21 @@ def test_many(method, name):
     pp[2].join()
     pp[3].join()
     pp[4].join()
+
+
+def test_naive():
+    q = NaiveQueue(3)
+    q.put(2)
+    q.put(3)
+    assert q.get() == 2
+    q.put('a')
+    q.put('b')
+
+    with pytest.raises(Full):
+        q.put(9, timeout=0.5)
+    q.get() == '3'
+    q.get() == 'a'
+    q.get() == 'b'
+    with pytest.raises(Empty):
+        q.get(timeout=0.3)
+

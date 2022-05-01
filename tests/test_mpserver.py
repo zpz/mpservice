@@ -5,7 +5,6 @@ import pytest
 from overrides import overrides
 
 from mpservice.remote_exception import RemoteException
-import mpservice.mpserver
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
     TotalTimeout

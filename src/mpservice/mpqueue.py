@@ -16,10 +16,13 @@ Once a clear winner emerges, the others may be removed.
 import logging
 import multiprocessing
 import os
-from types import SimpleNamespace
+import sys
+import threading
+from collections import deque
 from multiprocessing import queues as mp_queues, context as mp_context
 from queue import Empty, Full
 from time import monotonic
+from types import SimpleNamespace
 from uuid import uuid4
 
 import faster_fifo
@@ -141,6 +144,9 @@ class ZeroQueue:
         is necessary. If this class is used in a one-many or many-one
         relationship, this collector socket many be unnecessary, hence
         the use of it may incur a small overhead.
+
+        WARNING: when used in multiprocessing,
+        this class requires processes to be created by the "spawn" method.
         '''
         self._hwm = hwm
         self._writer = None
@@ -168,18 +174,28 @@ class ZeroQueue:
         writer_path = 'ipc://' + writer_path
         reader_path = 'ipc://' + reader_path
 
-        dev = zmq_devices.ThreadDevice(zmq.STREAMER, zmq.PULL, zmq.PUSH)  # pylint: disable=no-member
-        # dev.setsockopt_in(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
-        # dev.setsockopt_in(zmq.RCVHWM, 1) # writer_hwm)  # pylint: disable=no-member
-        # dev.setsockopt_out(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
-        dev.setsockopt_out(zmq.SNDHWM, self._hwm)  # pylint: disable=no-member
-        # self.writer_port = dev.bind_in_to_random_port('ipc://*')  # self.host)
-        # self.reader_port = dev.bind_out_to_random_port('ipc://*')  # self.host)
-        dev.bind_in(writer_path)
-        dev.bind_out(reader_path)
-        dev.start()
+        # dev = zmq_devices.ThreadDevice(zmq.STREAMER, zmq.PULL, zmq.PUSH)  # pylint: disable=no-member
+        # # dev.setsockopt_in(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+        # # dev.setsockopt_in(zmq.RCVHWM, 1) # writer_hwm)  # pylint: disable=no-member
+        # # dev.setsockopt_out(zmq.IMMEDIATE, 1)  # pylint: disable=no-member
+        # dev.setsockopt_out(zmq.SNDHWM, self._hwm)  # pylint: disable=no-member
+        # dev.bind_in(writer_path)
+        # dev.bind_out(reader_path)
+        # dev.start()
 
-        return writer_path, reader_path, dev
+        def foo():
+            ctx = zmq.Context.instance()
+            s_in = ctx.socket(zmq.PULL)
+            s_in.bind(writer_path)
+            s_out = ctx.socket(zmq.PUSH)
+            s_out.bind(reader_path)
+            s_out.set(zmq.SNDHWM, self._hwm)
+            zmq.proxy(s_in, s_out)
+
+        t = threading.Thread(target=foo, daemon=True)
+        t.start()
+
+        return writer_path, reader_path, t
 
     def __getstate__(self):
         multiprocessing.context.assert_spawning(self)
@@ -228,10 +244,8 @@ class ZeroQueue:
             return
         if self._writer is not None:
             self._writer.close(linger)
-            self._writer = None
         if self._reader is not None:
             self._reader.close(linger)
-            self._reader = None
         self._closed = True
 
     def put(self, obj, block=True, timeout=None):
@@ -377,6 +391,149 @@ class FastQueue:
 
     def put_nowait(self, obj):
         self.put(obj, False)
+
+    def get_nowait(self):
+        return self.get(False)
+
+
+class NaiveQueue:
+    '''
+    Adapted from the standard `queue.SimpleQueue`.
+
+    Used by a single thread, but supports `maxsize`.
+    '''
+    def __init__(self, maxsize=0):
+        self.maxsize = maxsize
+        self._queue = deque()
+        self._count = threading.Semaphore(0)
+        if maxsize > 0:
+            self._space = threading.Semaphore(maxsize)
+        else:
+            self._space = None
+
+    def put(self, item, block=True, timeout=None):
+        if self._space is not None:
+            if not self._space.acquire(block, timeout):
+                raise Full
+        self._queue.append(item)
+        self._count.release()
+
+    def put_nowait(self, item):
+        self.put(item, False)
+
+    def get(self, block=True, timeout=None):
+        if timeout is not None and timeout < 0:
+            raise ValueError("'timeout' must be a non-negative number")
+        if not self._count.acquire(block, timeout):
+            raise Empty
+        z = self._queue.popleft()
+        if self._space is not None:
+            self._space.release()
+        return z
+
+    def get_nowait(self):
+        return self.get(False)
+
+    def empty(self):
+        return len(self._queue) == 0
+
+    def full(self):
+        return 0 < self.maxsize <= len(self._queue)
+
+    def qsize(self):
+        return len(self._queue)
+
+
+class UniQueue:
+    def __init__(self, *, rcvhwm: int, ctx=None):
+        if ctx is None:
+            ctx = multiprocessing.get_context()
+        self._reader, self._writer = multiprocessing.connection.Pip(duplex=False)
+        self._rlock = ctx.Lock()
+        if sys.platform == 'win32':
+            self._wlock = None
+        else:
+            self._wlock = ctx.Lock()
+        self._rcvhwm = rcvhwm
+        self._reset()
+
+    def close(self):
+        self._reader.close()
+        self._writer.close()
+
+    def _reset(self):
+        self._wthread = None
+        self._rthread = None
+        self._closed = False
+
+    def _start_wthread(self):
+        assert self._rthread is None
+        wbuffer = deque()
+        notempty = threading.Condition()
+        nomore = object()
+        self._wbuffer = wbuffer
+        self._notempty = notempty
+        self._nomore = nomore
+
+        def foo():
+            while True:
+                if not wbuffer:
+                    with notempty:
+                        notempty.wait()
+                x = wbuffer.popleft()
+                if x is nomore:
+                    close()
+                    return
+                x = _ForkingPickler.dumps(x)
+                if self._wlock is None:
+                    self._writer.send_bytes(x)
+                else:
+                    with self._wlock:
+                        self._writer.send_bytes(x)
+
+        self._wthread = threading.Thread(target=foo, daemon=True)
+        self._wthread.start()
+
+    def _start_rthread(self):
+        assert self._wthread is None
+        read_batchsize = 100  # TODO: determine this value
+        rbuffer = NaiveQueue(read_batchsize)
+        self._rbuffer = rbuffer
+
+        def foo():
+            while True:
+                with self._rlock:
+                    while not self._rbuffer.full():
+                        # TODO: timeouts
+                        x = self._reader._recv_bytes()
+                        x = _ForkingPickler.loads(x)
+                        rbuffer.put_nowait(x)
+                    # TODO: wait for not full
+
+        self._rthread = threading.Thread(target=foo, daemon=True)
+        self._rthread.start()
+
+    def put(self, item, block=True, timeout=None):
+        '''
+        `block` and `timeout` are ignored, as the queue
+        is size-unlimited, hence never blocking.
+         '''
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        if self._wthread is None:
+            self._start_wthread()
+        self._wbuffer.append(item)
+        self._notempty.notify()
+
+    def get(self, block=True, timeout=None):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        if self._rthread is None:
+            self._start_rthread()
+        return self._rbuffer.get(block, timeout)
+
+    def put_nowait(self, item):
+        self.put(item, False)
 
     def get_nowait(self):
         return self.get(False)
