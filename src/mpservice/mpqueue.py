@@ -444,99 +444,111 @@ class NaiveQueue:
         return len(self._queue)
 
 
+class UniWriter:
+    def __init__(self, pipe_writer, pipe_lock):
+        self._writer = pipe_writer
+        self._lock = pipe_lock  # this is None on win32
+        self._buffer = deque()
+        self._notempty = threading.Condition()
+        self._nomore = object()
+        self._closed = False
+        self._thread = threading.Thread(target=self._feed, daemon=True)
+        self._thread.start()
+
+    def _feed(self):
+        buffer = self._buffer
+        notempty = self._notempty
+        nomore = self._nomore
+        lock = self._lock
+        writer = self._writer
+
+        while True:
+            if not buffer:
+                with notempty:
+                    notempty.wait()
+            x = buffer.popleft()
+            if x is nomore:
+                self.close()
+                return
+            x = _ForkingPickler.dumps(x)
+            if lock is None:
+                writer.send_bytes(x)
+            else:
+                with lock:
+                    writer.send_bytes(x)
+
+    def close(self):
+        self._writer.close()
+        self._closed = True
+
+    def put(self, item):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        with self._notempty:
+            self._buffer.append(item)
+            self._notempty.notify()
+
+
+class UniReader:
+    def __init__(self, pipe_reader, pipe_lock, maxsize=0):
+        self._reader = pipe_reader
+        self._lock = pipe_lock
+        self.maxsize = maxsize
+        self._buffer = NaiveQueue(maxsize)
+        self._notfull = threading.Condition()
+        self._closed = False
+        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread.start()
+
+    def _read(self):
+        buffer = self._buffer
+        lock = self._lock
+        notfull = self._notfull
+        while True:
+            if buffer.full():
+                with notfull:
+                    notfull.wait()
+            with lock:
+                while not buffer.full():
+                    # TODO: timeouts
+                    x = self._reader._recv_bytes()
+                    x = _ForkingPickler.loads(x)
+                    buffer.put_nowait(x)
+                # TODO: wait for not full
+                # TODO: release lock if `get` happened
+
+    def close(self):
+        self._reader.close()
+        self._closed = True
+
+    def get(self, block=True, timeout=None):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        with self._notfull:
+            z = self._buffer.get(block, timeout)
+            self._notfull.notify()
+        return z
+
+    def get_nowait(self):
+        return self.get(False)
+
+
 class UniQueue:
-    def __init__(self, *, rcvhwm: int, ctx=None):
+    def __init__(self, *, ctx=None):
         if ctx is None:
             ctx = multiprocessing.get_context()
-        self._reader, self._writer = multiprocessing.connection.Pip(duplex=False)
+        self._reader, self._writer = multiprocessing.connection.Pipe(duplex=False)
         self._rlock = ctx.Lock()
         if sys.platform == 'win32':
             self._wlock = None
         else:
             self._wlock = ctx.Lock()
-        self._rcvhwm = rcvhwm
-        self._reset()
 
-    def close(self):
-        self._reader.close()
-        self._writer.close()
+    def writer(self):
+        return UniWriter(self._writer, self._wlock)
 
-    def _reset(self):
-        self._wthread = None
-        self._rthread = None
-        self._closed = False
-
-    def _start_wthread(self):
-        assert self._rthread is None
-        wbuffer = deque()
-        notempty = threading.Condition()
-        nomore = object()
-        self._wbuffer = wbuffer
-        self._notempty = notempty
-        self._nomore = nomore
-
-        def foo():
-            while True:
-                if not wbuffer:
-                    with notempty:
-                        notempty.wait()
-                x = wbuffer.popleft()
-                if x is nomore:
-                    close()
-                    return
-                x = _ForkingPickler.dumps(x)
-                if self._wlock is None:
-                    self._writer.send_bytes(x)
-                else:
-                    with self._wlock:
-                        self._writer.send_bytes(x)
-
-        self._wthread = threading.Thread(target=foo, daemon=True)
-        self._wthread.start()
-
-    def _start_rthread(self):
-        assert self._wthread is None
-        read_batchsize = 100  # TODO: determine this value
-        rbuffer = NaiveQueue(read_batchsize)
-        self._rbuffer = rbuffer
-
-        def foo():
-            while True:
-                with self._rlock:
-                    while not self._rbuffer.full():
-                        # TODO: timeouts
-                        x = self._reader._recv_bytes()
-                        x = _ForkingPickler.loads(x)
-                        rbuffer.put_nowait(x)
-                    # TODO: wait for not full
-
-        self._rthread = threading.Thread(target=foo, daemon=True)
-        self._rthread.start()
-
-    def put(self, item, block=True, timeout=None):
-        '''
-        `block` and `timeout` are ignored, as the queue
-        is size-unlimited, hence never blocking.
-         '''
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if self._wthread is None:
-            self._start_wthread()
-        self._wbuffer.append(item)
-        self._notempty.notify()
-
-    def get(self, block=True, timeout=None):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if self._rthread is None:
-            self._start_rthread()
-        return self._rbuffer.get(block, timeout)
-
-    def put_nowait(self, item):
-        self.put(item, False)
-
-    def get_nowait(self):
-        return self.get(False)
+    def reader(self, buffer_size: int):
+        return UniReader(self, buffer_size)
 
 
 def _BasicQueue(self):
