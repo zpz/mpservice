@@ -468,7 +468,6 @@ class UniWriter:
                     notempty.wait()
             x = buffer.popleft()
             if x is nomore:
-                self.close()
                 return
             x = _ForkingPickler.dumps(x)
             if lock is None:
@@ -478,15 +477,31 @@ class UniWriter:
                     writer.send_bytes(x)
 
     def close(self):
+        self.put(self._nomore)
         self._writer.close()
         self._closed = True
 
-    def put(self, item):
+    def put(self, obj, block=True, timeout=None):
+        '''
+        `block` and `timeout` are ignored.
+        Accepted for API consistency with standard lib.
+        '''
         if self._closed:
             raise ValueError(f"{self!r} is closed")
         with self._notempty:
-            self._buffer.append(item)
+            self._buffer.append(obj)
             self._notempty.notify()
+
+    def put_many(self, objs):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        for obj in objs:
+            with self._notempty:
+                self._buffer.append(obj)
+                self._notempty.notify()
+
+    def put_nowait(self, item):
+        self.put(item, False)
 
 
 class UniReader:
@@ -496,6 +511,7 @@ class UniReader:
         self.maxsize = maxsize
         self._buffer = NaiveQueue(maxsize)
         self._notfull = threading.Condition()
+        self._get_called = threading.Event()
         self._closed = False
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
@@ -512,10 +528,10 @@ class UniReader:
                 while not buffer.full():
                     # TODO: timeouts
                     x = self._reader._recv_bytes()
-                    x = _ForkingPickler.loads(x)
                     buffer.put_nowait(x)
-                # TODO: wait for not full
-                # TODO: release lock if `get` happened
+                    if self._get_called.is_set():
+                        self._get_called.clear()
+                        break
 
     def close(self):
         self._reader.close()
@@ -527,7 +543,19 @@ class UniReader:
         with self._notfull:
             z = self._buffer.get(block, timeout)
             self._notfull.notify()
-        return z
+        self._get_called.set()
+        return _ForkingPickler.loads(z)
+
+    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+        if first_timeout is None:
+            first_timeout = 3600
+        deadline = monotonic() + first_timeout
+        z = self.get(timeout=first_timeout)
+        out = [z]
+        n = 1
+        if extra_timeout is None:
+            extra_timeout = 3600
+        raise NotImplementedError('to be finished')
 
     def get_nowait(self):
         return self.get(False)
