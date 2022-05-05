@@ -91,7 +91,7 @@ class BasicQueue:
                 self._q._buffer.append(obj)
                 self._q._notempty.notify()
 
-    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
         # Adapted from code of cpython.
         if self._q._closed:
             raise ValueError(f"{self!r} is closed")
@@ -301,7 +301,7 @@ class ZeroQueue:
         for v in objs:
             writer.send(_ForkingPickler.dumps(v), copy=self._copy_on_write)
 
-    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
         reader = self._get_reader()
         out = []
         n = 0
@@ -374,7 +374,7 @@ class FastQueue:
             else:
                 objs = objs[1:]
 
-    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
         if first_timeout is None:
             first_timeout = float(3600)
         if self._q.message_buffer is None:
@@ -481,6 +481,9 @@ class UniWriter:
         self._writer.close()
         self._closed = True
 
+    def full(self):
+        return False
+
     def put(self, obj, block=True, timeout=None):
         '''
         `block` and `timeout` are ignored.
@@ -520,22 +523,42 @@ class UniReader:
         buffer = self._buffer
         lock = self._lock
         notfull = self._notfull
+        get_called = self._get_called
+        closed = self._closed
         while True:
             if buffer.full():
                 with notfull:
                     notfull.wait()
             with lock:
+                # In order to facilitate batching,
+                # we hold the lock and keep getting
+                # data off the pipe for this reader's
+                # buffer, while there may be other readers
+                # waiting for the lock.
+                # Once `get` or `get_many` has been called,
+                # we release the lock so that other readers
+                # get a chance for the lock.
                 while not buffer.full():
-                    # TODO: timeouts
                     x = self._reader._recv_bytes()
-                    buffer.put_nowait(x)
-                    if self._get_called.is_set():
-                        self._get_called.clear()
+                    buffer.put_nowait(x.getbuffer())
+                    # This is the only code that `put` data
+                    # into `buffer`, hence `put_nowait`
+                    # is safe b/c we know `buffer` is not full.
+                    if closed:
+                        return
+                    if get_called.is_set():
+                        get_called.clear()
                         break
 
     def close(self):
         self._reader.close()
         self._closed = True
+
+    def empty(self):
+        return self._buffer.empty()
+
+    def qsize(self):
+        return self._buffer.qsize()
 
     def get(self, block=True, timeout=None):
         if self._closed:
@@ -546,7 +569,7 @@ class UniReader:
         self._get_called.set()
         return _ForkingPickler.loads(z)
 
-    def get_many(self, max_n: int, first_timeout=None, extra_timeout=None):
+    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
         if first_timeout is None:
             first_timeout = 3600
         deadline = monotonic() + first_timeout
@@ -555,7 +578,22 @@ class UniReader:
         n = 1
         if extra_timeout is None:
             extra_timeout = 3600
-        raise NotImplementedError('to be finished')
+        deadline = monotonic() + extra_timeout
+        while n < max_n:
+            # If there is remaining time, wait up to
+            # that long.
+            # Otherwise, get the next item if it is there
+            # right now (i.e. no waiting) even if we
+            # are already overtime. That is, if supply
+            # has piled up, then will get up to the
+            # batch capacity.
+            try:
+                t = max(0., deadline - monotonic())
+                out.append(self.get(timeout=t))
+            except Empty:
+                break
+            n += 1
+        return out
 
     def get_nowait(self):
         return self.get(False)
@@ -575,8 +613,8 @@ class UniQueue:
     def writer(self):
         return UniWriter(self._writer, self._wlock)
 
-    def reader(self, buffer_size: int):
-        return UniReader(self, buffer_size)
+    def reader(self, buffer_size: int = 1024):
+        return UniReader(self._reader, self._rlock, buffer_size)
 
 
 def _BasicQueue(self):
@@ -598,3 +636,11 @@ def _FastQueue(self, **kwargs):
 
 
 mp_context.BaseContext.FastQueue = _FastQueue
+
+
+def _UniQueue(self, **kwargs):
+    return UniQueue(**kwargs)
+
+
+mp_context.BaseContext.UniQueue = _UniQueue
+

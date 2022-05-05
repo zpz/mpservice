@@ -1,13 +1,13 @@
 import multiprocessing
 import time
 from queue import Empty, Full
-from mpservice.mpqueue import NaiveQueue
+from mpservice.mpqueue import NaiveQueue, UniQueue
 from mpservice.streamer import Streamer
 
 import pytest
 
 #methods = [None, 'spawn']
-methods = ['spawn']
+methods = ['spawn']  # ZeroQueue does not work well with `None`.
 names = ['BasicQueue', 'FastQueue', 'ZeroQueue']
 
 
@@ -165,9 +165,32 @@ def test_naive():
 
     with pytest.raises(Full):
         q.put(9, timeout=0.5)
-    q.get() == '3'
-    q.get() == 'a'
-    q.get() == 'b'
+    assert q.get() == 3
+    assert q.get() == 'a'
+    assert q.get() == 'b'
     with pytest.raises(Empty):
         q.get(timeout=0.3)
+
+
+def test_uni():
+    q = UniQueue()
+    writer = q.writer()
+    reader = q.reader()
+
+    writer.put(2)
+    writer.put(3)
+    assert reader.get() == 2
+    writer.put('a')
+    writer.put('b')
+
+    assert reader.get() == 3
+    assert reader.get() == 'a'
+    assert reader.get() == 'b'
+    with pytest.raises(Empty):
+        reader.get(timeout=0.3)
+    assert reader.empty()
+
+    writer.put_many([1, 3, 'a', 5])
+    assert reader.get_many(2) == [1, 3]
+    assert reader.get_many(5, first_timeout=0.1, extra_timeout=0.1) == ['a', 5]
 
