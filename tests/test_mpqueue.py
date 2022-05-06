@@ -29,7 +29,7 @@ def test_basic0(method, name):
         q.get_many(3, first_timeout=0.2, extra_timeout=0.2)
 
     assert q.empty()
-    q.put_nowait('abc')
+    q.put('abc')
 
     time.sleep(0.1) # To prevent BrokenPipeError with BasicQueue.
     q.close()
@@ -170,6 +170,10 @@ def test_naive():
     assert q.get() == 'b'
     with pytest.raises(Empty):
         q.get(timeout=0.3)
+    q.put(99)
+    q.put(100)
+    assert q.get() == 99
+    assert q.get() == 100
 
 
 def test_uni():
@@ -193,4 +197,85 @@ def test_uni():
     writer.put_many([1, 3, 'a', 5])
     assert reader.get_many(2) == [1, 3]
     assert reader.get_many(5, first_timeout=0.1, extra_timeout=0.1) == ['a', 5]
+
+
+def unireader(q):
+    q = q.reader(3)
+    k = 0
+    while True:
+        z = q.get()
+        if z is None:
+            q.close()
+            break
+        assert z == k
+        k += 1
+    q.close()
+
+
+def uniwriter(q):
+    q = q.writer()
+    for i in range(10):
+        q.put(i)
+    q.put_many(range(10, 20))
+    q.put(None)
+    q.close()
+
+
+def test_unimany():
+    ctx = multiprocessing.get_context('spawn')
+    q = ctx.UniQueue()
+    w = ctx.Process(target=uniwriter, args=(q,))
+    r = ctx.Process(target=unireader, args=(q,))
+    w.start()
+    r.start()
+    w.join()
+    r.join()
+    q.close()
+
+
+def unireader2(q):
+    name = multiprocessing.current_process().name
+    q = q.reader(10)
+    n = 0
+    try:
+        while True:
+            try:
+                z = q.get(timeout=1)
+                n += 1
+            except Empty:
+                break
+        print('reader', name, 'got', n, 'items')
+        q.close()
+    except Exception as e:
+        print('error', e)
+        raise
+
+
+def uniwriter2(q, k):
+    name = multiprocessing.current_process().name
+    q = q.writer()
+    n = 0
+    for i in range(100):
+        time.sleep(0.001)
+        q.put(i*10 + k)
+        n += 1
+    q.close()
+    print('writer', name, 'wrote', n, 'items')
+    time.sleep(10)
+
+
+def test_unimany2():
+    print('')
+    ctx = multiprocessing.get_context('spawn')
+    q = ctx.UniQueue()
+    ps = []
+    for i in range(3):
+        ps.append(ctx.Process(target=uniwriter2, args=(q, i)))
+    for i in range(3):
+        ps.append(ctx.Process(target=unireader2, args=(q, )))
+    for p in ps:
+        p.start()
+    for p in ps:
+        p.join()
+    q.close()
 

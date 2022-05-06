@@ -13,7 +13,8 @@ from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 
-@pytest.fixture(params=['BasicQueue', 'FastQueue', 'ZeroQueue'])
+#@pytest.fixture(params=['BasicQueue', 'FastQueue', 'ZeroQueue']) #, 'UniQueue'])
+@pytest.fixture(params=['UniQueue'])
 def qtype(request):
     yield request.param
 
@@ -53,8 +54,11 @@ async def test_sequential_server_async(qtype):
     service = SequentialServer(queue_type=qtype)
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
+    print('added servlets')
     with service:
+        print(5)
         z = await service.async_call(3)
+        print(6)
         assert z == 3 * 2 + 3
 
         x = list(range(10))
