@@ -17,8 +17,9 @@ import logging
 import multiprocessing
 import sys
 import threading
+import weakref
 from collections import deque
-from multiprocessing import queues as mp_queues, context as mp_context
+from multiprocessing import queues as mp_queues, context as mp_context, util as mp_util
 from queue import Empty, Full
 from time import monotonic
 from types import SimpleNamespace
@@ -175,7 +176,7 @@ class NaiveQueue:
         if self._space is not None:
             if not self._space.acquire(block, timeout):
                 raise Full
-        with self._not_empty:
+        with self._not_full:
             self._queue.append(item)
             self._not_empty.notify()
         self._count.release()
@@ -184,8 +185,10 @@ class NaiveQueue:
         if timeout is not None and timeout < 0:
             raise ValueError("'timeout' must be a non-negative number")
         if not self._count.acquire(block, timeout):
+            # This waits for a call to `put` if currently `self._queue`
+            # is empty.
             raise Empty
-        with self._not_full:
+        with self._not_empty:
             z = self._queue.popleft()
             self._not_full.notify()
         if self._space is not None:
@@ -205,49 +208,113 @@ class NaiveQueue:
         return len(self._queue)
 
 
-class UniWriter:
+class Unique:
+    '''
+    Naming follows the example of `deque`:
+
+        'de queue'  --> 'deque'
+        'uni queue' --> 'unique'
+    '''
+    def __init__(self, *, ctx=None):
+        if ctx is None:
+            ctx = multiprocessing.get_context()
+        self._reader, self._writer = multiprocessing.connection.Pipe(duplex=False)
+        self._rlock = ctx.Lock()
+        if sys.platform == 'win32':
+            self._wlock = None
+        else:
+            self._wlock = ctx.Lock()
+        self._closed = False
+
+    def __getstate__(self):
+        multiprocessing.context.assert_spawning(self)
+        return (self._reader, self._writer, self._rlock, self._wlock)
+
+    def __setstate__(self, state):
+        (self._reader, self._writer, self._rlock, self._wlock) = state
+        self._closed = None
+
+    def writer(self):
+        return UniqueWriter(self._writer, self._wlock)
+
+    def reader(self, buffer_size: int = 1024, batch_size: int = 1):
+        return UniqueReader(self._reader, self._rlock, buffer_size, batch_size)
+
+    def close(self):
+        if self._closed:
+            return
+        self._writer.close()
+        self._reader.close()
+        self._closed = True
+
+    def __del__(self):
+        if self._closed is not None:
+            # In the process that the object was created.
+            self.close()
+
+
+class UniqueWriter:
+    # Refer to source of `multiprocessing.queues.Queue`.
+
     def __init__(self, pipe_writer, pipe_lock):
         self._writer = pipe_writer
         self._lock = pipe_lock  # this is None on win32
         self._buffer = deque()
         self._not_empty = threading.Condition()
-        self._nomore = object()
         self._closed = False
+        self._start_thread()
+
+    def _start_thread(self):
+        sentinel = object()
         self._thread = threading.Thread(
-            target=UniWriter._feed,
-            args=(self._buffer, self._not_empty, self._nomore, self._lock, self._writer),
+            target=UniqueWriter._feed,
+            args=(self._buffer, self._not_empty, sentinel, self._lock, self._writer),
             daemon=True)
         self._thread.start()
+        self._close = mp_util.Finalize(
+            self, UniqueWriter._finalize_close,
+            (self._buffer, self._not_empty, sentinel),
+            exitpriority=10)
+        self._jointhread = mp_util.Finalize(
+            self._thread, UniqueWriter._finalize_join,
+            [weakref.ref(self._thread)],
+            exitpriority=-5
+            )
 
     @staticmethod
     def _feed(buffer, not_empty, nomore, lock, writer):
-        try:
-            while True:
-                with not_empty:
-                    if not buffer:
-                        not_empty.wait()
-                    x = buffer.popleft()
-                if x is nomore:
-                    return
-                xx = _ForkingPickler.dumps(x)
-                if lock is None:
+        while True:
+            with not_empty:
+                if not buffer:
+                    not_empty.wait()
+                x = buffer.popleft()
+            if x is nomore:
+                return
+            xx = _ForkingPickler.dumps(x)
+            if lock is None:
+                writer.send_bytes(xx)
+            else:
+                with lock:
                     writer.send_bytes(xx)
-                else:
-                    with lock:
-                        writer.send_bytes(xx)
 
-        except Exception as e:
-            logger.exception(e)
-            raise
+    @staticmethod
+    def _finalize_join(twr):
+        thread = twr()
+        if thread is not None:
+            thread.join()
+
+    @staticmethod
+    def _finalize_close(buffer, notempty, nomore):
+        with notempty:
+            buffer.append(nomore)
+            notempty.notify()
 
     def close(self):
-        if self._closed:
-            return
-        self.put(self._nomore)
         self._closed = True
-
-    def __del__(self):
-        self.close()
+        close = self._close
+        if close:
+            self._close = None
+            close()
 
     def __getstate__(self):
         raise TypeError(f"{self.__class__.__name__} does not support pickling")
@@ -267,13 +334,21 @@ class UniWriter:
             self.put(obj)
 
 
-class UniReader:
-    def __init__(self, pipe_reader, pipe_lock, maxsize=0):
+class UniqueReader:
+    def __init__(self, pipe_reader, pipe_lock, buffer_size=1024, batch_size=1):
+        assert 1 <= batch_size <= buffer_size
         self._reader = pipe_reader
         self._lock = pipe_lock
-        self.maxsize = maxsize
-        self._buffer = NaiveQueue(maxsize)
-        self._not_full = threading.Condition()
+        self._buffer_size = buffer_size
+        self._batch_size = batch_size
+
+        self._buffer = deque()
+        self._count = threading.Semaphore(0)
+        self._space = threading.Semaphore(buffer_size)
+        self._mutex = threading.Lock()
+        self._not_empty = threading.Condition(self._mutex)
+        self._not_full = threading.Condition(self._mutex)
+
         self._get_called = threading.Event()
         self._closed = False
         self._thread = threading.Thread(target=self._read, daemon=True)
@@ -285,35 +360,40 @@ class UniReader:
             lock = self._lock
             get_called = self._get_called
             closed = self._closed
+            batchsize = self._batch_size
             while True:
-                if buffer.full():
-                    with buffer._not_full:
-                        buffer._not_full.wait()
-                if closed:
-                    return
-                with lock:
-                    # In order to facilitate batching,
-                    # we hold the lock and keep getting
-                    # data off the pipe for this reader's
-                    # buffer, while there may be other readers
-                    # waiting for the lock.
-                    # Once `get` or `get_many` has been called,
-                    # we release the lock so that other readers
-                    # get a chance for the lock.
-                    while not buffer.full():
-                        try:
-                            x = self._reader._recv_bytes()
-                        except EOFError:
-                            return
-                        buffer.put(x.getbuffer())
-                        # This is the only code that `put` data
-                        # into `buffer`, hence `put`
-                        # is safe b/c we know `buffer` is not full.
-                        if closed:
-                            return
-                        if get_called.is_set():
-                            get_called.clear()
-                            break
+                self._space.acquire()
+                try:
+                    with lock:  # read lock
+                        # In order to facilitate batching,
+                        # we hold the lock and keep getting
+                        # data off the pipe for this reader's
+                        # buffer, while there may be other readers
+                        # waiting for the lock.
+                        # Once `get` or `get_many` has been called,
+                        # we release the lock so that other readers
+                        # get a chance for the lock.
+                        while True:
+                            try:
+                                x = self._reader._recv_bytes()
+                            except EOFError:
+                                return
+                            buffer.append(x.getbuffer())
+                            self._count.release()
+                            if closed:
+                                return
+                            if get_called.is_set():
+                                get_called.clear()
+                                break
+                            if len(buffer) >= batchsize:
+                                break
+                            self._space.acquire()
+
+                except Exception as e:
+                    if closed:
+                        break
+                    logger.error(e)
+                    raise
         except Exception as e:
             logger.exception(e)
             raise
@@ -334,15 +414,24 @@ class UniReader:
         raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
     def empty(self):
-        return self._buffer.empty()
+        return len(self._buffer) == 0
+
+    def full(self):
+        return 0 < self._buffer_size <= len(self._buffer)
 
     def qsize(self):
-        return self._buffer.qsize()
+        return len(self._buffer)
 
     def get(self, block=True, timeout=None):
         if self._closed:
             raise ValueError(f"{self!r} is closed")
-        z = self._buffer.get(block, timeout)
+        if timeout is not None and timeout < 0:
+            raise ValueError("'timeout' must be a non-negative number")
+        if not self._count.acquire(block, timeout):
+            # This waits for buffer to become non-empty.
+            raise Empty
+        z = self._buffer.popleft()
+        self._space.release()
         self._get_called.set()
         return _ForkingPickler.loads(z)
 
@@ -376,45 +465,6 @@ class UniReader:
         return self.get(False)
 
 
-class UniQueue:
-    def __init__(self, *, ctx=None):
-        if ctx is None:
-            ctx = multiprocessing.get_context()
-        self._reader, self._writer = multiprocessing.connection.Pipe(duplex=False)
-        self._rlock = ctx.Lock()
-        if sys.platform == 'win32':
-            self._wlock = None
-        else:
-            self._wlock = ctx.Lock()
-        self._closed = False
-
-    def __getstate__(self):
-        multiprocessing.context.assert_spawning(self)
-        return (self._reader, self._writer, self._rlock, self._wlock)
-
-    def __setstate__(self, state):
-        (self._reader, self._writer, self._rlock, self._wlock) = state
-        self._closed = None
-
-    def writer(self):
-        return UniWriter(self._writer, self._wlock)
-
-    def reader(self, buffer_size: int = 1024):
-        return UniReader(self._reader, self._rlock, buffer_size)
-
-    def close(self):
-        if self._closed:
-            return
-        self._writer.close()
-        self._reader.close()
-        self._closed = True
-
-    def __del__(self):
-        if self._closed is not None:
-            # In the process that the object was created.
-            self.close()
-
-
 def _BasicQueue(self):
     return BasicQueue(ctx=self.get_context())
 
@@ -422,11 +472,11 @@ def _BasicQueue(self):
 mp_context.BaseContext.BasicQueue = _BasicQueue
 
 
-def _UniQueue(self):
-    return UniQueue(ctx=self.get_context())
+def _Unique(self):
+    return Unique(ctx=self.get_context())
 
 
-mp_context.BaseContext.UniQueue = _UniQueue
+mp_context.BaseContext.Unique = _Unique
 
 
 if faster_fifo is not None:

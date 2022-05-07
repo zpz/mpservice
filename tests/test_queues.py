@@ -200,12 +200,10 @@ def test_uni():
 
 
 def unireader(q):
-    print('reader 0')
     q = q.reader(3)
     k = 0
     while True:
         z = q.get()
-        print('reader got', z)
         if z is None:
             q.close()
             break
@@ -221,10 +219,8 @@ def uniwriter(q):
     q.put_many(range(10, 20))
     q.put(None)
     q.close()
-    print('done put')
 
 
-@pytest.mark.skip(reason='not working; related to feeder thread daemon or not')
 def test_unimany():
     ctx = multiprocessing.get_context('spawn')
     q = ctx.UniQueue()

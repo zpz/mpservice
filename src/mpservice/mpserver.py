@@ -122,10 +122,10 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        if isinstance(q_in, mpqueue.UniQueue):
-            batch_size = init_kwargs.get('batch_size', 0)
-            q_in = q_in.reader(max(batch_size, 1))
-        if isinstance(q_out, mpqueue.UniQueue):
+        if isinstance(q_in, mpqueue.Unique):
+            batch_size = max(1, init_kwargs.get('batch_size', 0))
+            q_in = q_in.reader(batch_size + 10, batch_size)
+        if isinstance(q_out, mpqueue.Unique):
             q_out = q_out.writer()
         try:
             forward_logs(q_log)
@@ -807,37 +807,19 @@ class SequentialServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._q_in_out = []
+        self._input_queues_ = None
 
     @overrides
     def _start_servlets(self):
         for k, (servlet, kwargs) in enumerate(self._servlet_configs):
             qtype = getattr(self.get_mpcontext(), self._queue_type)
-            if self._queue_type == 'UniQueue':
-                if not self._q_in_out:
-                    q_in = qtype()
-                    q = q_in.writer()
-                    q._parent = q_in
-                    self._q_in_out.append(q)
-                else:
-                    q_in = self._q_in_out[-1]
-                    if not isinstance(q_in, mpqueue.UniQueue):
-                        q_in = q_in._parent
-
-                q_out = qtype()
-                if k == len(self._servlet_configs) - 1:
-                    q = q_out.reader()
-                    q._parent = q_out
-                    self._q_in_out.append(q)
-                else:
-                    self._q_in_out.append(q_out)
+            if not self._q_in_out:
+                q_in = qtype()
+                self._q_in_out.append(q_in)
             else:
-                if not self._q_in_out:
-                    q_in = qtype()
-                    self._q_in_out.append(q_in)
-                else:
-                    q_in = self._q_in_out[-1]
-                q_out = qtype()
-                self._q_in_out.append(q_out)
+                q_in = self._q_in_out[-1]
+            q_out = qtype()
+            self._q_in_out.append(q_out)
 
             self._add_servlet(
                 servlet,
@@ -852,16 +834,15 @@ class SequentialServer(MPServer):
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in_out:
-            if isinstance(q, (mpqueue.UniReader, mpqueue.UniWriter)):
-                q._parent.close()
-            else:
-                q.close()
+            q.close()
 
     @overrides
     def _gather_output(self):
         threading.current_thread().name = 'ResultCollector'
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
+        if isinstance(q_out, mpqueue.Unique):
+            q_out = q_out.reader(1024, 1024)
 
         while not self._should_stop.is_set():
             try:
@@ -887,7 +868,12 @@ class SequentialServer(MPServer):
 
     @overrides
     def _input_queues(self):
-        return self._q_in_out[:1]
+        if self._input_queues_ is None:
+            q = self._q_in_out[0]
+            if isinstance(q, mpqueue.Unique):
+                q = q.writer()
+            self._input_queues_ = [q]
+        return self._input_queues_
 
 
 class EnsembleServer(MPServer):
@@ -901,25 +887,16 @@ class EnsembleServer(MPServer):
         super().__init__(**kwargs)
         self._q_in: List[queues.Queue] = []
         self._q_out: List[queues.Queue] = []
+        self._input_queues_ = None
 
     @overrides
     def _start_servlets(self):
         qtype = getattr(self.get_mpcontext(), self._queue_type)
         for k, (servlet, kwargs) in enumerate(self._servlet_configs):
-            if self._queue_type == 'UniQueue':
-                q_in = qtype()
-                q_out = qtype()
-                q = q_in.writer()
-                q._parent = q_in
-                self._q_in.append(q)
-                q = q_out.reader()
-                q._parent = q_out
-                self._q_out.append(q)
-            else:
-                q_in = qtype()
-                q_out = qtype()
-                self._q_in.append(q_in)
-                self._q_out.append(q_out)
+            q_in = qtype()
+            q_out = qtype()
+            self._q_in.append(q_in)
+            self._q_out.append(q_out)
 
             self._add_servlet(
                 servlet,
@@ -933,15 +910,9 @@ class EnsembleServer(MPServer):
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in:
-            if isinstance(q, (mpqueue.UniReader, mpqueue.UniWriter)):
-                q._parent.close()
-            else:
-                q.close()
+            q.close()
         for q in self._q_out:
-            if isinstance(q, (mpqueue.UniReader, mpqueue.UniWriter)):
-                q._parent.close()
-            else:
-                q.close()
+            q.close()
 
     @abstractmethod
     def ensemble(self, x, results: list):
@@ -968,8 +939,12 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
+        qq = self._q_out
+        if isinstance(qq[0], mpqueue.Unique):
+            qq = [q.reader(1024, 1024) for q in qq]
+
         while not self._should_stop.is_set():
-            for idx, q_out in enumerate(self._q_out):
+            for idx, q_out in enumerate(qq):
                 while not q_out.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
@@ -1002,7 +977,12 @@ class EnsembleServer(MPServer):
 
     @overrides
     def _input_queues(self):
-        return self._q_in
+        if self._input_queues_ is None:
+            qq = self._q_in
+            if isinstance(qq[0], mpqueue.Unique):
+                qq = [q.writer() for q in qq]
+            self._input_queues_ = qq
+        return self._input_queues_
 
 
 class SimpleServlet(Servlet):

@@ -819,7 +819,7 @@ class Transformer(Stream):
                 if self._return_x:
                     return x, e
                 return e
-            # logger.error("exception '%r' happened for input '%s'", e, x)
+            logger.error("exception '%r' happened for input '%s'", e, x)
             raise e
         y = fut.result()
         if self._return_x:
