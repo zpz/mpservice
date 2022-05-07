@@ -1,7 +1,7 @@
 from queue import Empty
 import multiprocessing
 from time import monotonic, sleep
-import mpservice.mpqueue
+import mpservice._queues
 
 
 record = b'OK' * 100
@@ -57,12 +57,12 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    for qq in (mp.BasicQueue, mp.ZeroQueue, mp.FastQueue):
+    for qq in (mp.BasicQueue, mp.FastQueue):
         q = qq()
         _push(q, pull)
 
     print('---- 5 workers ----')
-    for qq in (mp.BasicQueue, mp.ZeroQueue, mp.FastQueue):
+    for qq in (mp.BasicQueue, mp.FastQueue):
         q = qq()
         _push(q, pull, 5)
 
@@ -88,18 +88,12 @@ def bench_push():
     q = mp.BasicQueue()
     _push_many(q, pull)
 
-    q = mp.ZeroQueue()
-    _push_many(q, pull_many)
-
     q = mp.FastQueue()
     _push_many(q, pull_many)
 
     print('---- 5 workers ----')
 
     q = mp.BasicQueue()
-    _push_many(q, pull_many, 5)
-
-    q = mp.ZeroQueue(writer_hwm=100, reader_hwm=100)
     _push_many(q, pull_many, 5)
 
     q = mp.FastQueue()

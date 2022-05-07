@@ -732,6 +732,8 @@ class Transformer(Stream):
             tasks = self._tasks
             stopped = self._stopped
             for x in self._instream:
+                if stopped.is_set():
+                    return
                 t = self._thread_pool.submit(func, x, **kwargs)
                 # The size of the queue `tasks` regulates how many
                 # concurrent calls to `func` there can be.
@@ -817,7 +819,7 @@ class Transformer(Stream):
                 if self._return_x:
                     return x, e
                 return e
-            logger.error("exception '%r' happened for input '%s'", e, x)
+            # logger.error("exception '%r' happened for input '%s'", e, x)
             raise e
         y = fut.result()
         if self._return_x:

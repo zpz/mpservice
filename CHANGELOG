@@ -1,3 +1,10 @@
+Release 0.10.7 (upcoming)
+==============
+
+- Added new custom queue type, `UniQueue`.
+- Removed the ZeroMQ-based `ZeroQueue`.
+
+
 Release 0.10.6
 ==============
 

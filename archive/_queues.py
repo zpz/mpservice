@@ -18,6 +18,7 @@ import multiprocessing
 import os
 import sys
 import threading
+import warnings
 from collections import deque
 from multiprocessing import queues as mp_queues, context as mp_context
 from queue import Empty, Full
@@ -451,22 +452,20 @@ class UniWriter:
         self._not_empty = threading.Condition()
         self._nomore = object()
         self._closed = False
-        self._thread = threading.Thread(target=self._feed)
+        self._thread = threading.Thread(
+            target=UniWriter._feed,
+            args=(self._buffer, self._not_empty, self._nomore, self._lock, self._writer),
+            daemon=True)
         self._thread.start()
 
-    def _feed(self):
+    @staticmethod
+    def _feed(buffer, not_empty, nomore, lock, writer):
         try:
-            buffer = self._buffer
-            not_empty = self._not_empty
-            nomore = self._nomore
-            lock = self._lock
-            writer = self._writer
-
             while True:
-                if not buffer:
-                    with not_empty:
+                with not_empty:
+                    if not buffer:
                         not_empty.wait()
-                x = buffer.popleft()
+                    x = buffer.popleft()
                 if x is nomore:
                     return
                 xx = _ForkingPickler.dumps(x)
@@ -485,10 +484,12 @@ class UniWriter:
             return
         self.put(self._nomore)
         self._closed = True
-        self._thread.join()
 
     def __del__(self):
         self.close()
+
+    def __getstate__(self):
+        raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
     def full(self):
         return False
@@ -501,12 +502,8 @@ class UniWriter:
             self._not_empty.notify()
 
     def put_many(self, objs):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
         for obj in objs:
-            with self._not_empty:
-                self._buffer.append(obj)
-                self._not_empty.notify()
+            self.put(obj)
 
 
 class UniReader:
@@ -531,6 +528,8 @@ class UniReader:
                 if buffer.full():
                     with buffer._not_full:
                         buffer._not_full.wait()
+                if closed:
+                    return
                 with lock:
                     # In order to facilitate batching,
                     # we hold the lock and keep getting
@@ -541,7 +540,10 @@ class UniReader:
                     # we release the lock so that other readers
                     # get a chance for the lock.
                     while not buffer.full():
-                        x = self._reader._recv_bytes()
+                        try:
+                            x = self._reader._recv_bytes()
+                        except EOFError:
+                            return
                         buffer.put(x.getbuffer())
                         # This is the only code that `put` data
                         # into `buffer`, hence `put`
@@ -556,8 +558,19 @@ class UniReader:
             raise
 
     def close(self):
-        self._reader.close()
+        if self._closed:
+            return
         self._closed = True
+        if self.qsize():
+            # This is not necessarily an error, but user should understand
+            # whether this is expected behavior in their particular application.
+            logger.warning(f"{self!r} closed with {self.qsize()} data items un-consumed and abandoned")
+
+    def __del__(self):
+        self.close()
+
+    def __getstate__(self):
+        raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
     def empty(self):
         return self._buffer.empty()
@@ -612,6 +625,7 @@ class UniQueue:
             self._wlock = None
         else:
             self._wlock = ctx.Lock()
+        self._closed = False
 
     def __getstate__(self):
         multiprocessing.context.assert_spawning(self)
@@ -619,6 +633,7 @@ class UniQueue:
 
     def __setstate__(self, state):
         (self._reader, self._writer, self._rlock, self._wlock) = state
+        self._closed = None
 
     def writer(self):
         return UniWriter(self._writer, self._wlock)
@@ -627,8 +642,16 @@ class UniQueue:
         return UniReader(self._reader, self._rlock, buffer_size)
 
     def close(self):
+        if self._closed:
+            return
         self._writer.close()
         self._reader.close()
+        self._closed = True
+
+    def __del__(self):
+        if self._closed is not None:
+            # In the process that the object was created.
+            self.close()
 
 
 def _BasicQueue(self):

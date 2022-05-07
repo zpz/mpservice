@@ -13,8 +13,7 @@ from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 
-#@pytest.fixture(params=['BasicQueue', 'FastQueue', 'ZeroQueue']) #, 'UniQueue'])
-@pytest.fixture(params=['UniQueue'])
+@pytest.fixture(params=['BasicQueue', 'FastQueue', 'UniQueue'])
 def qtype(request):
     yield request.param
 
