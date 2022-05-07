@@ -215,9 +215,7 @@ class Unique:
         'de queue'  --> 'deque'
         'uni queue' --> 'unique'
     '''
-    def __init__(self, *, ctx=None):
-        if ctx is None:
-            ctx = multiprocessing.get_context()
+    def __init__(self, *, ctx):
         self._reader, self._writer = multiprocessing.connection.Pipe(duplex=False)
         self._rlock = ctx.Lock()
         if sys.platform == 'win32':
@@ -227,7 +225,7 @@ class Unique:
         self._closed = False
 
     def __getstate__(self):
-        multiprocessing.context.assert_spawning(self)
+        mp_context.assert_spawning(self)
         return (self._reader, self._writer, self._rlock, self._wlock)
 
     def __setstate__(self, state):
@@ -254,11 +252,22 @@ class Unique:
 
 
 class UniqueWriter:
-    # Refer to source of `multiprocessing.queues.Queue`.
+    '''
+    This queue-writer has no size limit.
+    Its `put` method never blocks.
 
-    def __init__(self, pipe_writer, pipe_lock):
+    This object is not shared between threads,
+    and cannot be passed across processes.
+    An instance is created via `Unique.writer()`,
+    either in the Unique-creating process or in another
+    process (into which a `Unique` has been passed).
+
+    Refer to source of `multiprocessing.queues.Queue`.
+    '''
+
+    def __init__(self, pipe_writer, write_lock):
         self._writer = pipe_writer
-        self._lock = pipe_lock  # this is None on win32
+        self._lock = write_lock  # this is None on win32
         self._buffer = deque()
         self._not_empty = threading.Condition()
         self._closed = False
@@ -283,11 +292,12 @@ class UniqueWriter:
 
     @staticmethod
     def _feed(buffer, not_empty, nomore, lock, writer):
+        # This is the only reader of `self._buffer`.
         while True:
-            with not_empty:
-                if not buffer:
+            if not buffer:
+                with not_empty:
                     not_empty.wait()
-                x = buffer.popleft()
+            x = buffer.popleft()
             if x is nomore:
                 return
             xx = _ForkingPickler.dumps(x)
@@ -319,10 +329,8 @@ class UniqueWriter:
     def __getstate__(self):
         raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-    def full(self):
-        return False
-
     def put(self, obj):
+        # This is the only writer of `self._buffer`.
         if self._closed:
             raise ValueError(f"{self!r} is closed")
         with self._not_empty:
@@ -335,10 +343,20 @@ class UniqueWriter:
 
 
 class UniqueReader:
-    def __init__(self, pipe_reader, pipe_lock, buffer_size=1024, batch_size=1):
+    '''
+    This queue-reader uses a size-capped background thread.
+
+    Similar to `UniqueWriter`,
+    this object is not shared between threads,
+    and cannot be passed across processes.
+    An instance is created via `Unique.reader()`,
+    either in the Unique-creating process or in another
+    process (into which a `Unique` has been passed).
+    '''
+    def __init__(self, pipe_reader, read_lock, buffer_size=1024, batch_size=1):
         assert 1 <= batch_size <= buffer_size
         self._reader = pipe_reader
-        self._lock = pipe_lock
+        self._lock = read_lock
         self._buffer_size = buffer_size
         self._batch_size = batch_size
 
