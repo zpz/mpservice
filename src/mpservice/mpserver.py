@@ -348,7 +348,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
-    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'FastQueue'):
+    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'Unique'):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
@@ -1010,7 +1010,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self, func: Callable, /, queue_type='FastQueue', **kwargs):
+    def __init__(self, func: Callable, /, queue_type='Unique', **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,
