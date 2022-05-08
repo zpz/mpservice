@@ -19,17 +19,12 @@ import sys
 import threading
 import weakref
 from collections import deque
-from multiprocessing import queues as mp_queues, context as mp_context, util as mp_util
+from multiprocessing import context as mp_context
+from multiprocessing.connection import Pipe
+from multiprocessing.util import Finalize
 from queue import Empty, Full
 from time import monotonic
-from types import SimpleNamespace
 from typing import Protocol, Any, Sequence, List
-
-try:
-    import faster_fifo
-    import faster_fifo_reduction  # noqa: F401
-except ImportError:
-    faster_fifo = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +36,10 @@ _ForkingPickler = mp_context.reduction.ForkingPickler
 
 
 class QueueWriter(Protocol):
-    def put(self, obj: Any) -> None:
+    def put(self, obj: Any, *, timeout=None) -> None:
         pass
 
-    def put_many(self, objs: Sequence) -> None:
+    def put_many(self, objs: Sequence, *, timeout=None) -> None:
         pass
 
     def close(self) -> None:
@@ -52,160 +47,14 @@ class QueueWriter(Protocol):
 
 
 class QueueReader(Protocol):
-    def get(self, block=None, timeout=None) -> Any:
+    def get(self, *, timeout=None) -> Any:
         pass
 
     def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None) -> List[Any]:
         pass
 
-    def get_nowait(self) -> Any:
-        pass
-
     def close(self) -> None:
         pass
-
-
-class BasicQueue:
-    def __init__(self, *, ctx=None):
-        if ctx is None:
-            ctx = multiprocessing.get_context()
-        self._q = ctx.Queue()
-        self._disable_semaphore()
-
-    def _disable_semaphore(self):
-        self._q._sem = SimpleNamespace()
-        self._q._sem.acquire = lambda *args: True
-        self._q._sem.release = lambda: True
-
-    def __getstate__(self):
-        self._q._sem = None
-        z = self._q.__getstate__()
-        self._disable_semaphore()
-        return z
-
-    def __setstate__(self, state):
-        self._q = object.__new__(mp_queues.Queue)
-        self._q.__setstate__(state)
-        self._disable_semaphore()
-
-    def empty(self):
-        return self._q.empty()
-
-    def close(self):
-        # sleep(0.1)  # to prevent 'BrokenPipe' error. TODO: how to get rid of this?
-        self._q.close()
-        # self._q.join_thread()
-
-    def put(self, obj):
-        self._q.put(obj)
-
-    def get(self, block=True, timeout=None):
-        if timeout is None:
-            timeout = 3600
-        return self._q.get(block, timeout)
-
-    def put_many(self, objs):
-        if self._q._closed:
-            raise ValueError(f"{self!r} is closed")
-
-        with self._q._notempty:
-            if self._q._thread is None:
-                self._q._start_thread()
-            for obj in objs:
-                self._q._buffer.append(obj)
-                self._q._notempty.notify()
-
-    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
-        # Adapted from code of cpython.
-        if self._q._closed:
-            raise ValueError(f"{self!r} is closed")
-        out = []
-        n = 0
-        if first_timeout is None:
-            first_timeout = 3600
-        deadline = monotonic() + first_timeout
-        if not self._q._rlock.acquire(block=True, timeout=first_timeout):
-            raise Empty
-        # Now with the read lock
-        try:
-            if not self._q._poll(max(0, deadline - monotonic())):
-                raise Empty
-            out.append(self._q._recv_bytes())
-            n += 1
-            if extra_timeout is None:
-                extra_timeout = 3600
-            deadline = monotonic() + extra_timeout
-            while n < max_n:
-                # If there is remaining time, wait up to
-                # that long.
-                # Otherwise, get the next item if it is there
-                # right now (i.e. no waiting) even if we
-                # are already over time. That is, if supply
-                # has piled up, then will get up to the
-                # batch capacity.
-                if not self._q._poll(max(0, deadline - monotonic())):
-                    break
-                out.append(self._q._recv_bytes())
-                n += 1
-        finally:
-            self._q._rlock.release()
-        return [_ForkingPickler.loads(v) for v in out]
-
-    def get_nowait(self):
-        return self.get(False)
-
-
-class NaiveQueue:
-    '''
-    Adapted from the standard `queue.SimpleQueue`, with additional support
-    for `maxsize`.
-    '''
-    def __init__(self, maxsize=0):
-        self.maxsize = maxsize
-        self._queue = deque()
-        self._count = threading.Semaphore(0)
-        if maxsize > 0:
-            self._space = threading.Semaphore(maxsize)
-        else:
-            self._space = None
-        self._mutex = threading.Lock()
-        self._not_empty = threading.Condition(self._mutex)
-        self._not_full = threading.Condition(self._mutex)
-
-    def put(self, item, block=True, timeout=None):
-        if self._space is not None:
-            if not self._space.acquire(block, timeout):
-                raise Full
-        with self._not_full:
-            self._queue.append(item)
-            self._not_empty.notify()
-        self._count.release()
-
-    def get(self, block=True, timeout=None):
-        if timeout is not None and timeout < 0:
-            raise ValueError("'timeout' must be a non-negative number")
-        if not self._count.acquire(block, timeout):
-            # This waits for a call to `put` if currently `self._queue`
-            # is empty.
-            raise Empty
-        with self._not_empty:
-            z = self._queue.popleft()
-            self._not_full.notify()
-        if self._space is not None:
-            self._space.release()
-        return z
-
-    def get_nowait(self):
-        return self.get(False)
-
-    def empty(self):
-        return len(self._queue) == 0
-
-    def full(self):
-        return 0 < self.maxsize <= len(self._queue)
-
-    def qsize(self):
-        return len(self._queue)
 
 
 class Unique:
@@ -215,8 +64,10 @@ class Unique:
         'de queue'  --> 'deque'
         'uni queue' --> 'unique'
     '''
-    def __init__(self, *, ctx):
-        self._reader, self._writer = multiprocessing.connection.Pipe(duplex=False)
+    def __init__(self, *, ctx=None):
+        if ctx is None:
+            ctx = multiprocessing.get_context()
+        self._reader, self._writer = Pipe(duplex=False)
         self._rlock = ctx.Lock()
         if sys.platform == 'win32':
             self._wlock = None
@@ -235,7 +86,7 @@ class Unique:
     def writer(self):
         return UniqueWriter(self._writer, self._wlock)
 
-    def reader(self, buffer_size: int = 1024, batch_size: int = 1):
+    def reader(self, buffer_size=None, batch_size=None):
         return UniqueReader(self._reader, self._rlock, buffer_size, batch_size)
 
     def close(self):
@@ -280,15 +131,14 @@ class UniqueWriter:
             args=(self._buffer, self._not_empty, sentinel, self._lock, self._writer),
             daemon=True)
         self._thread.start()
-        self._close = mp_util.Finalize(
+        self._close = Finalize(
             self, UniqueWriter._finalize_close,
             (self._buffer, self._not_empty, sentinel),
             exitpriority=10)
-        self._jointhread = mp_util.Finalize(
+        self._jointhread = Finalize(
             self._thread, UniqueWriter._finalize_join,
             [weakref.ref(self._thread)],
-            exitpriority=-5
-            )
+            exitpriority=-5)
 
     @staticmethod
     def _feed(buffer, not_empty, nomore, lock, writer):
@@ -329,7 +179,8 @@ class UniqueWriter:
     def __getstate__(self):
         raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-    def put(self, obj):
+    def put(self, obj, *, timeout=None):
+        # `timeout` is ignored. This function does not block.
         # This is the only writer of `self._buffer`.
         if self._closed:
             raise ValueError(f"{self!r} is closed")
@@ -338,6 +189,7 @@ class UniqueWriter:
             self._not_empty.notify()
 
     def put_many(self, objs):
+        # `timeout` is ignored. This function does not block.
         for obj in objs:
             self.put(obj)
 
@@ -353,16 +205,27 @@ class UniqueReader:
     either in the Unique-creating process or in another
     process (into which a `Unique` has been passed).
     '''
-    def __init__(self, pipe_reader, read_lock, buffer_size=1024, batch_size=1):
-        assert 1 <= batch_size <= buffer_size
+    def __init__(self, pipe_reader, read_lock, buffer_size: int = None, batch_size: int = None):
+        if buffer_size is None:
+            if batch_size is None:
+                buffer_size = 1024
+                batch_size = 1
+            else:
+                assert 1 <= batch_size
+                buffer_size = batch_size
+        else:
+            assert 1 <= buffer_size
+            if batch_size is None:
+                batch_size = 1
+            else:
+                assert batch_size <= buffer_size
+
         self._reader = pipe_reader
         self._lock = read_lock
         self._buffer_size = buffer_size
         self._batch_size = batch_size
 
         self._buffer = deque()
-        self._count = threading.Semaphore(0)
-        self._space = threading.Semaphore(buffer_size)
         self._mutex = threading.Lock()
         self._not_empty = threading.Condition(self._mutex)
         self._not_full = threading.Condition(self._mutex)
@@ -378,9 +241,13 @@ class UniqueReader:
             lock = self._lock
             get_called = self._get_called
             closed = self._closed
+            buffersize = self._buffer_size
             batchsize = self._batch_size
+            notfull = self._not_full
             while True:
-                self._space.acquire()
+                if 0 < buffersize <= len(buffer):
+                    with notfull:
+                        notfull.wait()
                 try:
                     with lock:  # read lock
                         # In order to facilitate batching,
@@ -397,7 +264,9 @@ class UniqueReader:
                             except EOFError:
                                 return
                             buffer.append(x.getbuffer())
-                            self._count.release()
+                            if len(buffer) < 3:  # otherwise no need to notify
+                                with self._not_empty:
+                                    self._not_empty.notify()
                             if closed:
                                 return
                             if get_called.is_set():
@@ -405,7 +274,6 @@ class UniqueReader:
                                 break
                             if len(buffer) >= batchsize:
                                 break
-                            self._space.acquire()
 
                 except Exception as e:
                     if closed:
@@ -440,30 +308,48 @@ class UniqueReader:
     def qsize(self):
         return len(self._buffer)
 
-    def get(self, block=True, timeout=None):
+    def get(self, *, timeout=None):
+        '''
+        This is the only reader of `self._buffer`.
+        There are no concurrent calls to this method because
+        `self` is never shared between threads.
+        '''
         if self._closed:
             raise ValueError(f"{self!r} is closed")
-        if timeout is not None and timeout < 0:
-            raise ValueError("'timeout' must be a non-negative number")
-        if not self._count.acquire(block, timeout):
-            # This waits for buffer to become non-empty.
-            raise Empty
+        if len(self._buffer) == 0:
+            if timeout is None:
+                timeout = 3600
+            elif timeout <= 0:
+                raise Empty
+            with self._not_empty:
+                if not self._not_empty.wait(timeout=timeout):
+                    raise Empty
         z = self._buffer.popleft()
-        self._space.release()
+        if self._buffer_size > 0:
+            if len(self._buffer) > self._buffer_size - 2:  # other times no need to notify
+                with self._not_full:
+                    self._not_full.notify()
         self._get_called.set()
         return _ForkingPickler.loads(z)
 
     def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
-        if first_timeout is None:
-            first_timeout = 3600
-        deadline = monotonic() + first_timeout
-        z = self.get(timeout=first_timeout)
-        out = [z]
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
+        buffer = self._buffer
+        notfull = self._not_full
+        getcalled = self._get_called
+        if len(buffer) == 0:
+            if first_timeout is None:
+                first_timeout = 3600
+            with self._not_empty:
+                if not self._not_empty.wait(timeout=first_timeout):
+                    raise Empty
+        out = [buffer.popleft()]
         n = 1
-        if extra_timeout is None:
-            extra_timeout = 3600
-        deadline = monotonic() + extra_timeout
-        while n < max_n:
+        with notfull:
+            notfull.notify()
+
+        if max_n > 1:
             # If there is remaining time, wait up to
             # that long.
             # Otherwise, get the next item if it is there
@@ -471,23 +357,23 @@ class UniqueReader:
             # are already overtime. That is, if supply
             # has piled up, then will get up to the
             # batch capacity.
-            try:
-                t = max(0., deadline - monotonic())
-                out.append(self.get(timeout=t))
-            except Empty:
-                break
-            n += 1
-        return out
+            if extra_timeout is None:
+                extra_timeout = 3600
+            deadline = monotonic() + extra_timeout
+            while n < max_n:
+                if len(buffer) == 0:
+                    t = max(0., deadline - monotonic())
+                    with self._not_empty:
+                        if not self._not_empty.wait(timeout=t):
+                            break
+                while len(buffer) and n < max_n:
+                    out.append(buffer.popleft())
+                    n += 1
+                with notfull:
+                    notfull.notify()
 
-    def get_nowait(self):
-        return self.get(False)
-
-
-def _BasicQueue(self):
-    return BasicQueue(ctx=self.get_context())
-
-
-mp_context.BaseContext.BasicQueue = _BasicQueue
+        getcalled.set()
+        return [_ForkingPickler.loads(v) for v in out]
 
 
 def _Unique(self):
@@ -497,8 +383,12 @@ def _Unique(self):
 mp_context.BaseContext.Unique = _Unique
 
 
-if faster_fifo is not None:
-
+try:
+    import faster_fifo
+    import faster_fifo_reduction  # noqa: F401
+except ImportError:
+    faster_fifo = None
+else:
     class FastQueue:
         def __init__(self, maxsize_bytes=10_000_000):
             self._q = faster_fifo.Queue(max_size_bytes=maxsize_bytes)
@@ -509,17 +399,23 @@ if faster_fifo is not None:
         def close(self):
             return self._q.close()
 
-        def put(self, obj):
+        def put(self, obj, *, timeout=None):
             if self._q.is_closed():
                 raise ValueError(f"{self!r} is closed")
-            self._q.put(obj, timeout=3600)
+            if timeout is None:
+                timeout = 3600
+            else:
+                timeout = max(0, timeout)
+            self._q.put(obj, block=True, timeout=timeout)
 
-        def get(self, block=True, timeout=None):
+        def get(self, *, timeout=None):
             if timeout is None:
                 timeout = float(3600)
+            else:
+                timeout = max(0, timeout)
             if self._q.message_buffer is None:
                 self._q.reallocate_msg_buffer(1_000_000)
-            return self._q.get(block, timeout)
+            return self._q.get(block=True, timeout=timeout)
 
         def put_many(self, objs):
             if self._q.is_closed():
@@ -555,10 +451,63 @@ if faster_fifo is not None:
             out.extend(more)
             return out
 
-        def get_nowait(self):
-            return self.get(False)
-
     def _FastQueue(self, **kwargs):
         return FastQueue(**kwargs)
 
     mp_context.BaseContext.FastQueue = _FastQueue
+
+
+class BoundedSimpleQueue:
+    '''
+    The standard `queue.SimpleQueue` is much faster than `queue.Queue` but
+    lacks the capability of maxsize control. This class adds a `maxsize`
+    parameter to `SimpleQueue`.
+
+    TODO: benchmark.
+    '''
+    def __init__(self, maxsize=0):
+        self.maxsize = maxsize
+        self._queue = deque()
+        self._mutex = threading.Lock()
+        self._not_empty = threading.Condition(self._mutex)
+        self._not_full = threading.Condition(self._mutex)
+
+    def put(self, item, block=True, timeout=None):
+        with self._not_full:
+            if 0 < self.maxsize <= len(self._queue):
+                if timeout is None:
+                    timeout = 600
+                else:
+                    timeout = max(0, timeout)
+                if not self._not_full.wait(timeout=timeout):
+                    raise Full
+            self._queue.append(item)
+            self._not_empty.notify()
+
+    def get(self, block=True, timeout=None):
+        with self._not_empty:
+            if len(self._queue) == 0:
+                if timeout is None:
+                    timeout = 600
+                else:
+                    timeout = max(0, timeout)
+                if not self._not_empty.wait(timeout=timeout):
+                    raise Empty
+            z = self._queue.popleft()
+            self._not_full.notify()
+        return z
+
+    def put_nowait(self, item):
+        self.put(item, False)
+
+    def get_nowait(self):
+        return self.get(False)
+
+    def empty(self):
+        return len(self._queue) == 0
+
+    def full(self):
+        return 0 < self.maxsize <= len(self._queue)
+
+    def qsize(self):
+        return len(self._queue)

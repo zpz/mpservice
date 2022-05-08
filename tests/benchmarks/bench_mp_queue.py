@@ -7,7 +7,7 @@ from zpz.profile import profiled, lineprofiled
 
 
 record = b'OK' * 100
-NN = 10000
+NN = 400000
 
 
 def push(q):
@@ -20,13 +20,14 @@ def push(q):
         q.put('OK')
     q.put(None)
     t1 = monotonic()
+    # print('  push took', t1 - t0)
 
 
 # @profiled()
 # @lineprofiled()
 def pull(q, done):
     if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(100, 100)
+        q = q.reader(10000)
     t0 = monotonic()
     while True:
         try:
@@ -38,11 +39,12 @@ def pull(q, done):
             if done.is_set():
                 break
     t1 = monotonic()
+    # print('  pull took', t1 - t0)
 
 
 def pull_many(q, done):
     if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(100, 100)
+        q = q.reader(10000)
     while True:
         try:
             z = q.get_many(100, first_timeout=0.1, extra_timeout=0.01)
@@ -71,12 +73,12 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    for qq in (mp.BasicQueue, mp.FastQueue, mp.Unique):
+    for qq in (mp.FastQueue, mp.Unique):
         q = qq()
         _push(q, pull)
 
     print('---- 5 workers ----')
-    for qq in (mp.BasicQueue, mp.FastQueue, mp.Unique):
+    for qq in (mp.FastQueue, mp.Unique):
         q = qq()
         _push(q, pull, 5)
 
@@ -103,8 +105,6 @@ def bench_push():
 
     print('---- pull many ----')
     print('---- one worker ----')
-    q = mp.BasicQueue()
-    _push_many(q, pull)
 
     q = mp.FastQueue()
     _push_many(q, pull_many)
@@ -113,9 +113,6 @@ def bench_push():
     _push_many(q, pull_many)
 
     print('---- 5 workers ----')
-
-    q = mp.BasicQueue()
-    _push_many(q, pull_many, 5)
 
     q = mp.FastQueue()
     _push_many(q, pull_many, 5)

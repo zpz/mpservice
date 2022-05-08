@@ -1,8 +1,9 @@
 Release 0.10.7 (upcoming)
 ==============
 
-- Added new custom queue type, `UniQueue`.
-- Removed the ZeroMQ-based `ZeroQueue`.
+- Added new custom queue type, `Unique`; removed `ZeroQueue` and `BasicQueue`.
+  The default queue used by `MPServer` is `Unique`; this has shown benefits
+  in improved batching sizes in some tests.
 
 
 Release 0.10.6

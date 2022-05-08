@@ -9,9 +9,7 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing
-import queue
 import subprocess
-import threading
 import warnings
 
 
@@ -92,54 +90,3 @@ def get_docker_host_ip():
     z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
     z = z.decode()[len('default via '):]
     return z[: z.find(' ')]
-
-
-# `SimpleQueue` is much faster than `Queue`, but it is unbounded.
-# This class adds bound to it, but with bounds, the speed is not better
-# then `Queue`. If this continues to be the case, this class will be removed.
-class BoundedSimpleQueue(queue.SimpleQueue):
-    '''
-    The standard `queue.SimpleQueue` is much faster than `queue.Queue` but
-    lacks the capability of maxsize control. This class adds a `maxsize`
-    parameter to `SimpleQueue`.
-
-    QPS (items transmitted per second) in a simple benchmark:
-        Queue:
-        SimpleQueue:
-        BoundedSimpleQueue:
-    '''
-    def __init__(self, maxsize=0):
-        '''
-        `maxsize`: default 0, meaning unlimited.
-        '''
-        super().__init__()
-        self.maxsize = maxsize
-        if maxsize > 0:
-            self._put_lock = threading.Lock()
-            self._notfull = threading.Condition()
-
-    def put(self, item, block=True, timeout=None):
-        if self.maxsize == 0:
-            return super().put(item)
-        with self._put_lock:
-            if self.qsize() < self.maxsize:
-                super().put(item)
-                return
-            with self._notfull:
-                if self._notfull.wait(timeout=timeout):
-                    super().put(item)
-                else:
-                    raise queue.Full()
-
-    def put_nowait(self, item):
-        return self.put(item, block=False)
-
-    def get(self, block=True, timeout=None):
-        z = super().get(block=block, timeout=timeout)
-        if self.qsize() == self.maxsize - 1:
-            with self._notfull:
-                self._notfull.notify()
-        return z
-
-    def get_nowait(self):
-        return self.get(block=False)

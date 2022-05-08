@@ -123,7 +123,7 @@ class Servlet(metaclass=ABCMeta):
         Be careful about passing custom class objects in `init_kwargs`.
         '''
         if isinstance(q_in, mpqueue.Unique):
-            batch_size = max(1, init_kwargs.get('batch_size', 0))
+            batch_size = max(1, init_kwargs.get('batch_size') or 1)
             q_in = q_in.reader(batch_size + 10, batch_size)
         if isinstance(q_out, mpqueue.Unique):
             q_out = q_out.writer()
@@ -327,6 +327,17 @@ class Servlet(metaclass=ABCMeta):
 
 
 class MPServer(EnforceOverrides, metaclass=ABCMeta):
+    '''
+    In previous versions, the input queue has a configurable maxsize to regulate
+    the number of in-progress items in the pipeline.
+    Since version 0.10.6, the input queue has effectively unlimitted capacity.
+    Input load is regulated in two ways:
+
+        - When this object is behind a HTTP service, the server's `backlog`
+          parameter provides this regulation.
+        - When this object is used via its method `stream`, the `backlog`
+          parameter of `stream` provides this regulation.
+    '''
     SLEEP_ENQUEUE = 0.00015
     # Sleep when queue is full. It is not disastrous if this is a little
     # long, because this happens only occasionally.
@@ -337,7 +348,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
-    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'BasicQueue'):
+    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'FastQueue'):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
@@ -737,8 +748,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         for iq, q in enumerate(qs):
             while True:
                 try:
-                    # q.put_nowait((uid, x))
-                    q.put((uid, x))
+                    q.put((uid, x), timeout=0)
                     break
                 except Full:
                     timenow = monotonic()
@@ -771,13 +781,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t0 = fut.data['t0']
 
         qs = self._input_queues()
-        # t1 = t0 + enqueue_timeout
+        t1 = t0 + enqueue_timeout
         for iq, q in enumerate(qs):
             try:
                 # `enqueue_timeout` is the combined time across input queues,
                 # not time per queue.
-                # q.put((uid, x), timeout=max(0, t1 - monotonic()))
-                q.put((uid, x))
+                q.put((uid, x), timeout=max(0, t1 - monotonic()))
             except Full:
                 fut.cancel()
                 self._uid_to_futures.pop(uid, None)
@@ -941,14 +950,14 @@ class EnsembleServer(MPServer):
 
         qq = self._q_out
         if isinstance(qq[0], mpqueue.Unique):
-            qq = [q.reader(1024, 1024) for q in qq]
+            qq = [q.reader() for q in qq]
 
         while not self._should_stop.is_set():
             for idx, q_out in enumerate(qq):
                 while not q_out.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
-                    uid, y = q_out.get_nowait()
+                    uid, y = q_out.get(timeout=0)
                     fut = futures.get(uid)
                     if fut is None:
                         # timed-out in `async_call` or `call`.
@@ -1001,7 +1010,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self, func: Callable, /, queue_type='BasicQueue', **kwargs):
+    def __init__(self, func: Callable, /, queue_type='FastQueue', **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,

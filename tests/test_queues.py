@@ -1,13 +1,13 @@
 import multiprocessing
 import time
-from queue import Empty, Full
-from mpservice._queues import NaiveQueue, UniQueue
+from queue import Empty
+from mpservice._queues import Unique
 from mpservice.streamer import Streamer
 
 import pytest
 
 methods = [None, 'spawn']
-names = ['BasicQueue', 'FastQueue']
+names = ['FastQueue']
 
 
 @pytest.mark.parametrize('method', methods)
@@ -37,16 +37,13 @@ def test_basic0(method, name):
 
 
 def worker_put(q):
-    # print('\nworker_put starting')
     q.put(1)
     q.put('ab')
     q.put(['1', 'yes', [2, 3]])
     q.put(b'none')
-    print('worker_put done')
 
 
 def worker_get(q):
-    print('\nworker_get starting')
     z = q.get()
     assert z == 1
     z = q.get(timeout=5)
@@ -55,7 +52,6 @@ def worker_get(q):
     assert z == ['1', 'yes', [2, 3]]
     z = q.get()
     assert z == b'none'
-    print('worker_get done')
 
 
 @pytest.mark.parametrize('method', methods)
@@ -154,29 +150,8 @@ def test_many(method, name):
     pp[4].join()
 
 
-def test_naive():
-    q = NaiveQueue(3)
-    q.put(2)
-    q.put(3)
-    assert q.get() == 2
-    q.put('a')
-    q.put('b')
-
-    with pytest.raises(Full):
-        q.put(9, timeout=0.5)
-    assert q.get() == 3
-    assert q.get() == 'a'
-    assert q.get() == 'b'
-    with pytest.raises(Empty):
-        q.get(timeout=0.3)
-    q.put(99)
-    q.put(100)
-    assert q.get() == 99
-    assert q.get() == 100
-
-
 def test_uni():
-    q = UniQueue()
+    q = Unique()
     writer = q.writer()
     reader = q.reader()
 
@@ -223,7 +198,7 @@ def uniwriter(q):
 
 def test_unimany():
     ctx = multiprocessing.get_context('spawn')
-    q = ctx.UniQueue()
+    q = ctx.Unique()
     w = ctx.Process(target=uniwriter, args=(q,))
     r = ctx.Process(target=unireader, args=(q,))
     w.start()
@@ -262,7 +237,7 @@ def uniwriter2(q, k):
 def test_unimany2():
     print('')
     ctx = multiprocessing.get_context('spawn')
-    q = ctx.UniQueue()
+    q = ctx.Unique()
     ps = []
     for i in range(3):
         ps.append(ctx.Process(target=uniwriter2, args=(q, i)))
