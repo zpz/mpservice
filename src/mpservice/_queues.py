@@ -359,11 +359,6 @@ class UniqueReader:
                     with notempty:
                         if not notempty.wait(timeout=t):
                             break
-                # while len(buffer) and n < max_n:
-                #     out.append(buffer.popleft())
-                #     n += 1
-                # with notfull:  # for optim performance, do not notify after every item
-                #     notfull.notify()
                 while len(buffer) and n < max_n:
                     with notfull:
                         z = buffer.popleft()
