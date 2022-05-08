@@ -25,7 +25,7 @@ def main(model):
 
 
 if __name__ == '__main__':
-    for qtype in ('BasicQueue', 'FastQueue', 'ZeroQueue'):
+    for qtype in ('Unique', 'FastQueue'):
         print('')
         print('using', qtype)
         seed(100)

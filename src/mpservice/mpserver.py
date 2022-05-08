@@ -74,7 +74,7 @@ from overrides import EnforceOverrides, overrides
 from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
 from .streamer import put_in_queue
-from . import mpqueue  # noqa: F401
+from . import _queues as mpqueue  # noqa: F401
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -105,8 +105,8 @@ class Servlet(metaclass=ABCMeta):
 
     @classmethod
     def run(cls, *,
-            q_in: queues.Queue,
-            q_out: queues.Queue,
+            q_in: mpqueue.QueueReader,
+            q_out: mpqueue.QueueWriter,
             q_err: queues.Queue,
             q_log: queues.Queue,
             should_stop: synchronize.Event,
@@ -122,6 +122,11 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
+        if isinstance(q_in, mpqueue.Unique):
+            batch_size = max(1, init_kwargs.get('batch_size') or 1)
+            q_in = q_in.reader(batch_size + 10, batch_size)
+        if isinstance(q_out, mpqueue.Unique):
+            q_out = q_out.writer()
         try:
             forward_logs(q_log)
             if cpus:
@@ -215,15 +220,19 @@ class Servlet(metaclass=ABCMeta):
                     y = self.call([x])[0]
                 else:
                     y = self.call(x)
-                if not put_in_queue(q_out, (uid, y), should_stop):
-                    return
+                # if not put_in_queue(q_out, (uid, y), should_stop):
+                #     return
+                q_out.put((uid, y))
             except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
                 err = RemoteException().to_dict()
-                if not put_in_queue(q_err, (uid, err), should_stop):
-                    return
+                # if not put_in_queue(q_err, (uid, err), should_stop):
+                #     return
+                q_err.put((uid, err))
+            if should_stop.is_set():
+                break
 
     def _start_batch(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
@@ -260,7 +269,8 @@ class Servlet(metaclass=ABCMeta):
                 results = self.call(batch)
             except Exception:
                 err = RemoteException().to_dict()
-                q_err.put_many([(uid, err) for uid in uids])
+                for uid in uids:
+                    q_err.put((uid, err))
             else:
                 q_out.put_many(list(zip(uids, results)))
 
@@ -317,6 +327,17 @@ class Servlet(metaclass=ABCMeta):
 
 
 class MPServer(EnforceOverrides, metaclass=ABCMeta):
+    '''
+    In previous versions, the input queue has a configurable maxsize to regulate
+    the number of in-progress items in the pipeline.
+    Since version 0.10.6, the input queue has effectively unlimitted capacity.
+    Input load is regulated in two ways:
+
+        - When this object is behind a HTTP service, the server's `backlog`
+          parameter provides this regulation.
+        - When this object is used via its method `stream`, the `backlog`
+          parameter of `stream` provides this regulation.
+    '''
     SLEEP_ENQUEUE = 0.00015
     # Sleep when queue is full. It is not disastrous if this is a little
     # long, because this happens only occasionally.
@@ -327,14 +348,14 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     TIMEOUT_ENQUEUE = 1
     TIMEOUT_TOTAL = 10
 
-    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'BasicQueue'):
+    def __init__(self, *, main_cpu: int = 0, queue_type: str = 'FastQueue'):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
         '''
         self._queue_type = queue_type
-        self._q_err = self.get_mpcontext().BasicQueue()
-        self._q_log = self.get_mpcontext().BasicQueue()  # This does not need the performance optim of fast_fifo.
+        self._q_err = self.get_mpcontext().Queue()
+        self._q_log = self.get_mpcontext().Queue()  # This does not need the performance optim of fast_fifo.
         self._servlet_configs = []
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
@@ -369,18 +390,20 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # should be used with context manager `__enter__`/`__exit__`
 
         t = self._thread_pool.submit(logger_thread, self._q_log)
-        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
+        t.add_done_callback(self._thread_task_done_callback)
+        # Put in the dict before adding callback, in case
+        # the task is already done when adding the callback.
 
         self._start_servlets()
         assert self._servlets
 
         t = self._thread_pool.submit(self._gather_output)
-        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
+        t.add_done_callback(self._thread_task_done_callback)
         t = self._thread_pool.submit(self._gather_error)
-        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
+        t.add_done_callback(self._thread_task_done_callback)
 
         return self
 
@@ -513,8 +536,8 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # it will be propagated in the main thread.
 
         t = self._thread_pool.submit(_enqueue)
-        t.add_done_callback(self._thread_task_done_callback)
         self._thread_tasks[t] = None
+        t.add_done_callback(self._thread_task_done_callback)
 
         _wait = self._call_wait_for_result
 
@@ -725,7 +748,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         for iq, q in enumerate(qs):
             while True:
                 try:
-                    q.put_nowait((uid, x))
+                    q.put((uid, x), timeout=0)
                     break
                 except Full:
                     timenow = monotonic()
@@ -793,34 +816,19 @@ class SequentialServer(MPServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._q_in_out = []
+        self._input_queues_ = None
 
     @overrides
     def _start_servlets(self):
         for k, (servlet, kwargs) in enumerate(self._servlet_configs):
             qtype = getattr(self.get_mpcontext(), self._queue_type)
-            if self._queue_type == 'ZeroQueue':
-                batch_size = kwargs.get('batch_size', 0)
-                hwm = max(batch_size, 10)
-                if not self._q_in_out:
-                    q_in = qtype(hwm=hwm)
-                    self._q_in_out.append(q_in)
-                else:
-                    q_in = self._q_in_out[-1]
-                if k < len(self._servlet_configs) - 1:
-                    batch_size = self._servlet_configs[k + 1][1].get('batch_size', 0)
-                    hwm = max(batch_size, 10)
-                    q_out = qtype(hwm=hwm)
-                else:
-                    q_out = qtype()
-                self._q_in_out.append(q_out)
+            if not self._q_in_out:
+                q_in = qtype()
+                self._q_in_out.append(q_in)
             else:
-                if not self._q_in_out:
-                    q_in = qtype()
-                    self._q_in_out.append(q_in)
-                else:
-                    q_in = self._q_in_out[-1]
-                q_out = qtype()
-                self._q_in_out.append(q_out)
+                q_in = self._q_in_out[-1]
+            q_out = qtype()
+            self._q_in_out.append(q_out)
 
             self._add_servlet(
                 servlet,
@@ -842,6 +850,8 @@ class SequentialServer(MPServer):
         threading.current_thread().name = 'ResultCollector'
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
+        if isinstance(q_out, mpqueue.Unique):
+            q_out = q_out.reader(1024, 1024)
 
         while not self._should_stop.is_set():
             try:
@@ -867,7 +877,12 @@ class SequentialServer(MPServer):
 
     @overrides
     def _input_queues(self):
-        return self._q_in_out[:1]
+        if self._input_queues_ is None:
+            q = self._q_in_out[0]
+            if isinstance(q, mpqueue.Unique):
+                q = q.writer()
+            self._input_queues_ = [q]
+        return self._input_queues_
 
 
 class EnsembleServer(MPServer):
@@ -881,17 +896,13 @@ class EnsembleServer(MPServer):
         super().__init__(**kwargs)
         self._q_in: List[queues.Queue] = []
         self._q_out: List[queues.Queue] = []
+        self._input_queues_ = None
 
     @overrides
     def _start_servlets(self):
         qtype = getattr(self.get_mpcontext(), self._queue_type)
-        for servlet, kwargs in self._servlet_configs:
-            if self._queue_type == 'ZeroQueue':
-                batch_size = kwargs.get('batch_size', 0)
-                hwm = max(10, batch_size)
-                q_in = qtype(hwm=hwm)
-            else:
-                q_in = qtype()
+        for k, (servlet, kwargs) in enumerate(self._servlet_configs):
+            q_in = qtype()
             q_out = qtype()
             self._q_in.append(q_in)
             self._q_out.append(q_out)
@@ -937,12 +948,16 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
+        qq = self._q_out
+        if isinstance(qq[0], mpqueue.Unique):
+            qq = [q.reader() for q in qq]
+
         while not self._should_stop.is_set():
-            for idx, q_out in enumerate(self._q_out):
+            for idx, q_out in enumerate(qq):
                 while not q_out.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
-                    uid, y = q_out.get_nowait()
+                    uid, y = q_out.get(timeout=0)
                     fut = futures.get(uid)
                     if fut is None:
                         # timed-out in `async_call` or `call`.
@@ -971,7 +986,12 @@ class EnsembleServer(MPServer):
 
     @overrides
     def _input_queues(self):
-        return self._q_in
+        if self._input_queues_ is None:
+            qq = self._q_in
+            if isinstance(qq[0], mpqueue.Unique):
+                qq = [q.writer() for q in qq]
+            self._input_queues_ = qq
+        return self._input_queues_
 
 
 class SimpleServlet(Servlet):
@@ -990,7 +1010,7 @@ class SimpleServer(SequentialServer):
     the specified function.
     '''
 
-    def __init__(self, func: Callable, /, queue_type='BasicQueue', **kwargs):
+    def __init__(self, func: Callable, /, queue_type='FastQueue', **kwargs):
         '''
         `func`: a function that takes an input value,
             which will be the value provided in calls to the server,

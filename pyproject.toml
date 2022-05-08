@@ -9,10 +9,8 @@ authors = [
     {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
 ]
 dependencies = [
-    "faster-fifo >=1.3.1,<1.4.0",
     "overrides",
     "psutil",
-    "pyzmq",
     "uvicorn[standard] >=0.15.0,<1.0",
     "uvloop",
 ]
@@ -33,6 +31,9 @@ Source = "https://github.com/zpz/mpservice"
 
 
 [project.optional-dependencies]
+faster-fifo = [
+    "faster-fifo >=1.3.1,<1.4.0",
+]
 test = [
     "bandit",
     "coverage[toml]",
@@ -46,7 +47,7 @@ test = [
     "pytest-asyncio",
     "requests",
     "starlette",
-    "zpz",
+    "zpz[lineprofiler]",
 ]
 
 

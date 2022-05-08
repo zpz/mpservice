@@ -1,22 +1,34 @@
 from queue import Empty
 import multiprocessing
 from time import monotonic, sleep
-import mpservice.mpqueue
+import mpservice._queues
+
+from zpz.profile import profiled, lineprofiled
 
 
 record = b'OK' * 100
-NN = 1000000
+NN = 400000
 
 
 def push(q):
+    t0 = monotonic()
+    if isinstance(q, mpservice._queues.Unique):
+        q = q.writer()
     data = record
     for _ in range(NN):
         # q.put(data)
         q.put('OK')
     q.put(None)
+    t1 = monotonic()
+    # print('  push took', t1 - t0)
 
 
+# @profiled()
+# @lineprofiled()
 def pull(q, done):
+    if isinstance(q, mpservice._queues.Unique):
+        q = q.reader(10000)
+    t0 = monotonic()
     while True:
         try:
             z = q.get(timeout=0.01)
@@ -26,12 +38,16 @@ def pull(q, done):
         except Empty:
             if done.is_set():
                 break
+    t1 = monotonic()
+    # print('  pull took', t1 - t0)
 
 
 def pull_many(q, done):
+    if isinstance(q, mpservice._queues.Unique):
+        q = q.reader(10000)
     while True:
         try:
-            z = q.get_many(100, timeout=0.01)
+            z = q.get_many(100, first_timeout=0.1, extra_timeout=0.01)
             sleep(0.015)
         except Empty:
             if done.is_set():
@@ -57,19 +73,23 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    for qq in (mp.BasicQueue, mp.ZeroQueue, mp.FastQueue):
+    for qq in (mp.FastQueue, mp.Unique):
         q = qq()
         _push(q, pull)
 
     print('---- 5 workers ----')
-    for qq in (mp.BasicQueue, mp.ZeroQueue, mp.FastQueue):
+    for qq in (mp.FastQueue, mp.Unique):
         q = qq()
         _push(q, pull, 5)
 
     def _push_many(q, target, nworkers=1):
+        if isinstance(q, mpservice._queues.Unique):
+            qq = q.writer()
+        else:
+            qq = q
         for _ in range(NN):
             # q.put(data)
-            q.put('OK')
+            qq.put('OK')
 
         done = mp.Event()
         done.set()
@@ -85,24 +105,19 @@ def bench_push():
 
     print('---- pull many ----')
     print('---- one worker ----')
-    q = mp.BasicQueue()
-    _push_many(q, pull)
-
-    q = mp.ZeroQueue()
-    _push_many(q, pull_many)
 
     q = mp.FastQueue()
+    _push_many(q, pull_many)
+
+    q = mp.Unique()
     _push_many(q, pull_many)
 
     print('---- 5 workers ----')
 
-    q = mp.BasicQueue()
-    _push_many(q, pull_many, 5)
-
-    q = mp.ZeroQueue(writer_hwm=100, reader_hwm=100)
-    _push_many(q, pull_many, 5)
-
     q = mp.FastQueue()
+    _push_many(q, pull_many, 5)
+
+    q = mp.Unique()
     _push_many(q, pull_many, 5)
 
 
