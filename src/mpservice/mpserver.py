@@ -851,7 +851,7 @@ class SequentialServer(MPServer):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
         if isinstance(q_out, mpqueue.Unique):
-            q_out = q_out.reader(1024, 1024)
+            q_out = q_out.reader()
 
         while not self._should_stop.is_set():
             try:
