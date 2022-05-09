@@ -58,7 +58,6 @@ import asyncio
 import concurrent.futures
 import logging
 import multiprocessing
-import queue
 import threading
 import warnings
 from abc import ABCMeta, abstractmethod
@@ -75,6 +74,7 @@ from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
 from .streamer import put_in_queue
 from . import _queues as mpqueue  # noqa: F401
+from ._queues import SingleLane
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -129,6 +129,7 @@ class Servlet(metaclass=ABCMeta):
             q_out = q_out.writer()
         try:
             forward_logs(q_log)
+            # TODO: does the log message carry process info?
             if cpus:
                 psutil.Process().cpu_affinity(cpus=cpus)
             obj = cls(**init_kwargs)
@@ -506,7 +507,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         enqueue_timeout, total_timeout = self._resolve_timeout(
             enqueue_timeout=enqueue_timeout or self.TIMEOUT_ENQUEUE * 10,
             total_timeout=total_timeout or self.TIMEOUT_TOTAL * 10)
-        tasks = queue.Queue(backlog)
+        tasks = SingleLane(backlog)
         nomore = object()
 
         def _enqueue():
@@ -851,7 +852,7 @@ class SequentialServer(MPServer):
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
         if isinstance(q_out, mpqueue.Unique):
-            q_out = q_out.reader(1024, 1024)
+            q_out = q_out.reader()
 
         while not self._should_stop.is_set():
             try:
