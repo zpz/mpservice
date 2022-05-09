@@ -145,19 +145,23 @@ class UniqueWriter:
     @staticmethod
     def _feed(buffer, not_empty, nomore, lock, writer):
         # This is the only reader of `self._buffer`.
-        while True:
-            if not buffer:
-                with not_empty:
-                    not_empty.wait()
-            x = buffer.popleft()
-            if x is nomore:
-                return
-            xx = _ForkingPickler.dumps(x)
-            if lock is None:
-                writer.send_bytes(xx)
-            else:
-                with lock:
+        try:
+            while True:
+                if not buffer:
+                    with not_empty:
+                        not_empty.wait()
+                x = buffer.popleft()
+                if x is nomore:
+                    return
+                xx = _ForkingPickler.dumps(x)
+                if lock is None:
                     writer.send_bytes(xx)
+                else:
+                    with lock:
+                        writer.send_bytes(xx)
+        except Exception as e:
+            logger.exception(e)
+            raise
 
     @staticmethod
     def _finalize_join(twr):
@@ -341,6 +345,8 @@ class UniqueReader:
         if len(buffer) == 0:
             if first_timeout is None:
                 first_timeout = 3600
+            elif first_timeout <= 0:
+                raise Empty
             with notempty:
                 if not notempty.wait(timeout=first_timeout):
                     raise Empty
@@ -355,7 +361,9 @@ class UniqueReader:
             deadline = monotonic() + extra_timeout
             while n < max_n:
                 if len(buffer) == 0:
-                    t = max(0., deadline - monotonic())
+                    t = deadline - monotonic()
+                    if t <= 0:
+                        break
                     with notempty:
                         if not notempty.wait(timeout=t):
                             break
@@ -451,40 +459,46 @@ else:
     mp_context.BaseContext.FastQueue = _FastQueue
 
 
-class BoundedSimpleQueue:
+class SingleLane:
     '''
-    The standard `queue.SimpleQueue` is much faster than `queue.Queue` but
-    lacks the capability of maxsize control. This class adds a `maxsize`
-    parameter to `SimpleQueue`.
-
-    TODO: benchmark.
+    This queue has a single reader and a single writer, possibly in different threads.
     '''
-    def __init__(self, maxsize=0):
+    def __init__(self, maxsize=1_000_000):
+        assert 1 <= maxsize
         self.maxsize = maxsize
         self._queue = deque()
         self._mutex = threading.Lock()
         self._not_empty = threading.Condition(self._mutex)
         self._not_full = threading.Condition(self._mutex)
+        self._closed = False
 
     def put(self, item, block=True, timeout=None):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
         with self._not_full:
             if 0 < self.maxsize <= len(self._queue):
+                if not block:
+                    raise Full
                 if timeout is None:
                     timeout = 3600
-                else:
-                    timeout = max(0, timeout)
+                elif timeout <= 0:
+                    raise Full
                 if not self._not_full.wait(timeout=timeout):
                     raise Full
             self._queue.append(item)
             self._not_empty.notify()
 
     def get(self, block=True, timeout=None):
+        if self._closed:
+            raise ValueError(f"{self!r} is closed")
         with self._not_empty:
             if len(self._queue) == 0:
+                if not block:
+                    raise Empty
                 if timeout is None:
                     timeout = 3600
-                else:
-                    timeout = max(0, timeout)
+                elif timeout <= 0:
+                    raise Empty
                 if not self._not_empty.wait(timeout=timeout):
                     raise Empty
             z = self._queue.popleft()
@@ -505,3 +519,8 @@ class BoundedSimpleQueue:
 
     def qsize(self):
         return len(self._queue)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True

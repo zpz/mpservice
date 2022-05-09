@@ -14,6 +14,7 @@ from overrides import EnforceOverrides
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
 from .streamer import put_in_queue
+from ._queues import SingleLane
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +444,7 @@ class SocketClient(EnforceOverrides):
         return self.__repr__()
 
     def __enter__(self):
-        self._pending_requests = queue.Queue(self._backlog)
+        self._pending_requests = SingleLane(self._backlog)
         q = queue.Queue()
         self._tasks.append(self._executor.submit(self._open_connections, q))
         n = 0
@@ -607,7 +608,7 @@ class SocketClient(EnforceOverrides):
         If `return_exceptions` is `True`, `y` could be an Exception object.
         '''
         # Refer to `mpserver.MPServer.stream` for in-code documentation.
-        tasks = queue.Queue(self._backlog)
+        tasks = SingleLane(self._backlog)
         nomore = object()
 
         def _enqueue():

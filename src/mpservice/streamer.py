@@ -197,7 +197,7 @@ import logging
 import random
 import threading
 import traceback
-from queue import Queue, Empty, Full
+from queue import Empty, Full
 from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
@@ -209,6 +209,7 @@ from overrides import EnforceOverrides, overrides, final
 
 from .remote_exception import RemoteException, exit_err_msg
 from .util import is_exception, is_async, MAX_THREADS
+from ._queues import SingleLane
 
 
 logger = logging.getLogger(__name__)
@@ -660,7 +661,7 @@ class Buffer(Stream):
         else:
             assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = Queue(maxsize)
+        self._q = SingleLane(maxsize)
         self._nomore = object()
         self._t = self._thread_pool.submit(self._start)
         # This requires that `instream` is already context managed.
@@ -718,7 +719,7 @@ class Transformer(Stream):
         self._return_x = return_x
         self._return_exceptions = return_exceptions
         self._nomore = object()
-        self._tasks = Queue(concurrency)
+        self._tasks = SingleLane(concurrency)
 
         if is_async(func):
             self._is_async = True

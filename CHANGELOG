@@ -1,7 +1,8 @@
-Release 0.10.7 (upcoming)
+Release 0.10.7 (forthcoming)
 ==============
 
-- Added new custom queue type, `Unique`; removed `ZeroQueue` and `BasicQueue`.
+- Added new custom queue types, `Unique` and `SingleLane`;
+  removed `ZeroQueue` and `BasicQueue`.
   The default queue used by `MPServer` is `Unique`; this has shown benefits
   in improved batching sizes in some tests.
 
