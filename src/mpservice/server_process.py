@@ -40,7 +40,7 @@ In order to proactively shut down the server process,
 delete (all references to) the proxy object.
 
 `ServerProcess.start()` can be used multiple times
-to have multiple shared objects, which reside in diff
+to create multiple server objects, which reside in diff
 processes and are independent of each other.
 
 Example use cases:

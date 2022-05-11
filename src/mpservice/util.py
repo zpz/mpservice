@@ -9,6 +9,7 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing
+import multiprocessing.queues
 import subprocess
 import warnings
 
@@ -47,7 +48,7 @@ def full_class_name(cls):
     return mod + '.' + cls.__name__
 
 
-def logger_thread(q: multiprocessing.Queue):
+def logger_thread(q: multiprocessing.queues.Queue):
     '''
     In main thread, start another thread with this function as `target`.
     '''
@@ -61,7 +62,7 @@ def logger_thread(q: multiprocessing.Queue):
             logger.handle(record)
 
 
-def forward_logs(q: multiprocessing.Queue):
+def forward_logs(q: multiprocessing.queues.Queue):
     '''
     In a Process (created using the "spawn" method),
     run this function at the beginning to set up putting all log messages
@@ -81,6 +82,10 @@ def forward_logs(q: multiprocessing.Queue):
 
 
 def get_docker_host_ip():
+    '''
+    From within a Docker container, this function finds the IP address
+    of the host machine.
+    '''
     # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
     # another idea:
     # ip -4 route list match 0/0 | cut -d' ' -f3

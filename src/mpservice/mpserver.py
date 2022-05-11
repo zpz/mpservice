@@ -116,7 +116,7 @@ class Servlet(metaclass=ABCMeta):
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
 
-        This function is the parameter `target` to `multiprocessing.Process`
+        This function is the parameter `target` to `Process`
         called by `MPServer` in the main process. As such, elements
         in `init_kwargs` go through pickling, hence they should consist
         mainly of small, native types such as string, number,small dict.
@@ -199,11 +199,14 @@ class Servlet(metaclass=ABCMeta):
 
     def start(self, *, q_in, q_out, q_err, should_stop):
         q_err.put(self.name)
-        if self.batch_size > 1:
-            self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
-                              should_stop=should_stop)
-        else:
-            self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
+        try:
+            if self.batch_size > 1:
+                self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
+                                  should_stop=should_stop)
+            else:
+                self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
+        except KeyboardInterrupt:
+            print(self.name, 'stopped by KeyboardInterrupt')
 
     def _start_single(self, *, q_in, q_out, q_err, should_stop):
         batch_size = self.batch_size
@@ -244,49 +247,54 @@ class Servlet(metaclass=ABCMeta):
                         n_batches, batch_size_min, batch_size_max, batch_size_mean)
 
         n_batches = 0
-        while True:
-            if n_batches == 0:
-                batch_size_max = -1
-                batch_size_min = 1000000
-                batch_size_mean = 0.0
+        try:
+            while True:
+                if n_batches == 0:
+                    batch_size_max = -1
+                    batch_size_min = 1000000
+                    batch_size_mean = 0.0
 
-            try:
-                batch = q_in.get_many(batch_size, first_timeout=0.5, extra_timeout=batch_wait_time)
-            except Empty:
+                try:
+                    batch = q_in.get_many(batch_size, first_timeout=0.5, extra_timeout=batch_wait_time)
+                except Empty:
+                    if should_stop.is_set():
+                        if n_batches:
+                            print_batching_info()
+                        return
+                    continue
+                except Exception as e:
+                    print(type(e), repr(e), str(e))
+                    raise
+
+                uids = [v[0] for v in batch]
+                batch = [v[1] for v in batch]
+                n = len(batch)
+
+                try:
+                    results = self.call(batch)
+                except Exception:
+                    err = RemoteException().to_dict()
+                    for uid in uids:
+                        q_err.put((uid, err))
+                else:
+                    q_out.put_many(list(zip(uids, results)))
+
+                n_batches += 1
+                batch_size_max = max(batch_size_max, n)
+                batch_size_min = min(batch_size_min, n)
+                batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+                if n_batches % 1000 == 0:
+                    print_batching_info()
+                    n_batches = 0
+
                 if should_stop.is_set():
-                    if n_batches:
+                    if n_batches and n_batches % 1000 != 0:
                         print_batching_info()
                     return
-                continue
-            except Exception as e:
-                print(type(e), repr(e), str(e))
-                raise
-
-            uids = [v[0] for v in batch]
-            batch = [v[1] for v in batch]
-            n = len(batch)
-
-            try:
-                results = self.call(batch)
-            except Exception:
-                err = RemoteException().to_dict()
-                for uid in uids:
-                    q_err.put((uid, err))
-            else:
-                q_out.put_many(list(zip(uids, results)))
-
-            n_batches += 1
-            batch_size_max = max(batch_size_max, n)
-            batch_size_min = min(batch_size_min, n)
-            batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-            if n_batches % 1000 == 0:
+        except BaseException:
+            if n_batches:
                 print_batching_info()
-                n_batches = 0
-
-            if should_stop.is_set():
-                if n_batches and n_batches % 1000 != 0:
-                    print_batching_info()
-                return
+            raise
 
     @abstractmethod
     def call(self, x):
