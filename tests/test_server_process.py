@@ -2,6 +2,7 @@ import multiprocessing
 import time
 from multiprocessing import current_process, active_children
 
+import pytest
 from mpservice.server_process import ServerProcess
 
 
@@ -49,13 +50,14 @@ def wait_long(server):
         assert nn == n
 
 
-def test_data_server():
+@pytest.mark.parametrize('method', [None, 'spawn'])
+def test_data_server(method):
     print('')
     print('starting test in %s' % current_process().name)
-    data_server = MyDataServer.start(inc=3.2)
-    data_server2 = MyDataServer.start()
+    mp = multiprocessing.get_context(method)
 
-    mp = multiprocessing.get_context('spawn')
+    data_server = MyDataServer.start(inc=3.2, ctx=mp)
+    data_server2 = MyDataServer.start(ctx=mp)
 
     p1 = mp.Process(
         target=increment,

@@ -13,6 +13,9 @@ Usage:
               y = ...
               return y
 
+    The subclass can define `__init__` and helper methods as needed,
+    plus public methods as service APIs.
+
   (2) in main process,
 
       obj = MyServerProcess.start(...)
@@ -37,7 +40,7 @@ In order to proactively shut down the server process,
 delete (all references to) the proxy object.
 
 `ServerProcess.start()` can be used multiple times
-to have multiple shared objects, which reside in diff
+to create multiple server objects, which reside in diff
 processes and are independent of each other.
 
 Example use cases:
@@ -61,12 +64,18 @@ from multiprocessing.managers import BaseManager
 class ServerProcess:
 
     @classmethod
-    def start(cls, *args, **kwargs):
+    def start(cls, *args, ctx=None, **kwargs):
+        '''
+        `args` and `kwargs` are passed on to the `__init__`
+        method of this class (implemented by a subclass as needed).
+        The method `__init__` is executed in the process that hosts
+        the real server object.
+        '''
         BaseManager.register(
             cls.__name__,
             cls,
         )
-        manager = BaseManager()
+        manager = BaseManager(ctx=ctx)
         manager.start()  # pylint: disable=consider-using-with
         obj = getattr(manager, cls.__name__)(*args, **kwargs)
         return obj
