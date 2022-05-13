@@ -3,6 +3,9 @@ Release 0.10.7 (forthcoming)
 
 - By default, `MPServer` uses the new, custom queue type `Unique` for faster
   buildup of batches for servlets. Removed `ZeroQueue` and `BasicQueue`.
+- Simplified timeout in `mpserver`. `EnqueueTimeout` is gone; `TotalTimeout` is renamed
+  `Timeout`. The parameters `enqueue_timeout` and `total_timeout` are combined
+  into `timeout`.
 - `ServerProcess` gets new parameter `ctx` for multiprocessing context.
 
 

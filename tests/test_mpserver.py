@@ -7,7 +7,7 @@ from overrides import overrides
 from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
     Servlet, SequentialServer, EnsembleServer, SimpleServer,
-    TotalTimeout
+    TimeoutError
 )
 from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
@@ -105,18 +105,16 @@ async def test_sequential_timeout_async(qtype):
     service = SequentialServer(queue_type=qtype)
     service.add_servlet(Delay)
     with service:
-        with pytest.raises(TotalTimeout):
-            z = await service.async_call(2.2, total_timeout=1)
+        with pytest.raises(TimeoutError):
+            z = await service.async_call(2.2, timeout=1)
 
 
 def test_sequential_timeout(qtype):
-    # TODO: it's hard to test for EnqueueTimeout because
-    # the servers don't have a parameter to control backlog.
     service = SequentialServer(queue_type=qtype)
     service.add_servlet(Delay)
     with service:
-        with pytest.raises(TotalTimeout):
-            z = service.call(2.2, total_timeout=1)
+        with pytest.raises(TimeoutError):
+            z = service.call(2.2, timeout=1)
 
 
 def test_sequential_stream(qtype):
@@ -205,15 +203,15 @@ class YourWideServer(EnsembleServer):
 async def test_ensemble_timeout_async(qtype):
     service = YourWideServer(queue_type=qtype)
     with service:
-        with pytest.raises(TotalTimeout):
-            z = await service.async_call(8.2, total_timeout=1)
+        with pytest.raises(TimeoutError):
+            z = await service.async_call(8.2, timeout=1)
 
 
 def test_ensemble_timeout(qtype):
     service = YourWideServer(queue_type=qtype)
     with service:
-        with pytest.raises(TotalTimeout):
-            z = service.call(8.2, total_timeout=1)
+        with pytest.raises(TimeoutError):
+            z = service.call(8.2, timeout=1)
 
 
 class HisWideServer(EnsembleServer):
