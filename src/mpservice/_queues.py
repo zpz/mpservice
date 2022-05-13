@@ -41,6 +41,9 @@ class QueueWriter(Protocol):
     def put_many(self, objs: Sequence, *, timeout=None) -> None:
         pass
 
+    def full(self) -> bool:
+        pass
+
     def close(self) -> None:
         pass
 
@@ -50,6 +53,9 @@ class QueueReader(Protocol):
         pass
 
     def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None) -> List[Any]:
+        pass
+
+    def empty(self) -> bool:
         pass
 
     def close(self) -> None:
@@ -185,7 +191,7 @@ class UniqueWriter:
     def __getstate__(self):
         raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-    def put(self, obj, *, timeout=None):
+    def put(self, obj):
         # `timeout` is ignored. This function does not block.
         # This is the only writer to `self._buffer`.
         if self._closed:
@@ -198,6 +204,9 @@ class UniqueWriter:
         # `timeout` is ignored. This function does not block.
         for obj in objs:
             self.put(obj)
+
+    def full(self):
+        return False
 
 
 class UniqueReader:
@@ -397,6 +406,9 @@ else:
 
         def empty(self):
             return self._q.empty()
+
+        def full(self):
+            return self._q.full()
 
         def close(self):
             return self._q.close()
