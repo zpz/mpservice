@@ -73,8 +73,7 @@ from overrides import EnforceOverrides, overrides
 from .remote_exception import RemoteException, exit_err_msg
 from .util import forward_logs, logger_thread
 from .streamer import put_in_queue
-from . import _queues as mpqueue  # noqa: F401
-from ._queues import SingleLane
+from . import _queues
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -93,8 +92,8 @@ class Servlet(metaclass=ABCMeta):
 
     @classmethod
     def run(cls, *,
-            q_in: mpqueue.QueueReader,
-            q_out: mpqueue.QueueWriter,
+            q_in: _queues.Unique,
+            q_out: _queues.Unique,
             q_err: queues.Queue,
             q_log: queues.Queue,
             should_stop: synchronize.Event,
@@ -455,7 +454,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # For streaming, "timeout" is usually not a concern.
         # The concern is overall throughput.
 
-        tasks = SingleLane(backlog)
+        tasks = _queues.SingleLane(backlog)
         nomore = object()
 
         def _enqueue():

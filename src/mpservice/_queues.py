@@ -24,7 +24,6 @@ from multiprocessing.connection import Pipe, Connection
 from multiprocessing.util import Finalize
 from queue import Empty, Full
 from time import monotonic
-from typing import Protocol, Any, Sequence, List
 
 logger = logging.getLogger(__name__)
 
@@ -99,34 +98,6 @@ class SingleLane:
         self._closed = True
 
 
-class QueueWriter(Protocol):
-    def put(self, obj: Any) -> None:
-        pass
-
-    def put_many(self, objs: Sequence) -> None:
-        pass
-
-    def full(self) -> bool:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
-class QueueReader(Protocol):
-    def get(self, *, timeout=None) -> Any:
-        pass
-
-    def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None) -> List[Any]:
-        pass
-
-    def empty(self) -> bool:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
 class UniqueReader:
     '''
     This queue-reader uses a size-capped background thread.
@@ -171,16 +142,8 @@ class UniqueReader:
             getcalled = self._get_called
             closed = self._buffer._closed
             batchsize = self._batch_size
-
-            if isinstance(self._reader, Connection):
-                def recv(max_n):
-                    # `max_n` is ignored
-                    z = self._reader._recv_bytes()
-                    return [z.getbuffer()]
-            else:
-                def recv(max_n):
-                    z = self._reader.get_many(timeout=float(60), max_messages_to_get=int(max_n))
-                    return [bytes(v) for v in z]
+            reader = self._reader
+            is_pipe = isinstance(reader, Connection)
 
             while True:
                 if buffer.full():
@@ -193,15 +156,22 @@ class UniqueReader:
                         # data off the pipe for this reader's buffer,
                         # even though there may be other readers waiting.
                         while True:
-                            n = max(1, batchsize - buffer.qsize())
-                            try:
-                                xx = recv(n)
-                            except EOFError:
-                                return
-                            except Empty:
-                                break
-                            for x in xx:
-                                buffer.put(x)
+                            if is_pipe:
+                                try:
+                                    z = reader._recv_bytes()
+                                except EOFError:
+                                    return
+                                buffer.put(z.getbuffer())
+                            else:
+                                n = max(1, batchsize - buffer.qsize())
+                                try:
+                                    z = reader.get_many(
+                                        timeout=float(60),
+                                        max_messages_to_get=int(n))
+                                except Empty:
+                                    break
+                                for x in z:
+                                    buffer.put(bytes(x))
                             if closed:
                                 return
                             if getcalled.is_set():
@@ -280,7 +250,6 @@ try:
 
 except ImportError:
     faster_fifo = None
-
 
     class UniqueWriter:
         '''
@@ -369,7 +338,6 @@ except ImportError:
         def full(self):
             return self._buffer.full()
 
-
     class Unique:
         '''
         Naming follows the example of `deque`:
@@ -440,23 +408,25 @@ else:
         def close(self):
             if self._closed:
                 return
-            self._writer.close()
             self._closed = True
 
         def __getstate__(self):
             raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-        def put(self, obj):
+        def put(self, obj, timeout=None):
+            if timeout is None:
+                timeout = 60
+            if self._closed:
+                raise ValueError(f"{self!r} is closed")
             # x = _ForkingPickler.dumps(obj)
             x = pickle.dumps(obj)
-            self._writer.put(x)
+            self._writer.put(x, timeout=timeout)
 
         def put_many(self, objs):
             if self._closed:
                 raise ValueError(f"{self!r} is closed")
 
             # xx = [_ForkingPickler.dumps(x) for x in objs]
-
             objs = [[pickle.dumps(x) for x in objs]]
             while objs:
                 try:
@@ -475,10 +445,8 @@ else:
         def full(self):
             return self._writer.full()
 
-
     def passthrough(x):
         return x
-
 
     class Unique:
         '''
@@ -487,10 +455,11 @@ else:
             'de queue'  --> 'deque'
             'uni queue' --> 'unique'
         '''
-        def __init__(self, *, ctx=None):
-            self._q = faster_fifo.Queue(max_size_bytes=10_000_000, loads=passthrough, dumps=passthrough)
+        def __init__(self, *, ctx=None, maxsize_bytes: int = 10_000_000):
             if ctx is None:
                 ctx = multiprocessing.get_context()
+            self._q = faster_fifo.Queue(
+                max_size_bytes=maxsize_bytes, loads=passthrough, dumps=passthrough)
             self._rlock = ctx.Lock()
             self._closed = False
 
@@ -518,13 +487,11 @@ else:
             self._closed = True
 
         def __del__(self):
-            if self._closed is not None:
-                # In the process where the object was created.
-                self.close()
+            self.close()
 
 
 def _Unique(self, **kwargs):
     return Unique(ctx=self.get_context(), **kwargs)
 
-mp_context.BaseContext.Unique = _Unique
 
+mp_context.BaseContext.Unique = _Unique

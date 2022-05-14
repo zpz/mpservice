@@ -1,7 +1,7 @@
 from queue import Empty
 import multiprocessing
 from time import monotonic, sleep
-import mpservice._queues
+from mpservice._queues import Unique
 
 from zpz.profile import profiled, lineprofiled
 
