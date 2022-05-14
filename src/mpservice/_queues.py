@@ -457,7 +457,7 @@ else:
 
             # xx = [_ForkingPickler.dumps(x) for x in objs]
 
-            objs = [pickle.dumps(x) for x in objs]
+            objs = [[pickle.dumps(x) for x in objs]]
             while objs:
                 try:
                     self._writer.put_many(objs[0], timeout=0.01)
