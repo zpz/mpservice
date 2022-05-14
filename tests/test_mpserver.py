@@ -13,11 +13,6 @@ from mpservice.remote_exception import RemoteException
 from mpservice.streamer import Streamer
 
 
-@pytest.fixture(params=['FastQueue', 'Unique'])
-def qtype(request):
-    yield request.param
-
-
 class Double(Servlet):
     def call(self, x):
         return x * 2
@@ -49,8 +44,8 @@ class Delay(Servlet):
 
 
 @pytest.mark.asyncio
-async def test_sequential_server_async(qtype):
-    service = SequentialServer(queue_type=qtype)
+async def test_sequential_server_async():
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
@@ -63,8 +58,8 @@ async def test_sequential_server_async(qtype):
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_sequential_server(qtype):
-    service = SequentialServer(queue_type=qtype)
+def test_sequential_server():
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3])
     with service:
@@ -76,8 +71,8 @@ def test_sequential_server(qtype):
         assert y == [v * 2 + 3 for v in x]
 
 
-def test_sequential_batch(qtype):
-    service = SequentialServer(queue_type=qtype)
+def test_sequential_batch():
+    service = SequentialServer()
     service.add_servlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
     with service:
         z = service.call(3)
@@ -88,8 +83,8 @@ def test_sequential_batch(qtype):
         assert y == [v + 4 for v in x]
 
 
-def test_sequential_error(qtype):
-    service = SequentialServer(queue_type=qtype)
+def test_sequential_error():
+    service = SequentialServer()
     service.add_servlet(Double, cpus=[1, 2])
     service.add_servlet(Shift, cpus=[3], stepsize=4)
     with service:
@@ -101,24 +96,24 @@ def test_sequential_error(qtype):
 
 
 @pytest.mark.asyncio
-async def test_sequential_timeout_async(qtype):
-    service = SequentialServer(queue_type=qtype)
+async def test_sequential_timeout_async():
+    service = SequentialServer()
     service.add_servlet(Delay)
     with service:
         with pytest.raises(TimeoutError):
             z = await service.async_call(2.2, timeout=1)
 
 
-def test_sequential_timeout(qtype):
-    service = SequentialServer(queue_type=qtype)
+def test_sequential_timeout():
+    service = SequentialServer()
     service.add_servlet(Delay)
     with service:
         with pytest.raises(TimeoutError):
             z = service.call(2.2, timeout=1)
 
 
-def test_sequential_stream(qtype):
-    service = SequentialServer(queue_type=qtype)
+def test_sequential_stream():
+    service = SequentialServer()
     service.add_servlet(Square, cpus=[1, 2, 3])
     with service:
         data = range(100)
@@ -158,8 +153,8 @@ class MyWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_ensemble_server_async(qtype):
-    service = MyWideServer(queue_type=qtype)
+async def test_ensemble_server_async():
+    service = MyWideServer()
 
     with service:
         z = await service.async_call('abcde')
@@ -171,8 +166,8 @@ async def test_ensemble_server_async(qtype):
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
-def test_ensemble_server(qtype):
-    service = MyWideServer(queue_type=qtype)
+def test_ensemble_server():
+    service = MyWideServer()
 
     with service:
         z = service.call('abcde')
@@ -200,15 +195,15 @@ class YourWideServer(EnsembleServer):
 
 
 @pytest.mark.asyncio
-async def test_ensemble_timeout_async(qtype):
-    service = YourWideServer(queue_type=qtype)
+async def test_ensemble_timeout_async():
+    service = YourWideServer()
     with service:
         with pytest.raises(TimeoutError):
             z = await service.async_call(8.2, timeout=1)
 
 
-def test_ensemble_timeout(qtype):
-    service = YourWideServer(queue_type=qtype)
+def test_ensemble_timeout():
+    service = YourWideServer()
     with service:
         with pytest.raises(TimeoutError):
             z = service.call(8.2, timeout=1)
@@ -227,8 +222,8 @@ class HisWideServer(EnsembleServer):
         return [min(results), max(results)]
 
 
-def test_ensemble_stream(qtype):
-    service = HisWideServer(queue_type=qtype)
+def test_ensemble_stream():
+    service = HisWideServer()
     with service:
         data = range(100)
         ss = service.stream(data)
@@ -247,14 +242,14 @@ def func2(x, shift):
     return [_ + shift for _ in x]
 
 
-def test_simple_server(qtype):
-    server = SimpleServer(func1, shift=3, queue_type=qtype)
+def test_simple_server():
+    server = SimpleServer(func1, shift=3)
     with server:
         data = range(1000)
         ss = server.stream(data, return_x=True)
         assert list(ss) == [(x, x + 3) for x in range(1000)]
 
-    server = SimpleServer(func2, batch_size=99, shift=5, queue_type=qtype)
+    server = SimpleServer(func2, batch_size=99, shift=5)
     with server:
         data = range(1000)
         ss = server.stream(data)

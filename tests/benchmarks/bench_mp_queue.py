@@ -12,8 +12,7 @@ NN = 400000
 
 def push(q):
     t0 = monotonic()
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.writer()
+    q = q.writer()
     data = record
     for _ in range(NN):
         # q.put(data)
@@ -26,8 +25,7 @@ def push(q):
 # @profiled()
 # @lineprofiled()
 def pull(q, done):
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(10000)
+    q = q.reader(10000)
     t0 = monotonic()
     while True:
         try:
@@ -43,8 +41,7 @@ def pull(q, done):
 
 
 def pull_many(q, done):
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(10000)
+    q = q.reader(10000)
     while True:
         try:
             z = q.get_many(100, first_timeout=0.1, extra_timeout=0.01)
@@ -73,20 +70,15 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    for qq in (mp.FastQueue, mp.Unique):
-        q = qq()
-        _push(q, pull)
+    q = Unique()
+    _push(q, pull)
 
     print('---- 5 workers ----')
-    for qq in (mp.FastQueue, mp.Unique):
-        q = qq()
-        _push(q, pull, 5)
+    q = Unique()
+    _push(q, pull, 5)
 
     def _push_many(q, target, nworkers=1):
-        if isinstance(q, mpservice._queues.Unique):
-            qq = q.writer()
-        else:
-            qq = q
+        qq = q.writer()
         for _ in range(NN):
             # q.put(data)
             qq.put('OK')
@@ -106,16 +98,10 @@ def bench_push():
     print('---- pull many ----')
     print('---- one worker ----')
 
-    q = mp.FastQueue()
-    _push_many(q, pull_many)
-
     q = mp.Unique()
     _push_many(q, pull_many)
 
     print('---- 5 workers ----')
-
-    q = mp.FastQueue()
-    _push_many(q, pull_many, 5)
 
     q = mp.Unique()
     _push_many(q, pull_many, 5)

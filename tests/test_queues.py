@@ -7,102 +7,6 @@ from mpservice.streamer import Streamer
 import pytest
 
 methods = [None, 'spawn']
-names = ['FastQueue']
-
-
-@pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
-def test_basic0(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    q.put(3)
-    assert q.get() == 3
-    with pytest.raises(Empty):
-        _ = q.get(timeout=0.8)
-    q.put_many(range(8))
-    assert q.get_many(3) == [0, 1, 2]
-    assert q.get_many(4) == [3, 4, 5, 6]
-    assert q.get_many(4, first_timeout=0.2, extra_timeout=0.2) == [7]
-    with pytest.raises(Empty):
-        q.get_many(3, first_timeout=0.2, extra_timeout=0.2)
-
-    assert q.empty()
-    q.put('abc')
-
-    time.sleep(0.1) # To prevent BrokenPipeError with BasicQueue.
-    q.close()
-    with pytest.raises(ValueError):
-        q.put(8)
-
-
-def worker_put(q):
-    q.put(1)
-    q.put('ab')
-    q.put(['1', 'yes', [2, 3]])
-    q.put(b'none')
-
-
-def worker_get(q):
-    z = q.get()
-    assert z == 1
-    z = q.get(timeout=5)
-    assert z == 'ab'
-    z = q.get()
-    assert z == ['1', 'yes', [2, 3]]
-    z = q.get()
-    assert z == b'none'
-
-
-@pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
-def test_basic1(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    worker_put(q)
-    worker_get(q)
-
-
-@pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
-def test_basic2(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    p = mp.Process(target=worker_put, args=(q,))
-    p.start()
-    worker_get(q)
-    p.join()
-
-
-@pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
-def test_basic3(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    p = mp.Process(target=worker_get, args=(q,))
-    p.start()
-    worker_put(q)
-    p.join()
-
-
-@pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
-def test_basic4(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    pp = [
-        mp.Process(target=worker_put, args=(q,)),
-        mp.Process(target=worker_get, args=(q,)),
-    ]
-    for p in pp:
-        p.start()
-    time.sleep(1)
-    for p in pp:
-        p.join()
 
 
 def put_many(q, n0, n):
@@ -128,7 +32,6 @@ def get_many(q, done):
 
 
 @pytest.mark.parametrize('method', methods)
-@pytest.mark.parametrize('name', names)
 def test_many(method, name):
     print('')
     mp = multiprocessing.get_context(method)
