@@ -9,49 +9,6 @@ import pytest
 methods = [None, 'spawn']
 
 
-def put_many(q, n0, n):
-    nn = 0
-    with Streamer(range(n0, n0 + n)) as data:
-        for xs in data.batch(23):
-            q.put_many(xs)
-            nn += len(xs)
-        print(multiprocessing.current_process().name, 'put', nn, 'items')
-
-
-def get_many(q, done):
-    n = 0
-    while True:
-        try:
-            z = q.get_many(30, first_timeout=1, extra_timeout=1)
-        except Empty:
-            if done.is_set():
-                break
-            continue
-        n += len(z)
-    print(multiprocessing.current_process().name, 'got', n, 'items')
-
-
-@pytest.mark.parametrize('method', methods)
-def test_many(method, name):
-    print('')
-    mp = multiprocessing.get_context(method)
-    q = getattr(mp, name)()
-    done = mp.Event()
-    pp = []
-    pp.append(mp.Process(target=put_many, args=(q, 0, 1000)))
-    pp.append(mp.Process(target=put_many, args=(q, 1000, 1000)))
-    pp.append(mp.Process(target=get_many, args=(q, done)))
-    pp.append(mp.Process(target=get_many, args=(q, done)))
-    pp.append(mp.Process(target=get_many, args=(q, done)))
-    for p in pp:
-        p.start()
-    pp[0].join()
-    pp[1].join()
-    done.set()
-    pp[2].join()
-    pp[3].join()
-    pp[4].join()
-
 
 def test_uni():
     q = Unique()
