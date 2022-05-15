@@ -13,9 +13,7 @@ NN = 400000
 def push(q):
     t0 = monotonic()
     q = q.writer()
-    data = record
     for _ in range(NN):
-        # q.put(data)
         q.put('OK')
     q.put(None)
     t1 = monotonic()
@@ -55,11 +53,12 @@ def bench_push():
     print('==== push ====')
     mp = multiprocessing.get_context('spawn')
 
-    def _push(q, target, nworkers=1):
+    def _push(nworkers=1):
+        q = mp.Unique()
         done = mp.Event()
         pp = []
         pp.append(mp.Process(target=push, args=(q,)))
-        pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
+        pp.extend((mp.Process(target=pull, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
         t0 = monotonic()
@@ -70,14 +69,13 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    q = Unique()
-    _push(q, pull)
+    _push(1)
 
     print('---- 5 workers ----')
-    q = Unique()
-    _push(q, pull, 5)
+    _push(5)
 
-    def _push_many(q, target, nworkers=1):
+    def _push_many(nworkers=1):
+        q = mp.Unique()
         qq = q.writer()
         for _ in range(NN):
             # q.put(data)
@@ -86,7 +84,7 @@ def bench_push():
         done = mp.Event()
         done.set()
         pp = []
-        pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
+        pp.extend((mp.Process(target=pull_many, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
         t0 = monotonic()
@@ -98,13 +96,11 @@ def bench_push():
     print('---- pull many ----')
     print('---- one worker ----')
 
-    q = mp.Unique()
-    _push_many(q, pull_many)
+    _push_many(1)
 
     print('---- 5 workers ----')
 
-    q = mp.Unique()
-    _push_many(q, pull_many, 5)
+    _push_many(5)
 
 
 def main():

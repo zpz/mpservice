@@ -14,7 +14,6 @@ They are purpose-built for particular use cases in this package.
 
 import logging
 import multiprocessing
-import pickle
 import sys
 import threading
 import weakref
@@ -39,6 +38,9 @@ class SingleLane:
     This queue has a single reader and a single writer, possibly in different threads.
     '''
     def __init__(self, maxsize=1_000_000):
+        '''
+        `maxisze`: max number of elements in the queue. `0` means no limit.
+        '''
         assert 0 <= maxsize
         self.maxsize = maxsize
         self._queue = deque()
@@ -102,14 +104,14 @@ class UniqueReader:
     '''
     This queue-reader uses a size-capped background thread.
 
-    Similar to `UniqueWriter`,
-    this object is not shared between threads,
+    This object is not shared between threads,
     and cannot be passed across processes.
     An instance is created via `Unique.reader()`,
     either in the Unique-creating process or in another
     process (into which a `Unique` has been passed).
     '''
     def __init__(self, reader, read_lock, buffer_size: int = None, batch_size: int = None):
+        # `reader` is either a `Connection` or a `faster_fifo.Queue`.
         if buffer_size is None:
             if batch_size is None:
                 buffer_size = 1024
@@ -143,7 +145,13 @@ class UniqueReader:
             closed = self._buffer._closed
             batchsize = self._batch_size
             reader = self._reader
-            is_pipe = isinstance(reader, Connection)
+            if isinstance(reader, Connection):
+                is_pipe = True
+            else:
+                # `faster_fifo.Queue`
+                is_pipe = False
+                if reader.message_buffer is None:
+                    reader.reallocate_msg_buffer(1_000_000)
 
             while True:
                 if buffer.full():
@@ -159,19 +167,32 @@ class UniqueReader:
                             if is_pipe:
                                 try:
                                     z = reader._recv_bytes()
+                                    # This will wait forever if there's nothing
+                                    # to read.
                                 except EOFError:
                                     return
                                 buffer.put(z.getbuffer())
                             else:
                                 n = max(1, batchsize - buffer.qsize())
                                 try:
+                                    # `faster_fifo.Queue.get_many` will wait
+                                    # up to the specified timeout if there's nothing;
+                                    # once there's something to read, it will
+                                    # read up to the max count that's already there
+                                    # to be read---importantly, it will not spread
+                                    # out the wait in order to collect more elements.
                                     z = reader.get_many(
+                                        block=True,
                                         timeout=float(60),
                                         max_messages_to_get=int(n))
                                 except Empty:
-                                    break
-                                for x in z:
-                                    buffer.put(bytes(x))
+                                    pass
+                                else:
+                                    for x in z:
+                                        buffer.put(bytes(x))
+                                        # TODO: understand the need for `bytes` here
+                                        # and compare with `getbuffer` above.
+                                        # Is there overhead? Can this be simplified?
                             if closed:
                                 return
                             if getcalled.is_set():
@@ -204,8 +225,8 @@ class UniqueReader:
     def empty(self):
         return self._buffer.empty()
 
-    def full(self):
-        return self._buffer.full()
+    # def full(self):
+    #     return self._buffer.full()
 
     def qsize(self):
         return self._buffer.qsize()
@@ -218,14 +239,13 @@ class UniqueReader:
         '''
         z = self._buffer.get(timeout=timeout)
         self._get_called.set()
-        # return _ForkingPickler.loads(z)
-        return pickle.loads(z)
+        return _ForkingPickler.loads(z)
+        # return pickle.loads(z)
 
     def get_many(self, max_n: int, *, first_timeout=None, extra_timeout=None):
         buffer = self._buffer
         out = [buffer.get(timeout=first_timeout)]
         n = 1
-
         if max_n > 1:
             if extra_timeout is None:
                 extra_timeout = 60
@@ -238,10 +258,9 @@ class UniqueReader:
                     break
                 out.append(z)
                 n += 1
-
         self._get_called.set()
-        # return [_ForkingPickler.loads(v) for v in out]
-        return [pickle.loads(v) for v in out]
+        return [_ForkingPickler.loads(v) for v in out]
+        # return [pickle.loads(v) for v in out]
 
 
 try:
@@ -265,10 +284,10 @@ except ImportError:
         Refer to source of `multiprocessing.queues.Queue`.
         '''
 
-        def __init__(self, writer, write_lock):
+        def __init__(self, writer: Connection, write_lock):
             self._writer = writer
             self._lock = write_lock  # this is None on win32
-            self._buffer = SingleLane(0)
+            self._buffer = SingleLane(0)  # no size limit
             self._closed = False
             self._start_thread()
 
@@ -293,15 +312,15 @@ except ImportError:
             # This is the only reader of `self._buffer`.
             try:
                 while True:
-                    x = buffer.get()
-                    if x is nomore:
+                    obj = buffer.get()
+                    if obj is nomore:
                         return
-                    xx = _ForkingPickler.dumps(x)
+                    x = _ForkingPickler.dumps(obj)
                     if lock is None:
-                        writer.send_bytes(xx)
+                        writer.send_bytes(x)
                     else:
                         with lock:
-                            writer.send_bytes(xx)
+                            writer.send_bytes(x)
             except Exception as e:
                 logger.exception(e)
                 raise
@@ -326,14 +345,17 @@ except ImportError:
         def __getstate__(self):
             raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-        def put(self, obj):
+        def put(self, obj, *, timeout=None):
+            # `timeout` is ignored.
             # This function does not block.
             # This is the only writer to `self._buffer`.
             self._buffer.put(obj)
 
-        def put_many(self, objs):
+        def put_many(self, objs, *, timeout=None):
+            # `timeout` is ignored.
+            # This function does not block.
             for obj in objs:
-                self.put(obj)
+                self._buffer.put(obj)
 
         def full(self):
             return self._buffer.full()
@@ -389,19 +411,14 @@ else:
 
     class UniqueWriter:
         '''
-        This queue-writer has no size limit.
-        Its `put` method does not block.
-
         This object is not shared between threads,
         and cannot be passed across processes.
         An instance is created by `Unique.writer()`,
         either in the Unique-creating process or in another
         process (into which a `Unique` has been passed).
-
-        Refer to source of `multiprocessing.queues.Queue`.
         '''
 
-        def __init__(self, writer):
+        def __init__(self, writer: faster_fifo.Queue):
             self._writer = writer
             self._closed = False
 
@@ -413,34 +430,39 @@ else:
         def __getstate__(self):
             raise TypeError(f"{self.__class__.__name__} does not support pickling")
 
-        def put(self, obj, timeout=None):
+        def put(self, obj, *, timeout=None):
+            if self._closed:
+                raise ValueError(f"{self!r} is closed")
             if timeout is None:
-                timeout = 60
+                timeout = 3600 * 24
+            x = bytes(_ForkingPickler.dumps(obj))
+            self._writer.put(x, timeout=float(timeout))
+
+        def put_many(self, objs, *, timeout=None):
             if self._closed:
                 raise ValueError(f"{self!r} is closed")
-            # x = _ForkingPickler.dumps(obj)
-            x = pickle.dumps(obj)
-            self._writer.put(x, timeout=timeout)
+            if timeout is None:
+                timeout = 3600 * 24
 
-        def put_many(self, objs):
-            if self._closed:
-                raise ValueError(f"{self!r} is closed")
+            xx = [bytes(_ForkingPickler.dumps(obj)) for obj in objs]
+            self._writer.put_many(xx, timeout=float(timeout))
 
-            # xx = [_ForkingPickler.dumps(x) for x in objs]
-            objs = [[pickle.dumps(x) for x in objs]]
-            while objs:
-                try:
-                    self._writer.put_many(objs[0], timeout=0.01)
-                except Full:
-                    if len(objs[0]) > 1:
-                        k = int(len(objs[0]) / 2)
-                        objs = [objs[0][:k], objs[0][k:]] + objs[1:]
-                        # Split the data batch into smaller batches.
-                        # This is in case the buffer is too small for the whole batch,
-                        # hence would never succeed unless we split the batch into
-                        # smaller chunks.
-                else:
-                    objs = objs[1:]
+            # # This is safe against extemely large data, but
+            # # in this way we can't control timeout.
+            # xx = [xx]
+            # while xx:
+            #     try:
+            #         self._writer.put_many(xx[0], timeout=0.01)
+            #     except Full:
+            #         if len(xx[0]) > 1:
+            #             k = int(len(xx[0]) / 2)
+            #             objs = [xx[0][:k], xx[0][k:]] + xx[1:]
+            #             # Split the data batch into smaller batches.
+            #             # This is in case the buffer is too small for the whole batch,
+            #             # hence would never succeed unless we split the batch into
+            #             # smaller chunks.
+            #     else:
+            #         xx = xx[1:]
 
         def full(self):
             return self._writer.full()
@@ -478,8 +500,8 @@ else:
             return UniqueReader(self._q, self._rlock, buffer_size, batch_size)
 
         def close(self):
-            # This may be called only in the process where this object was created.
             if self._closed is None:
+                # Not in the process where the Queue was created.
                 return
             if self._closed:
                 return

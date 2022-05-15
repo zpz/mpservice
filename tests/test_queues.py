@@ -6,12 +6,15 @@ from mpservice.streamer import Streamer
 
 import pytest
 
-methods = [None, 'spawn']
+
+@pytest.fixture(params=[None, 'spawn'])
+def mp(request):
+    return multiprocessing.get_context(request.param)
 
 
 
-def test_uni():
-    q = Unique()
+def test_uni(mp):
+    q = mp.Unique()
     writer = q.writer()
     reader = q.reader()
 
@@ -56,11 +59,10 @@ def uniwriter(q):
     q.close()
 
 
-def test_unimany():
-    ctx = multiprocessing.get_context('spawn')
-    q = ctx.Unique()
-    w = ctx.Process(target=uniwriter, args=(q,))
-    r = ctx.Process(target=unireader, args=(q,))
+def test_unimany(mp):
+    q = mp.Unique()
+    w = mp.Process(target=uniwriter, args=(q,))
+    r = mp.Process(target=unireader, args=(q,))
     w.start()
     r.start()
     w.join()
@@ -94,15 +96,14 @@ def uniwriter2(q, k):
     print('writer', name, 'wrote', n, 'items')
 
 
-def test_unimany2():
+def test_unimany2(mp):
     print('')
-    ctx = multiprocessing.get_context('spawn')
-    q = ctx.Unique()
+    q = mp.Unique()
     ps = []
     for i in range(3):
-        ps.append(ctx.Process(target=uniwriter2, args=(q, i)))
+        ps.append(mp.Process(target=uniwriter2, args=(q, i)))
     for i in range(3):
-        ps.append(ctx.Process(target=unireader2, args=(q, )))
+        ps.append(mp.Process(target=unireader2, args=(q, )))
     for p in ps:
         p.start()
     for p in ps:
