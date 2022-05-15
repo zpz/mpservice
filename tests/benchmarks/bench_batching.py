@@ -1,6 +1,5 @@
 from time import sleep, monotonic
 from random import uniform, seed
-import mpservice.mpserver
 from mpservice.mpserver import SimpleServer
 from zpz.logging import config_logger
 
@@ -25,12 +24,10 @@ def main(model):
 
 
 if __name__ == '__main__':
-    for qtype in ('Unique', 'FastQueue'):
-        print('')
-        print('using', qtype)
-        seed(100)
-        config_logger(with_process_name=True)
-        model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01, queue_type=qtype)
-        with model:
-            main(model)
+    print('')
+    seed(100)
+    config_logger(with_process_name=True)
+    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
+    with model:
+        main(model)
 

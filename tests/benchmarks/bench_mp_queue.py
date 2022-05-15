@@ -1,7 +1,7 @@
 from queue import Empty
 import multiprocessing
 from time import monotonic, sleep
-import mpservice._queues
+from mpservice._queues import Unique
 
 from zpz.profile import profiled, lineprofiled
 
@@ -12,11 +12,8 @@ NN = 400000
 
 def push(q):
     t0 = monotonic()
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.writer()
-    data = record
+    q = q.writer()
     for _ in range(NN):
-        # q.put(data)
         q.put('OK')
     q.put(None)
     t1 = monotonic()
@@ -26,8 +23,7 @@ def push(q):
 # @profiled()
 # @lineprofiled()
 def pull(q, done):
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(10000)
+    q = q.reader(10000)
     t0 = monotonic()
     while True:
         try:
@@ -43,8 +39,7 @@ def pull(q, done):
 
 
 def pull_many(q, done):
-    if isinstance(q, mpservice._queues.Unique):
-        q = q.reader(10000)
+    q = q.reader(10000)
     while True:
         try:
             z = q.get_many(100, first_timeout=0.1, extra_timeout=0.01)
@@ -58,11 +53,12 @@ def bench_push():
     print('==== push ====')
     mp = multiprocessing.get_context('spawn')
 
-    def _push(q, target, nworkers=1):
+    def _push(nworkers=1):
+        q = mp.Unique()
         done = mp.Event()
         pp = []
         pp.append(mp.Process(target=push, args=(q,)))
-        pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
+        pp.extend((mp.Process(target=pull, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
         t0 = monotonic()
@@ -73,20 +69,14 @@ def bench_push():
 
     print('---- pull one ----')
     print('---- one worker ----')
-    for qq in (mp.FastQueue, mp.Unique):
-        q = qq()
-        _push(q, pull)
+    _push(1)
 
     print('---- 5 workers ----')
-    for qq in (mp.FastQueue, mp.Unique):
-        q = qq()
-        _push(q, pull, 5)
+    _push(5)
 
-    def _push_many(q, target, nworkers=1):
-        if isinstance(q, mpservice._queues.Unique):
-            qq = q.writer()
-        else:
-            qq = q
+    def _push_many(nworkers=1):
+        q = mp.Unique()
+        qq = q.writer()
         for _ in range(NN):
             # q.put(data)
             qq.put('OK')
@@ -94,7 +84,7 @@ def bench_push():
         done = mp.Event()
         done.set()
         pp = []
-        pp.extend((mp.Process(target=target, args=(q, done)) for _ in range(nworkers)))
+        pp.extend((mp.Process(target=pull_many, args=(q, done)) for _ in range(nworkers)))
         for p in pp:
             p.start()
         t0 = monotonic()
@@ -106,19 +96,11 @@ def bench_push():
     print('---- pull many ----')
     print('---- one worker ----')
 
-    q = mp.FastQueue()
-    _push_many(q, pull_many)
-
-    q = mp.Unique()
-    _push_many(q, pull_many)
+    _push_many(1)
 
     print('---- 5 workers ----')
 
-    q = mp.FastQueue()
-    _push_many(q, pull_many, 5)
-
-    q = mp.Unique()
-    _push_many(q, pull_many, 5)
+    _push_many(5)
 
 
 def main():
