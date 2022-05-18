@@ -1,3 +1,11 @@
+Release 0.10.8
+==============
+
+- Finetune to `EnsembleServer`: ensemble elements could be `RemoteException`
+  objects, i.e. failure of one ensemble component will not halt or invalidate
+  the other components.
+
+
 Release 0.10.7
 ==============
 

@@ -94,9 +94,10 @@ class Servlet(metaclass=ABCMeta):
     def run(cls, *,
             q_in: _queues.Unique,
             q_out: _queues.Unique,
-            q_err: queues.Queue,
             q_log: queues.Queue,
+            q_indicator: queues.Queue,
             should_stop: synchronize.Event,
+            q_err: queues.Queue = None,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -112,12 +113,15 @@ class Servlet(metaclass=ABCMeta):
         batch_size = max(1, init_kwargs.get('batch_size') or 1)
         q_in = q_in.reader(batch_size + 10, batch_size)
         q_out = q_out.writer()
+        if q_err is None:
+            q_err = q_out
         try:
             forward_logs(q_log)
             # TODO: does the log message carry process info?
             if cpus:
                 psutil.Process().cpu_affinity(cpus=cpus)
             obj = cls(**init_kwargs)
+            q_indicator.put(obj.name)
             obj.start(q_in=q_in,
                       q_out=q_out,
                       q_err=q_err,
@@ -183,7 +187,6 @@ class Servlet(metaclass=ABCMeta):
         self.name = multiprocessing.current_process().name
 
     def start(self, *, q_in, q_out, q_err, should_stop):
-        q_err.put(self.name)
         try:
             if self.batch_size > 1:
                 self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
@@ -216,7 +219,8 @@ class Servlet(metaclass=ABCMeta):
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
                 err = RemoteException().to_dict()
-                q_err.put((uid, err))
+                if not put_in_queue(q_err, (uid, err), should_stop):
+                    return
             if should_stop.is_set():
                 break
 
@@ -257,7 +261,8 @@ class Servlet(metaclass=ABCMeta):
                 except Exception:
                     err = RemoteException().to_dict()
                     for uid in uids:
-                        q_err.put((uid, err))
+                        if not put_in_queue(q_err, (uid, err), should_stop):
+                            return
                 else:
                     while True:
                         try:
@@ -345,12 +350,12 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
         '''
-        self._q_err = self.get_mpcontext().Queue()
         self._q_log = self.get_mpcontext().Queue()  # This does not need the performance optim of fast_fifo.
         self._servlet_configs = []
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
 
+        self._q_indicator = self.get_mpcontext().Queue()
         self._should_stop = self.get_mpcontext().Event()
         # `_add_servlet` can only be called after this.
         # In other words, subclasses should call `super().__init__`
@@ -392,9 +397,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         t = self._thread_pool.submit(self._gather_output)
         self._thread_tasks[t] = None
         t.add_done_callback(self._thread_task_done_callback)
-        t = self._thread_pool.submit(self._gather_error)
-        self._thread_tasks[t] = None
-        t.add_done_callback(self._thread_task_done_callback)
 
         return self
 
@@ -415,7 +417,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_pool.shutdown()
         # TODO: in Python 3.9+, use argument `cancel_futures=True`.
 
-        self._q_err.close()
         self._q_log.close()
 
         # Reset CPU affinity.
@@ -426,7 +427,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
         fut = self._enqueue(x)
-        return await self._async_call_wait_for_result(fut, timeout=timeout)
+        return await self._async_wait_for_result(fut, timeout=timeout)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
         '''
@@ -437,7 +438,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         However, be careful to maintain consistency between `call` and `stream`.
         '''
         fut = self._enqueue(x)
-        return self._call_wait_for_result(fut, timeout=timeout)
+        return self._wait_for_result(fut, timeout=timeout)
 
     def stream(self, data_stream, /, *,
                return_x: bool = False,
@@ -490,7 +491,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._thread_tasks[t] = None
         t.add_done_callback(self._thread_task_done_callback)
 
-        _wait = self._call_wait_for_result
+        _wait = self._wait_for_result
 
         while True:
             try:
@@ -550,9 +551,10 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         for m in self._servlets:
             logger.debug(f"starting servlet in Process {m}")
             m.start()
-            name = self._q_err.get()
+            name = self._q_indicator.get()
             k += 1
             logger.info(f"{k}/{n}: servlet <{name}> is ready")
+        self._q_indicator.close()
 
     def _stop_servlets(self):
         for m in self._servlets:
@@ -569,7 +571,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                      **init_kwargs):
         # `servlet` is the class object, not instance.
 
-        q_err = self._q_err
         q_log = self._q_log
 
         cpus = self._resolve_cpus(cpus=cpus, workers=workers)
@@ -588,9 +589,9 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
                     kwargs={
                         'q_in': q_in,
                         'q_out': q_out,
-                        'q_err': q_err,
                         'cpus': cpu,
                         'q_log': q_log,
+                        'q_indicator': self._q_indicator,
                         'should_stop': self._should_stop,
                         **init_kwargs,
                     },
@@ -646,34 +647,6 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         # for removing the finished entry from `self._uid_to_futures`.
         raise NotImplementedError
 
-    def _gather_error(self):
-        threading.current_thread().name = 'ErrorCollector'
-        q_err = self._q_err
-        futures = self._uid_to_futures
-        while not self._should_stop.is_set():
-            try:
-                z = q_err.get(timeout=1)
-            except Empty:
-                continue
-            uid, err = z
-            err = RemoteException.from_dict(err)
-            fut = futures.pop(uid, None)
-            if fut is None:  # timed-out in `call` or `async_call`
-                logger.debug('got error for an already-cancelled task: %r', err)
-                continue
-            try:
-                # `err` is a RemoteException object.
-                fut.set_exception(err)
-                fut.data['t2'] = monotonic()
-            except asyncio.InvalidStateError as e:
-                if fut.cancelled():
-                    # Could have been canceled due to TimeoutError.
-                    # logger.debug('Future object is already cancelled')
-                    pass
-                else:
-                    logger.exception(e)
-                    raise
-
     def _enqueue_future(self, x):
         fut = Future()
         uid = id(fut)
@@ -695,7 +668,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         return fut
 
-    async def _async_call_wait_for_result(self, fut, *, timeout):
+    async def _async_wait_for_result(self, fut, *, timeout):
         t0 = fut.data['t0']
         t2 = t0 + timeout
         while not fut.done():
@@ -710,7 +683,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         return fut.result()
         # This could raise RemoteException.
 
-    def _call_wait_for_result(self, fut, *, timeout):
+    def _wait_for_result(self, fut, *, timeout):
         t0 = fut.data['t0']
         t2 = t0 + timeout
         try:
@@ -732,6 +705,7 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         self._q_in_out = []
         self._input_queues_ = None
+        self._q_err = self.get_mpcontext().Queue()
 
     @overrides
     def _start_servlets(self):
@@ -748,16 +722,22 @@ class SequentialServer(MPServer):
                 servlet,
                 q_in=q_in,
                 q_out=q_out,
+                q_err=self._q_err,
                 **kwargs,
             )
 
         super()._start_servlets()
+
+        t = self._thread_pool.submit(self._gather_error)
+        self._thread_tasks[t] = None
+        t.add_done_callback(self._thread_task_done_callback)
 
     @overrides
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in_out:
             q.close()
+        self._q_err.close()
 
     @overrides
     def _gather_output(self):
@@ -772,16 +752,38 @@ class SequentialServer(MPServer):
             except Empty:
                 continue
             uid, y = z
-            fut = futures.pop(uid, None)
-            if fut is None:
-                # timed-out in `async_call` or `call`.
-                continue
+            fut = futures.pop(uid)
             try:
                 fut.set_result(y)
                 fut.data['t1'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TimeoutError.
+                    # logger.debug('Future object is already cancelled')
+                    pass
+                else:
+                    logger.exception(e)
+                    raise
+
+    def _gather_error(self):
+        threading.current_thread().name = 'ErrorCollector'
+        q_err = self._q_err
+        futures = self._uid_to_futures
+        while not self._should_stop.is_set():
+            try:
+                z = q_err.get(timeout=1)
+            except Empty:
+                continue
+            uid, err = z
+            err = RemoteException.from_dict(err)
+            fut = futures.pop(uid)
+            try:
+                # `err` is a RemoteException object.
+                fut.set_exception(err)
+                fut.data['t1'] = monotonic()
+            except asyncio.InvalidStateError as e:
+                if fut.cancelled():
+                    # Could have been canceled due to TimeoutError.
                     # logger.debug('Future object is already cancelled')
                     pass
                 else:
@@ -833,18 +835,19 @@ class EnsembleServer(MPServer):
         for q in self._q_out:
             q.close()
 
-    @abstractmethod
     def ensemble(self, x, results: list):
         '''
         Take results of all components and return a final result
         by combining the individual results in some way.
-        It is assumed here that this function is quick and cheap.
-        If this is not true, some optimization is needed.
+
+        `x`: the original input data; provided in case needed for
+        constructing the final ensemble result.
 
         `results`: results of the servlets in the order they were
-        added by `add_servlet`.
+        added by `add_servlet`. Some or all elements of `results`
+        could be `RemoteException` objects.
         '''
-        raise NotImplementedError
+        return results
 
     @overrides
     def _enqueue_future(self, x):
@@ -866,28 +869,25 @@ class EnsembleServer(MPServer):
                     # Get all available results out of this queue.
                     # They are for different requests.
                     uid, y = q_out.get(timeout=0)
-                    fut = futures.get(uid)
-                    if fut is None:
-                        # timed-out in `async_call` or `call`.
-                        continue
-
+                    fut = futures[uid]
                     extra = fut.data
                     extra['res'][idx] = y
                     extra['n'] += 1
                     if extra['n'] == n_results_needed:
                         # All results for this request have been collected.
-                        futures.pop(uid, None)
+                        futures.pop(uid)
                         try:
                             z = self.ensemble(extra['x'], extra['res'])
                             fut.set_result(z)
+                            fut.data['t1'] = monotonic()
                         except asyncio.InvalidStateError as e:
                             if fut.cancelled():
+                                # Already cancelled due to timeout in `async_call` or `call`.
                                 # logger.debug('Future object is already cancelled')
                                 pass
                             else:
                                 logger.exception(e)
                                 raise
-                        fut.data['t1'] = monotonic()
                     # No sleep. Get results out of the queue as quickly as possible.
                     # TODO: check `should_stop`?
             sleep(self.SLEEP_DEQUEUE)
