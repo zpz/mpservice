@@ -3,6 +3,7 @@ from random import uniform, seed
 from mpservice.mpserver import SimpleServer
 from zpz.logging import config_logger
 
+
 def double(x):
     sleep(uniform(0.05, 0.2))
     if isinstance(x, list):

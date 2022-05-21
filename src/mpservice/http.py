@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 # See tests for examples of server shutdown.
 
+# About socket 'backlog':
+# https://stackoverflow.com/a/12340078
 
 # Adapted from `uvicorn.main.run`.
 def make_server(
