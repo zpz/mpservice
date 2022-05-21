@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 # See tests for examples of server shutdown.
 
+# About socket 'backlog':
+# https://stackoverflow.com/a/12340078
 
 # Adapted from `uvicorn.main.run`.
 def make_server(
@@ -26,6 +28,7 @@ def make_server(
         access_log: bool = None,
         loop='auto',
         workers: int = 1,
+        backlog: int = 64,
         **kwargs,
 ):
     '''
@@ -70,6 +73,7 @@ def make_server(
         log_level=log_level,
         loop=loop,
         workers=workers,
+        backlog=backlog,
         reload=debug and isinstance(app, str),
         **kwargs)
 

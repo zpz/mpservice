@@ -43,6 +43,14 @@ class Delay(Servlet):
         return x
 
 
+def test_basic():
+    service = SequentialServer()
+    service.add_servlet(Double, cpus=[1])
+    with service:
+        z = service.call(3)
+        assert z == 3 * 2
+
+
 @pytest.mark.asyncio
 async def test_sequential_server_async():
     service = SequentialServer()

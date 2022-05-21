@@ -71,7 +71,7 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread
+from .util import forward_logs, logger_thread, is_exception
 from .streamer import put_in_queue
 from . import _queues
 
@@ -86,6 +86,124 @@ class TimeoutError(Exception):
     pass
 
 
+class BatchQueue:
+    '''
+    Eagerly collect data in a background thread to facilitate batching.
+    '''
+    def __init__(self, batch_size: int, queue_in, queue_err, *, rlock, buffer_size: int = None):
+        assert 1 <= batch_size
+        if buffer_size is None:
+            buffer_size = batch_size
+        else:
+            assert batch_size <= buffer_size
+
+        self._buffer_size = buffer_size
+        self._batch_size = batch_size
+        self._buffer = _queues.SingleLane(buffer_size)
+
+        self._qin = queue_in
+        self._lock = rlock
+        self._qerr = queue_err
+
+        self._get_called = threading.Event()
+        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread.start()
+
+    def _read(self):
+        try:
+            buffer = self._buffer
+            lock = self._lock
+            getcalled = self._get_called
+            closed = self._buffer._closed
+            batchsize = self._batch_size
+            qin = self._qin
+            qerr = self._qerr
+
+            while True:
+                if buffer.full():
+                    with buffer._not_full:
+                        buffer._not_full.wait()
+                try:
+                    with lock:  # read lock
+                        # In order to facilitate batching,
+                        # we hold the lock and keep getting
+                        # data off the pipe for this reader's buffer,
+                        # even though there may be other readers waiting.
+                        while True:
+                            n = max(1, batchsize - buffer.qsize())
+                            try:
+                                # `faster_fifo.Queue.get_many` will wait
+                                # up to the specified timeout if there's nothing;
+                                # once there's something to read, it will
+                                # read up to the max count that's already there
+                                # to be read---importantly, it will not spread
+                                # out the wait in order to collect more elements.
+                                z = qin.get_many(
+                                    block=True,
+                                    timeout=float(60),
+                                    max_messages_to_get=int(n))
+                            except Empty:
+                                pass
+                            else:
+                                for x in z:
+                                    if is_exception(x[1]):
+                                        qerr.put(x)
+                                    else:
+                                        buffer.put(x)
+
+                            if closed:
+                                return
+                            if getcalled.is_set():
+                                # Once `get` or `get_many` has been called,
+                                # we release the lock so that other readers
+                                # get a chance for the lock.
+                                getcalled.clear()
+                                break
+                            if buffer.qsize() >= batchsize:
+                                break
+
+                except Exception as e:
+                    if closed:
+                        break
+                    logger.error(e)
+                    raise
+        except Exception as e:
+            logger.exception(e)
+            raise
+
+    def close(self):
+        self._buffer.close()
+
+    def __del__(self):
+        self.close()
+
+    def empty(self):
+        return self._buffer.empty()
+
+    def qsize(self):
+        return self._buffer.qsize()
+
+    def get_many(self, *, first_timeout=None, extra_timeout=None):
+        buffer = self._buffer
+        out = [buffer.get(timeout=first_timeout)]
+        max_n = self._batch_size
+        n = 1
+        if max_n > 1:
+            if extra_timeout is None:
+                extra_timeout = 60
+            deadline = monotonic() + extra_timeout
+            while n < max_n:
+                t = deadline - monotonic()
+                try:
+                    z = buffer.get(timeout=t)
+                except Empty:
+                    break
+                out.append(z)
+                n += 1
+        self._get_called.set()
+        return out
+
+
 class Servlet(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
     # `__init__` and implement `call`.
@@ -97,7 +215,6 @@ class Servlet(metaclass=ABCMeta):
             q_log: queues.Queue,
             q_indicator: queues.Queue,
             should_stop: synchronize.Event,
-            q_err: queues.Queue = None,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -110,11 +227,6 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        batch_size = max(1, init_kwargs.get('batch_size') or 1)
-        q_in = q_in.reader(batch_size + 10, batch_size)
-        q_out = q_out.writer()
-        if q_err is None:
-            q_err = q_out
         try:
             forward_logs(q_log)
             # TODO: does the log message carry process info?
@@ -122,15 +234,18 @@ class Servlet(metaclass=ABCMeta):
                 psutil.Process().cpu_affinity(cpus=cpus)
             obj = cls(**init_kwargs)
             q_indicator.put(obj.name)
+            batch_size = obj.batch_size
+            if batch_size > 1:
+                q_in = BatchQueue(batch_size, q_in, q_out, rlock=q_in._rlock, buffer_size=batch_size + 10)
             obj.start(q_in=q_in,
                       q_out=q_out,
-                      q_err=q_err,
                       should_stop=should_stop,
                       )
         finally:
             q_in.close()
+            if isinstance(q_in, BatchQueue):
+                q_in._qin.close()
             q_out.close()
-            q_err.close()
             q_log.close()
 
     def __init__(self, *,
@@ -186,17 +301,17 @@ class Servlet(metaclass=ABCMeta):
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
-    def start(self, *, q_in, q_out, q_err, should_stop):
+    def start(self, *, q_in, q_out, should_stop):
         try:
             if self.batch_size > 1:
-                self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
+                self._start_batch(q_in=q_in, q_out=q_out,
                                   should_stop=should_stop)
             else:
-                self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
+                self._start_single(q_in=q_in, q_out=q_out, should_stop=should_stop)
         except KeyboardInterrupt:
             print(self.name, 'stopped by KeyboardInterrupt')
 
-    def _start_single(self, *, q_in, q_out, q_err, should_stop):
+    def _start_single(self, *, q_in, q_out, should_stop):
         batch_size = self.batch_size
         while True:
             try:
@@ -206,26 +321,26 @@ class Servlet(metaclass=ABCMeta):
                     break
                 continue
             uid, x = z
+            if is_exception(x):
+                q_out.put((uid, x))
+                continue
 
             try:
                 if batch_size:
                     y = self.call([x])[0]
                 else:
                     y = self.call(x)
-                if not put_in_queue(q_out, (uid, y), should_stop):
-                    return
             except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
-                err = RemoteException().to_dict()
-                if not put_in_queue(q_err, (uid, err), should_stop):
-                    return
+                y = RemoteException()
+            if not put_in_queue(q_out, (uid, y), should_stop):
+                return
             if should_stop.is_set():
                 break
 
-    def _start_batch(self, *, q_in, q_out, q_err, should_stop):
-        batch_size = self.batch_size
+    def _start_batch(self, *, q_in, q_out, should_stop):
         batch_wait_time = self.batch_wait_time
 
         def print_batching_info():
@@ -241,7 +356,7 @@ class Servlet(metaclass=ABCMeta):
                     batch_size_mean = 0.0
 
                 try:
-                    batch = q_in.get_many(batch_size, first_timeout=0.5, extra_timeout=batch_wait_time)
+                    batch = q_in.get_many(first_timeout=0.5, extra_timeout=batch_wait_time)
                 except Empty:
                     if should_stop.is_set():
                         if n_batches:
@@ -259,14 +374,14 @@ class Servlet(metaclass=ABCMeta):
                 try:
                     results = self.call(batch)
                 except Exception:
-                    err = RemoteException().to_dict()
+                    err = RemoteException()
                     for uid in uids:
-                        if not put_in_queue(q_err, (uid, err), should_stop):
+                        if not put_in_queue(q_out, (uid, err), should_stop):
                             return
                 else:
                     while True:
                         try:
-                            q_out.put_many(zip(uids, results), timeout=0.1)
+                            q_out.put_many(list(zip(uids, results)), timeout=0.1)
                             break
                         except Full:
                             if should_stop.is_set():
@@ -345,15 +460,21 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
     # Sleep when future is not done yet or queue is empty.
     # This may better be short, because we want to go once things are available.
 
-    def __init__(self, *, main_cpu: int = 0):
+    def __init__(self, *, main_cpu: int = 0, backlog: int = 1024):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
+
+        `backlog`: max number of requests concurrently in progress within this server,
+            all pipes/servlets/stages combined.
         '''
         self._q_log = self.get_mpcontext().Queue()  # This does not need the performance optim of fast_fifo.
         self._servlet_configs = []
         self._servlets: List[multiprocessing.Process] = []
         self._uid_to_futures = {}
+
+        assert backlog > 0
+        self.backlog = backlog
 
         self._q_indicator = self.get_mpcontext().Queue()
         self._should_stop = self.get_mpcontext().Event()
@@ -426,7 +547,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         self._servlet_configs.append((servlet, kwargs))
 
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
-        fut = self._enqueue(x)
+        fut = self._enqueue(x, timeout)  # this function could block
         return await self._async_wait_for_result(fut, timeout=timeout)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
@@ -437,7 +558,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
 
         However, be careful to maintain consistency between `call` and `stream`.
         '''
-        fut = self._enqueue(x)
+        fut = self._enqueue(x, timeout)
         return self._wait_for_result(fut, timeout=timeout)
 
     def stream(self, data_stream, /, *,
@@ -469,7 +590,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             should_stop = self._should_stop
             for x in data_stream:
                 try:
-                    fut = enqueue(x)
+                    fut = enqueue(x, timeout)
                     timedout = False
                 except Exception as e:
                     if return_exceptions:
@@ -654,17 +775,28 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
         fut.data = {'t0': monotonic()}
         return uid, fut
 
-    def _enqueue(self, x):
+    def _enqueue(self, x, timeout):
         uid, fut = self._enqueue_future(x)
+        t0 = fut.data['t0']
+        deadline = t0 + timeout
+
+        while len(self._uid_to_futures) >= self.backlog:
+            if (t := monotonic()) > deadline:
+                self._uid_to_futures.pop(uid, None)
+                raise TimeoutError(f"{t - t0} seconds enqueue")
+            sleep(min(0.01, deadline - t))
 
         for q in self._input_queues():
             try:
-                # This input queue either has no size limit
-                # or has a very large capacity.
-                # If it is full right now, just time out.
-                q.put((uid, x), timeout=0)
+                q.put((uid, x), timeout=max(0, min(0.01, deadline - monotonic())))
             except Full:
-                raise TimeoutError("input queue is full")
+                self._uid_to_futures.pop(uid, None)
+                raise TimeoutError(f"{monotonic() - t0} seconds enqueue")
+            # TODO: this has risk in ensemble models;
+            # enqueuing to all these input queues should be atomic,
+            # i.e. all or none, not partial.
+            # TODO: in cases of partial enqueue, removing uid from the dict
+            # wll cause trouble in `gather_output`.
 
         return fut
 
@@ -675,7 +807,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             timenow = monotonic()
             if timenow >= t2:
                 fut.cancel()
-                raise TimeoutError(f"{timenow - t0} seconds")
+                raise TimeoutError(f"{timenow - t0} seconds total")
             await asyncio.sleep(min(self.SLEEP_FUTURE, t2 - timenow))
         # await asyncio.wait_for(fut, timeout=t0 + timeout - monotonic())
         # NOTE: `asyncio.wait_for` seems to be blocking for the
@@ -691,7 +823,7 @@ class MPServer(EnforceOverrides, metaclass=ABCMeta):
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
-            raise TimeoutError(f"{monotonic() - t0} seconds")
+            raise TimeoutError(f"{monotonic() - t0} seconds total")
 
 
 class SequentialServer(MPServer):
@@ -705,7 +837,6 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         self._q_in_out = []
         self._input_queues_ = None
-        self._q_err = self.get_mpcontext().Queue()
 
     @overrides
     def _start_servlets(self):
@@ -722,29 +853,22 @@ class SequentialServer(MPServer):
                 servlet,
                 q_in=q_in,
                 q_out=q_out,
-                q_err=self._q_err,
                 **kwargs,
             )
 
         super()._start_servlets()
-
-        t = self._thread_pool.submit(self._gather_error)
-        self._thread_tasks[t] = None
-        t.add_done_callback(self._thread_task_done_callback)
 
     @overrides
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in_out:
             q.close()
-        self._q_err.close()
 
     @overrides
     def _gather_output(self):
         threading.current_thread().name = 'ResultCollector'
         q_out = self._q_in_out[-1]
         futures = self._uid_to_futures
-        q_out = q_out.reader()
 
         while not self._should_stop.is_set():
             try:
@@ -754,7 +878,10 @@ class SequentialServer(MPServer):
             uid, y = z
             fut = futures.pop(uid)
             try:
-                fut.set_result(y)
+                if is_exception(y):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
                 fut.data['t1'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
@@ -765,37 +892,9 @@ class SequentialServer(MPServer):
                     logger.exception(e)
                     raise
 
-    def _gather_error(self):
-        threading.current_thread().name = 'ErrorCollector'
-        q_err = self._q_err
-        futures = self._uid_to_futures
-        while not self._should_stop.is_set():
-            try:
-                z = q_err.get(timeout=1)
-            except Empty:
-                continue
-            uid, err = z
-            err = RemoteException.from_dict(err)
-            fut = futures.pop(uid)
-            try:
-                # `err` is a RemoteException object.
-                fut.set_exception(err)
-                fut.data['t1'] = monotonic()
-            except asyncio.InvalidStateError as e:
-                if fut.cancelled():
-                    # Could have been canceled due to TimeoutError.
-                    # logger.debug('Future object is already cancelled')
-                    pass
-                else:
-                    logger.exception(e)
-                    raise
-
     @overrides
     def _input_queues(self):
-        if self._input_queues_ is None:
-            q = self._q_in_out[0].writer()
-            self._input_queues_ = [q]
-        return self._input_queues_
+        return self._q_in_out[:1]
 
 
 class EnsembleServer(MPServer):
@@ -861,7 +960,7 @@ class EnsembleServer(MPServer):
         futures = self._uid_to_futures
         n_results_needed = len(self._q_out)
 
-        qq = [q.reader() for q in self._q_out]
+        qq = self._q_out
 
         while not self._should_stop.is_set():
             for idx, q_out in enumerate(qq):
@@ -894,10 +993,7 @@ class EnsembleServer(MPServer):
 
     @overrides
     def _input_queues(self):
-        if self._input_queues_ is None:
-            qq = [q.writer() for q in self._q_in]
-            self._input_queues_ = qq
-        return self._input_queues_
+        return self._q_in
 
 
 class SimpleServlet(Servlet):
