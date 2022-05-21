@@ -28,6 +28,7 @@ def make_server(
         access_log: bool = None,
         loop='auto',
         workers: int = 1,
+        backlog: int = 64,
         **kwargs,
 ):
     '''
@@ -72,6 +73,7 @@ def make_server(
         log_level=log_level,
         loop=loop,
         workers=workers,
+        backlog=backlog,
         reload=debug and isinstance(app, str),
         **kwargs)
 
