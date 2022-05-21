@@ -24,8 +24,6 @@ import faster_fifo_reduction  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-_ForkingPickler = mp_context.reduction.ForkingPickler
-
 
 # About changing pickle protocol for multiprocessing:
 #  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
@@ -103,10 +101,6 @@ class SingleLane:
         self._closed = True
 
 
-def passthrough(x):
-    return x
-
-
 class Unique:
     '''
     Naming follows the example of `deque`:
@@ -117,8 +111,7 @@ class Unique:
     def __init__(self, *, ctx=None, maxsize_bytes: int = 10_000_000):
         if ctx is None:
             ctx = multiprocessing.get_context()
-        self._q = faster_fifo.Queue(
-            max_size_bytes=maxsize_bytes, loads=passthrough, dumps=passthrough)
+        self._q = faster_fifo.Queue(max_size_bytes=maxsize_bytes)
         self._rlock = ctx.Lock()
         self._closed = False
 
@@ -153,10 +146,9 @@ class Unique:
             raise ValueError(f"{self!r} is closed")
         if timeout is None:
             timeout = 3600 * 24
-        z = self._q.get(timeout=float(timeout))
-        return _ForkingPickler.loads(z)
+        return self._q.get(timeout=float(timeout))
 
-    def get_many_bytes(self, *, timeout=None, **kwargs):
+    def get_many(self, *, timeout=None, **kwargs):
         if self._closed:
             raise ValueError(f"{self!r} is closed")
         if timeout is None:
@@ -168,8 +160,7 @@ class Unique:
             raise ValueError(f"{self!r} is closed")
         if timeout is None:
             timeout = 3600 * 24
-        x = bytes(_ForkingPickler.dumps(obj))
-        self._q.put(x, timeout=float(timeout))
+        self._q.put(obj, timeout=float(timeout))
 
     def put_many(self, objs, *, timeout=None):
         if self._closed:
@@ -177,12 +168,11 @@ class Unique:
         if timeout is None:
             timeout = 3600 * 24
 
-        xx = [bytes(_ForkingPickler.dumps(obj)) for obj in objs]
-        self._q.put_many(xx, timeout=float(timeout))
+        self._q.put_many(objs, timeout=float(timeout))
 
         # # This is safe against extemely large data, but
         # # in this way we can't control timeout.
-        # xx = [xx]
+        # xx = [objs]
         # while xx:
         #     try:
         #         self._q.put_many(xx[0], timeout=0.01)

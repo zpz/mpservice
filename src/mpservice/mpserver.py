@@ -62,7 +62,7 @@ import threading
 import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
-from multiprocessing import synchronize, queues, context as mp_context
+from multiprocessing import synchronize, queues
 from queue import Empty, Full
 from time import monotonic, sleep
 from typing import List, Type, Sequence, Union, Callable
@@ -71,7 +71,7 @@ import psutil
 from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread
+from .util import forward_logs, logger_thread, is_exception
 from .streamer import put_in_queue
 from . import _queues
 
@@ -86,14 +86,11 @@ class TimeoutError(Exception):
     pass
 
 
-_ForkingPickler = mp_context.reduction.ForkingPickler
-
-
 class BatchQueue:
     '''
     Eagerly collect data in a background thread to facilitate batching.
     '''
-    def __init__(self, batch_size: int, in_queue, read_lock, buffer_size: int = None):
+    def __init__(self, batch_size: int, queue_in, queue_err, *, rlock, buffer_size: int = None):
         assert 1 <= batch_size
         if buffer_size is None:
             buffer_size = batch_size
@@ -104,8 +101,9 @@ class BatchQueue:
         self._batch_size = batch_size
         self._buffer = _queues.SingleLane(buffer_size)
 
-        self._q = in_queue
-        self._lock = read_lock
+        self._qin = queue_in
+        self._lock = rlock
+        self._qerr = queue_err
 
         self._get_called = threading.Event()
         self._thread = threading.Thread(target=self._read, daemon=True)
@@ -118,7 +116,8 @@ class BatchQueue:
             getcalled = self._get_called
             closed = self._buffer._closed
             batchsize = self._batch_size
-            q = self._q
+            qin = self._qin
+            qerr = self._qerr
 
             while True:
                 if buffer.full():
@@ -139,7 +138,7 @@ class BatchQueue:
                                 # read up to the max count that's already there
                                 # to be read---importantly, it will not spread
                                 # out the wait in order to collect more elements.
-                                z = q.get_many_bytes(
+                                z = qin.get_many(
                                     block=True,
                                     timeout=float(60),
                                     max_messages_to_get=int(n))
@@ -147,9 +146,10 @@ class BatchQueue:
                                 pass
                             else:
                                 for x in z:
-                                    buffer.put(bytes(x))
-                                    # TODO: understand the need for `bytes` here.
-                                    # Is there overhead? Can this be simplified?
+                                    if is_exception(x[1]):
+                                        qerr.put(x)
+                                    else:
+                                        buffer.put(x)
 
                             if closed:
                                 return
@@ -201,8 +201,7 @@ class BatchQueue:
                 out.append(z)
                 n += 1
         self._get_called.set()
-        return [_ForkingPickler.loads(v) for v in out]
-        # return [pickle.loads(v) for v in out]
+        return out
 
 
 class Servlet(metaclass=ABCMeta):
@@ -216,7 +215,6 @@ class Servlet(metaclass=ABCMeta):
             q_log: queues.Queue,
             q_indicator: queues.Queue,
             should_stop: synchronize.Event,
-            q_err: queues.Queue = None,
             cpus: Sequence[int] = None,
             **init_kwargs):
         '''
@@ -229,8 +227,6 @@ class Servlet(metaclass=ABCMeta):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        if q_err is None:
-            q_err = q_out
         try:
             forward_logs(q_log)
             # TODO: does the log message carry process info?
@@ -240,18 +236,16 @@ class Servlet(metaclass=ABCMeta):
             q_indicator.put(obj.name)
             batch_size = obj.batch_size
             if batch_size > 1:
-                q_in = BatchQueue(batch_size, q_in, q_in._rlock, buffer_size=batch_size + 10)
+                q_in = BatchQueue(batch_size, q_in, q_out, rlock=q_in._rlock, buffer_size=batch_size + 10)
             obj.start(q_in=q_in,
                       q_out=q_out,
-                      q_err=q_err,
                       should_stop=should_stop,
                       )
         finally:
             q_in.close()
             if isinstance(q_in, BatchQueue):
-                q_in._q.close()
+                q_in._qin.close()
             q_out.close()
-            q_err.close()
             q_log.close()
 
     def __init__(self, *,
@@ -307,17 +301,17 @@ class Servlet(metaclass=ABCMeta):
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
-    def start(self, *, q_in, q_out, q_err, should_stop):
+    def start(self, *, q_in, q_out, should_stop):
         try:
             if self.batch_size > 1:
-                self._start_batch(q_in=q_in, q_out=q_out, q_err=q_err,
+                self._start_batch(q_in=q_in, q_out=q_out,
                                   should_stop=should_stop)
             else:
-                self._start_single(q_in=q_in, q_out=q_out, q_err=q_err, should_stop=should_stop)
+                self._start_single(q_in=q_in, q_out=q_out, should_stop=should_stop)
         except KeyboardInterrupt:
             print(self.name, 'stopped by KeyboardInterrupt')
 
-    def _start_single(self, *, q_in, q_out, q_err, should_stop):
+    def _start_single(self, *, q_in, q_out, should_stop):
         batch_size = self.batch_size
         while True:
             try:
@@ -327,25 +321,26 @@ class Servlet(metaclass=ABCMeta):
                     break
                 continue
             uid, x = z
+            if is_exception(x):
+                q_out.put((uid, x))
+                continue
 
             try:
                 if batch_size:
                     y = self.call([x])[0]
                 else:
                     y = self.call(x)
-                if not put_in_queue(q_out, (uid, y), should_stop):
-                    return
             except Exception:
                 # There are opportunities to print traceback
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
-                err = RemoteException().to_dict()
-                if not put_in_queue(q_err, (uid, err), should_stop):
-                    return
+                y = RemoteException()
+            if not put_in_queue(q_out, (uid, y), should_stop):
+                return
             if should_stop.is_set():
                 break
 
-    def _start_batch(self, *, q_in, q_out, q_err, should_stop):
+    def _start_batch(self, *, q_in, q_out, should_stop):
         batch_wait_time = self.batch_wait_time
 
         def print_batching_info():
@@ -379,14 +374,14 @@ class Servlet(metaclass=ABCMeta):
                 try:
                     results = self.call(batch)
                 except Exception:
-                    err = RemoteException().to_dict()
+                    err = RemoteException()
                     for uid in uids:
-                        if not put_in_queue(q_err, (uid, err), should_stop):
+                        if not put_in_queue(q_out, (uid, err), should_stop):
                             return
                 else:
                     while True:
                         try:
-                            q_out.put_many(zip(uids, results), timeout=0.1)
+                            q_out.put_many(list(zip(uids, results)), timeout=0.1)
                             break
                         except Full:
                             if should_stop.is_set():
@@ -842,7 +837,6 @@ class SequentialServer(MPServer):
         super().__init__(**kwargs)
         self._q_in_out = []
         self._input_queues_ = None
-        self._q_err = self.get_mpcontext().Queue()
 
     @overrides
     def _start_servlets(self):
@@ -859,22 +853,16 @@ class SequentialServer(MPServer):
                 servlet,
                 q_in=q_in,
                 q_out=q_out,
-                q_err=self._q_err,
                 **kwargs,
             )
 
         super()._start_servlets()
-
-        t = self._thread_pool.submit(self._gather_error)
-        self._thread_tasks[t] = None
-        t.add_done_callback(self._thread_task_done_callback)
 
     @overrides
     def _stop_servlets(self):
         super()._stop_servlets()
         for q in self._q_in_out:
             q.close()
-        self._q_err.close()
 
     @overrides
     def _gather_output(self):
@@ -890,36 +878,14 @@ class SequentialServer(MPServer):
             uid, y = z
             fut = futures.pop(uid)
             try:
-                fut.set_result(y)
+                if is_exception(y):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
                 fut.data['t1'] = monotonic()
             except asyncio.InvalidStateError as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TimeoutError.
-                    # logger.debug('Future object is already cancelled')
-                    pass
-                else:
-                    logger.exception(e)
-                    raise
-
-    def _gather_error(self):
-        threading.current_thread().name = 'ErrorCollector'
-        q_err = self._q_err
-        futures = self._uid_to_futures
-        while not self._should_stop.is_set():
-            try:
-                z = q_err.get(timeout=1)
-            except Empty:
-                continue
-            uid, err = z
-            err = RemoteException.from_dict(err)
-            fut = futures.pop(uid)
-            try:
-                # `err` is a RemoteException object.
-                fut.set_exception(err)
-                fut.data['t1'] = monotonic()
-            except asyncio.InvalidStateError as e:
-                if fut.cancelled():
-                    # Could have been canceled due to TimeoutError.
                     # logger.debug('Future object is already cancelled')
                     pass
                 else:

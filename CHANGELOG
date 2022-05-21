@@ -1,3 +1,10 @@
+Release 0.10.9
+==============
+
+- Added (or brought back) parameter `backlog` to `MPServer`.
+- Implimentation improvements: simplified utitlity queues; removed error pipe of MPServer.
+
+
 Release 0.10.8
 ==============
 
