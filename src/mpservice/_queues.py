@@ -29,6 +29,11 @@ _ForkingPickler = mp_context.reduction.ForkingPickler
 
 # About changing pickle protocol for multiprocessing:
 #  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
+#  socket.setsockopt(level, optname, value: int)
+# You can set the socket buffer size with setsockopt() using the SO_RCVBUFSIZ or SO_SNDBUFSIZ options
+
+# About socket buffer size:
+# https://stackoverflow.com/questions/2811006/what-is-a-good-buffer-size-for-socket-programming
 
 
 class SingleLane:
