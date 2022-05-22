@@ -137,16 +137,11 @@ class GetLen(ProcessWorker):
         return len(x)
 
 
-def foo(x, y):
-    print('foo', x, y)
-    return (y[0] + y[1]) * y[2]
-
-
 my_wide_server = Ensemble(
     Servlet(GetHead, cpus=[1,2]),
     Servlet(GetTail, cpus=[3]),
     Servlet(GetLen, cpus=[2]),
-    post_func=foo,
+    post_func=lambda x, y: (y[0] + y[1]) * y[2],
     )
 
 
@@ -180,7 +175,7 @@ class AddThree(ProcessWorker):
 your_wide_server = Ensemble(
         Servlet(AddThree, cpus=[1, 2]),
         Servlet(Delay, cpus=[3]),
-        post_func=lambda x, y: x + x[0] + x[1]
+        post_func=lambda x, y: x + y[0] + y[1]
     )
 
 

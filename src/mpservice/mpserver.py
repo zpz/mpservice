@@ -580,7 +580,7 @@ class Sequential:
                 q2 = _queues.Unique(ctx=ctx)
             else:
                 q2 = q_out
-            s.start(q1, q2, q_log, should_stop=should_stop, ctx=ctx)
+            s.start(q1, q2, q_log=q_log, should_stop=should_stop, ctx=ctx)
             self._qs.append(q2)
             q1 = q2
         self._started = True
@@ -674,10 +674,10 @@ class Ensemble:
                     if z['n'] == nn:
                         # All results for this request have been collected.
                         catalog.pop(uid)
-                        z = z['y']
+                        y = z['y']
                         if func is not None:
-                            z = func(z['x'], z)
-                        qout.put((uid, z))
+                            y = func(z['x'], y)
+                        qout.put((uid, y))
 
     def stop(self):
         assert self._started
