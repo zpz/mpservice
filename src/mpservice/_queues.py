@@ -16,7 +16,7 @@ import logging
 import multiprocessing
 import threading
 from collections import deque
-from multiprocessing import context as mp_context
+from multiprocessing import context as mp_context, queues as mp_queues
 from queue import Empty, Full
 
 import faster_fifo
@@ -188,8 +188,11 @@ class Unique:
         #         xx = xx[1:]
 
 
-def _Unique(self, **kwargs):
-    return Unique(ctx=self.get_context(), **kwargs)
+class SimpleQueue(mp_queues.SimpleQueue):
+    # Check out os.read, os.write, os.close with file-descriptor args.
+    def __init__(self, *, ctx):
+        super().__init__(ctx=ctx)
+        self._rlock = ctx.RLock()
+        if self._wlock:
+            self._wlock = ctx.RLock()
 
-
-mp_context.BaseContext.Unique = _Unique

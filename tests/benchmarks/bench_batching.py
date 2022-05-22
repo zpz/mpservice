@@ -1,14 +1,15 @@
 from time import sleep, monotonic
 from random import uniform, seed
-from mpservice.mpserver import SimpleServer
+from mpservice.mpserver import ProcessWorker, Servlet, Server
 from zpz.logging import config_logger
 
 
-def double(x):
-    sleep(uniform(0.05, 0.2))
-    if isinstance(x, list):
-        return [v * 2 for v in x]
-    return x * 2
+class Double(ProcessWorker):
+    def call(self, x):
+        sleep(uniform(0.05, 0.2))
+        if isinstance(x, list):
+            return [v * 2 for v in x]
+        return x * 2
 
 
 def main(model):
@@ -28,7 +29,7 @@ if __name__ == '__main__':
     print('')
     seed(100)
     config_logger(with_process_name=True)
-    model = SimpleServer(double, batch_size=1000, batch_wait_time=0.01)
-    with model:
+    s = Servlet(Double, batch_size=1000, batch_wait_time=0.01)
+    with Server(s) as model:
         main(model)
 

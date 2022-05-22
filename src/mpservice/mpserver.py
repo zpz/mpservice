@@ -60,19 +60,17 @@ import logging
 import multiprocessing
 import queue
 import threading
-import warnings
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import Future
 from multiprocessing import synchronize, queues
 from queue import Empty, Full
 from time import monotonic, sleep
-from typing import List, Type, Sequence, Union, Callable, Type, Protocol, Any
+from typing import Sequence, Union, Callable, Type, Protocol, Any
 
 import psutil
-from overrides import EnforceOverrides, overrides
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread, is_exception
+from .util import forward_logs, logger_thread, is_exception, Thread, Process
 from .streamer import put_in_queue
 from . import _queues
 
@@ -84,14 +82,6 @@ logger = logging.getLogger(__name__)
 
 
 class TimeoutError(Exception):
-    pass
-
-
-class EnqueueTimeout(TimeoutError):
-    pass
-
-
-class TotalTimeout(TimeoutError):
     pass
 
 
@@ -115,70 +105,66 @@ class BatchQueue:
         self._qerr = queue_err
 
         self._get_called = threading.Event()
-        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread = Thread(target=self._read, daemon=True)
         self._thread.start()
 
     def _read(self):
-        try:
-            buffer = self._buffer
-            lock = self._lock
-            getcalled = self._get_called
-            closed = self._buffer._closed
-            batchsize = self._batch_size
-            qin = self._qin
-            qerr = self._qerr
+        threading.current_thread().name = f"{self.__class__.__name__}._read"
+        buffer = self._buffer
+        lock = self._lock
+        getcalled = self._get_called
+        closed = self._buffer._closed
+        batchsize = self._batch_size
+        qin = self._qin
+        qerr = self._qerr
 
-            while True:
-                if buffer.full():
-                    with buffer._not_full:
-                        buffer._not_full.wait()
-                try:
-                    with lock:  # read lock
-                        # In order to facilitate batching,
-                        # we hold the lock and keep getting
-                        # data off the pipe for this reader's buffer,
-                        # even though there may be other readers waiting.
-                        while True:
-                            n = max(1, batchsize - buffer.qsize())
-                            try:
-                                # `faster_fifo.Queue.get_many` will wait
-                                # up to the specified timeout if there's nothing;
-                                # once there's something to read, it will
-                                # read up to the max count that's already there
-                                # to be read---importantly, it will not spread
-                                # out the wait in order to collect more elements.
-                                z = qin.get_many(
-                                    block=True,
-                                    timeout=float(60),
-                                    max_messages_to_get=int(n))
-                            except Empty:
-                                pass
-                            else:
-                                for x in z:
-                                    if is_exception(x[1]):
-                                        qerr.put(x)
-                                    else:
-                                        buffer.put(x)
+        while True:
+            if buffer.full():
+                with buffer._not_full:
+                    buffer._not_full.wait()
+            try:
+                with lock:  # read lock
+                    # In order to facilitate batching,
+                    # we hold the lock and keep getting
+                    # data off the pipe for this reader's buffer,
+                    # even though there may be other readers waiting.
+                    while True:
+                        n = max(1, batchsize - buffer.qsize())
+                        try:
+                            # `faster_fifo.Queue.get_many` will wait
+                            # up to the specified timeout if there's nothing;
+                            # once there's something to read, it will
+                            # read up to the max count that's already there
+                            # to be read---importantly, it will not spread
+                            # out the wait in order to collect more elements.
+                            z = qin.get_many(
+                                block=True,
+                                timeout=float(60),
+                                max_messages_to_get=int(n))
+                        except Empty:
+                            pass
+                        else:
+                            for x in z:
+                                if is_exception(x[1]):
+                                    qerr.put(x)
+                                else:
+                                    buffer.put(x)
 
-                            if closed:
-                                return
-                            if getcalled.is_set():
-                                # Once `get` or `get_many` has been called,
-                                # we release the lock so that other readers
-                                # get a chance for the lock.
-                                getcalled.clear()
-                                break
-                            if buffer.qsize() >= batchsize:
-                                break
+                        if closed:
+                            return
+                        if getcalled.is_set():
+                            # Once `get` or `get_many` has been called,
+                            # we release the lock so that other readers
+                            # get a chance for the lock.
+                            getcalled.clear()
+                            break
+                        if buffer.qsize() >= batchsize:
+                            break
 
-                except Exception as e:
-                    if closed:
-                        break
-                    logger.error(e)
-                    raise
-        except Exception as e:
-            logger.exception(e)
-            raise
+            except Exception:
+                if closed:
+                    break
+                raise
 
     def close(self):
         self._buffer.close()
@@ -221,26 +207,10 @@ class Worker(metaclass=ABCMeta):
     def run(cls, *,
             q_in: _queues.Unique,
             q_out: _queues.Unique,
-            q_log: queues.Queue,
             q_indicator: queues.Queue,
             should_stop: synchronize.Event,
-            cpus: Sequence[int] = None,
             **init_kwargs):
-        '''
-        This classmethod runs in the worker process to construct
-        the worker object and start its processing loop.
-
-        This function is the parameter `target` to `Process`
-        called by `MPServer` in the main process. As such, elements
-        in `init_kwargs` go through pickling, hence they should consist
-        mainly of small, native types such as string, number,small dict.
-        Be careful about passing custom class objects in `init_kwargs`.
-        '''
         try:
-            forward_logs(q_log)
-            # TODO: does the log message carry process info?
-            if cpus:
-                psutil.Process().cpu_affinity(cpus=cpus)
             obj = cls(**init_kwargs)
             q_indicator.put(obj.name)
             batch_size = obj.batch_size
@@ -255,7 +225,6 @@ class Worker(metaclass=ABCMeta):
             if isinstance(q_in, BatchQueue):
                 q_in._qin.close()
             q_out.close()
-            q_log.close()
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -344,6 +313,7 @@ class Worker(metaclass=ABCMeta):
                 # and details later using the `RemoteException`
                 # object. Be brief on the logging here.
                 y = RemoteException()
+
             if not put_in_queue(q_out, (uid, y), should_stop):
                 return
             if should_stop.is_set():
@@ -372,9 +342,6 @@ class Worker(metaclass=ABCMeta):
                             print_batching_info()
                         return
                     continue
-                except Exception as e:
-                    print(type(e), repr(e), str(e))
-                    raise
 
                 uids = [v[0] for v in batch]
                 batch = [v[1] for v in batch]
@@ -453,11 +420,29 @@ class Worker(metaclass=ABCMeta):
 
 
 class ProcessWorker(Worker):
-    pass
+    @classmethod
+    def run(cls, *,
+            q_log: queues.Queue,
+            cpus: Sequence[int] = None,
+            **kwargs):
+        '''
+        This classmethod runs in the worker process to construct
+        the worker object and start its processing loop.
 
-
-class ThreadWorker(Worker):
-    pass
+        This function is the parameter `target` to `Process`.
+        As such, elements in `init_kwargs` go through pickling,
+        hence they should consist
+        mainly of small, native types such as string, number,small dict.
+        Be careful about passing custom class objects in `init_kwargs`.
+        '''
+        try:
+            forward_logs(q_log)
+            # TODO: does the log message carry process info?
+            if cpus:
+                psutil.Process().cpu_affinity(cpus=cpus)
+            super().run(**kwargs)
+        finally:
+            q_log.close()
 
 
 class ServletProtocol(Protocol):
@@ -470,7 +455,7 @@ class ServletProtocol(Protocol):
 
 class Servlet:
     def __init__(self,
-                 worker_cls: Type[Worker],
+                 worker_cls: Type[ProcessWorker],
                  *,
                  cpus: list = None,
                  workers: int = None,
@@ -490,7 +475,8 @@ class Servlet:
             # Pinned to the specified cpu core.
             sname = f"{self._name}-{','.join(map(str, cpu))}"
             logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-            w = ctx.Process(
+            w = Process(
+                ctx=ctx,
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
@@ -544,9 +530,9 @@ class Servlet:
             # This provides the ultimate flexibility, e.g.
             #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
         else:
-            # Create as many processes as there are cores,
+            # Create as many processes as there are cores minus core '0',
             # one process pinned to one core.
-            cpus = list(range(n_cpus))
+            cpus = list(range(1, n_cpus))
             # List[int]
 
         for i, cpu in enumerate(cpus):
@@ -614,8 +600,7 @@ class Ensemble:
         self._qins = []
         self._qouts = []
         self._uid_to_results = {}
-        self._thread_pool = None
-        self._thread_tasks = []
+        self._threads = []
 
     def start(self, q_in, q_out, *, q_log, should_stop, ctx):
         assert not self._started
@@ -628,15 +613,16 @@ class Ensemble:
             s.start(q1, q2, q_log=q_log, should_stop=should_stop, ctx=ctx)
             self._qins.append(q1)
             self._qouts.append(q2)
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor()
-        t = self._thread_pool.submit(self._dequeue, should_stop)
-        self._thread_tasks.append(t)
-        t = self._thread_pool.submit(self._enqueue, should_stop)
-        self._thread_tasks.append(t)
+        t = Thread(target=self._dequeue, args=(should_stop,))
+        t.start()
+        self._threads.append(t)
+        t = Thread(target=self._enqueue, args=(should_stop,))
+        t.start()
+        self._threads.append(t)
         self._started = True
 
     def _enqueue(self, should_stop):
-        threading.current_thread().name = f"{self.__class__.__name__}-enqueue"
+        threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
         qins = self._qins
@@ -644,7 +630,10 @@ class Ensemble:
         hasfunc = self._func is not None
         nn = len(qins)
         while not should_stop.is_set():
-            uid, x = qin.get()
+            try:
+                uid, x = qin.get(timeout=0.1)
+            except Empty:
+                continue
             if is_exception(x):
                 qout.put((uid, x))
                 continue
@@ -656,7 +645,7 @@ class Ensemble:
                 q.put((uid, x))
 
     def _dequeue(self, should_stop):
-        threading.current_thread().name = f"{self.__class__.__name__}-dequeue"
+        threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
         func = self._func
         qout = self._qout
         qouts = self._qouts
@@ -687,9 +676,8 @@ class Ensemble:
             q.close()
         for q in self._qouts:
             q.close()
-        done, not_done = concurrent.futures.wait(self._thread_tasks, timeout=10)
-        for t in not_done:
-            t.cancel()
+        for t in self._threads:
+            t.join()
         self._reset()
         self._started = False
 
@@ -714,8 +702,7 @@ class Server:
 
         self._should_stop = self.get_mpcontext().Event()
 
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor()
-        self._thread_tasks = []
+        self._threads = []
 
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
@@ -730,7 +717,9 @@ class Server:
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
 
-        self._thread_tasks.append(self._thread_pool.submit(logger_thread, self._q_log))
+        t = Thread(target=logger_thread, args=(self._q_log,))
+        t.start()
+        self._threads.append(t)
 
         if isinstance(self._servlet, Ensemble):
             self._q_in = queue.Queue()
@@ -738,11 +727,14 @@ class Server:
         else:
             self._q_in = _queues.Unique(ctx=self.get_mpcontext())
             self._q_out = _queues.Unique(ctx=self.get_mpcontext())
-        self._servlet.start(self._q_in, self._q_out,
-                q_log=self._q_log,
-                should_stop=self._should_stop, ctx=self.get_mpcontext())
+        self._servlet.start(
+            self._q_in, self._q_out,
+            q_log=self._q_log,
+            should_stop=self._should_stop, ctx=self.get_mpcontext())
 
-        self._thread_tasks.append(self._thread_pool.submit(self._gather_output))
+        t = Thread(target=self._gather_output)
+        t.start()
+        self._threads.append(t)
 
         return self
 
@@ -754,14 +746,10 @@ class Server:
         self._should_stop.set()
         self._servlet.stop()
 
-        done, not_done = concurrent.futures.wait(self._thread_tasks, timeout=10)
-        for t in not_done:
-            t.cancel()
-
         self._q_log.put(None)
-        self._thread_pool.shutdown()
-        # TODO: in Python 3.9+, use argument `cancel_futures=True`.
-        self._q_log.close()
+
+        for t in self._threads:
+            t.join()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -798,33 +786,41 @@ class Server:
         tasks = _queues.SingleLane(0)
         nomore = object()
 
-        def _enqueue():
+        def _enqueue(tasks, return_exceptions, err):
+            threading.current_thread().name = f"{self.__class__.__name__}.stream._enqueue"
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
-            enqueue = self._enqueue
-            should_stop = self._should_stop
-            for x in data_stream:
-                try:
-                    fut = enqueue(x, timeout)
-                    timedout = False
-                except Exception as e:
-                    if return_exceptions:
-                        timedout = True
-                        fut = Future()
-                        fut.set_exception(e)
-                    else:
-                        logger.error("exception '%r' happened for input '%s'", e, x)
-                        raise
-                tasks.put((x, fut, timedout))
-                if should_stop.is_set():
-                    break
-            tasks.put(nomore)
-            # Exceptions in `fut` is covered by `return_exceptions`.
-            # Uncaptured exceptions will propagate and cause the thread to exit in
-            # exception state. This exception is not covered by `return_exceptions`;
-            # it will be propagated in the main thread.
+            try:
+                enqueue = self._enqueue
+                should_stop = self._should_stop
+                for x in data_stream:
+                    try:
+                        fut = enqueue(x, timeout)
+                        timedout = False
+                    except Exception as e:
+                        if return_exceptions:
+                            timedout = True
+                            fut = Future()
+                            fut.set_exception(e)
+                        else:
+                            logger.error("exception '%r' happened for input '%s'", e, x)
+                            raise
+                    tasks.put((x, fut, timedout))
+                    if should_stop.is_set():
+                        break
+                tasks.put(nomore)
+                # Exceptions in `fut` is covered by `return_exceptions`.
+                # Uncaptured exceptions will propagate and cause the thread to exit in
+                # exception state. This exception is not covered by `return_exceptions`;
+                # it will be propagated in the main thread.
+            except Exception as e:
+                logger.exception(e)
+                err.append(e)
 
-        self._thread_tasks.append(self._thread_pool.submit(_enqueue))
+        thread_error = []
+        t = Thread(target=_enqueue, args=(tasks, return_exceptions, thread_error))
+        t.start()
+        self._threads.append(t)
 
         _wait = self._wait_for_result
 
@@ -832,9 +828,9 @@ class Server:
             try:
                 z = tasks.get(timeout=1)
             except Empty:
-                if t.done():
-                    if t.exception():
-                        raise t.exception()
+                if not t.is_alive():
+                    if thread_error:
+                        raise thread_error[0]
                     assert self._should_stop.is_set()
                     return
                 if self._should_stop.is_set():
@@ -927,7 +923,7 @@ class Server:
             raise TimeoutError(f"{monotonic() - t0} seconds total")
 
     def _gather_output(self):
-        threading.current_thread().name = 'ResultCollector'
+        threading.current_thread().name = f"{self.__class__.__name__}._gather_output"
         q_out = self._q_out
         futures = self._uid_to_futures
 

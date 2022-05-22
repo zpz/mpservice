@@ -5,7 +5,7 @@ import pytest
 
 from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
-    ProcessWorker, ThreadWorker,
+    ProcessWorker,
     Servlet, Sequential, Ensemble, Server,
     TimeoutError
 )

@@ -40,7 +40,7 @@ def main():
     mp = multiprocessing.get_context('spawn')
     for n in (10000, 100000, 1000000):
         run(mp.SimpleQueue(), n, mp)
-        run(mp.Unique(), n, mp)
+        run(Unique(ctx=mp), n, mp)
         run(mp.Queue(), n, mp)
         print('')
 

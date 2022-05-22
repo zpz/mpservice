@@ -11,6 +11,8 @@ import logging.handlers
 import multiprocessing
 import multiprocessing.queues
 import subprocess
+import threading
+import traceback
 import warnings
 
 
@@ -48,10 +50,37 @@ def full_class_name(cls):
     return mod + '.' + cls.__name__
 
 
+class Thread(threading.Thread):
+    def run(self):
+        try:
+            super().run()
+        except BaseException:
+            print('Error in Thread', threading.current_thread().name)
+            traceback.print_exc()
+            raise
+
+
+class SpawnProcess(multiprocessing.context.SpawnProcess):
+    def run(self):
+        try:
+            super().run()
+        except BaseException:
+            print('Error in Process', multiprocessing.current_process().name)
+            traceback.print_exc()
+            raise
+
+
+def Process(*args, ctx, **kwargs):
+    method = ctx.get_start_method()
+    assert method == 'spawn', f"process start method '{method}' not implemented"
+    return SpawnProcess(*args, **kwargs)
+
+
 def logger_thread(q: multiprocessing.queues.Queue):
     '''
     In main thread, start another thread with this function as `target`.
     '''
+    threading.current_thread().name = 'logger_thread'
     while True:
         record = q.get()
         if record is None:

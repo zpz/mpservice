@@ -1,3 +1,10 @@
+Release 0.11.0 (forthcoming)
+==============
+
+- Refactor to `mpservice.mpserver` with API changes.
+  New design allows flexible composition of sequential and ensemble setups.
+
+
 Release 0.10.9
 ==============
 
