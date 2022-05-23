@@ -135,6 +135,9 @@ class Unique:
         self._q.close()
         self._closed = True
 
+    def qsize(self):
+        return self._q.qsize()
+
     def empty(self):
         return self._q.empty()
 

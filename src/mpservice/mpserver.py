@@ -125,7 +125,9 @@ class BatchQueue:
                 with buffer._not_full:
                     buffer._not_full.wait()
             try:
+                sleep(0)  # TODO: hack; fix it.
                 with lock:  # read lock
+                    # print(multiprocessing.current_process().name, 'batcher 1')
                     # In order to facilitate batching,
                     # we hold the lock and keep getting
                     # data off the pipe for this reader's buffer,
@@ -148,8 +150,11 @@ class BatchQueue:
                         else:
                             for x in z:
                                 if x == NOMOREDATA:
+                                    print('batcher 0 got', x)
+                                    print('  qin qsize', qin.qsize())
                                     buffer.put(x)
                                     qin.put(x)
+                                    print('  qin qsize', qin.qsize())
                                     return
 
                                 if is_exception(x[1]):
@@ -189,6 +194,7 @@ class BatchQueue:
         buffer = self._buffer
         out = buffer.get(timeout=first_timeout)
         if out == NOMOREDATA:
+            print('  batcher 1 got', out)
             return out
 
         out = [out]
@@ -210,6 +216,7 @@ class BatchQueue:
                     # Next call to this method will get
                     # the indicator.
                     buffer.put(z)
+                    print('  batcher3 got', z)
                     break
                 out.append(z)
                 n += 1
@@ -352,6 +359,7 @@ class Worker(metaclass=ABCMeta):
                 except Empty:
                     continue
                 if batch == NOMOREDATA:
+                    print('worker', self.name, 'got', batch)
                     q_out.put(batch)
                     break
 
@@ -450,7 +458,7 @@ class ProcessWorker(Worker):
 
 
 class ServletProtocol(Protocol):
-    def start(self, q_in, q_out, *, log_passer, should_stop, ctx):
+    def start(self, q_in, q_out, *, log_passer, ctx):
         pass
 
     def stop(self):
@@ -472,7 +480,7 @@ class Servlet:
         self._workers = []
         self._started = False
 
-    def start(self, q_in, q_out, *, log_passer, should_stop, ctx):
+    def start(self, q_in, q_out, *, log_passer, ctx):
         assert not self._started
         q_indicator = ctx.Queue()
         for cpu in self._cpus:
@@ -559,7 +567,7 @@ class Sequential:
         self._qs = []
         self._started = False
 
-    def start(self, q_in, q_out, *, log_passer, should_stop, ctx):
+    def start(self, q_in, q_out, *, log_passer, ctx):
         assert not self._started
         nn = len(self._servlets)
         q1 = q_in
@@ -569,7 +577,7 @@ class Sequential:
                 q2 = _queues.Unique(ctx=ctx)
             else:
                 q2 = q_out
-            s.start(q1, q2, log_passer=log_passer, should_stop=should_stop, ctx=ctx)
+            s.start(q1, q2, log_passer=log_passer, ctx=ctx)
             self._qs.append(q2)
             q1 = q2
         self._started = True
@@ -605,7 +613,7 @@ class Ensemble:
         self._uid_to_results = {}
         self._threads = []
 
-    def start(self, q_in, q_out, *, log_passer, should_stop, ctx):
+    def start(self, q_in, q_out, *, log_passer, ctx):
         assert not self._started
         self._reset()
         self._qin = q_in
@@ -613,18 +621,18 @@ class Ensemble:
         for s in self._servlets:
             q1 = _queues.Unique(ctx=ctx)
             q2 = _queues.Unique(ctx=ctx)
-            s.start(q1, q2, log_passer=log_passer, should_stop=should_stop, ctx=ctx)
+            s.start(q1, q2, log_passer=log_passer, ctx=ctx)
             self._qins.append(q1)
             self._qouts.append(q2)
-        t = Thread(target=self._dequeue, args=(should_stop,))
+        t = Thread(target=self._dequeue)
         t.start()
         self._threads.append(t)
-        t = Thread(target=self._enqueue, args=(should_stop,))
+        t = Thread(target=self._enqueue)
         t.start()
         self._threads.append(t)
         self._started = True
 
-    def _enqueue(self, should_stop):
+    def _enqueue(self):
         threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
@@ -632,7 +640,7 @@ class Ensemble:
         catalog = self._uid_to_results
         hasfunc = self._func is not None
         nn = len(qins)
-        while not should_stop.is_set():
+        while True:
             try:
                 v = qin.get(timeout=0.1)
             except Empty:
@@ -653,14 +661,14 @@ class Ensemble:
             for q in qins:
                 q.put((uid, x))
 
-    def _dequeue(self, should_stop):
+    def _dequeue(self):
         threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
         func = self._func
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
         nn = len(qouts)
-        while not should_stop.is_set():
+        while True:
             for idx, q in enumerate(qouts):
                 while not q.empty():
                     # Get all available results out of this queue.
@@ -709,8 +717,6 @@ class Server:
         assert backlog > 0
         self._backlog = backlog
 
-        self._should_stop = self.get_mpcontext().Event()
-
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
             if isinstance(main_cpu, int):
@@ -726,7 +732,6 @@ class Server:
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
         assert not self._started
-        assert not self._should_stop.is_set()
 
         self._worker_logger = ProcessLogger(ctx=self.get_mpcontext())
         self._worker_logger.start()
@@ -766,7 +771,6 @@ class Server:
             self._q_in,
             self._q_out,
             log_passer=self._worker_logger,
-            should_stop=self._should_stop,
             ctx=self.get_mpcontext())
 
         t = Thread(target=self._gather_output)
@@ -787,7 +791,6 @@ class Server:
             logger.error(msg)
 
         self._input_buffer.put(NOMOREDATA)
-        self._should_stop.set()
 
         self._servlet.stop()
 
@@ -840,7 +843,6 @@ class Server:
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
-            should_stop = self._should_stop
             try:
                 for x in data_stream:
                     try:
@@ -855,8 +857,6 @@ class Server:
                             logger.error("exception '%r' happened for input '%s'", e, x)
                             raise
                     tasks.put((x, fut, timedout))
-                    if should_stop.is_set():
-                        break
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaptured exceptions will propagate and cause the thread to exit in
                 # exception state. This exception is not covered by `return_exceptions`;
@@ -976,7 +976,7 @@ class Server:
         q_out = self._q_out
         futures = self._uid_to_futures
 
-        while not self._should_stop.is_set():
+        while True:
             try:
                 z = q_out.get(timeout=1)
             except Empty:

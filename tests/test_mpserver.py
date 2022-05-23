@@ -86,6 +86,8 @@ def test_sequential_batch():
         y = [service.call(v) for v in x]
         assert y == [v + 4 for v in x]
 
+        print('\n\n-----done-----\n\n')
+
 
 def test_sequential_error():
     s1 = Servlet(Double, cpus=[1, 2])
