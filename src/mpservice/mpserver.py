@@ -61,8 +61,7 @@ import multiprocessing
 import queue
 import threading
 from abc import ABCMeta, abstractmethod
-from concurrent.futures import Future
-from multiprocessing import synchronize, queues
+from multiprocessing import queues
 from queue import Empty, Full
 from time import monotonic, sleep
 from typing import Sequence, Union, Callable, Type, Protocol, Any
@@ -71,7 +70,6 @@ import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
 from .util import is_exception, Thread, Process, ProcessLogger
-from .streamer import put_in_queue
 from . import _queues
 
 
@@ -127,7 +125,6 @@ class BatchQueue:
             try:
                 sleep(0)  # TODO: hack; fix it.
                 with lock:  # read lock
-                    # print(multiprocessing.current_process().name, 'batcher 1')
                     # In order to facilitate batching,
                     # we hold the lock and keep getting
                     # data off the pipe for this reader's buffer,
@@ -150,11 +147,8 @@ class BatchQueue:
                         else:
                             for x in z:
                                 if x == NOMOREDATA:
-                                    print('batcher 0 got', x)
-                                    print('  qin qsize', qin.qsize())
                                     buffer.put(x)
                                     qin.put(x)
-                                    print('  qin qsize', qin.qsize())
                                     return
 
                                 if is_exception(x[1]):
@@ -194,7 +188,6 @@ class BatchQueue:
         buffer = self._buffer
         out = buffer.get(timeout=first_timeout)
         if out == NOMOREDATA:
-            print('  batcher 1 got', out)
             return out
 
         out = [out]
@@ -216,7 +209,6 @@ class BatchQueue:
                     # Next call to this method will get
                     # the indicator.
                     buffer.put(z)
-                    print('  batcher3 got', z)
                     break
                 out.append(z)
                 n += 1
@@ -354,12 +346,8 @@ class Worker(metaclass=ABCMeta):
                     batch_size_min = 1000000
                     batch_size_mean = 0.0
 
-                try:
-                    batch = q_in.get_many(first_timeout=0.5, extra_timeout=batch_wait_time)
-                except Empty:
-                    continue
+                batch = q_in.get_many(extra_timeout=batch_wait_time)
                 if batch == NOMOREDATA:
-                    print('worker', self.name, 'got', batch)
                     q_out.put(batch)
                     break
 
@@ -641,10 +629,7 @@ class Ensemble:
         hasfunc = self._func is not None
         nn = len(qins)
         while True:
-            try:
-                v = qin.get(timeout=0.1)
-            except Empty:
-                continue
+            v = qin.get()
             if v == NOMOREDATA:
                 for q in qins:
                     q.put(v)
@@ -851,7 +836,7 @@ class Server:
                     except Exception as e:
                         if return_exceptions:
                             timedout = True
-                            fut = Future()
+                            fut = concurrent.futures.Future()
                             fut.set_exception(e)
                         else:
                             logger.error("exception '%r' happened for input '%s'", e, x)
@@ -913,9 +898,12 @@ class Server:
         while len(self._uid_to_futures) >= self._backlog:
             if (t := monotonic()) > deadline:
                 raise TimeoutError(f"{t - t0} seconds enqueue")
-            await asyncio.sleep(min(0.001, deadline - t))
+            await asyncio.sleep(min(0.01, deadline - t))
+            # It's OK if this sleep is a little long,
+            # because the pipe is full and busy.
 
-        fut = Future()
+        # fut = asyncio.Future()
+        fut = concurrent.futures.Future()
         fut.data = {'t0': t0, 'timeout': timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
@@ -934,6 +922,19 @@ class Server:
         return fut.result()
         # This could raise RemoteException.
 
+        # TODO: I don't understand why the following (along with
+        # corresponding change in `_async_enqueue`) seems to work but
+        # is very, very slow.
+
+        # t0 = fut.data['t0']
+        # t2 = t0 + fut.data['timeout']
+        # try:
+        #     return await asyncio.wait_for(fut, timeout=max(0, t2 - monotonic()))
+        #     # this may raise RemoteException
+        # except asyncio.TimeoutError:
+        #     # `wait_for` has already cancelled `fut`.
+        #     raise TimeoutError(f"{monotonic() - t0} seconds total")
+
     def _enqueue(self, x, timeout):
         # This method is called by `call` or `stream`.
         # There are no concurrent calls to this method.
@@ -944,8 +945,10 @@ class Server:
             if (t := monotonic()) >= deadline:
                 raise TimeoutError(f"{t - t0} seconds enqueue")
             sleep(min(0.01, deadline - t))
+            # It's OK if this sleep is a little long,
+            # because the pipe is full and busy.
 
-        fut = Future()
+        fut = concurrent.futures.Future()
         fut.data = {'t0': t0, 'timeout': timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
@@ -991,7 +994,7 @@ class Server:
                 else:
                     fut.set_result(y)
                 fut.data['t1'] = monotonic()
-            except asyncio.InvalidStateError as e:
+            except (concurrent.futures.InvalidStateError, asyncio.InvalidStateError) as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TimeoutError.
                     # logger.debug('Future object is already cancelled')
