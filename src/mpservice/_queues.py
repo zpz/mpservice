@@ -1,8 +1,3 @@
-'''
-This module defines a few alternatives to the standard multiprocessing or threading queues for better performance.
-They are purpose-built for particular use cases in this package.
-'''
-
 # Queue performance benchmarking:
 #   https://stackoverflow.com/questions/8463008/multiprocessing-pipe-vs-queue
 # quick-quque: https://github.com/Invarato/quick_queue_project
@@ -13,14 +8,9 @@ They are purpose-built for particular use cases in this package.
 # https://stackoverflow.com/questions/60197392/high-performance-replacement-for-multiprocessing-queue
 
 import logging
-import multiprocessing
 import threading
 from collections import deque
-from multiprocessing import context as mp_context
 from queue import Empty, Full
-
-import faster_fifo
-import faster_fifo_reduction  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -99,97 +89,3 @@ class SingleLane:
             # whether this is expected behavior in their particular application.
             logger.warning(f"{self!r} closed with {self.qsize()} data items un-consumed and abandoned")
         self._closed = True
-
-
-class Unique:
-    '''
-    Naming follows the example of `deque`:
-
-        'de queue'  --> 'deque'
-        'uni queue' --> 'unique'
-    '''
-    def __init__(self, *, ctx=None, maxsize_bytes: int = 10_000_000):
-        if ctx is None:
-            ctx = multiprocessing.get_context()
-        self._q = faster_fifo.Queue(max_size_bytes=maxsize_bytes)
-        self._rlock = ctx.Lock()
-        self._closed = False
-
-    def __getstate__(self):
-        mp_context.assert_spawning(self)
-        return (self._q, self._rlock)
-
-    def __setstate__(self, state):
-        (self._q, self._rlock) = state
-        self._closed = None
-
-    def __del__(self):
-        self.close()
-
-    def close(self):
-        if self._closed is None:
-            # Not in the process where the Queue was created.
-            return
-        if self._closed:
-            return
-        self._q.close()
-        self._closed = True
-
-    def empty(self):
-        return self._q.empty()
-
-    def full(self):
-        return self._q.full()
-
-    def get(self, *, timeout=None):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = 3600 * 24
-        return self._q.get(timeout=float(timeout))
-
-    def get_many(self, *, timeout=None, **kwargs):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = 3600 * 24
-        return self._q.get_many(timeout=float(timeout), **kwargs)
-
-    def put(self, obj, *, timeout=None):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = 3600 * 24
-        self._q.put(obj, timeout=float(timeout))
-
-    def put_many(self, objs, *, timeout=None):
-        if self._closed:
-            raise ValueError(f"{self!r} is closed")
-        if timeout is None:
-            timeout = 3600 * 24
-
-        self._q.put_many(objs, timeout=float(timeout))
-
-        # # This is safe against extemely large data, but
-        # # in this way we can't control timeout.
-        # xx = [objs]
-        # while xx:
-        #     try:
-        #         self._q.put_many(xx[0], timeout=0.01)
-        #     except Full:
-        #         if len(xx[0]) > 1:
-        #             k = int(len(xx[0]) / 2)
-        #             objs = [xx[0][:k], xx[0][k:]] + xx[1:]
-        #             # Split the data batch into smaller batches.
-        #             # This is in case the buffer is too small for the whole batch,
-        #             # hence would never succeed unless we split the batch into
-        #             # smaller chunks.
-        #     else:
-        #         xx = xx[1:]
-
-
-def _Unique(self, **kwargs):
-    return Unique(ctx=self.get_context(), **kwargs)
-
-
-mp_context.BaseContext.Unique = _Unique

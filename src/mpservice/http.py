@@ -28,7 +28,7 @@ def make_server(
         access_log: bool = None,
         loop='auto',
         workers: int = 1,
-        backlog: int = 64,
+        backlog: int = 32,
         **kwargs,
 ):
     '''

@@ -11,6 +11,8 @@ import logging.handlers
 import multiprocessing
 import multiprocessing.queues
 import subprocess
+import threading
+import traceback
 import warnings
 
 
@@ -48,37 +50,103 @@ def full_class_name(cls):
     return mod + '.' + cls.__name__
 
 
-def logger_thread(q: multiprocessing.queues.Queue):
-    '''
-    In main thread, start another thread with this function as `target`.
-    '''
-    while True:
-        record = q.get()
-        if record is None:
-            # User should put a `None` in `q` to indicate stop.
-            break
-        logger = logging.getLogger(record.name)
-        if record.levelno >= logger.getEffectiveLevel():
-            logger.handle(record)
+class Thread(threading.Thread):
+    def run(self):
+        try:
+            super().run()
+        except BaseException:
+            print('Error in Thread', threading.current_thread().name)
+            traceback.print_exc()
+            raise
 
 
-def forward_logs(q: multiprocessing.queues.Queue):
-    '''
-    In a Process (created using the "spawn" method),
-    run this function at the beginning to set up putting all log messages
-    ever produced in that process into the queue that will be consumed by
-    `logger_thread`.
+class SpawnProcess(multiprocessing.context.SpawnProcess):
+    def run(self):
+        try:
+            super().run()
+        except BaseException:
+            print('Error in Process', multiprocessing.current_process().name)
+            traceback.print_exc()
+            raise
 
-    During the execution of the process, logging should not be configured.
-    Logging config should happen in the main process/thread.
-    '''
-    root = logging.getLogger()
-    if root.handlers:
-        warnings.warn('root logger has handlers: {}; deleted'.format(root.handlers))
-        root.handlers = []
-    root.setLevel(logging.DEBUG)
-    qh = logging.handlers.QueueHandler(q)
-    root.addHandler(qh)
+
+def Process(*args, ctx, **kwargs):
+    # This is a "factory" function.
+    method = ctx.get_start_method()
+    assert method == 'spawn', f"process start method '{method}' not implemented"
+    return SpawnProcess(*args, **kwargs)
+
+
+class ProcessLogger:
+    def __init__(self, *, ctx):
+        assert ctx.get_start_method() == 'spawn'
+        self._ctx = ctx
+        self._t = None
+        self._creator = True
+
+    def __getstate__(self):
+        assert self._creator
+        assert self._t is not None
+        return self._q
+
+    def __setstate__(self, state):
+        # In another process.
+        self._q = state
+        self._creator = False
+
+    def start(self):
+        if self._creator:
+            self._start_in_main_process()
+        else:
+            self._start_in_other_process()
+
+    def stop(self):
+        if self._creator:
+            assert self._t is not None
+            self._q.put(None)
+            self._t.join()
+        else:
+            self._q.close()
+
+    def _start_in_main_process(self):
+        assert self._t is None
+        self._q = self._ctx.Queue()
+
+        self._t = Thread(target=self._logger_thread, args=(self._q, ))
+        self._t.start()
+
+    def _start_in_other_process(self):
+        '''
+        In a Process (created using the "spawn" method),
+        run this function at the beginning to set up putting all log messages
+        ever produced in that process into the queue that will be consumed
+        in the main process by `self._logger_thread`.
+
+        During the execution of the process, logging should not be configured.
+        Logging config should happen in the main process/thread.
+        '''
+        root = logging.getLogger()
+        if root.handlers:
+            warnings.warn('root logger has handlers: {}; deleted'.format(root.handlers))
+            root.handlers = []
+        root.setLevel(logging.DEBUG)
+        qh = logging.handlers.QueueHandler(self._q)
+        root.addHandler(qh)
+
+    @staticmethod
+    def _logger_thread(q: multiprocessing.queues.Queue):
+        '''
+        In main thread, start another thread with this function as `target`.
+        '''
+        threading.current_thread().name = 'logger_thread'
+        while True:
+            record = q.get()
+            if record is None:
+                # User should put a `None` in `q` to indicate stop.
+                break
+            logger = logging.getLogger(record.name)
+            if record.levelno >= logger.getEffectiveLevel():
+                logger.handle(record)
 
 
 def get_docker_host_ip():
