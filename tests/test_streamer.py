@@ -248,14 +248,12 @@ def test_chain():
             s.transform(process2, concurrency=4)
             s.drain()
 
-    print('d')
     with pytest.raises(TypeError):
         with Streamer(corrupt_data()) as s:
             s.transform(process1, concurrency=2)
             s.transform(process2, concurrency=4, return_exceptions=True)
             s.drain()
 
-    print('e')
     with Streamer(corrupt_data()) as s:
         s.transform(process1, concurrency=2, return_exceptions=True)
         s.transform(process2, concurrency=4, return_exceptions=True)

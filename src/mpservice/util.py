@@ -71,6 +71,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
 
 def Process(*args, ctx, **kwargs):
+    # This is a "factory" function.
     method = ctx.get_start_method()
     assert method == 'spawn', f"process start method '{method}' not implemented"
     return SpawnProcess(*args, **kwargs)

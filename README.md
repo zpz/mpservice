@@ -13,12 +13,12 @@ Utilities for Python concurrency, including
   is that one or more of the operators is I/O bound (think: calling an external
   service), hence can benefit from concurrency.
 
-The serving and streaming utilities can be combined because a `mpservice.mpserver.MPServer` instance,
+The serving and streaming utilities can be combined because a `mpservice.mpserver.Server` instance,
 while doing heavy-lifting in other processes, acts as an
-I/O bound operator in the main process. Indeed, `mpservice.mpserver.MPServer` provides method `stream`
+I/O bound operator in the main process. Indeed, `mpservice.mpserver.Server` provides method `stream`
 for using the server to process data streams.
 
-A `MPServer` object could be used either in "embedded" mode or to back a service.
+A `Server` object could be used either in "embedded" mode or to back a service.
 Utilities are provided in `mpservice.http` and `mpservice.socket` for the latter use case.
 
 The package also contains some other related utilities.

@@ -1,4 +1,5 @@
 #!/bin/bash
 
-source <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/run-tests) --parent zppz/py3-build:22.04.07
+# source <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/run-tests) --parent zppz/py3-build:22.04.07
+source <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/run-tests)
 

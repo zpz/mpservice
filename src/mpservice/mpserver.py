@@ -1,54 +1,63 @@
 '''Service using multiprocessing to perform CPU-bound operations
 making use of multiple CPUs (i.e. cores) on the machine.
 
-Each "worker" runs in a separate process. There can be multiple
-workers forming a sequence or an ensemble. Exact CPU allocation---which
-CPUs are used by which workers---can be controlled
-to achieve high efficiency.
+There are 4 levels of constructs.
 
-The "interface" between the service and the outside world
-resides in the "main process".
+- On the lowest level is `Worker`. This defines operation on a single input item
+  or a batch of items in usual sync code. This is supposed to run in a single process.
+  (If the code creates other processes, well, no one can forbid that, but that is not
+  the intended usage.)
+
+- A `Servlet` manages a `Worker`, specifing how many processes are to be created,
+  each executing the worker code independently. It may control exactly
+  which CPU(s) each worker process uses. The servlet code runs in the "main process",
+  whereas workers run in other processes. Each input item is processed by one
+  and only one worker.
+
+- Servlets can be composed in `Sequential`s or `Ensemble`s. In a sequential,
+  the first servlet's output becomes the second servlet's input, and so on.
+  In an ensemble, each input item is processed by all the servlets, and their
+  results are collected in a list.
+
+  Great power comes from the fact that both `Sequential` and `Ensemble`
+  also follow the `Servlet` API, hence both can be constituents of other compositions.
+  In principle, you can freely compose and nest them (in practice, you can't go crazy;
+  remember they create processes). For example, suppose `W1`, `W2`,..., are `Worker`
+  subclasses, then you may design such a workflow,
+
+    s = Sequential(
+            Servlet(W1),
+            Ensemble(
+                Servlet(W2),
+                Sequential(Servlet(W3), Servlet(W4)),
+                ),
+            Ensemble(
+                Sequetial(Servlet(W5), Servlet(W6)),
+                Sequetial(Servlet(W7), Servlet(W8), Servlet(W9)),
+                ),
+        )
+
+- On the top level is `Server`. Pass a `Servlet`, or `Sequential` or `Ensemble`
+  into a `Server`, which handles scheduling as well as interfacing with the outside
+  world:
+
+    server = Server(s)
+    with server:
+        y = server.call(38)
+        z = await server.async_call('abc')
+
+        for x, y in server.stream(data, return_x=True):
+            print(x, y)
+
+The "interface" and "scheduling" code of `Server` runs in the "main process".
 Two usage patterns are supported, namely making (concurrent) individual
 calls to the service to get individual results, or flowing
 a potentially unlimited stream of data through the service
-to get a stream of results. Each usage supports a sync API and an async API.
-
-The interface and scheduling code in the main process
-is all provided, and usually does not need much customization.
-One task of trial and error by the user is experimenting with
-CPU allocations among workers to achieve best performance.
+to get a stream of results. The first usage supports a sync API and an async API.
 
 The user's main work is implementing the operations in the "workers".
-These are conventional sync functions.
-
-Typical usage:
-
-    class MyServlet1(Servlet):
-        def __init_(self, ..):
-            ...
-
-        def call(self, x):
-            ...
-
-    class MyServlet2(Servlet):
-        def __init__(self, ...):
-            ...
-
-        def call(self, x):
-            ...
-
-    class MyServer(SequentialServer):
-        def __init__(self, ...):
-            ...
-            self.add_servlet(MyServlet1, ...)
-            self.add_servlet(MyServlet2, ...)
-
-    with MyServer(...) as server:
-        y = server.call(x)
-
-        output = server.stream(data)
-        for y in output:
-            ...
+Another task (of some trial and error) by the user is experimenting with
+CPU allocations among workers to achieve best performance.
 
 Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/).
 This article describes roughly version 0.7.2.
@@ -58,11 +67,11 @@ import asyncio
 import concurrent.futures
 import logging
 import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 from abc import ABCMeta, abstractmethod
-from multiprocessing import queues
-from queue import Empty, Full
+from queue import Empty
 from time import monotonic, sleep
 from typing import Sequence, Union, Callable, Type, Protocol, Any
 
@@ -70,7 +79,7 @@ import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
 from .util import is_exception, Thread, Process, ProcessLogger
-from . import _queues
+from ._queues import SingleLane
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -85,135 +94,15 @@ class TimeoutError(Exception):
     pass
 
 
-class BatchQueue:
-    '''
-    Eagerly collect data in a background thread to facilitate batching.
-    '''
-    def __init__(self, batch_size: int, queue_in, queue_err, *, rlock, buffer_size: int = None):
-        assert 1 <= batch_size
-        if buffer_size is None:
-            buffer_size = batch_size
-        else:
-            assert batch_size <= buffer_size
-
-        self._buffer_size = buffer_size
-        self._batch_size = batch_size
-        self._buffer = _queues.SingleLane(buffer_size)
-
-        self._qin = queue_in
-        self._lock = rlock
-        self._qerr = queue_err
-
-        self._get_called = threading.Event()
-        self._thread = Thread(target=self._read, daemon=True)
-        self._thread.start()
-
-    def _read(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._read"
-        buffer = self._buffer
-        lock = self._lock
-        getcalled = self._get_called
-        closed = self._buffer._closed
-        batchsize = self._batch_size
-        qin = self._qin
-        qerr = self._qerr
-
-        while True:
-            if buffer.full():
-                with buffer._not_full:
-                    buffer._not_full.wait()
-            try:
-                sleep(0)  # TODO: hack; fix it.
-                with lock:  # read lock
-                    # In order to facilitate batching,
-                    # we hold the lock and keep getting
-                    # data off the pipe for this reader's buffer,
-                    # even though there may be other readers waiting.
-                    while True:
-                        n = max(1, batchsize - buffer.qsize())
-                        try:
-                            # `faster_fifo.Queue.get_many` will wait
-                            # up to the specified timeout if there's nothing;
-                            # once there's something to read, it will
-                            # read up to the max count that's already there
-                            # to be read---importantly, it will not spread
-                            # out the wait in order to collect more elements.
-                            z = qin.get_many(
-                                block=True,
-                                timeout=float(60),
-                                max_messages_to_get=int(n))
-                        except Empty:
-                            pass
-                        else:
-                            for x in z:
-                                if x == NOMOREDATA:
-                                    buffer.put(x)
-                                    qin.put(x)
-                                    return
-
-                                if is_exception(x[1]):
-                                    qerr.put(x)
-                                else:
-                                    buffer.put(x)
-
-                        if closed:
-                            return
-                        if getcalled.is_set():
-                            # Once `get` or `get_many` has been called,
-                            # we release the lock so that other readers
-                            # get a chance for the lock.
-                            getcalled.clear()
-                            break
-                        if buffer.qsize() >= batchsize:
-                            break
-
-            except Exception:
-                if closed:
-                    break
-                raise
-
-    def close(self):
-        self._buffer.close()
-
-    def __del__(self):
-        self.close()
-
-    def empty(self):
-        return self._buffer.empty()
-
-    def qsize(self):
-        return self._buffer.qsize()
-
-    def get_many(self, *, first_timeout=None, extra_timeout=None):
-        buffer = self._buffer
-        out = buffer.get(timeout=first_timeout)
-        if out == NOMOREDATA:
-            return out
-
-        out = [out]
-        max_n = self._batch_size
-        n = 1
-        if max_n > 1:
-            if extra_timeout is None:
-                extra_timeout = 60
-            deadline = monotonic() + extra_timeout
-            while n < max_n:
-                t = deadline - monotonic()
-                try:
-                    z = buffer.get(timeout=t)
-                except Empty:
-                    break
-                if z == NOMOREDATA:
-                    # Return the batch so far.
-                    # Put this indicator back in the queue.
-                    # Next call to this method will get
-                    # the indicator.
-                    buffer.put(z)
-                    break
-                out.append(z)
-                n += 1
-        self._get_called.set()
-        return out
+class FastQueue(multiprocessing.queues.SimpleQueue):
+    # Check out os.read, os.write, os.close with file-descriptor args.
+    def __init__(self, *, ctx):
+        super().__init__(ctx=ctx)
+        # Replace Lock by RLock to facilitate batching
+        # via greedy `get_many`.
+        self._rlock = ctx.RLock()
+        if self._wlock:
+            self._wlock = ctx.RLock()
 
 
 class Worker(metaclass=ABCMeta):
@@ -221,23 +110,10 @@ class Worker(metaclass=ABCMeta):
     # `__init__` and implement `call`.
 
     @classmethod
-    def run(cls, *,
-            q_in: _queues.Unique,
-            q_out: _queues.Unique,
-            q_indicator: queues.Queue,
-            **init_kwargs):
-        try:
-            obj = cls(**init_kwargs)
-            q_indicator.put(obj.name)
-            batch_size = obj.batch_size
-            if batch_size > 1:
-                q_in = BatchQueue(batch_size, q_in, q_out, rlock=q_in._rlock, buffer_size=batch_size + 10)
-            obj.start(q_in=q_in, q_out=q_out)
-        finally:
-            q_in.close()
-            if isinstance(q_in, BatchQueue):
-                q_in._qin.close()
-            q_out.close()
+    def run(cls, *, q_in: FastQueue, q_out: FastQueue, **init_kwargs):
+        obj = cls(**init_kwargs)
+        q_out.put(obj.name)
+        obj.start(q_in=q_in, q_out=q_out)
 
     def __init__(self, *,
                  batch_size: int = None,
@@ -292,94 +168,6 @@ class Worker(metaclass=ABCMeta):
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
-    def start(self, *, q_in, q_out):
-        try:
-            if self.batch_size > 1:
-                self._start_batch(q_in=q_in, q_out=q_out)
-            else:
-                self._start_single(q_in=q_in, q_out=q_out)
-        except KeyboardInterrupt:
-            print(self.name, 'stopped by KeyboardInterrupt')
-
-    def _start_single(self, *, q_in, q_out):
-        batch_size = self.batch_size
-        while True:
-            try:
-                z = q_in.get()
-            except Empty:
-                continue
-            if z == NOMOREDATA:
-                q_out.put(z)
-                q_in.put(z)  # broadcast to one fellow worker
-                break
-
-            uid, x = z
-            if is_exception(x):
-                q_out.put((uid, x))
-                continue
-
-            try:
-                if batch_size:
-                    y = self.call([x])[0]
-                else:
-                    y = self.call(x)
-            except Exception:
-                # There are opportunities to print traceback
-                # and details later using the `RemoteException`
-                # object. Be brief on the logging here.
-                y = RemoteException()
-
-            q_out.put((uid, y))
-
-    def _start_batch(self, *, q_in, q_out):
-        batch_wait_time = self.batch_wait_time
-
-        def print_batching_info():
-            logger.info('%d batches with sizes %d--%d, mean %.1f',
-                        n_batches, batch_size_min, batch_size_max, batch_size_mean)
-
-        n_batches = 0
-        try:
-            while True:
-                if n_batches == 0:
-                    batch_size_max = -1
-                    batch_size_min = 1000000
-                    batch_size_mean = 0.0
-
-                batch = q_in.get_many(extra_timeout=batch_wait_time)
-                if batch == NOMOREDATA:
-                    q_out.put(batch)
-                    break
-
-                uids = [v[0] for v in batch]
-                batch = [v[1] for v in batch]
-                n = len(batch)
-
-                try:
-                    results = self.call(batch)
-                except Exception:
-                    err = RemoteException()
-                    for uid in uids:
-                        q_out.put((uid, err))
-                else:
-                    while True:
-                        try:
-                            q_out.put_many(list(zip(uids, results)))
-                            break
-                        except Full:
-                            continue
-
-                n_batches += 1
-                batch_size_max = max(batch_size_max, n)
-                batch_size_min = min(batch_size_min, n)
-                batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-                if n_batches % 1000 == 0:
-                    print_batching_info()
-                    n_batches = 0
-        finally:
-            if n_batches:
-                print_batching_info()
-
     @abstractmethod
     def call(self, x):
         # If `self.batch_size == 0`, then `x` is a single
@@ -418,6 +206,172 @@ class Worker(metaclass=ABCMeta):
         # in `_start_batch` and `_start_single`.
         raise NotImplementedError
 
+    def start(self, *, q_in, q_out):
+        try:
+            if self.batch_size > 1:
+                self._batch_buffer = SingleLane(self.batch_size + 10)
+                self._batch_get_called = threading.Event()
+                t = Thread(target=self._build_input_batches, args=(q_in, q_out))
+                t.start()
+                self._start_batch(q_out=q_out)
+            else:
+                self._start_single(q_in=q_in, q_out=q_out)
+        except KeyboardInterrupt:
+            print(self.name, 'stopped by KeyboardInterrupt')
+        finally:
+            if self.batch_size > 1:
+                t.join()
+
+    def _start_single(self, *, q_in, q_out):
+        batch_size = self.batch_size
+        while True:
+            try:
+                z = q_in.get()
+            except Empty:
+                continue
+            if z == NOMOREDATA:
+                q_out.put(z)
+                q_in.put(z)  # broadcast to one fellow worker
+                break
+
+            uid, x = z
+            if is_exception(x):
+                q_out.put((uid, x))
+                continue
+
+            try:
+                if batch_size:
+                    y = self.call([x])[0]
+                else:
+                    y = self.call(x)
+            except Exception:
+                # There are opportunities to print traceback
+                # and details later using the `RemoteException`
+                # object. Be brief on the logging here.
+                y = RemoteException()
+
+            q_out.put((uid, y))
+
+    def _start_batch(self, *, q_out):
+        def print_batching_info():
+            logger.info('%d batches with sizes %d--%d, mean %.1f',
+                        n_batches, batch_size_min, batch_size_max, batch_size_mean)
+
+        n_batches = 0
+        try:
+            while True:
+                if n_batches == 0:
+                    batch_size_max = -1
+                    batch_size_min = 1000000
+                    batch_size_mean = 0.0
+
+                batch = self._get_input_batch()
+                if batch == NOMOREDATA:
+                    q_out.put(batch)
+                    break
+
+                uids = [v[0] for v in batch]
+                batch = [v[1] for v in batch]
+                n = len(batch)
+
+                try:
+                    results = self.call(batch)
+                except Exception:
+                    err = RemoteException()
+                    for uid in uids:
+                        q_out.put((uid, err))
+                else:
+                    for z in zip(uids, results):
+                        q_out.put(z)
+
+                n_batches += 1
+                batch_size_max = max(batch_size_max, n)
+                batch_size_min = min(batch_size_min, n)
+                batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+                if n_batches % 1000 == 0:
+                    print_batching_info()
+                    n_batches = 0
+        finally:
+            if n_batches:
+                print_batching_info()
+
+    def _build_input_batches(self, q_in: FastQueue, q_out):
+        threading.current_thread().name = f"{self.name}._build_input_batches"
+        buffer = self._batch_buffer
+        batchsize = self.batch_size
+
+        while True:
+            if buffer.full():
+                with buffer._not_full:
+                    buffer._not_full.wait()
+
+            sleep(0)  # TODO: hack; fix it.
+            with q_in._rlock:  # read lock
+                while True:
+                    # In order to facilitate batching,
+                    # we hold the lock and keep getting
+                    # data off the pipe for this reader's buffer,
+                    # even though there may be other readers waiting.
+                    z = q_in.get()  # wait as long as it takes to get one item.
+                    while True:
+                        if z == NOMOREDATA:
+                            buffer.put(z)
+                            q_in.put(z)  # broadcast to fellow workers.
+                            return
+                        if is_exception(z[1]):
+                            q_out.put(z)
+                        else:
+                            buffer.put(z)
+                        if not q_in.empty() and buffer.qsize() < batchsize:
+                            z = q_in.get()
+                        else:
+                            break
+
+                    # Now, either `q_in` is empty or `buffer` already has
+                    # a batch-ful of items, and we have retrieved at least one
+                    # item during this holding of the lock.
+
+                    if self._batch_get_called.is_set():
+                        # `_get_input_batch` has been called in this round;
+                        # release the lock so that other readers
+                        # get a chance for the lock.
+                        self._batch_get_called.clear()
+                        break
+                    if buffer.qsize() >= batchsize:
+                        break
+
+    def _get_input_batch(self):
+        extra_timeout = self.batch_wait_time
+        batchsize = self.batch_size
+        buffer = self._batch_buffer
+        out = buffer.get()
+        if out == NOMOREDATA:
+            return out
+        out = [out]
+        n = 1
+
+        deadline = monotonic() + extra_timeout
+        # Timeout starts after the first item is secured.
+
+        while n < batchsize:
+            t = deadline - monotonic()
+            try:
+                z = buffer.get(timeout=max(0, t))
+            except Empty:
+                break
+            if z == NOMOREDATA:
+                # Return the batch so far.
+                # Put this indicator back in the buffer.
+                # Next call to this method will get
+                # the indicator.
+                buffer.put(z)
+                break
+            out.append(z)
+            n += 1
+
+        self._batch_get_called.set()
+        return out
+
 
 class ProcessWorker(Worker):
     @classmethod
@@ -437,7 +391,6 @@ class ProcessWorker(Worker):
         '''
         try:
             log_passer.start()
-            # TODO: does the log message carry process info?
             if cpus:
                 psutil.Process().cpu_affinity(cpus=cpus)
             super().run(**kwargs)
@@ -470,7 +423,6 @@ class Servlet:
 
     def start(self, q_in, q_out, *, log_passer, ctx):
         assert not self._started
-        q_indicator = ctx.Queue()
         for cpu in self._cpus:
             # Pinned to the specified cpu core.
             sname = f"{self._name}-{','.join(map(str, cpu))}"
@@ -484,16 +436,14 @@ class Servlet:
                     'q_out': q_out,
                     'cpus': cpu,
                     'log_passer': log_passer,
-                    'q_indicator': q_indicator,
                     **self._init_kwargs,
                 },
             )
             self._workers.append(w)
             w.start()
-            name = q_indicator.get()
+            name = q_out.get()
             logger.debug(f"   ... worker <{name}> is ready")
         logger.info(f"servlet {self._name} is ready")
-        q_indicator.close()
         self._started = True
 
     def stop(self):
@@ -546,7 +496,7 @@ class Servlet:
 class Sequential:
     '''
     A sequence of operations performed in order,
-    the previous op's result becoming the subsequent
+    the previous op's output becoming the subsequent
     op's input.
     '''
     def __init__(self, *servlets: ServletProtocol):
@@ -559,14 +509,13 @@ class Sequential:
         assert not self._started
         nn = len(self._servlets)
         q1 = q_in
-        self._qs.append(q1)
         for i, s in enumerate(self._servlets):
             if i + 1 < nn:
-                q2 = _queues.Unique(ctx=ctx)
+                q2 = FastQueue(ctx=ctx)
+                self._qs.append(q2)
             else:
                 q2 = q_out
             s.start(q1, q2, log_passer=log_passer, ctx=ctx)
-            self._qs.append(q2)
             q1 = q2
         self._started = True
 
@@ -574,8 +523,6 @@ class Sequential:
         assert self._started
         for s in self._servlets:
             s.stop()
-        for q in self._qs[1:-1]:
-            q.close()
         self._qs = []
         self._started = False
 
@@ -583,11 +530,17 @@ class Sequential:
 class Ensemble:
     '''
     A number of operations performed on the same input
-    in parallel, the list of results gathered and combined
+    in parallel, the list of results are gathered and combined
     to form a final result.
     '''
     def __init__(self, *servlets: ServletProtocol,
                  post_func: Callable[[Any, list], Any] = None):
+        '''
+        `post_func`: if provided, this function takes the original input
+            value, `x`, and the ensemble output components, `y`
+            (a list containing output of each servlet, in order),
+            and returns a final result; if absent, `y` is the output.
+        '''
         assert len(servlets) > 1
         self._servlets = servlets
         self._func = post_func
@@ -607,8 +560,8 @@ class Ensemble:
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = _queues.Unique(ctx=ctx)
-            q2 = _queues.Unique(ctx=ctx)
+            q1 = FastQueue(ctx=ctx)
+            q2 = FastQueue(ctx=ctx)
             s.start(q1, q2, log_passer=log_passer, ctx=ctx)
             self._qins.append(q1)
             self._qouts.append(q2)
@@ -658,7 +611,7 @@ class Ensemble:
                 while not q.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
-                    v = q.get(timeout=0)
+                    v = q.get()
                     if v == NOMOREDATA:
                         qout.put(v)
                         return
@@ -678,10 +631,6 @@ class Ensemble:
         assert self._started
         for s in self._servlets:
             s.stop()
-        for q in self._qins:
-            q.close()
-        for q in self._qouts:
-            q.close()
         for t in self._threads:
             t.join()
         self._reset()
@@ -727,16 +676,6 @@ class Server:
         # Size of this dict is capped at `self._backlog`.
         # A few places need to enforce this size limit.
 
-        # # Use thse to enforce `backlog` in sync mode.
-        # mutex = threading.Lock()
-        # self._notfull = threading.Condition(lock=mutex)
-        # self._notempty = threading.Condition(lock=mutex)
-
-        # # Use thse to enforce `backlog` in async mode.
-        # amutex = asyncio.Lock()
-        # self._a_notfull = asyncio.Condition(lock=amutex)
-        # self._a_notempty = asyncio.Condition(lock=amutex)
-
         self._input_buffer = queue.SimpleQueue()
         # This has unlimited size; `put` never blocks (as long as
         # memory is not blown up!). Input requests respect size limit
@@ -750,8 +689,8 @@ class Server:
             self._q_in = queue.Queue()
             self._q_out = queue.Queue()
         else:
-            self._q_in = _queues.Unique(ctx=self.get_mpcontext())
-            self._q_out = _queues.Unique(ctx=self.get_mpcontext())
+            self._q_in = FastQueue(ctx=self.get_mpcontext())
+            self._q_out = FastQueue(ctx=self.get_mpcontext())
         self._servlet.start(
             self._q_in,
             self._q_out,
@@ -980,10 +919,7 @@ class Server:
         futures = self._uid_to_futures
 
         while True:
-            try:
-                z = q_out.get(timeout=1)
-            except Empty:
-                continue
+            z = q_out.get()
             if z == NOMOREDATA:
                 break
             uid, y = z
