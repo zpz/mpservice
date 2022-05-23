@@ -70,7 +70,7 @@ from typing import Sequence, Union, Callable, Type, Protocol, Any
 import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import forward_logs, logger_thread, is_exception, Thread, Process, ProcessLogger
+from .util import is_exception, Thread, Process, ProcessLogger
 from .streamer import put_in_queue
 from . import _queues
 
@@ -147,6 +147,11 @@ class BatchQueue:
                             pass
                         else:
                             for x in z:
+                                if x == NOMOREDATA:
+                                    buffer.put(x)
+                                    qin.put(x)
+                                    return
+
                                 if is_exception(x[1]):
                                     qerr.put(x)
                                 else:
@@ -182,7 +187,11 @@ class BatchQueue:
 
     def get_many(self, *, first_timeout=None, extra_timeout=None):
         buffer = self._buffer
-        out = [buffer.get(timeout=first_timeout)]
+        out = buffer.get(timeout=first_timeout)
+        if out == NOMOREDATA:
+            return out
+
+        out = [out]
         max_n = self._batch_size
         n = 1
         if max_n > 1:
@@ -194,6 +203,13 @@ class BatchQueue:
                 try:
                     z = buffer.get(timeout=t)
                 except Empty:
+                    break
+                if z == NOMOREDATA:
+                    # Return the batch so far.
+                    # Put this indicator back in the queue.
+                    # Next call to this method will get
+                    # the indicator.
+                    buffer.put(z)
                     break
                 out.append(z)
                 n += 1
@@ -210,7 +226,6 @@ class Worker(metaclass=ABCMeta):
             q_in: _queues.Unique,
             q_out: _queues.Unique,
             q_indicator: queues.Queue,
-            should_stop: synchronize.Event,
             **init_kwargs):
         try:
             obj = cls(**init_kwargs)
@@ -218,10 +233,7 @@ class Worker(metaclass=ABCMeta):
             batch_size = obj.batch_size
             if batch_size > 1:
                 q_in = BatchQueue(batch_size, q_in, q_out, rlock=q_in._rlock, buffer_size=batch_size + 10)
-            obj.start(q_in=q_in,
-                      q_out=q_out,
-                      should_stop=should_stop,
-                      )
+            obj.start(q_in=q_in, q_out=q_out)
         finally:
             q_in.close()
             if isinstance(q_in, BatchQueue):
@@ -281,25 +293,27 @@ class Worker(metaclass=ABCMeta):
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
-    def start(self, *, q_in, q_out, should_stop):
+    def start(self, *, q_in, q_out):
         try:
             if self.batch_size > 1:
-                self._start_batch(q_in=q_in, q_out=q_out,
-                                  should_stop=should_stop)
+                self._start_batch(q_in=q_in, q_out=q_out)
             else:
-                self._start_single(q_in=q_in, q_out=q_out, should_stop=should_stop)
+                self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
             print(self.name, 'stopped by KeyboardInterrupt')
 
-    def _start_single(self, *, q_in, q_out, should_stop):
+    def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
         while True:
             try:
-                z = q_in.get(timeout=1)
+                z = q_in.get()
             except Empty:
-                if should_stop.is_set():
-                    break
                 continue
+            if z == NOMOREDATA:
+                q_out.put(z)
+                q_in.put(z)  # broadcast to one fellow worker
+                break
+
             uid, x = z
             if is_exception(x):
                 q_out.put((uid, x))
@@ -316,12 +330,9 @@ class Worker(metaclass=ABCMeta):
                 # object. Be brief on the logging here.
                 y = RemoteException()
 
-            if not put_in_queue(q_out, (uid, y), should_stop):
-                return
-            if should_stop.is_set():
-                break
+            q_out.put((uid, y))
 
-    def _start_batch(self, *, q_in, q_out, should_stop):
+    def _start_batch(self, *, q_in, q_out):
         batch_wait_time = self.batch_wait_time
 
         def print_batching_info():
@@ -339,11 +350,10 @@ class Worker(metaclass=ABCMeta):
                 try:
                     batch = q_in.get_many(first_timeout=0.5, extra_timeout=batch_wait_time)
                 except Empty:
-                    if should_stop.is_set():
-                        if n_batches:
-                            print_batching_info()
-                        return
                     continue
+                if batch == NOMOREDATA:
+                    q_out.put(batch)
+                    break
 
                 uids = [v[0] for v in batch]
                 batch = [v[1] for v in batch]
@@ -354,16 +364,14 @@ class Worker(metaclass=ABCMeta):
                 except Exception:
                     err = RemoteException()
                     for uid in uids:
-                        if not put_in_queue(q_out, (uid, err), should_stop):
-                            return
+                        q_out.put((uid, err))
                 else:
                     while True:
                         try:
-                            q_out.put_many(list(zip(uids, results)), timeout=0.1)
+                            q_out.put_many(list(zip(uids, results)))
                             break
                         except Full:
-                            if should_stop.is_set():
-                                return
+                            continue
 
                 n_batches += 1
                 batch_size_max = max(batch_size_max, n)
@@ -372,15 +380,9 @@ class Worker(metaclass=ABCMeta):
                 if n_batches % 1000 == 0:
                     print_batching_info()
                     n_batches = 0
-
-                if should_stop.is_set():
-                    if n_batches and n_batches % 1000 != 0:
-                        print_batching_info()
-                    return
-        except BaseException:
+        finally:
             if n_batches:
                 print_batching_info()
-            raise
 
     @abstractmethod
     def call(self, x):
@@ -487,7 +489,6 @@ class Servlet:
                     'cpus': cpu,
                     'log_passer': log_passer,
                     'q_indicator': q_indicator,
-                    'should_stop': should_stop,
                     **self._init_kwargs,
                 },
             )
@@ -633,9 +634,15 @@ class Ensemble:
         nn = len(qins)
         while not should_stop.is_set():
             try:
-                uid, x = qin.get(timeout=0.1)
+                v = qin.get(timeout=0.1)
             except Empty:
                 continue
+            if v == NOMOREDATA:
+                for q in qins:
+                    q.put(v)
+                break
+
+            uid, x = v
             if is_exception(x):
                 qout.put((uid, x))
                 continue
@@ -658,7 +665,11 @@ class Ensemble:
                 while not q.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
-                    uid, y = q.get(timeout=0)
+                    v = q.get(timeout=0)
+                    if v == NOMOREDATA:
+                        qout.put(v)
+                        return
+                    uid, y = v
                     z = catalog[uid]
                     z['y'][idx] = y
                     z['n'] += 1
@@ -929,7 +940,7 @@ class Server:
         t0 = monotonic()
         deadline = t0 + timeout
 
-        while len(self._uid_to_futures) >= self.backlog:
+        while len(self._uid_to_futures) >= self._backlog:
             if (t := monotonic()) >= deadline:
                 raise TimeoutError(f"{t - t0} seconds enqueue")
             sleep(min(0.01, deadline - t))

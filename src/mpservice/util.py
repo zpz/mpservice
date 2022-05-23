@@ -78,7 +78,7 @@ def Process(*args, ctx, **kwargs):
 
 class ProcessLogger:
     def __init__(self, *, ctx):
-        assert ctx.start_metho() == 'spawn'
+        assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
         self._t = None
         self._creator = True
