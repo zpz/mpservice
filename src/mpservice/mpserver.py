@@ -196,7 +196,7 @@ class Worker(metaclass=ABCMeta):
         # accordingly. If `__init__` has no requirement on the value
         # of `batch_size`, then the current method needs to check
         # `self.batch_size` and act accordingly, because it is up to
-        # the uer in `MPServer` to specify a zero or nonzero `batch_size`
+        # the uer in `Servlet` to specify a zero or nonzero `batch_size`
         # for this worker.
         #
         # In case of exceptions, unless the user has specific things to do,

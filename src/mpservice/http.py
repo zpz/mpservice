@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 # About socket 'backlog':
 # https://stackoverflow.com/a/12340078
+# https://stackoverflow.com/questions/36594400/what-is-backlog-in-tcp-connections
+# http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
 
 # Adapted from `uvicorn.main.run`.
 def make_server(
@@ -45,7 +47,7 @@ def make_server(
         otherwise it will create a new `asyncio` native event loop
         and set it as the default loop.
 
-    `workers`: when used for `mpservice.mpserver.MPServer`, this should be 1.
+    `workers`: when used for `mpservice.mpserver.Server`, this should be 1.
 
     If user has their own ways to config logging, then pass in
     `log_config=None` in `kwargs`.

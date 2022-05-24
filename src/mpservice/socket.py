@@ -607,7 +607,7 @@ class SocketClient(EnforceOverrides):
         If `return_x` is `False`, return a stream of `y`.
         If `return_exceptions` is `True`, `y` could be an Exception object.
         '''
-        # Refer to `mpserver.MPServer.stream` for in-code documentation.
+        # Refer to `mpserver.Server.stream` for in-code documentation.
         tasks = SingleLane(self._backlog)
         nomore = object()
 
