@@ -101,8 +101,6 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
         # Replace Lock by RLock to facilitate batching
         # via greedy `get_many`.
         self._rlock = ctx.RLock()
-        if self._wlock:
-            self._wlock = ctx.RLock()
 
 
 class Worker(metaclass=ABCMeta):
@@ -213,7 +211,7 @@ class Worker(metaclass=ABCMeta):
                 self._batch_get_called = threading.Event()
                 t = Thread(target=self._build_input_batches, args=(q_in, q_out))
                 t.start()
-                self._start_batch(q_out=q_out)
+                self._start_batch(q_in=q_in, q_out=q_out)
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
@@ -252,7 +250,7 @@ class Worker(metaclass=ABCMeta):
 
             q_out.put((uid, y))
 
-    def _start_batch(self, *, q_out):
+    def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
             logger.info('%d batches with sizes %d--%d, mean %.1f',
                         n_batches, batch_size_min, batch_size_max, batch_size_mean)
@@ -267,6 +265,7 @@ class Worker(metaclass=ABCMeta):
 
                 batch = self._get_input_batch()
                 if batch == NOMOREDATA:
+                    q_in.put(batch)  # broadcast to fellow workers.
                     q_out.put(batch)
                     break
 
@@ -295,7 +294,7 @@ class Worker(metaclass=ABCMeta):
             if n_batches:
                 print_batching_info()
 
-    def _build_input_batches(self, q_in: FastQueue, q_out):
+    def _build_input_batches(self, q_in, q_out):
         threading.current_thread().name = f"{self.name}._build_input_batches"
         buffer = self._batch_buffer
         batchsize = self.batch_size
@@ -305,23 +304,29 @@ class Worker(metaclass=ABCMeta):
                 with buffer._not_full:
                     buffer._not_full.wait()
 
-            sleep(0)  # TODO: hack; fix it.
-            with q_in._rlock:  # read lock
+            # Multiple workers in separate processes may be competing
+            # to get data out of this `q_in`.
+            with q_in._rlock:
+                # Now we've got hold of the read lock.
+                # In order to facilitate batching,
+                # we hold on to the lock and keep getting
+                # data from `q_in` even though other readers are waiting.
+                # We let go the lock when certain conditions are met.
                 while True:
-                    # In order to facilitate batching,
-                    # we hold the lock and keep getting
-                    # data off the pipe for this reader's buffer,
-                    # even though there may be other readers waiting.
                     z = q_in.get()  # wait as long as it takes to get one item.
                     while True:
                         if z == NOMOREDATA:
                             buffer.put(z)
-                            q_in.put(z)  # broadcast to fellow workers.
                             return
+                        # Now `z` is a tuple like (uid, x).
                         if is_exception(z[1]):
                             q_out.put(z)
                         else:
                             buffer.put(z)
+
+                        # If `q_in` currently has more data right there
+                        # and `buffer` has not reached `batchsize` yet,
+                        # keep grabbing more data.
                         if not q_in.empty() and buffer.qsize() < batchsize:
                             z = q_in.get()
                         else:
@@ -333,11 +338,18 @@ class Worker(metaclass=ABCMeta):
 
                     if self._batch_get_called.is_set():
                         # `_get_input_batch` has been called in this round;
-                        # release the lock so that other readers
-                        # get a chance for the lock.
+                        # that is, `self` has already take a (partial) batch
+                        # of data away to process. Even though that might have
+                        # made `buffer` low at this time, we should let go
+                        # the lock to give others a chance to read data.
                         self._batch_get_called.clear()
                         break
                     if buffer.qsize() >= batchsize:
+                        # `buffer` has reached `batchsize`, which is the most
+                        # that `_get_input_batch` will take in one call.
+                        # Even if `buffer` is not full, we no longer has priority
+                        # for more data. Release the lock to give others
+                        # a chance.
                         break
 
     def _get_input_batch(self):
