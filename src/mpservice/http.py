@@ -30,7 +30,7 @@ def make_server(
         access_log: bool = None,
         loop='auto',
         workers: int = 1,
-        backlog: int = 32,
+        backlog: int = 64,
         **kwargs,
 ):
     '''
@@ -51,6 +51,10 @@ def make_server(
 
     If user has their own ways to config logging, then pass in
     `log_config=None` in `kwargs`.
+
+    `backlog`: this is passed to asyncio `loop.create_server` (in `asyncio.base_events`,
+    where default is 100), and in-turn to `socket.listen`. Don't make this large
+    unless you know what you're doing.
     '''
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()

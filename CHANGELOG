@@ -6,6 +6,8 @@ Release 0.11.0 (forthcoming)
   leading to considerable enhancements in capability and flexibility.
   There are also considerable improvements to the implementation
   (in terms of simplicity, elegance, robustness).
+- Replaced all uses of `time.monotonic` by `time.perf_counter`, which has much
+  higher resolution.
 
 
 Release 0.10.9

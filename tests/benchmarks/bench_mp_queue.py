@@ -1,6 +1,6 @@
 from queue import Empty
 import multiprocessing
-from time import monotonic, sleep
+from time import perf_counter, sleep
 from mpservice._queues import Unique
 
 
@@ -26,13 +26,13 @@ def run(q, n, mp):
     done = mp.Event()
     pp.append(mp.Process(target=push, args=(q, n)))
     pp.append(mp.Process(target=pull, args=(q, done)))
-    t0 = monotonic()
+    t0 = perf_counter()
     for p in pp:
         p.start()
     pp[0].join()
     q.put(None)
     pp[1].join()
-    t1 = monotonic()
+    t1 = perf_counter()
     print(f"{q.__class__.__name__:<12} {n:>8} {round(t1 - t0, 2):>8}")
 
 

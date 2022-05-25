@@ -1,4 +1,4 @@
-from time import sleep, monotonic
+from time import sleep, perf_counter
 from random import uniform, seed
 from mpservice.mpserver import ProcessWorker, Servlet, Server
 from zpz.logging import config_logger
@@ -15,13 +15,13 @@ class Double(ProcessWorker):
 def main(model):
     seed(100)
     data = range(100000)
-    t0 = monotonic()
+    t0 = perf_counter()
     s = model.stream(data)
     n = 0
     for _ in enumerate(s):
         n += 1
         pass
-    t1 = monotonic()
+    t1 = perf_counter()
     print('finished', n, 'items in', t1 - t0, 'seconds')
 
 

@@ -1,4 +1,4 @@
-from time import monotonic, sleep
+from time import perf_counter
 from threading import Thread
 from queue import Queue
 from mpservice._queues import SingleLane
@@ -24,12 +24,12 @@ def pull(q):
 def main(q, n):
     t1 = Thread(target=pull, args=(q,))
     t2 = Thread(target=push, args=(q, n))
-    t0 = monotonic()
+    t0 = perf_counter()
     t1.start()
     t2.start()
     t1.join()
     t2.join()
-    t1 = monotonic()
+    t1 = perf_counter()
     print(f"  {q.__class__.__name__:<12}{t1 - t0:.2f}")
 
 

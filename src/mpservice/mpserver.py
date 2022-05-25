@@ -4,19 +4,25 @@ making use of multiple CPUs (i.e. cores) on the machine.
 There are 4 levels of constructs.
 
 - On the lowest level is `Worker`. This defines operation on a single input item
-  or a batch of items in usual sync code. This is supposed to run in a single process.
-  (If the code creates other processes, well, no one can forbid that, but that is not
-  the intended usage.)
+  or a batch of items in usual sync code. This is supposed to run in a separate process
+  and uses that single process only. (If the code futher creates other processes,
+  well, no one can forbid that, but that is not the intended usage.)
 
 - A `Servlet` manages a `Worker`, specifing how many processes are to be created,
   each executing the worker code independently. It may control exactly
   which CPU(s) each worker process uses. The servlet code runs in the "main process",
   whereas workers run in other processes. Each input item is processed by one
-  and only one worker.
+  and only one worker. If `W1` is a subclass of `Worker`, then the simplest servlet
+  is like this:
 
-- Servlets can be composed in `Sequential`s or `Ensemble`s. In a sequential,
+    s = Servlet(W1)
+
+  This creates as many processes as there are CPU cores, minus core 0, and runs the worker
+  code in each process.
+
+- Servlets can be composed in `Sequential`s or `Ensemble`s. In a `Sequential`,
   the first servlet's output becomes the second servlet's input, and so on.
-  In an ensemble, each input item is processed by all the servlets, and their
+  In an `Ensemble`, each input item is processed by all the servlets, and their
   results are collected in a list.
 
   Great power comes from the fact that both `Sequential` and `Ensemble`
@@ -72,7 +78,7 @@ import queue
 import threading
 from abc import ABCMeta, abstractmethod
 from queue import Empty
-from time import monotonic, sleep
+from time import perf_counter, sleep
 from typing import Sequence, Union, Callable, Type, Protocol, Any
 
 import psutil
@@ -362,11 +368,11 @@ class Worker(metaclass=ABCMeta):
         out = [out]
         n = 1
 
-        deadline = monotonic() + extra_timeout
+        deadline = perf_counter() + extra_timeout
         # Timeout starts after the first item is secured.
 
         while n < batchsize:
-            t = deadline - monotonic()
+            t = deadline - perf_counter()
             try:
                 z = buffer.get(timeout=max(0, t))
             except Empty:
@@ -434,6 +440,9 @@ class Servlet:
         self._started = False
 
     def start(self, q_in, q_out, *, log_passer, ctx):
+        '''
+        `ctx` is a multiprocessing context passed in ultimately from `Server`.
+        '''
         assert not self._started
         for cpu in self._cpus:
             # Pinned to the specified cpu core.
@@ -650,18 +659,25 @@ class Ensemble:
 
 
 class Server:
-    def __init__(self, servlet: ServletProtocol, *, main_cpu: int = 0, backlog: int = 1024):
+    def __init__(self, servlet: ServletProtocol, *, main_cpu: int = 0, backlog: int = 1024, ctx=None):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
 
         `backlog`: max number of requests concurrently in progress within this server,
             all pipes/servlets/stages combined.
+
+        `ctx`: a multiprocessing context. Leave this at default unless you know what you're doing.
         '''
         self._servlet = servlet
 
         assert backlog > 0
         self._backlog = backlog
+
+        if ctx is None:
+            self._ctx = multiprocessing.get_context('spawn')
+        else:
+            self._ctx = ctx
 
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
@@ -742,9 +758,7 @@ class Server:
     def get_mpcontext(self):
         # If subclasses need to use additional Queues, Locks, Conditions, etc,
         # they should create them out of this context.
-        # This method does not create a new object.
-        # It returns the same object.
-        return multiprocessing.get_context('spawn')
+        return self._ctx
 
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
         # When this is called, it's usually backing a (http or other) service.
@@ -843,11 +857,11 @@ class Server:
                         yield y
 
     async def _async_enqueue(self, x, timeout):
-        t0 = monotonic()
+        t0 = perf_counter()
         deadline = t0 + timeout
 
         while len(self._uid_to_futures) >= self._backlog:
-            if (t := monotonic()) > deadline:
+            if (t := perf_counter()) > deadline:
                 raise TimeoutError(f"{t - t0} seconds enqueue")
             await asyncio.sleep(min(0.01, deadline - t))
             # It's OK if this sleep is a little long,
@@ -865,7 +879,7 @@ class Server:
         t0 = fut.data['t0']
         t2 = t0 + fut.data['timeout']
         while not fut.done():
-            timenow = monotonic()
+            timenow = perf_counter()
             if timenow > t2:
                 fut.cancel()
                 raise TimeoutError(f"{timenow - t0} seconds total")
@@ -880,20 +894,20 @@ class Server:
         # t0 = fut.data['t0']
         # t2 = t0 + fut.data['timeout']
         # try:
-        #     return await asyncio.wait_for(fut, timeout=max(0, t2 - monotonic()))
+        #     return await asyncio.wait_for(fut, timeout=max(0, t2 - perf_counter()))
         #     # this may raise RemoteException
         # except asyncio.TimeoutError:
         #     # `wait_for` has already cancelled `fut`.
-        #     raise TimeoutError(f"{monotonic() - t0} seconds total")
+        #     raise TimeoutError(f"{perf_counter() - t0} seconds total")
 
     def _enqueue(self, x, timeout):
         # This method is called by `call` or `stream`.
         # There are no concurrent calls to this method.
-        t0 = monotonic()
+        t0 = perf_counter()
         deadline = t0 + timeout
 
         while len(self._uid_to_futures) >= self._backlog:
-            if (t := monotonic()) >= deadline:
+            if (t := perf_counter()) >= deadline:
                 raise TimeoutError(f"{t - t0} seconds enqueue")
             sleep(min(0.01, deadline - t))
             # It's OK if this sleep is a little long,
@@ -910,11 +924,11 @@ class Server:
         t0 = fut.data['t0']
         t2 = t0 + fut.data['timeout']
         try:
-            return fut.result(timeout=max(0, t2 - monotonic()))
+            return fut.result(timeout=max(0, t2 - perf_counter()))
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
-            raise TimeoutError(f"{monotonic() - t0} seconds total")
+            raise TimeoutError(f"{perf_counter() - t0} seconds total")
 
     def _onboard_input(self):
         qin = self._input_buffer
@@ -941,7 +955,7 @@ class Server:
                     fut.set_exception(y)
                 else:
                     fut.set_result(y)
-                fut.data['t1'] = monotonic()
+                fut.data['t1'] = perf_counter()
             except (concurrent.futures.InvalidStateError, asyncio.InvalidStateError) as e:
                 if fut.cancelled():
                     # Could have been cancelled due to TimeoutError.
