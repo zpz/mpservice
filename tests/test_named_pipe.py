@@ -28,6 +28,6 @@ def test_basic():
     executor = concurrent.futures.ProcessPoolExecutor()
     p1 = executor.submit(_client, path)
     p2 = executor.submit(_server, path)
-    p1.result() == 'client done'
-    p2.result() == 'server done'
+    assert p1.result() == 'client done'
+    assert p2.result() == 'server done'
 
