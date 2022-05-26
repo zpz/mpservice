@@ -12,7 +12,7 @@ The two objects can be created in any order, and their roles are symmetric.
 The different names simply remind the application to create one of each
 in the two processes.
 
-The `send` and `recv` functions take picklable Python objects.
+The `send` and `recv` functions take and return picklable Python objects.
 While `send` does not block as long as system buffer has space,
 `recv` blocks until one data item is read.
 
