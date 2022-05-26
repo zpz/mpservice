@@ -862,7 +862,7 @@ class Server:
 
         while len(self._uid_to_futures) >= self._backlog:
             if (t := perf_counter()) > deadline:
-                raise TimeoutError(f"{t - t0} seconds enqueue")
+                raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
             await asyncio.sleep(min(0.01, deadline - t))
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
@@ -882,7 +882,7 @@ class Server:
             timenow = perf_counter()
             if timenow > t2:
                 fut.cancel()
-                raise TimeoutError(f"{timenow - t0} seconds total")
+                raise TimeoutError(f"{timenow - t0:.3f} seconds total")
             await asyncio.sleep(min(0.001, t2 - timenow))
         return fut.result()
         # This could raise RemoteException.
@@ -898,7 +898,7 @@ class Server:
         #     # this may raise RemoteException
         # except asyncio.TimeoutError:
         #     # `wait_for` has already cancelled `fut`.
-        #     raise TimeoutError(f"{perf_counter() - t0} seconds total")
+        #     raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
 
     def _enqueue(self, x, timeout):
         # This method is called by `call` or `stream`.
@@ -908,7 +908,7 @@ class Server:
 
         while len(self._uid_to_futures) >= self._backlog:
             if (t := perf_counter()) >= deadline:
-                raise TimeoutError(f"{t - t0} seconds enqueue")
+                raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
             sleep(min(0.01, deadline - t))
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
@@ -928,7 +928,7 @@ class Server:
             # this may raise RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
-            raise TimeoutError(f"{perf_counter() - t0} seconds total")
+            raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
 
     def _onboard_input(self):
         qin = self._input_buffer

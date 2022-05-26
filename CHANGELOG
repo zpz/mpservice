@@ -8,6 +8,7 @@ Release 0.11.0 (forthcoming)
   (in terms of simplicity, elegance, robustness).
 - Replaced all uses of `time.monotonic` by `time.perf_counter`, which has much
   higher resolution.
+- Added module `mpservice.named_pipe`.
 
 
 Release 0.10.9
