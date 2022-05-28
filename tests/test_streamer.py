@@ -261,9 +261,9 @@ def test_chain():
 
     with pytest.raises((TypeError, ValueError)):
         with Streamer(corrupt_data()) as s:
-            s.transform(process1, concurrency=2)
+            s.transform(process1, concurrency=1) #2)
             s.buffer(3)
-            s.transform(process2, concurrency=3)
+            s.transform(process2, concurrency=1) #3)
             s.drain()
 
     with pytest.raises((ValueError, TypeError)):

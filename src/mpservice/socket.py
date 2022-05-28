@@ -3,6 +3,7 @@ import concurrent.futures
 import logging
 import os
 import queue
+import stat
 import threading
 import time
 from pickle import dumps as pickle_dumps, loads as pickle_loads
@@ -106,15 +107,10 @@ async def run_unix_server(conn_handler: Callable, path: str):
         and it (including parent directories) does not need to exist.
         In fact, if the file exists, it will be removed first.
     '''
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
+    if os.path.exists(path):
+        assert stat.S_ISSOCK(os.stat(path).st_mode), f"file '{path}' exists but is not a socket file"
+    else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-    except PermissionError:
-        raise
-    except OSError:
-        if os.path.exists(path):
-            raise
     server = await asyncio.start_unix_server(conn_handler, path)
     async with server:
         addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
@@ -230,7 +226,7 @@ class SocketServer(EnforceOverrides):
         if path:
             assert not host
             assert not port
-            self._path = path
+            self._path = os.path.abspath(path)
             self._host = None
             self._port = None
         else:

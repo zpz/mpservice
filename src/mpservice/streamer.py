@@ -436,7 +436,7 @@ class Streamer(EnforceOverrides):
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
         return self
 
-    def buffer(self, maxsize: int = None):
+    def buffer(self, maxsize: int):
         '''Buffer is used to stabilize and improve the speed of data flow.
 
         A buffer is useful after any operation that can not guarantee
@@ -654,12 +654,9 @@ def put_in_queue(q, x, stop_event, timeout=0.1):
 
 
 class Buffer(Stream):
-    def __init__(self, instream: Stream, maxsize: int = None):
+    def __init__(self, instream: Stream, maxsize: int):
         super().__init__(instream)
-        if maxsize is None:
-            maxsize = 2048
-        else:
-            assert 1 <= maxsize <= 10_000
+        assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = SingleLane(maxsize)
         self._nomore = object()
@@ -691,7 +688,7 @@ class Buffer(Stream):
             except Empty:
                 if self._t.done():
                     if self._t.exception():
-                        raise self._t.exception()
+                        raise self._t.exception() from None
                     assert self._stopped.is_set()
                     return
                 elif self._stopped.is_set():
@@ -797,7 +794,7 @@ class Transformer(Stream):
             except Empty:
                 if self._t.done():
                     if self._t.exception():
-                        raise self._t.exception()
+                        raise self._t.exception() from None
                     assert self._stopped.is_set()
                     return
                 elif self._stopped.is_set():
@@ -816,6 +813,7 @@ class Transformer(Stream):
 
         if fut.exception():
             e = fut.exception()
+            print('exception in transformer:', e)
             if self._return_exceptions:
                 if self._return_x:
                     return x, e
