@@ -213,26 +213,19 @@ class Worker(metaclass=ABCMeta):
     def start(self, *, q_in, q_out):
         try:
             if self.batch_size > 1:
-                self._batch_buffer = SingleLane(self.batch_size + 10)
-                self._batch_get_called = threading.Event()
-                t = Thread(target=self._build_input_batches, args=(q_in, q_out))
-                t.start()
                 self._start_batch(q_in=q_in, q_out=q_out)
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
             print(self.name, 'stopped by KeyboardInterrupt')
-        finally:
-            if self.batch_size > 1:
-                t.join()
+            # The process will exit. Don't print the usual
+            # exception stuff as that's not need when user
+            # pressed Ctrl-C.
 
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
         while True:
-            try:
-                z = q_in.get()
-            except Empty:
-                continue
+            z = q_in.get()
             if z == NOMOREDATA:
                 q_out.put(z)
                 q_in.put(z)  # broadcast to one fellow worker
@@ -260,6 +253,11 @@ class Worker(metaclass=ABCMeta):
         def print_batching_info():
             logger.info('%d batches with sizes %d--%d, mean %.1f',
                         n_batches, batch_size_min, batch_size_max, batch_size_mean)
+
+        self._batch_buffer = SingleLane(self.batch_size + 10)
+        self._batch_get_called = threading.Event()
+        collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out))
+        collector_thread.start()
 
         n_batches = 0
         try:
@@ -299,6 +297,7 @@ class Worker(metaclass=ABCMeta):
         finally:
             if n_batches:
                 print_batching_info()
+            collector_thread.join()
 
     def _build_input_batches(self, q_in, q_out):
         threading.current_thread().name = f"{self.name}._build_input_batches"
@@ -416,17 +415,70 @@ class ProcessWorker(Worker):
             log_passer.stop()
 
 
+class ThreadWorker(Worker):
+    '''
+    Use this class if the operation is I/O bound, and computation is
+    very light compared to the I/O part.
+    For code simplicity, this class still uses `FastQueue` for input/output,
+    which is designed for multiprocessing and is slower than `quque.SimpleQueue`.
+    Hopefully, this is not a bottleneck in most applications.
+    '''
+    pass
+
+
 class ServletProtocol(Protocol):
-    def start(self, q_in, q_out, *, log_passer, ctx):
+    def start(self, q_in: FastQueue, q_out: FastQueue, *,
+              log_passer: ProcessLogger,
+              ctx: multiprocessing.context.BaseContext):
         pass
 
     def stop(self):
         pass
 
 
+def _resolve_cpus(*, cpus: list = None, workers: int = None):
+    n_cpus = psutil.cpu_count(logical=True)
+
+    # Either `workers` or `cpus`, but not both,
+    # can be specified.
+    if workers:
+        # Number of workers is specified.
+        # Create this many processes, each pinned
+        # to one core. One core will host mulitple
+        # processes if `workers` exceeds the number
+        # of cores.
+        assert not cpus
+        assert 0 < workers <= n_cpus * 4
+        cpus = list(reversed(range(n_cpus))) * 4
+        cpus = sorted(cpus[:workers])
+        # List[int]
+    elif cpus:
+        assert isinstance(cpus, list)
+        # Create as many processes as the length of `cpus`.
+        # Each element of `cpus` specifies cpu pinning for
+        # one process. `cpus` could contain repeat numbers,
+        # meaning multiple processes can be pinned to the same
+        # cpu.
+        # This provides the ultimate flexibility, e.g.
+        #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
+    else:
+        # Create as many processes as there are cores minus core '0',
+        # one process pinned to one core.
+        cpus = list(range(1, n_cpus))
+        # List[int]
+
+    for i, cpu in enumerate(cpus):
+        if isinstance(cpu, int):
+            cpu = [cpu]
+            cpus[i] = cpu
+        assert all(0 <= c < n_cpus for c in cpu)
+
+    return cpus
+
+
 class Servlet:
     def __init__(self,
-                 worker_cls: Type[ProcessWorker],
+                 worker_cls: Type[Worker],
                  *,
                  cpus: list = None,
                  workers: int = None,
@@ -434,7 +486,12 @@ class Servlet:
                  **kwargs):
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
-        self._cpus = self._resolve_cpus(cpus=cpus, workers=workers)
+        if issubclass(worker_cls, ProcessWorker):
+            self._cpus = _resolve_cpus(cpus=cpus, workers=workers)
+        else:
+            assert issubclass(worker_cls, ThreadWorker)
+            assert cpus is None
+            self._num_threads = workers or 1
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
@@ -444,26 +501,45 @@ class Servlet:
         `ctx` is a multiprocessing context passed in ultimately from `Server`.
         '''
         assert not self._started
-        for cpu in self._cpus:
-            # Pinned to the specified cpu core.
-            sname = f"{self._name}-{','.join(map(str, cpu))}"
-            logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-            w = Process(
-                ctx=ctx,
-                target=self._worker_cls.run,
-                name=sname,
-                kwargs={
-                    'q_in': q_in,
-                    'q_out': q_out,
-                    'cpus': cpu,
-                    'log_passer': log_passer,
-                    **self._init_kwargs,
-                },
-            )
-            self._workers.append(w)
-            w.start()
-            name = q_out.get()
-            logger.debug(f"   ... worker <{name}> is ready")
+        if issubclass(self._worker_cls, ProcessWorker):
+            for cpu in self._cpus:
+                # Pinned to the specified cpu core.
+                sname = f"{self._name}-{','.join(map(str, cpu))}"
+                logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
+                w = Process(
+                    ctx=ctx,
+                    target=self._worker_cls.run,
+                    name=sname,
+                    kwargs={
+                        'q_in': q_in,
+                        'q_out': q_out,
+                        'cpus': cpu,
+                        'log_passer': log_passer,
+                        **self._init_kwargs,
+                    },
+                )
+                self._workers.append(w)
+                w.start()
+                name = q_out.get()
+                logger.debug(f"   ... worker <{name}> is ready")
+        else:
+            for ithread in range(self._num_threads):
+                sname = f"{self._name}-{ithread}"
+                logger.info('adding worker <%s> in thread ...', sname)
+                w = Thread(
+                    target=self._worker_cls.run,
+                    name=sname,
+                    kwargs={
+                        'q_in': q_in,
+                        'q_out': q_out,
+                        **self._init_kwargs,
+                    },
+                )
+                self._workers.append(w)
+                w.start()
+                name = q_out.get()
+                logger.debug(f"   ... worker <{name}> is ready")
+
         logger.info(f"servlet {self._name} is ready")
         self._started = True
 
@@ -473,45 +549,6 @@ class Servlet:
             w.join()
         self._workers = []
         self._started = False
-
-    def _resolve_cpus(self, *, cpus: list = None, workers: int = None):
-        n_cpus = psutil.cpu_count(logical=True)
-
-        # Either `workers` or `cpus`, but not both,
-        # can be specified.
-        if workers:
-            # Number of workers is specified.
-            # Create this many processes, each pinned
-            # to one core. One core will host mulitple
-            # processes if `workers` exceeds the number
-            # of cores.
-            assert not cpus
-            assert 0 < workers <= n_cpus * 4
-            cpus = list(reversed(range(n_cpus))) * 4
-            cpus = sorted(cpus[:workers])
-            # List[int]
-        elif cpus:
-            assert isinstance(cpus, list)
-            # Create as many processes as the length of `cpus`.
-            # Each element of `cpus` specifies cpu pinning for
-            # one process. `cpus` could contain repeat numbers,
-            # meaning multiple processes can be pinned to the same
-            # cpu.
-            # This provides the ultimate flexibility, e.g.
-            #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
-        else:
-            # Create as many processes as there are cores minus core '0',
-            # one process pinned to one core.
-            cpus = list(range(1, n_cpus))
-            # List[int]
-
-        for i, cpu in enumerate(cpus):
-            if isinstance(cpu, int):
-                cpu = [cpu]
-                cpus[i] = cpu
-            assert all(0 <= c < n_cpus for c in cpu)
-
-        return cpus
 
 
 class Sequential:
@@ -532,6 +569,9 @@ class Sequential:
         q1 = q_in
         for i, s in enumerate(self._servlets):
             if i + 1 < nn:
+                # TODO: if both prev and current servlet is running
+                # ThreadWorker, then we could use a thread-based queue
+                # for some performance gain.
                 q2 = FastQueue(ctx=ctx)
                 self._qs.append(q2)
             else:

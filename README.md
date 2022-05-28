@@ -24,3 +24,7 @@ Utilities are provided in `mpservice.http` and `mpservice.socket` for the latter
 The package also contains some other related utilities.
 
 To install, do `pip install mpservice`.
+
+## Status
+
+Production ready. Under active development.

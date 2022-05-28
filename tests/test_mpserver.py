@@ -5,7 +5,7 @@ import pytest
 
 from mpservice.remote_exception import RemoteException
 from mpservice.mpserver import (
-    ProcessWorker,
+    ProcessWorker, ThreadWorker,
     Servlet, Sequential, Ensemble, Server,
     TimeoutError
 )
@@ -210,3 +210,33 @@ def test_ensemble_stream():
         with Streamer(data) as s:
             s.transform(service.call, concurrency=10)
             assert s.collect() == [[v + 1, v + 7] for v in data]
+
+
+class AddOne(ThreadWorker):
+    def call(self, x):
+        time.sleep(0.3)
+        return x + 1
+
+
+class AddThree(ThreadWorker):
+    def call(self, x):
+        time.sleep(0.1)
+        return x + 3
+
+
+class TakeMean(ThreadWorker):
+    def call(self, x):
+        return sum(x) / len(x)
+
+
+def test_thread():
+    s1 = Servlet(AddOne, workers=3)
+    s2 = Servlet(AddThree)
+    s3 = Servlet(TakeMean)
+    s = Sequential(Ensemble(s1, s2), s3)
+    with Server(s) as service:
+        assert service.call(3) == 5
+        for x, y in service.stream(range(100), return_x=True):
+            assert y == x + 2
+
+
