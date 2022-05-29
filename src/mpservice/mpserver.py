@@ -291,7 +291,7 @@ class Worker(metaclass=ABCMeta):
                 batch_size_max = max(batch_size_max, n)
                 batch_size_min = min(batch_size_min, n)
                 batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-                if n_batches % 1000 == 0:
+                if n_batches % 10_000 == 0:
                     print_batching_info()
                     n_batches = 0
         finally:
