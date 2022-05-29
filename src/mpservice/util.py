@@ -52,21 +52,21 @@ def full_class_name(cls):
 
 class Thread(threading.Thread):
     def run(self):
+        self.exc = None
         try:
             super().run()
-        except BaseException:
-            print('Error in Thread', threading.current_thread().name)
-            traceback.print_exc()
+        except BaseException as e:
+            self.exc = e
             raise
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
     def run(self):
+        self.exc = None
         try:
             super().run()
-        except BaseException:
-            print('Error in Process', multiprocessing.current_process().name)
-            traceback.print_exc()
+        except BaseException as e:
+            self.exc = e
             raise
 
 
