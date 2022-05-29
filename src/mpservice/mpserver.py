@@ -8,17 +8,22 @@ There are 4 levels of constructs.
   and uses that single process only. (If the code futher creates other processes,
   well, no one can forbid that, but that is not the intended usage.)
 
+  There are two worker classes: `ProcessWorker` and `ThreadWorker`.
+
 - A `Servlet` manages a `Worker`, specifing how many processes are to be created,
   each executing the worker code independently. It may control exactly
   which CPU(s) each worker process uses. The servlet code runs in the "main process",
   whereas workers run in other processes. Each input item is processed by one
-  and only one worker. If `W1` is a subclass of `Worker`, then the simplest servlet
+  and only one worker.
+
+  There are two servelet classess: `ProcessServlet` and `ThreadServlet`.
+
+  If `W1` is a subclass of `ProcessWorker`, then the simplest servlet
   is like this:
 
-    s = Servlet(W1)
+    s = ProcessServlet(W1)
 
-  This creates as many processes as there are CPU cores, minus core 0, and runs the worker
-  code in each process.
+  This creates one worker process that is not pinned to a particular CPU.
 
 - Servlets can be composed in `Sequential`s or `Ensemble`s. In a `Sequential`,
   the first servlet's output becomes the second servlet's input, and so on.
@@ -27,21 +32,24 @@ There are 4 levels of constructs.
 
   Great power comes from the fact that both `Sequential` and `Ensemble`
   also follow the `Servlet` API, hence both can be constituents of other compositions.
-  In principle, you can freely compose and nest them (in practice, you can't go crazy;
-  remember they create processes). For example, suppose `W1`, `W2`,..., are `Worker`
-  subclasses, then you may design such a workflow,
+  In principle, you can freely compose and nest them.
+  For example, suppose `W1`, `W2`,..., are `Worker` subclasses,
+  then you may design such a workflow,
 
     s = Sequential(
-            Servlet(W1),
+            ProcessServlet(W1),
             Ensemble(
-                Servlet(W2),
-                Sequential(Servlet(W3), Servlet(W4)),
+                ThreadServlet(W2),
+                Sequential(ProcessServlet(W3), ThreadServlet(W4)),
                 ),
             Ensemble(
-                Sequetial(Servlet(W5), Servlet(W6)),
-                Sequetial(Servlet(W7), Servlet(W8), Servlet(W9)),
+                Sequetial(ProcessServlet(W5), ProcessServlet(W6)),
+                Sequetial(ProcessServlet(W7), ThreadServlet(W8), ProcessServlet(W9)),
                 ),
         )
+
+  In sum, `ProcessServlet`, `ThreadServlet`, `Sequential`, `Ensemble` are collectively
+  referred to and used as `Servlet`.
 
 - On the top level is `Server`. Pass a `Servlet`, or `Sequential` or `Ensemble`
   into a `Server`, which handles scheduling as well as interfacing with the outside
@@ -68,7 +76,7 @@ CPU allocations among workers to achieve best performance.
 Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/).
 This article describes roughly version 0.7.2.
 '''
-
+from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
@@ -79,7 +87,7 @@ import threading
 from abc import ABCMeta, abstractmethod
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Sequence, Union, Callable, Type, Protocol, Any
+from typing import Sequence, Union, Callable, Type, Any
 
 import psutil
 
@@ -109,14 +117,26 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
         self._rlock = ctx.RLock()
 
 
+class SimpleQueue(queue.SimpleQueue):
+    def __init__(self):
+        super().__init__()
+        self._rlock = threading.RLock()
+
+
 class Worker(metaclass=ABCMeta):
     # Typically a subclass needs to enhance
     # `__init__` and implement `call`.
 
     @classmethod
-    def run(cls, *, q_in: FastQueue, q_out: FastQueue, **init_kwargs):
+    def run(cls, *,
+            q_in: Union[FastQueue, SimpleQueue],
+            q_out: Union[FastQueue, SimpleQueue],
+            **init_kwargs):
+        # For a `ProcessWorker`, `q_in` and `q_out` should be `FastQueue`.
+        # For a `ThreadWorker`, `q_in` and `q_out` are either `FastQueue` or `SimpleQueue`.
         obj = cls(**init_kwargs)
         q_out.put(obj.name)
+        # This sends a signal to caller indicating completion of init.
         obj.start(q_in=q_in, q_out=q_out)
 
     def __init__(self, *,
@@ -417,81 +437,65 @@ class ProcessWorker(Worker):
 
 class ThreadWorker(Worker):
     '''
-    Use this class if the operation is I/O bound, and computation is
-    very light compared to the I/O part.
-    For code simplicity, this class still uses `FastQueue` for input/output,
-    which is designed for multiprocessing and is slower than `quque.SimpleQueue`.
-    Hopefully, this is not a bottleneck in most applications.
+    Use this class if the operation is I/O bound (e.g. calling an external service
+    to get some info), and computation is very light compared to the I/O part.
+    Another use-case of this class is to perform some very simple and quick
+    pre-processing or post-processing.
     '''
     pass
 
 
-class ServletProtocol(Protocol):
-    def start(self, q_in: FastQueue, q_out: FastQueue, *,
-              log_passer: ProcessLogger,
-              ctx: multiprocessing.context.BaseContext):
-        pass
+def make_threadworker(func: Callable[[Any], Any]):
+    # Define a simple ThreadWorker subclass for quick, "on-the-fly" use.
+    # This can be useful when we want introduce simple servlets
+    # for pre-processing and post-processing.
+    class MyThreadWorker(ThreadWorker):
+        def call(self, x):
+            return func(x)
 
-    def stop(self):
-        pass
-
-
-def _resolve_cpus(*, cpus: list = None, workers: int = None):
-    n_cpus = psutil.cpu_count(logical=True)
-
-    # Either `workers` or `cpus`, but not both,
-    # can be specified.
-    if workers:
-        # Number of workers is specified.
-        # Create this many processes, each pinned
-        # to one core. One core will host mulitple
-        # processes if `workers` exceeds the number
-        # of cores.
-        assert not cpus
-        assert 0 < workers <= n_cpus * 4
-        cpus = list(reversed(range(n_cpus))) * 4
-        cpus = sorted(cpus[:workers])
-        # List[int]
-    elif cpus:
-        assert isinstance(cpus, list)
-        # Create as many processes as the length of `cpus`.
-        # Each element of `cpus` specifies cpu pinning for
-        # one process. `cpus` could contain repeat numbers,
-        # meaning multiple processes can be pinned to the same
-        # cpu.
-        # This provides the ultimate flexibility, e.g.
-        #    [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
-    else:
-        # Create as many processes as there are cores minus core '0',
-        # one process pinned to one core.
-        cpus = list(range(1, n_cpus))
-        # List[int]
-
-    for i, cpu in enumerate(cpus):
-        if isinstance(cpu, int):
-            cpu = [cpu]
-            cpus[i] = cpu
-        assert all(0 <= c < n_cpus for c in cpu)
-
-    return cpus
+    MyThreadWorker.__name__ = f"ThreadWorker-{func.__name__}"
+    return MyThreadWorker
 
 
-class Servlet:
+PassThrough = make_threadworker(lambda x: x)
+# Example use of this class:
+#
+#    class Combine(ThreadWorker):
+#       '''
+#       Combine the ensemble elements depending on the results
+#       as well as the original input.
+#       '''
+#       def call(self, x):
+#           x, *y = x
+#           assert len(y) == 3
+#           if x < 100:
+#               return sum(y) / len(y)
+#           else:
+#               return max(y)
+#
+#   s = Ensemble(
+#           Servlet(PassThrough),
+#           Servlet(W1),
+#           Servlet(W2)
+#           Servlet(W3),
+#       )
+#   ss = Sequential(s, Servlet(Combine))
+
+
+class ProcessServlet:
     def __init__(self,
-                 worker_cls: Type[Worker],
+                 worker_cls: Type[ProcessWorker],
                  *,
                  cpus: list = None,
-                 workers: int = None,
                  name: str = None,
                  **kwargs):
+        '''
+        `cpus`: specifies how many processes to create and how they are pinned
+                to specific CPUs. The default is a single unpinned process.
+        '''
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
-        if issubclass(worker_cls, ProcessWorker):
-            self._cpus = _resolve_cpus(cpus=cpus, workers=workers)
-        else:
-            assert issubclass(worker_cls, ThreadWorker)
-            assert cpus is None
-            self._num_threads = workers or 1
+        self._cpus = cpus
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
@@ -501,44 +505,85 @@ class Servlet:
         `ctx` is a multiprocessing context passed in ultimately from `Server`.
         '''
         assert not self._started
-        if issubclass(self._worker_cls, ProcessWorker):
-            for cpu in self._cpus:
-                # Pinned to the specified cpu core.
+
+        # CPU allocation can look as flexible as this:
+        #   [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
+        cpus = self._cpus or [None]
+        for i, c in enumerate(cpus):
+            if c is not None:
+                if isinstance(c, int):
+                    cpus[i] = [c]
+                else:
+                    assert all(isinstance(v, int) for v in c)
+
+        for cpu in cpus:
+            # Create as many processes as the length of `cpus`.
+            # Each process is pinned to the specified cpu core.
+            if cpu is None:
+                sname = self._name
+            else:
                 sname = f"{self._name}-{','.join(map(str, cpu))}"
-                logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-                w = Process(
-                    ctx=ctx,
-                    target=self._worker_cls.run,
-                    name=sname,
-                    kwargs={
-                        'q_in': q_in,
-                        'q_out': q_out,
-                        'cpus': cpu,
-                        'log_passer': log_passer,
-                        **self._init_kwargs,
-                    },
-                )
-                self._workers.append(w)
-                w.start()
-                name = q_out.get()
-                logger.debug(f"   ... worker <{name}> is ready")
-        else:
-            for ithread in range(self._num_threads):
-                sname = f"{self._name}-{ithread}"
-                logger.info('adding worker <%s> in thread ...', sname)
-                w = Thread(
-                    target=self._worker_cls.run,
-                    name=sname,
-                    kwargs={
-                        'q_in': q_in,
-                        'q_out': q_out,
-                        **self._init_kwargs,
-                    },
-                )
-                self._workers.append(w)
-                w.start()
-                name = q_out.get()
-                logger.debug(f"   ... worker <{name}> is ready")
+            logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
+            w = Process(
+                ctx=ctx,
+                target=self._worker_cls.run,
+                name=sname,
+                kwargs={
+                    'q_in': q_in,
+                    'q_out': q_out,
+                    'cpus': cpu,
+                    'log_passer': log_passer,
+                    **self._init_kwargs,
+                },
+            )
+            self._workers.append(w)
+            w.start()
+            name = q_out.get()
+            logger.debug(f"   ... worker <{name}> is ready")
+
+        logger.info(f"servlet {self._name} is ready")
+        self._started = True
+
+    def stop(self):
+        assert self._started
+        for w in self._workers:
+            w.join()
+        self._workers = []
+        self._started = False
+
+
+class ThreadServlet:
+    def __init__(self,
+                 worker_cls: Type[ThreadWorker],
+                 *,
+                 num_threads: int = None,
+                 name: str = None,
+                 **kwargs):
+        self._worker_cls = worker_cls
+        self._name = name or worker_cls.__name__
+        self._num_threads = num_threads or 1
+        self._init_kwargs = kwargs
+        self._workers = []
+        self._started = False
+
+    def start(self, q_in, q_out):
+        assert not self._started
+        for ithread in range(self._num_threads):
+            sname = f"{self._name}-{ithread}"
+            logger.info('adding worker <%s> in thread ...', sname)
+            w = Thread(
+                target=self._worker_cls.run,
+                name=sname,
+                kwargs={
+                    'q_in': q_in,
+                    'q_out': q_out,
+                    **self._init_kwargs,
+                },
+            )
+            self._workers.append(w)
+            w.start()
+            name = q_out.get()
+            logger.debug(f"   ... worker <{name}> is ready")
 
         logger.info(f"servlet {self._name} is ready")
         self._started = True
@@ -557,7 +602,7 @@ class Sequential:
     the previous op's output becoming the subsequent
     op's input.
     '''
-    def __init__(self, *servlets: ServletProtocol):
+    def __init__(self, *servlets: Servlet):
         assert len(servlets) > 0
         self._servlets = servlets
         self._qs = []
@@ -569,14 +614,17 @@ class Sequential:
         q1 = q_in
         for i, s in enumerate(self._servlets):
             if i + 1 < nn:
-                # TODO: if both prev and current servlet is running
-                # ThreadWorker, then we could use a thread-based queue
-                # for some performance gain.
-                q2 = FastQueue(ctx=ctx)
+                if isinstance(s, ThreadServlet) and isinstance(self._servlets[i + 1], ThreadServlet):
+                    q2 = SimpleQueue()
+                else:
+                    q2 = FastQueue(ctx=ctx)
                 self._qs.append(q2)
             else:
                 q2 = q_out
-            s.start(q1, q2, log_passer=log_passer, ctx=ctx)
+            if isinstance(s, ThreadServlet):
+                s.start(q1, q2)
+            else:
+                s.start(q1, q2, log_passer=log_passer, ctx=ctx)
             q1 = q2
         self._started = True
 
@@ -594,17 +642,9 @@ class Ensemble:
     in parallel, the list of results are gathered and combined
     to form a final result.
     '''
-    def __init__(self, *servlets: ServletProtocol,
-                 post_func: Callable[[Any, list], Any] = None):
-        '''
-        `post_func`: if provided, this function takes the original input
-            value, `x`, and the ensemble output components, `y`
-            (a list containing output of each servlet, in order),
-            and returns a final result; if absent, `y` is the output.
-        '''
+    def __init__(self, *servlets: Servlet):
         assert len(servlets) > 1
         self._servlets = servlets
-        self._func = post_func
         self._started = False
 
     def _reset(self):
@@ -621,9 +661,14 @@ class Ensemble:
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = FastQueue(ctx=ctx)
-            q2 = FastQueue(ctx=ctx)
-            s.start(q1, q2, log_passer=log_passer, ctx=ctx)
+            if isinstance(s, ThreadServlet):
+                q1 = SimpleQueue()
+                q2 = SimpleQueue()
+                s.start(q1, q2)
+            else:
+                q1 = FastQueue(ctx=ctx)
+                q2 = FastQueue(ctx=ctx)
+                s.start(q1, q2, log_passer=log_passer, ctx=ctx)
             self._qins.append(q1)
             self._qouts.append(q2)
         t = Thread(target=self._dequeue)
@@ -640,7 +685,6 @@ class Ensemble:
         qout = self._qout
         qins = self._qins
         catalog = self._uid_to_results
-        hasfunc = self._func is not None
         nn = len(qins)
         while True:
             v = qin.get()
@@ -654,15 +698,12 @@ class Ensemble:
                 qout.put((uid, x))
                 continue
             z = {'y': [None] * nn, 'n': 0}
-            if hasfunc:
-                z['x'] = x
             catalog[uid] = z
             for q in qins:
                 q.put((uid, x))
 
     def _dequeue(self):
         threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
-        func = self._func
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
@@ -684,8 +725,6 @@ class Ensemble:
                         # All results for this request have been collected.
                         catalog.pop(uid)
                         y = z['y']
-                        if func is not None:
-                            y = func(z['x'], y)
                         qout.put((uid, y))
 
     def stop(self):
@@ -698,8 +737,11 @@ class Ensemble:
         self._started = False
 
 
+Servlet = Union[ProcessServlet, ThreadServlet, Sequential, Ensemble]
+
+
 class Server:
-    def __init__(self, servlet: ServletProtocol, *, main_cpu: int = 0, backlog: int = 1024, ctx=None):
+    def __init__(self, servlet: Servlet, *, main_cpu: int = 0, backlog: int = 1024, ctx=None):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
@@ -753,17 +795,18 @@ class Server:
 
         self._q_in = None
         self._q_out = None
-        if isinstance(self._servlet, Ensemble):
+        if isinstance(self._servlet, (Ensemble, ThreadServlet)):
             self._q_in = queue.Queue()
             self._q_out = queue.Queue()
         else:
             self._q_in = FastQueue(ctx=self.get_mpcontext())
             self._q_out = FastQueue(ctx=self.get_mpcontext())
-        self._servlet.start(
-            self._q_in,
-            self._q_out,
-            log_passer=self._worker_logger,
-            ctx=self.get_mpcontext())
+        if isinstance(self._servlet, ThreadServlet):
+            self._servlet.start(self._q_in, self._q_out)
+        else:
+            self._servlet.start(
+                self._q_in, self._q_out,
+                log_passer=self._worker_logger, ctx=self.get_mpcontext())
 
         t = Thread(target=self._gather_output)
         t.start()

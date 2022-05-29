@@ -12,7 +12,6 @@ import multiprocessing
 import multiprocessing.queues
 import subprocess
 import threading
-import traceback
 import warnings
 
 
