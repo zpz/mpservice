@@ -24,6 +24,10 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # For others, user may want to specify a smaller value.
 
 
+class TimeoutError(RuntimeError):
+    pass
+
+
 def is_exception(e):
     return isinstance(e, BaseException) or (
         (type(e) is type) and issubclass(e, BaseException)
@@ -51,29 +55,48 @@ def full_class_name(cls):
 
 class Thread(threading.Thread):
     def run(self):
-        self.exc = None
+        self._result = None
+        self._exc = None
         try:
-            super().run()
+            if self._target is not None:
+                self._result = self._target(*self._args, **self._kwargs)
         except BaseException as e:
-            self.exc = e
+            self._exc = e
             raise
+        finally:
+            # Avoid a refcycle if the thread is running a function with
+            # an argument that has a member that points to the thread.
+            del self._target, self._args, self._kwargs
 
+    def done(self):
+        if self.is_alive():
+            return False
+        return self._started.is_set()
+        # Otherwise, not started yet.
 
-class SpawnProcess(multiprocessing.context.SpawnProcess):
-    def run(self):
-        self.exc = None
-        try:
-            super().run()
-        except BaseException as e:
-            self.exc = e
-            raise
+    def result(self, timeout=None):
+        self.join(timeout)
+        if self.is_alive():
+            raise TimeoutError
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+    def execption(self, timeout=None):
+        self.join(timeout)
+        if self.is_alive():
+            raise TimeoutError
+        return self._exc
 
 
 def Process(*args, ctx, **kwargs):
     # This is a "factory" function.
     method = ctx.get_start_method()
-    assert method == 'spawn', f"process start method '{method}' not implemented"
-    return SpawnProcess(*args, **kwargs)
+    if method == 'spawn':
+        return multiprocessing.context.SpawnProcess(*args, **kwargs)
+    if method == 'fork':
+        return multiprocessing.context.ForkProcess(*args, **kwargs)
+    assert f"multiprocessing context {ctx} not supported"
 
 
 class ProcessLogger:

@@ -92,7 +92,7 @@ from typing import Sequence, Union, Callable, Type, Any
 import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, Thread, Process, ProcessLogger
+from .util import is_exception, Thread, Process, ProcessLogger, TimeoutError
 from ._queues import SingleLane
 
 
@@ -102,10 +102,6 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 NOMOREDATA = b'c7160a52-f8ed-40e4-8a38-ec6b84c2cd87'
-
-
-class TimeoutError(Exception):
-    pass
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):

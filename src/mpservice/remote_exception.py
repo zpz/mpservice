@@ -5,7 +5,6 @@ import warnings
 
 from .util import full_class_name
 
-
 # TODO
 # check out
 #   https://github.com/ionelmc/python-tblib
