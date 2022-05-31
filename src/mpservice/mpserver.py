@@ -759,7 +759,7 @@ class Server:
                  main_cpu: int = 0,
                  backlog: int = 1024,
                  ctx=None,
-                 sys_info_log_cadence: int = 10,
+                 sys_info_log_cadence: int = 10_000,
                  ):
         '''
         `main_cpu`: specifies the cpu for the "main process",
