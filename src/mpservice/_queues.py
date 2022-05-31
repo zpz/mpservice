@@ -14,6 +14,7 @@ from queue import Empty, Full
 
 logger = logging.getLogger(__name__)
 
+# Interesting: faster_fifo
 
 # About changing pickle protocol for multiprocessing:
 #  https://stackoverflow.com/questions/45119053/how-to-change-the-serialization-method-used-by-the-multiprocessing-module
