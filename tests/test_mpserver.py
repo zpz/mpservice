@@ -25,6 +25,7 @@ class Shift(ProcessWorker):
 
     def call(self, x):
         if self.batch_size == 0:
+            print('x', x, 'stepsize', self._stepsize)
             return x + self._stepsize
         return [_ + self._stepsize for _ in x]
 
@@ -47,6 +48,22 @@ def test_basic():
     with Server(ProcessServlet(Double, cpus=[1])) as service:
         z = service.call(3)
         assert z == 3 * 2
+
+
+def test_sysinfolog():
+    s = Sequential(
+            ProcessServlet(Double, cpus=[0, 1]),
+            ProcessServlet(Square, cpus=[1]),
+            Ensemble(
+                ProcessServlet(Double),
+                ThreadServlet(make_threadworker(lambda x: x + 1)),
+                ProcessServlet(Square, cpus=[1]),
+                ),
+            ThreadServlet(make_threadworker(lambda x: sum(x))),
+            )
+    with Server(s, sys_info_log_cadence=100) as service:
+        s = list(service.stream(range(1000)))
+        assert len(s) == 1000
 
 
 @pytest.mark.asyncio

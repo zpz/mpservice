@@ -85,6 +85,7 @@ import multiprocessing.queues
 import queue
 import threading
 from abc import ABCMeta, abstractmethod
+from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Sequence, Union, Callable, Type, Any
@@ -137,7 +138,8 @@ class Worker(metaclass=ABCMeta):
 
     def __init__(self, *,
                  batch_size: int = None,
-                 batch_wait_time: float = None):
+                 batch_wait_time: float = None,
+                 batch_size_log_cadence: int = 10_000):
         '''
         `batch_size`: max batch size; see `call`.
 
@@ -185,6 +187,7 @@ class Worker(metaclass=ABCMeta):
                 assert 0 < batch_wait_time < 1
 
         self.batch_size = batch_size
+        self.batch_size_log_cadence = batch_size_log_cadence
         self.batch_wait_time = batch_wait_time
         self.name = multiprocessing.current_process().name
 
@@ -307,9 +310,10 @@ class Worker(metaclass=ABCMeta):
                 batch_size_max = max(batch_size_max, n)
                 batch_size_min = min(batch_size_min, n)
                 batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-                if n_batches % 10_000 == 0:
-                    print_batching_info()
-                    n_batches = 0
+                if self.batch_size_log_cadence:
+                    if n_batches % self.batch_size_log_cadence == 0:
+                        print_batching_info()
+                        n_batches = 0
         finally:
             if n_batches:
                 print_batching_info()
@@ -631,6 +635,13 @@ class Sequential:
         self._qs = []
         self._started = False
 
+    @property
+    def _workers(self):
+        w = []
+        for s in self._servlets:
+            w.extend(s._workers)
+        return w
+
 
 class Ensemble:
     '''
@@ -732,12 +743,24 @@ class Ensemble:
         self._reset()
         self._started = False
 
+    @property
+    def _workers(self):
+        w = []
+        for s in self._servlets:
+            w.extend(s._workers)
+        return w
+
 
 Servlet = Union[ProcessServlet, ThreadServlet, Sequential, Ensemble]
 
 
 class Server:
-    def __init__(self, servlet: Servlet, *, main_cpu: int = 0, backlog: int = 1024, ctx=None):
+    def __init__(self, servlet: Servlet, *,
+                 main_cpu: int = 0,
+                 backlog: int = 1024,
+                 ctx=None,
+                 sys_info_log_cadence: int = 10,
+                 ):
         '''
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
@@ -766,6 +789,7 @@ class Server:
                 cpus = main_cpu
             psutil.Process().cpu_affinity(cpus=cpus)
 
+        self._sys_info_log_cadence = sys_info_log_cadence
         self._started = False
 
     def __enter__(self):
@@ -1023,6 +1047,35 @@ class Server:
         q_out = self._q_out
         futures = self._uid_to_futures
 
+        log_cadence = self._sys_info_log_cadence
+        if log_cadence:
+            ts0 = datetime.utcnow()
+            logcounter = 0
+
+            def _log_sys_info():
+                pp = [(w.name, psutil.Process(w.pid))
+                      for w in self._servlet._workers
+                      if not isinstance(w, Thread)]
+                msg = [f"  time from           {ts0}",
+                       f"  time to             {datetime.utcnow()}",
+                       f"  items served        {logcounter}",
+                       ]
+                attrs = ['memory_full_info',
+                         'cpu_affinity', 'cpu_percent', 'cpu_times',
+                         'num_threads', 'num_fds', 'io_counters',
+                         'status',
+                         ]
+                for pname, pobj in pp:
+                    msg.append(f'    process {pname}')
+                    info = pobj.as_dict(attrs)
+                    for k in attrs:
+                        v = info[k]
+                        if k == 'memory_full_info':
+                            msg.append(f"      {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB")
+                        else:
+                            msg.append(f"      {k:<15} {v}")
+                logger.info('worker process stats:\n%s', '\n'.join(msg))
+
         while True:
             z = q_out.get()
             if z == NOMOREDATA:
@@ -1044,3 +1097,14 @@ class Server:
                     # Unexpected situation; to be investigated.
                     logger.exception(e)
                     raise
+
+            if log_cadence:
+                logcounter += 1
+                if logcounter >= log_cadence and (q_out.empty() or logcounter >= log_cadence * 10):
+                    _log_sys_info()
+                    logcounter = 0
+                    ts0 = datetime.utcnow()
+
+        if log_cadence:
+            if logcounter >= log_cadence:
+                _log_sys_info()
