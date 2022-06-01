@@ -3,6 +3,7 @@ Release 0.11.1
 
 - Added `mpserver.ThreadWorker` and `ThreadServlet`.
 - Simplified `mpserver` parameter for CPU pinning spec.
+- Added log on worker process CPU/memory utilization in `mpserver`.
 
 
 Release 0.11.0
