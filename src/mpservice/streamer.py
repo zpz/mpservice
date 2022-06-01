@@ -818,7 +818,6 @@ class Transformer(Stream):
 
         if fut.exception():
             e = fut.exception()
-            print('exception in transformer:', e)
             if self._return_exceptions:
                 if self._return_x:
                     return x, e

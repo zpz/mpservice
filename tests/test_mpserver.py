@@ -25,7 +25,6 @@ class Shift(ProcessWorker):
 
     def call(self, x):
         if self.batch_size == 0:
-            print('x', x, 'stepsize', self._stepsize)
             return x + self._stepsize
         return [_ + self._stepsize for _ in x]
 

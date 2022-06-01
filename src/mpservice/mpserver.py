@@ -447,7 +447,7 @@ class ThreadWorker(Worker):
 
 def make_threadworker(func: Callable[[Any], Any]):
     # Define a simple ThreadWorker subclass for quick, "on-the-fly" use.
-    # This can be useful when we want introduce simple servlets
+    # This can be useful when we want to introduce simple servlets
     # for pre-processing and post-processing.
     class MyThreadWorker(ThreadWorker):
         def call(self, x):
@@ -460,26 +460,25 @@ def make_threadworker(func: Callable[[Any], Any]):
 PassThrough = make_threadworker(lambda x: x)
 # Example use of this class:
 #
-#    class Combine(ThreadWorker):
+#    def combine(x):
 #       '''
 #       Combine the ensemble elements depending on the results
 #       as well as the original input.
 #       '''
-#       def call(self, x):
-#           x, *y = x
-#           assert len(y) == 3
-#           if x < 100:
-#               return sum(y) / len(y)
-#           else:
-#               return max(y)
+#       x, *y = x
+#       assert len(y) == 3
+#       if x < 100:
+#           return sum(y) / len(y)
+#       else:
+#           return max(y)
 #
 #   s = Ensemble(
-#           Servlet(PassThrough),
-#           Servlet(W1),
-#           Servlet(W2)
-#           Servlet(W3),
+#           ThreadServlet(PassThrough),
+#           ProcessServlet(W1),
+#           ProcessServlet(W2)
+#           ProcessServlet(W3),
 #       )
-#   ss = Sequential(s, Servlet(Combine))
+#   ss = Sequential(s, ThreadServlet(make_threadworker(combine)))
 
 
 class ProcessServlet:
@@ -755,7 +754,9 @@ Servlet = Union[ProcessServlet, ThreadServlet, Sequential, Ensemble]
 
 
 class Server:
-    def __init__(self, servlet: Servlet, *,
+    def __init__(self,
+                 servlet: Servlet,
+                 *,
                  main_cpu: int = 0,
                  backlog: int = 1024,
                  ctx=None,
@@ -769,6 +770,9 @@ class Server:
             all pipes/servlets/stages combined.
 
         `ctx`: a multiprocessing context. Leave this at default unless you know what you're doing.
+
+        `sys_info_log_cadence`: log worker process system info (cpu/memory utilization)
+            every this many requests; if `None`, do not log.
         '''
         self._servlet = servlet
 
@@ -1106,5 +1110,5 @@ class Server:
                     ts0 = datetime.utcnow()
 
         if log_cadence:
-            if logcounter >= log_cadence:
+            if logcounter >= log_cadence / 2:
                 _log_sys_info()
