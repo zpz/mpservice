@@ -3,7 +3,7 @@ import multiprocessing
 import time
 
 from mpservice.socket import SocketApplication, SocketClient, run_app
-from mpservice.mpserver import ProcessWorker, Servlet, Server
+from mpservice.mpserver import ProcessWorker, ProcessServlet, Server
 from zpz.logging import config_logger
 
 mp = multiprocessing.get_context('spawn')
@@ -47,7 +47,7 @@ class Double(ProcessWorker):
 
 def run_mp_server():
 
-    model = Server(Servlet(Double))
+    model = Server(ProcessServlet(Double))
     app = SocketApplication(
         on_startup=[model.__enter__],
         on_shutdown=[model.__exit__])

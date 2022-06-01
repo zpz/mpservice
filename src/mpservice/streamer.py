@@ -214,6 +214,11 @@ from ._queues import SingleLane
 
 logger = logging.getLogger(__name__)
 
+FINISHED = '8d906c4b-1161-40cc-b585-7cfb012bca26'
+STOPPED = 'ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e'
+CRASHED = '57cf8a88-434e-4772-9bca-01086f6c45e9'
+
+
 T = TypeVar('T')      # indicates input data element
 TT = TypeVar('TT')    # indicates output after an op on `T`
 
@@ -813,7 +818,6 @@ class Transformer(Stream):
 
         if fut.exception():
             e = fut.exception()
-            print('exception in transformer:', e)
             if self._return_exceptions:
                 if self._return_x:
                     return x, e
