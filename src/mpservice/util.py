@@ -89,16 +89,6 @@ class Thread(threading.Thread):
         return self._exc
 
 
-def Process(*args, ctx, **kwargs):
-    # This is a "factory" function.
-    method = ctx.get_start_method()
-    if method == 'spawn':
-        return multiprocessing.context.SpawnProcess(*args, **kwargs)
-    if method == 'fork':
-        return multiprocessing.context.ForkProcess(*args, **kwargs)
-    assert f"multiprocessing context {ctx} not supported"
-
-
 class ProcessLogger:
     def __init__(self, *, ctx):
         assert ctx.get_start_method() == 'spawn'
