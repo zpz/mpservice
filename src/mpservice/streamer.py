@@ -2,7 +2,7 @@
 
 An input data stream goes through a series of operations.
 The target use case is that one or more operations is I/O bound,
-hence can benefit from concurrency via threading or asyncio.
+hence can benefit from concurrency via threading.
 These operations are called `transform`s.
 
 The other operations are typically light weight and supportive
@@ -191,24 +191,21 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 
-import asyncio
 import concurrent.futures
 import logging
 import random
 import threading
 import traceback
-from queue import Empty, Full
-from time import sleep
 from typing import (
     Callable, TypeVar, Union, Optional,
     Iterable, Iterator,
-    Tuple, Awaitable,
+    Tuple,
 )
 
 from overrides import EnforceOverrides, overrides, final
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, is_async, MAX_THREADS
+from .util import is_exception, MAX_THREADS, Thread
 from ._queues import SingleLane
 
 
@@ -226,30 +223,33 @@ TT = TypeVar('TT')    # indicates output after an op on `T`
 def _default_peek_func(i, x):
     print('')
     print('#', i)
-    print(x)
+    if is_exception(x):
+        print(repr(x))
+    else:
+        print(x)
 
 
 class Streamer(EnforceOverrides):
     def __init__(self, instream: Union[Iterator, Iterable], /):
         self.streamlets = [Stream(instream)]
+        self._started = False
+        self._stopped = False
 
     def __enter__(self):
-        if self.streamlets[0]._thread_pool is None:
-            self.streamlets[0]._thread_pool = concurrent.futures.ThreadPoolExecutor()
-        self.streamlets[0]._started.set()
+        self._started = True
         return self
 
     def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
-        self.streamlets[0]._stopped.set()
-        self.streamlets[0]._started.clear()
+        for s in self.streamlets:
+            s._stop()
         msg = exit_err_msg(self, exc_type, exc_value, exc_tb)
         if msg:
             logger.error(msg)
-        self.streamlets[0]._thread_pool.shutdown()
+        self._stopped = True
 
     @final
     def __iter__(self):
-        if not self.streamlets[0]._started.is_set():
+        if not self._started:
             raise RuntimeError("iteration must be started within context manager, i.e. within a 'with ...:' block")
         return self
 
@@ -451,13 +451,13 @@ class Streamer(EnforceOverrides):
         data. The buffer evens out unstabilities in the speeds of upstream
         production and downstream consumption.
         '''
-        if not self.streamlets[0]._started.is_set():
+        if not self._started:
             raise RuntimeError("`buffer` requires the object to be in context manager")
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
 
     def transform(self,
-                  func: Union[Callable[[T], TT], Callable[[T], Awaitable[TT]]],
+                  func: Callable[[T], TT],
                   *,
                   concurrency: Optional[Union[int, str]] = None,
                   return_x: bool = False,
@@ -466,9 +466,11 @@ class Streamer(EnforceOverrides):
         '''Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
 
-        `func`: a sync or async function that takes a single input item
+        `func`: a sync function that takes a single input item
         as the first positional argument and produces a result.
         Additional keyword args can be passed in via `func_args`.
+        Async can be supported, but it's a little more involved than the sync case.
+        Since the need seems to be low, it's not supported for now.
 
         The outputs are in the order of the input elements.
 
@@ -498,7 +500,7 @@ class Streamer(EnforceOverrides):
         User may want to add a `buffer` to the output of this method,
         esp if the `func` operations are slow.
         '''
-        if not self.streamlets[0]._started.is_set():
+        if not self._started:
             raise RuntimeError("`transform` requires the object to be in context manager")
         self.streamlets.append(Transformer(
             self.streamlets[-1],
@@ -513,25 +515,18 @@ class Streamer(EnforceOverrides):
 
 class Stream(EnforceOverrides):
     def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
-        if isinstance(instream, Stream):
+        if hasattr(instream, '__next__'):
             self._instream = instream
-            self._thread_pool = instream._thread_pool
-            self._started = instream._started
-            self._stopped = instream._stopped
         else:
-            if hasattr(instream, '__next__'):
-                self._instream = instream
-            else:
-                self._instream = iter(instream)
-            self._thread_pool: concurrent.futures.ThreadPoolExecutor = None
-            self._started = threading.Event()
-            self._stopped = threading.Event()
+            self._instream = iter(instream)
         self.index = 0
         # Index of the upcoming element; 0 based.
         # This is also the count of finished elements.
+        self._stopped = False
 
-        # `started`, `stopped`, and `thread_pool` are shared
-        # by all Stream objects in a "chain".
+    def _stop(self):
+        # Clean up and deal with early-stop situations.
+        self._stopped = True
 
     @final
     def __iter__(self):
@@ -546,6 +541,8 @@ class Stream(EnforceOverrides):
         results of transformations on its `_instream`.
         Subclass should take efforts to handle exceptions in this method.
         '''
+        if self._stopped:
+            raise StopIteration
         return next(self._instream)
 
     @final
@@ -560,18 +557,17 @@ class Batcher(Stream):
         super().__init__(instream)
         assert 1 < batch_size <= 10_000
         self.batch_size = batch_size
-        self._done = False
 
     @overrides
     def _get_next(self):
-        if self._done:
+        if self._stopped:
             raise StopIteration
         batch = []
         for _ in range(self.batch_size):
             try:
                 batch.append(next(self._instream))
             except StopIteration:
-                self._done = True
+                self._stop()
                 break
         if batch:
             return batch
@@ -585,6 +581,8 @@ class Unbatcher(Stream):
 
     @overrides
     def _get_next(self):
+        if self._stopped:
+            raise StopIteration
         if self._batch:
             return self._batch.pop(0)
         z = next(self._instream)
@@ -601,6 +599,8 @@ class Dropper(Stream):
 
     @overrides
     def _get_next(self):
+        if self._stopped:
+            raise StopIteration
         while True:
             z = next(self._instream)
             if self.func(self.index, z):
@@ -617,6 +617,8 @@ class Header(Stream):
 
     @overrides
     def _get_next(self):
+        if self._stopped:
+            raise StopIteration
         if self.index >= self.n:
             raise StopIteration
         return self._instream.__next__()
@@ -629,33 +631,11 @@ class Peeker(Stream):
 
     @overrides
     def _get_next(self):
+        if self._stopped:
+            raise StopIteration
         z = next(self._instream)
         self.func(self.index, z)
         return z
-
-
-def put_in_queue(q, x, stop_event, timeout=0.1):
-    '''
-    `q` is either a `threading.Queue` or a `multiprocessing.queues.Queue`,
-    but not an `asyncio.Queue`, because the latter does not take
-    the `timeout` argument.
-
-    This is used in a blocking mode to put `x` in the queue
-    till success. It checks for any request of early-stop indicated by
-    `stop_event`, which is either `threading.Event` or `multiprocessing.synchronize.Event`.
-    Usually there is not need to customize the value of `timeout`,
-    because in this usecase it's OK to try a little long before checking
-    early-stop.
-
-    Return `True` if successfully put in queue; `False` if early-stop is detected.
-    '''
-    while True:
-        try:
-            q.put(x, timeout=timeout)
-            return True
-        except Full:
-            if stop_event.is_set():
-                return False
 
 
 class Buffer(Stream):
@@ -664,40 +644,45 @@ class Buffer(Stream):
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = SingleLane(maxsize)
-        self._nomore = object()
-        self._t = self._thread_pool.submit(self._start)
+        self._t = Thread(target=self._start)
+        self._t.start()
         # This requires that `instream` is already context managed.
 
     def _start(self):
         threading.current_thread().name = 'BufferThread'
         q = self._q
-        instream = self._instream
-        stopped = self._stopped
+        while True:
+            try:
+                v = next(self._instream)
+            except StopIteration:
+                q.put(FINISHED)
+                break
+            except Exception:
+                q.put(STOPPED)
+                raise
+            if self._stopped:
+                break
+            q.put(v)
 
-        for v in instream:
-            # If error happens in the line above,
-            # it will crash this thread and be reflected in the
-            # concurrent.futures.Future object.
-            if not put_in_queue(q, v, stopped):
-                return
-        put_in_queue(q, self._nomore, stopped)
+    @overrides
+    def _stop(self):
+        self._stopped = True
+        while not self._q.empty():
+            _ = self._q.get()
+        self._t.join()
 
     @overrides
     def _get_next(self):
-        while True:
-            try:
-                z = self._q.get(timeout=0.1)
-                if z is self._nomore:
-                    raise StopIteration
-                return z
-            except Empty:
-                if self._t.done():
-                    if self._t.exception():
-                        raise self._t.exception() from None
-                    assert self._stopped.is_set()
-                    return
-                elif self._stopped.is_set():
-                    return
+        if self._stopped:
+            raise StopIteration
+        z = self._q.get()
+        if z == FINISHED:
+            self._stop()
+            raise StopIteration
+        if z == STOPPED:
+            self._stop()
+            raise self._t.exception()
+        return z
 
 
 class Transformer(Stream):
@@ -720,111 +705,62 @@ class Transformer(Stream):
             assert concurrency > 0
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        self._nomore = object()
-        self._tasks = SingleLane(concurrency)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(concurrency)
+        self._tasks = SingleLane(concurrency * 2)
+        self._t = Thread(target=self._start, args=(func,), kwargs=func_args)
+        self._t.start()
 
-        if is_async(func):
-            self._is_async = True
-            self._t = self._thread_pool.submit(self._start_async, func, **func_args)
-        else:
-            self._is_async = False
-            self._t = self._thread_pool.submit(self._start_sync, func, **func_args)
-
-    def _start_sync(self, func, **kwargs):
-        try:
-            tasks = self._tasks
-            stopped = self._stopped
-            for x in self._instream:
-                if stopped.is_set():
-                    return
-                t = self._thread_pool.submit(func, x, **kwargs)
-                # The size of the queue `tasks` regulates how many
-                # concurrent calls to `func` there can be.
-                if not put_in_queue(tasks, (x, t), stopped):
-                    return
-            put_in_queue(tasks, self._nomore, stopped)
-        except Exception as e:
-            logger.exception(e)
-            raise
-
-    def _start_async(self, func, **kwargs):
-
-        async def a_put_in_queue(q, x, stop_event):
-            while True:
-                try:
-                    q.put_nowait(x)
-                    return True
-                except Full:
-                    if stop_event.is_set():
-                        return False
-                    await asyncio.sleep(0.01)
-                    # The length of this sleep is not critical, because
-                    # it happens only when the queue is full.
-                    # It should be relatively short.
-
-        async def main():
+    def _start(self, func, **kwargs):
+        tasks = self._tasks
+        while True:
             try:
-                tasks = self._tasks
-                ff = func
-                args = kwargs
-                stopped = self._stopped
-
-                for x in self._instream:
-                    t = asyncio.create_task(ff(x, **args))
-                    # The size of the queue `tasks` regulates how many
-                    # concurrent calls to `func` there can be.
-                    if not (await a_put_in_queue(tasks, (x, t), stopped)):
-                        return
-                if not (await a_put_in_queue(tasks, self._nomore, stopped)):
-                    return
-
-                # If we do not wait here, `main` will exit, and unfinished tasks
-                # will be cancelled.
-                while not tasks.empty():
-                    if stopped.is_set():
-                        return
-                    await asyncio.sleep(0.001)
-            except Exception as e:
-                logger.exception(e)
+                x = next(self._instream)
+            except StopIteration:
+                tasks.put(FINISHED)
+                break
+            except Exception:
+                tasks.put(STOPPED)
                 raise
+            if self._stopped:
+                break
+            t = self._thread_pool.submit(func, x, **kwargs)
+            # The size of the queue `tasks` regulates how many
+            # concurrent calls to `func` there can be.
+            tasks.put((x, t))
 
-        asyncio.run(main())
+    @overrides
+    def _stop(self):
+        self._stopped = True
+        while not self._tasks.empty():
+            _ = self._tasks.get()
+        self._t.join()
+        self._thread_pool.shutdown()
 
     @overrides
     def _get_next(self):
-        while True:
-            try:
-                z = self._tasks.get(timeout=0.1)
-                break
-            except Empty:
-                if self._t.done():
-                    if self._t.exception():
-                        raise self._t.exception() from None
-                    assert self._stopped.is_set()
-                    return
-                elif self._stopped.is_set():
-                    return
-
-        if z is self._nomore:
+        if self._stopped:
             raise StopIteration
+        z = self._tasks.get()
+        if z == FINISHED:
+            self._stop()
+            raise StopIteration
+        if z == STOPPED:
+            self._stop()
+            raise self._t.exception()
 
         x, fut = z
-        while not fut.done():
-            if self._stopped.is_set():
-                return
-            sleep(0.0002)
-            # This sleep should be short, but I don't know what would be
-            # an optimal duration.
-
-        if fut.exception():
-            e = fut.exception()
+        try:
+            y = fut.result()
+            if self._return_x:
+                return x, y
+            else:
+                return y
+        except Exception as e:
             if self._return_exceptions:
                 if self._return_x:
                     return x, e
-                return e
-            logger.error("exception '%r' happened for input '%s'", e, x)
-            raise e
-        y = fut.result()
-        if self._return_x:
-            return x, y
-        return y
+                else:
+                    return e
+            else:
+                self._stop()
+                raise

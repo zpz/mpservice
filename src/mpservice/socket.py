@@ -14,10 +14,33 @@ from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
 from .remote_exception import RemoteException, exit_err_msg
-from .streamer import put_in_queue
 from ._queues import SingleLane
 
 logger = logging.getLogger(__name__)
+
+
+def put_in_queue(q, x, stop_event, timeout=0.1):
+    '''
+    `q` is either a `threading.Queue` or a `multiprocessing.queues.Queue`,
+    but not an `asyncio.Queue`, because the latter does not take
+    the `timeout` argument.
+
+    This is used in a blocking mode to put `x` in the queue
+    till success. It checks for any request of early-stop indicated by
+    `stop_event`, which is either `threading.Event` or `multiprocessing.synchronize.Event`.
+    Usually there is not need to customize the value of `timeout`,
+    because in this usecase it's OK to try a little long before checking
+    early-stop.
+
+    Return `True` if successfully put in queue; `False` if early-stop is detected.
+    '''
+    while True:
+        try:
+            q.put(x, timeout=timeout)
+            return True
+        except queue.Full:
+            if stop_event.is_set():
+                return False
 
 
 # References about Docker networking:

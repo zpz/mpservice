@@ -525,7 +525,6 @@ class ProcessServlet:
                 sname = f"{self._name}-{','.join(map(str, cpu))}"
             logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
             w = ctx.Process(
-                ctx=ctx,
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
