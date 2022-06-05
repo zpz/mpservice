@@ -20,9 +20,9 @@ def _test_thread_process(cls):
     with pytest.raises(TimeoutError):
         y = t.result(0.1)
     with pytest.raises(TimeoutError):
-        y = t.execption(0.1)
+        y = t.exception(0.1)
     assert t.result() == 6
-    assert t.execption() is None
+    assert t.exception() is None
     t.join()
 
     t = Thread(target=delay_double, args=(12,))
@@ -33,7 +33,7 @@ def _test_thread_process(cls):
     with pytest.raises(ValueError):
         y = t.result()
 
-    e = t.execption()
+    e = t.exception()
     assert type(e) is ValueError
     t.join()
 

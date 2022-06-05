@@ -1,6 +1,9 @@
 # Changelog
 
-## Release 0.11.2 (forthcoming)
+## Release 0.11.2
+
+- Refinement and simplification to `mpservice.streamer`.
+- Refinement to `mpservice.server_process`.
 
 
 ## Release 0.11.1

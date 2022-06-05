@@ -1,9 +1,3 @@
-#from __future__ import annotations
-# Enable using a class in type annotations in the code
-# that defines that class itself.
-# https://stackoverflow.com/a/49872353
-# Will no longer be needed in Python 3.10.
-
 import functools
 import inspect
 import logging
@@ -68,7 +62,7 @@ class Thread(threading.Thread):
                 self._result = self._target(*self._args, **self._kwargs)
         except BaseException as e:
             self._exc = e
-            raise
+            # raise
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -88,7 +82,7 @@ class Thread(threading.Thread):
             raise self._exc
         return self._result
 
-    def execption(self, timeout=None):
+    def exception(self, timeout=None):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError

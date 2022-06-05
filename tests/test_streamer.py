@@ -1,4 +1,3 @@
-import asyncio
 import math
 import random
 from time import sleep
@@ -279,7 +278,9 @@ def test_chain():
              .buffer(3)
              .transform(process2, concurrency=3, return_exceptions=True)
              .peek_every_nth(1))
-        print(z.collect())
+        zz = z.collect()
+        print('')
+        print(zz)
 
     with Streamer(corrupt_data()) as s:
         s.transform(process1, concurrency=2, return_exceptions=True)
@@ -301,31 +302,8 @@ def test_early_stop():
         z = s.transform(double, concurrency=3)
         n = 0
         for x in z:
-            print(x)
+            # print(x)
             n += 1
             if n == 10:
                 break
         assert n == 10
-
-
-def test_async_func():
-    async def double(x):
-        await asyncio.sleep(random.uniform(0.1, 0.3))
-        return x * 2
-
-    with Streamer(range(200)) as s:
-        z = s.transform(double, concurrency=100)
-        for x, y in zip(range(200), z):
-            assert y == x * 2
-
-
-def test_async_func_ret_x():
-    async def double(x):
-        await asyncio.sleep(random.uniform(0.1, 0.3))
-        return x * 2
-
-    with Streamer(range(200)) as s:
-        z = s.transform(double, concurrency=100, return_x=True)
-        for x, y in zip(range(200), z):
-            assert y == (x, x * 2)
-
