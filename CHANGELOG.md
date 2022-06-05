@@ -1,3 +1,10 @@
+Changelog
+---------
+
+Release 0.11.2 (forthcoming)
+==============
+
+
 Release 0.11.1
 ==============
 
