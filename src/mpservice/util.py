@@ -1,4 +1,4 @@
-from __future__ import annotations
+#from __future__ import annotations
 # Enable using a class in type annotations in the code
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
@@ -54,6 +54,12 @@ def full_class_name(cls):
 
 
 class Thread(threading.Thread):
+    '''
+    This class makes the result or exception produced in a thread
+    accessible from the thread object itself. This makes the `Thread`
+    object behavior somewhat similar to the `Future` object returned
+    by `concurrent.futures.ThreadPoolExecutor.submit`.
+    '''
     def run(self):
         self._result = None
         self._exc = None
@@ -89,17 +95,32 @@ class Thread(threading.Thread):
         return self._exc
 
 
-def Process(*args, ctx, **kwargs):
-    # This is a "factory" function.
-    method = ctx.get_start_method()
-    if method == 'spawn':
-        return multiprocessing.context.SpawnProcess(*args, **kwargs)
-    if method == 'fork':
-        return multiprocessing.context.ForkProcess(*args, **kwargs)
-    assert f"multiprocessing context {ctx} not supported"
-
-
 class ProcessLogger:
+    '''
+    Logging messages produced in worker processes are tricky.
+    First, some settings should be concerned in the main process only,
+    including log formatting, log-level control, log handler (destination), etc.
+    Specifically, these should be settled in the "launching script", and definitely
+    should not be concerned in worker processes.
+    Second, the terminal printout of loggings in multiple processes tends to be
+    intermingled and mis-ordered.
+
+    This class uses a queue to transmit all logging messages that are produced
+    in a worker process to the main process/thread, to be handled there.
+
+    Usage:
+
+        1. In main process, create a `ProcessLogger` instance and start it:
+
+                pl = ProcessLogger().start()
+
+        2. Pass this object to other processes. (Yes, this object is picklable.)
+
+        3. In the other process, start it. Suppose the object is also called `pl`,
+           then do
+
+                pl.start()
+    '''
     def __init__(self, *, ctx):
         assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
@@ -121,6 +142,7 @@ class ProcessLogger:
             self._start_in_main_process()
         else:
             self._start_in_other_process()
+        return self
 
     def stop(self):
         if self._creator:

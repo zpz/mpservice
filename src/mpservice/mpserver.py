@@ -93,7 +93,7 @@ from typing import Sequence, Union, Callable, Type, Any
 import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, Thread, Process, ProcessLogger, TimeoutError
+from .util import is_exception, Thread, ProcessLogger, TimeoutError
 from ._queues import SingleLane
 
 
@@ -279,6 +279,7 @@ class Worker(metaclass=ABCMeta):
         collector_thread.start()
 
         n_batches = 0
+        batch_size_log_cadence = self.batch_size_log_cadence
         try:
             while True:
                 if n_batches == 0:
@@ -310,8 +311,8 @@ class Worker(metaclass=ABCMeta):
                 batch_size_max = max(batch_size_max, n)
                 batch_size_min = min(batch_size_min, n)
                 batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
-                if self.batch_size_log_cadence:
-                    if n_batches % self.batch_size_log_cadence == 0:
+                if batch_size_log_cadence:
+                    if n_batches >= batch_size_log_cadence:
                         print_batching_info()
                         n_batches = 0
         finally:
@@ -523,7 +524,7 @@ class ProcessServlet:
             else:
                 sname = f"{self._name}-{','.join(map(str, cpu))}"
             logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-            w = Process(
+            w = ctx.Process(
                 ctx=ctx,
                 target=self._worker_cls.run,
                 name=sname,
@@ -867,6 +868,9 @@ class Server:
         # they should create them out of this context.
         return self._ctx
 
+        # TODO: how to track helper processes created by subclasses, so that
+        # the sys info log in `_gather_output` can include them?
+
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.
@@ -1080,35 +1084,36 @@ class Server:
                             msg.append(f"      {k:<15} {v}")
                 logger.info('worker process stats:\n%s', '\n'.join(msg))
 
-        while True:
-            z = q_out.get()
-            if z == NOMOREDATA:
-                break
-            uid, y = z
-            fut = futures.pop(uid)
-            try:
-                if is_exception(y):
-                    fut.set_exception(y)
-                else:
-                    fut.set_result(y)
-                fut.data['t1'] = perf_counter()
-            except (concurrent.futures.InvalidStateError, asyncio.InvalidStateError) as e:
-                if fut.cancelled():
-                    # Could have been cancelled due to TimeoutError.
-                    # logger.debug('Future object is already cancelled')
-                    pass
-                else:
-                    # Unexpected situation; to be investigated.
-                    logger.exception(e)
-                    raise
+        try:
+            while True:
+                z = q_out.get()
+                if z == NOMOREDATA:
+                    break
+                uid, y = z
+                fut = futures.pop(uid)
+                try:
+                    if is_exception(y):
+                        fut.set_exception(y)
+                    else:
+                        fut.set_result(y)
+                    fut.data['t1'] = perf_counter()
+                except (concurrent.futures.InvalidStateError, asyncio.InvalidStateError) as e:
+                    if fut.cancelled():
+                        # Could have been cancelled due to TimeoutError.
+                        # logger.debug('Future object is already cancelled')
+                        pass
+                    else:
+                        # Unexpected situation; to be investigated.
+                        logger.exception(e)
+                        raise
 
+                if log_cadence:
+                    logcounter += 1
+                    if logcounter >= log_cadence and (q_out.empty() or logcounter >= log_cadence * 10):
+                        _log_sys_info()
+                        logcounter = 0
+                        ts0 = datetime.utcnow()
+        finally:
             if log_cadence:
-                logcounter += 1
-                if logcounter >= log_cadence and (q_out.empty() or logcounter >= log_cadence * 10):
+                if logcounter >= log_cadence / 2:
                     _log_sys_info()
-                    logcounter = 0
-                    ts0 = datetime.utcnow()
-
-        if log_cadence:
-            if logcounter >= log_cadence / 2:
-                _log_sys_info()

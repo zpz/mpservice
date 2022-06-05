@@ -29,9 +29,16 @@ Usage:
 `obj` is NOT an instance of the class `MyServerProcess`.
 It's a "proxy" object, which is like a reference to a
 `MyServerProcess` object in the "server process".
-All public methods of `MyServerProcess` can be used on this
-proxy object from other processes.
-Input and output should all be small, pickle-able objects.
+All public methods (i.e. named without a leading '_')
+of `MyServerProcess` can be used on this proxy object from other processes.
+Input and output should all be picklable objects, since this cross-process
+communiation.
+
+When the proxy of one server object is passed to multiple processes,
+the calls to its public methods (even the same method) from different processes
+are concurrent. This will show benefit if the method is I/O bound.
+I guess we can think of the method call in the server process as if it is
+happening in separate threads.
 
 When all references to this proxy object have
 been garbage-collected, the server process is shut down.
@@ -61,7 +68,14 @@ Example use cases:
 from multiprocessing.managers import BaseManager
 
 
+class _MyManager(BaseManager):
+    pass
+
+
 class ServerProcess:
+    # In one application, there should not be two subclasses
+    # of `ServerProcess` with the same name,
+    # because subclass registration is by the class name.
 
     @classmethod
     def start(cls, *args, ctx=None, **kwargs):
@@ -71,11 +85,12 @@ class ServerProcess:
         The method `__init__` is executed in the process that hosts
         the real server object.
         '''
-        BaseManager.register(
-            cls.__name__,
-            cls,
-        )
-        manager = BaseManager(ctx=ctx)
+        if cls.__name__ not in _MyManager._registry:
+            _MyManager.register(
+                cls.__name__,
+                cls,
+            )
+        manager = _MyManager(ctx=ctx)
         manager.start()  # pylint: disable=consider-using-with
         obj = getattr(manager, cls.__name__)(*args, **kwargs)
         return obj

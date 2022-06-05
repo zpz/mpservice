@@ -1,12 +1,16 @@
-Release 0.11.1
-==============
+# Changelog
+
+## Release 0.11.2 (forthcoming)
+
+
+## Release 0.11.1
 
 - Added `mpserver.ThreadWorker` and `ThreadServlet`.
 - Simplified `mpserver` parameter for CPU pinning spec.
+- Added log on worker process CPU/memory utilization in `mpserver`.
 
 
-Release 0.11.0
-==============
+## Release 0.11.0
 
 - Refactor to `mpservice.mpserver` with API changes.
   New design allows flexible composition of sequential and ensemble setups,
@@ -18,23 +22,20 @@ Release 0.11.0
 - Added module `mpservice.named_pipe`.
 
 
-Release 0.10.9
-==============
+## Release 0.10.9
 
 - Added (or brought back) parameter `backlog` to `MPServer`.
 - Implimentation improvements: simplified utitlity queues; removed error pipe of MPServer.
 
 
-Release 0.10.8
-==============
+## Release 0.10.8
 
 - Finetune to `EnsembleServer`: ensemble elements could be `RemoteException`
   objects, i.e. failure of one ensemble component will not halt or invalidate
   the other components.
 
 
-Release 0.10.7
-==============
+## Release 0.10.7
 
 - By default, `MPServer` uses the new, custom queue type `Unique` for faster
   buildup of batches for servlets. Removed `ZeroQueue` and `BasicQueue`.
@@ -44,8 +45,7 @@ Release 0.10.7
 - `ServerProcess` gets new parameter `ctx` for multiprocessing context.
 
 
-Release 0.10.6
-==============
+## Release 0.10.6
 
 - Added alternative multiprocessing queues, namely `BasicQueue`, `FastQueue` and `ZeroQueue`,
   in an attempt to improve service speed, expecially batching.
@@ -55,14 +55,12 @@ Release 0.10.6
 - `MPServer` parameter `cpus` renamed to `main_cpu` with default value `0`.
 
 
-Release 0.10.5
-==============
+## Release 0.10.5
 
 - Minor fine-tuning and documentation touch-ups.
 
 
-Release 0.10.4
-==============
+## Release 0.10.4
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
 - Refactored socket server side to make its usage similar to a web app.
@@ -79,8 +77,7 @@ Release 0.10.4
 - Removed some contents of `mpservice.util`.
 
 
-Release 0.10.3.post1, post2, post3, post4, post5
-================================================
+## Release 0.10.3.post1, post2, post3, post4, post5
 
 - Add async-based `MPServer.stream2`.
 - Improve printing of RemoteException in `__exit__`.
@@ -88,15 +85,13 @@ Release 0.10.3.post1, post2, post3, post4, post5
 - Small improvements.
 
 
-Release 0.10.3
-==============
+## Release 0.10.3
 
 - Removed async streamer.
 - Simplified implementation of the `transform` method of streamer.
 
 
-Release 0.10.2
-==============
+## Release 0.10.2
 
 - Simplify `MPServer.stream`; remove `MPServer.async_stream`; the functionality
   of `async_stream` is provided by `stream`.
@@ -104,29 +99,25 @@ Release 0.10.2
 - Simplify `mpservice._async_streamer`.
 
 
-Release 0.10.1
-==============
+## Release 0.10.1
 
 - `mpservice.http_server` was renamed to `mpservice.http`.
 - Initial implementation of socket client/server.
 
 
-Release 0.10.0
-==============
+## Release 0.10.0
 
 - `mpserver` fine tune, esp about graceful shutdown.
 - Use `overrides` to help keep sanity checks on class inheritance.
 - Bug fixes in streamer.
 
 
-Release 0.9.9.post1
-===================
+## Release 0.9.9.post1
 
 - Handle logging in multiprocessing.
 
 
-Release 0.9.9
-=============
+## Release 0.9.9
 
 - Use 'spawn' method for process creation.
 - Refactored and simplified test/build process.
@@ -134,90 +125,76 @@ Release 0.9.9
 - Minor bug fixes.
 
 
-Release 0.9.8.post2
-===================
+## Release 0.9.8.post2
 
 - Improvements to the utilities in `mpservice.http_server`, esp regarding service shutdown.
 
 
-Release 0.9.8.post1
-===================
+## Release 0.9.8.post1
 
 - Requirement on `uvicorn` changes to `uvicorn[standard]`, which uses `uvloop`.
 
 
-Release 0.9.8
-=============
+## Release 0.9.8
 
 - Reworked error propagation in streamer; fixed bugs therein.
 - Renamed `mpservice.exception` to `mpservice.remote_exception`.
 
 
-Release 0.9.8b1
-===============
+## Release 0.9.8b1
 
 - Corner-case bug fixes in `MPServer`.
 - Increase queue size in `ConcurrentTransformer`.
 
 
-Release 0.9.7
-=============
+## Release 0.9.7
 
 - Refactor the `MPError` class, with a renaming to `RemoteException`.
 
 
-Release 0.9.6
-=============
+## Release 0.9.6
 
 - Refactor the `MPError` class.
 
 
-Release 0.9.5.post3
-===================
+## Release 0.9.5.post3
 
 - Relax version requirements on dependencies.
 
 
-Release 0.9.5.post2
-===================
+## Release 0.9.5.post2
 
 - `BackgroundTask` refinements, esp about support for asyncio.
 
 
-Release 0.9.5.post1
-===================
+## Release 0.9.5.post1
 
 - `BackgroundTask` bug fix.
 
 
-Release 0.9.5
-=============
+## Release 0.9.5
 
 - `BackgroundTask` refactor.
 
 
-Release 0.9.4
-=============
+## Release 0.9.4
 
 - `MPServer.start` starts the servlets sequentially by default.
 
 
-Release 0.9.3
-=============
+## Release 0.9.3
 
 - Bug fix in `streamer.{Stream, AsyncStream}.batch`.
 - Change Python version requirement from 3.7 to 3.8, due to the use of
   parameter `name` in `asyncio.create_task`.
 
 
-Release 0.9.2
-=============
+## Release 0.9.2
 
 - Revise `background_task` API.
 
 
-Release 0.9.1
-=============
+## Release 0.9.1
 
 - Rewrite `streamer` and `async_streamer` to avoid queues in simple "pass-through" ops, such as `drop_if`, `log_exceptions`.
 - Minor improvements to `http_server`.
@@ -225,54 +202,46 @@ Release 0.9.1
 - Added new module `background_task`.
 
 
-Release 0.9.0
-=============
+## Release 0.9.0
 
 - Bug fix.
 - `mpservice.mpserver.Servlet.__call__` is renamed to `call`.
 
 
-Release 0.8.9
-=============
+## Release 0.8.9
 
 - Add `mpserver.EnsembleServer` to implement ensembles; rename `Server` to `SequentialServer`.
 - Add `mpserver.SimpleServer`.
 - Revise `cpu` specification in `mpserver`.
 
 
-Release 0.8.8
-=============
+## Release 0.8.8
 
 - `mpserver.Server` gets a sync API, in addition to the existing async API.
 - `mpserver.Server` gets sync and async stream methods.
 
 
-Release 0.8.7
-=============
+## Release 0.8.7
 
 Streamer API fine-tuning and bug fixes.
 
 
-Release 0.8.6
-=============
+## Release 0.8.6
 
 Added sync streamer.
 
 
-Release 0.8.5
-=============
+## Release 0.8.5
 
 Refactor the async streamer API and tests.
 
 
-Release 0.8.4
-=============
+## Release 0.8.4
 
 Fine tuning on `streamer`.
 
 
-Release 0.8.3
-=============
+## Release 0.8.3
 
 Added:
 
@@ -280,16 +249,14 @@ Added:
   Similarly, `drain` gets new parameter `ignore_exceptions`.
 
 
-Release 0.8.2
-=============
+## Release 0.8.2
 
 Added:
 
 - `mpservice.streamer`
 
 
-Release 0.8.1
-===========
+## Release 0.8.1
 
 Changed:
 
@@ -298,8 +265,7 @@ Changed:
 - `mpservice._server_process` renamed to `mpservice.server_process`.
 
 
-Release 0.8.0
-=============
+## Release 0.8.0
 
 Changed:
 
@@ -309,8 +275,7 @@ Changed:
   finishes.
 
 
-Release 0.7.3
-=============
+## Release 0.7.3
 
 Added:
 

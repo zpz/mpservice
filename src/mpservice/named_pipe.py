@@ -12,6 +12,10 @@ The two objects can be created in any order, and their roles are symmetric.
 The different names simply remind the application to create one of each
 in the two processes.
 
+Two uni-directional pipes are created between the two processes.
+In each process, one "sends" (or writes) to one pipe and "receives" (or reads)
+from the other pipe. The roles of the two pipes in the two processes are flipped.
+
 The `send` and `recv` functions take and return picklable Python objects.
 While `send` does not block as long as system buffer has space,
 `recv` blocks until one data item is read.
