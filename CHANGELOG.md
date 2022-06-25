@@ -1,5 +1,13 @@
 # Changelog
 
+## Release 0.11.3
+
+- Add dependency `asgiref`.
+  Previously we've relied on getting `asgiref` from `uvicorn` dependency,
+  which is a bad idea. Recently, `uvicorn` removed its dependency on `asgiref`.
+- Reduce the default frequency of resource utilization logs.
+
+
 ## Release 0.11.2
 
 - Refinement and simplification to `mpservice.streamer`.

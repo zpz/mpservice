@@ -139,12 +139,15 @@ class Worker(metaclass=ABCMeta):
     def __init__(self, *,
                  batch_size: int = None,
                  batch_wait_time: float = None,
-                 batch_size_log_cadence: int = 10_000):
+                 batch_size_log_cadence: int = 1_000_000):
         '''
         `batch_size`: max batch size; see `call`.
 
         `batch_wait_time`: seconds, may be 0; the total duration
             to wait for one batch after the first item has arrived.
+
+        `batch_size_log_cadence`: log batch size statistics every this
+            many batches. If `None`, do not log.
 
         To leverage batching, it is recommended to set `batch_wait_time`
         to a small positive value. If it is 0, worker will never wait
@@ -282,7 +285,7 @@ class Worker(metaclass=ABCMeta):
         batch_size_log_cadence = self.batch_size_log_cadence
         try:
             while True:
-                if n_batches == 0:
+                if batch_size_log_cadence and n_batches == 0:
                     batch_size_max = -1
                     batch_size_min = 1000000
                     batch_size_mean = 0.0
@@ -307,16 +310,16 @@ class Worker(metaclass=ABCMeta):
                     for z in zip(uids, results):
                         q_out.put(z)
 
-                n_batches += 1
-                batch_size_max = max(batch_size_max, n)
-                batch_size_min = min(batch_size_min, n)
-                batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
                 if batch_size_log_cadence:
+                    n_batches += 1
+                    batch_size_max = max(batch_size_max, n)
+                    batch_size_min = min(batch_size_min, n)
+                    batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
                     if n_batches >= batch_size_log_cadence:
                         print_batching_info()
                         n_batches = 0
         finally:
-            if n_batches:
+            if batch_size_log_cadence and n_batches:
                 print_batching_info()
             collector_thread.join()
 
@@ -760,7 +763,7 @@ class Server:
                  main_cpu: int = 0,
                  backlog: int = 1024,
                  ctx=None,
-                 sys_info_log_cadence: int = 10_000,
+                 sys_info_log_cadence: int = 1_000_000,
                  ):
         '''
         `main_cpu`: specifies the cpu for the "main process",
@@ -1108,11 +1111,10 @@ class Server:
 
                 if log_cadence:
                     logcounter += 1
-                    if logcounter >= log_cadence and (q_out.empty() or logcounter >= log_cadence * 10):
+                    if (logcounter >= log_cadence and q_out.empty()) or logcounter >= log_cadence * 10:
                         _log_sys_info()
                         logcounter = 0
                         ts0 = datetime.utcnow()
         finally:
-            if log_cadence:
-                if logcounter >= log_cadence / 2:
-                    _log_sys_info()
+            if log_cadence and logcounter:
+                _log_sys_info()
