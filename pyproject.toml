@@ -9,6 +9,7 @@ authors = [
     {name = "Zepu Zhang", email = "zepu.zhang@gmail.com"},
 ]
 dependencies = [
+    "asgiref",
     "overrides",
     "psutil",
     "uvicorn[standard] >=0.15.0,<1.0",
