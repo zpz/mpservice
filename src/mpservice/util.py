@@ -116,7 +116,7 @@ class ProcessLogger:
                 pl.start()
     '''
     def __init__(self, *, ctx):
-        assert ctx.get_start_method() == 'spawn'
+        # assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
         self._t = None
         self._creator = True
