@@ -51,7 +51,7 @@ class Thread(threading.Thread):
     '''
     This class makes the result or exception produced in a thread
     accessible from the thread object itself. This makes the `Thread`
-    object behavior somewhat similar to the `Future` object returned
+    object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
     def run(self):
@@ -106,7 +106,7 @@ class ProcessLogger:
 
         1. In main process, create a `ProcessLogger` instance and start it:
 
-                pl = ProcessLogger().start()
+                pl = ProcessLogger(ctx=...).start()
 
         2. Pass this object to other processes. (Yes, this object is picklable.)
 
@@ -115,7 +115,7 @@ class ProcessLogger:
 
                 pl.start()
     '''
-    def __init__(self, *, ctx):
+    def __init__(self, *, ctx: multiprocessing.context.BaseContext):
         # assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
         self._t = None
@@ -164,23 +164,20 @@ class ProcessLogger:
         Logging config should happen in the main process/thread.
         '''
         root = logging.getLogger()
-        if root.handlers:
-            warnings.warn('root logger has handlers: {}; deleted'.format(root.handlers))
-            root.handlers = []
+        # if root.handlers:
+        #     warnings.warn('root logger has handlers: {}; deleted'.format(root.handlers))
+        #     root.handlers = []
         root.setLevel(logging.DEBUG)
         qh = logging.handlers.QueueHandler(self._q)
         root.addHandler(qh)
 
     @staticmethod
     def _logger_thread(q: multiprocessing.queues.Queue):
-        '''
-        In main thread, start another thread with this function as `target`.
-        '''
         threading.current_thread().name = 'logger_thread'
         while True:
             record = q.get()
             if record is None:
-                # User should put a `None` in `q` to indicate stop.
+                # This is put in the queue by `self.stop()`.
                 break
             logger = logging.getLogger(record.name)
             if record.levelno >= logger.getEffectiveLevel():
