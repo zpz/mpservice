@@ -1,5 +1,11 @@
 # Changelog
 
+## Release 0.11.4 (forthcoming)
+
+- `mpservice.util.ProcessLogger` is moved into its own module, hence has become
+  `mpservice.logging.ProcessLogger`. `ProcessLogger` gets context manager methods.
+
+
 ## Release 0.11.3
 
 - Add dependency `asgiref`.

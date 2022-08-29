@@ -93,7 +93,8 @@ from typing import Sequence, Union, Callable, Type, Any
 import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, Thread, ProcessLogger, TimeoutError
+from .util import is_exception, Thread, TimeoutError
+from .logging import ProcessLogger
 from ._queues import SingleLane
 
 
