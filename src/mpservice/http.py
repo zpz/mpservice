@@ -29,11 +29,13 @@ def make_server(
         debug: bool = None,
         access_log: bool = None,
         loop='auto',
-        workers: int = 1,
-        backlog: int = 64,
+        backlog: int = 32,
         **kwargs,
 ):
     '''
+    This function is specifically for use with `mpservice.mpserver`.
+    The argument `workers` is fixed to 1.
+
     `app`: a `Starlette` instance or the import string for such
         an instance, like 'mymodule:app'.
 
@@ -46,8 +48,6 @@ def make_server(
         if that package is installed (w/o creating a new loop);
         otherwise it will create a new `asyncio` native event loop
         and set it as the default loop.
-
-    `workers`: when used for `mpservice.mpserver.Server`, this should be 1.
 
     If user has their own ways to config logging, then pass in
     `log_config=None` in `kwargs`.
@@ -78,7 +78,7 @@ def make_server(
         debug=debug,
         log_level=log_level,
         loop=loop,
-        workers=workers,
+        workers=1,
         backlog=backlog,
         reload=debug and isinstance(app, str),
         **kwargs)

@@ -4,6 +4,7 @@ import logging
 import logging.handlers
 import multiprocessing
 import multiprocessing.queues
+import multiprocessing.context
 import subprocess
 import threading
 
@@ -54,13 +55,13 @@ class Thread(threading.Thread):
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
     def run(self):
-        self._result = None
-        self._exc = None
+        self._result_ = None
+        self._exc_ = None
         try:
             if self._target is not None:
-                self._result = self._target(*self._args, **self._kwargs)
+                self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
-            self._exc = e
+            self._exc_ = e
             # raise
         finally:
             # Avoid a refcycle if the thread is running a function with
@@ -77,15 +78,70 @@ class Thread(threading.Thread):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        if self._exc is not None:
-            raise self._exc
-        return self._result
+        if self._exc_ is not None:
+            raise self._exc_
+        return self._result_
 
     def exception(self, timeout=None):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        return self._exc
+        return self._exc_
+
+
+
+class SpawnProcess(multiprocessing.context.SpawnProcess):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._result_ = multiprocessing.get_context('spawn').Queue()
+        self._exc_ = multiprocessing.get_context('spawn').Queue()
+        self._result_.put(None)
+        self._exc_.put(None)
+
+        print('process init in', multiprocessing.current_process().name)
+
+    def run(self):
+        print('process run in', multiprocessing.current_process().name)
+
+        if self._target:
+            try:
+                z = self._target(*self._args, **self._kwargs)
+                print('in run result:', z)
+                self._result_.put(z)
+            except BaseException as e:
+                print('Error in Process', multiprocessing.current_process().name)
+                traceback.print_exc()
+                self._error_.put(e)
+
+    def done(self):
+        if self.is_alive():
+            return False
+        return self._started.is_set()
+        # Otherwise, not started yet.
+
+    def result(self, timeout=None):
+        self.join(timeout)
+        if self.is_alive():
+            raise TimeoutError
+        e = self._exc_.get()
+        if e is not None:
+            raise e
+        return self._result_.get()
+
+    def exception(self, timeout=None):
+        self.join(timeout)
+        if self.is_alive():
+            raise TimeoutError
+        return self._exc_.get()
+
+
+def Process(*args, ctx=None, **kwargs):
+    # This is a "factory" function.
+    if ctx is None:
+        ctx = multiprocessing.get_context('spawn')
+    method = ctx.get_start_method()
+    assert method == 'spawn', f"process start method '{method}' not implemented"
+    return SpawnProcess(*args, **kwargs)
 
 
 def get_docker_host_ip():

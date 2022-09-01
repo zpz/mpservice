@@ -1,6 +1,6 @@
 from time import sleep
 import pytest
-from mpservice.util import Thread, TimeoutError
+from mpservice.util import Thread, TimeoutError, Process
 
 
 def delay_double(x, delay=2):
@@ -40,3 +40,15 @@ def _test_thread_process(cls):
 
 def test_thread():
     _test_thread_process(Thread)
+
+
+def _process_func(x):
+    print('in worker process')
+    return x
+
+
+def test_process():
+    p = Process(target=_process_func, args=(123,))
+    p.start()
+    p.join()
+    print('result:', p.result())

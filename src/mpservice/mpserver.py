@@ -110,8 +110,7 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
     # Check out os.read, os.write, os.close with file-descriptor args.
     def __init__(self, *, ctx):
         super().__init__(ctx=ctx)
-        # Replace Lock by RLock to facilitate batching
-        # via greedy `get_many`.
+        # Replace Lock by RLock to facilitate batching via greedy `get_many`.
         self._rlock = ctx.RLock()
 
 
