@@ -3,10 +3,12 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing
+import multiprocessing.connection
 import multiprocessing.queues
+import multiprocessing.context
 import subprocess
 import threading
-import warnings
+from concurrent.futures.process import _ExceptionWithTraceback
 
 
 logger = logging.getLogger(__name__)
@@ -51,17 +53,17 @@ class Thread(threading.Thread):
     '''
     This class makes the result or exception produced in a thread
     accessible from the thread object itself. This makes the `Thread`
-    object behavior somewhat similar to the `Future` object returned
+    object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
     def run(self):
-        self._result = None
-        self._exc = None
+        self._result_ = None
+        self._exc_ = None
         try:
             if self._target is not None:
-                self._result = self._target(*self._args, **self._kwargs)
+                self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
-            self._exc = e
+            self._exc_ = e
             # raise
         finally:
             # Avoid a refcycle if the thread is running a function with
@@ -78,15 +80,112 @@ class Thread(threading.Thread):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        if self._exc is not None:
-            raise self._exc
-        return self._result
+        if self._exc_ is not None:
+            raise self._exc_
+        return self._result_
 
     def exception(self, timeout=None):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        return self._exc
+        return self._exc_
+
+
+class SpawnProcess(multiprocessing.context.SpawnProcess):
+    '''
+    This customization adds two things to the standard class:
+
+        - make result and exception available as attributes of the
+          process object, similar to `concurrent.futures.Future`.
+        - make logs in the subprocess handled in the main process.
+    '''
+    def __init__(self, *args, kwargs=None, **moreargs):
+        if kwargs is None:
+            kwargs = {}
+        assert '__result_and_error__' not in kwargs
+        assert '__worker_logger__' not in kwargs
+        reader, writer = multiprocessing.connection.Pipe(duplex=False)
+        worker_logger = ProcessLogger(ctx=multiprocessing.get_context('spawn'))
+        worker_logger.__enter__()
+        kwargs['__result_and_error__'] = writer
+        kwargs['__worker_logger__'] = worker_logger
+
+        super().__init__(*args, kwargs=kwargs, **moreargs)
+
+        assert not hasattr(self, '__result_and_error__')
+        assert not hasattr(self, '__worker_logger__')
+        self.__result_and_error__ = reader
+        self.__worker_logger__ = worker_logger
+
+    def _stop_logger(self):
+        if hasattr(self, '__worker_logger__') and self.__worker_logger__ is not None:
+            self.__worker_logger__.__exit__()
+            self.__worker_logger__ = None
+
+    def __del__(self):
+        self._stop_logger()
+
+    def terminate(self):
+        super().terminate()
+        self._stop_logger()
+
+    def kill(self):
+        super().kill()
+        self._stop_logger()
+
+    def join(self, *args, **kwargs):
+        super().join(*args, **kwargs)
+        if self.done():
+            self._stop_logger()
+
+    def run(self):
+        with self._kwargs.pop('__worker_logger__'):
+            result_and_error = self._kwargs.pop('__result_and_error__')
+            # Upon completion, `result_and_error` will contain `result` and `exception`
+            # in this order; both may be `None`.
+            if self._target:
+                try:
+                    z = self._target(*self._args, **self._kwargs)
+                except BaseException as e:
+                    result_and_error.send(None)
+                    result_and_error.send(_ExceptionWithTraceback(e, e.__traceback__))
+                    raise
+                else:
+                    result_and_error.send(z)
+                    result_and_error.send(None)
+            else:
+                result_and_error.send(None)
+                result_and_error.send(None)
+
+    def done(self):
+        return self.exitcode is not None
+
+    def result(self, timeout=None):
+        self.join(timeout)
+        if not self.done():
+            raise TimeoutError
+        if not hasattr(self, '__result__'):
+            self.__result__ = self.__result_and_error__.recv()
+            self.__error__ = self.__result_and_error__.recv()
+        if self.__error__ is not None:
+            raise self.__error__
+        return self.__result__
+
+    def exception(self, timeout=None):
+        self.join(timeout)
+        if not self.done():
+            raise TimeoutError
+        if not hasattr(self, '__result__'):
+            self.__result__ = self.__result_and_error__.recv()
+            self.__error__ = self.__result_and_error__.recv()
+        return self.__error__
+
+
+def Process(*args, ctx, **kwargs):
+    # This is a "factory" function.
+    method = ctx.get_start_method()
+    assert method == 'spawn', f"process start method '{method}' not implemented; the 'spwan' method is preferred"
+    return SpawnProcess(*args, **kwargs)
 
 
 class ProcessLogger:
@@ -106,7 +205,7 @@ class ProcessLogger:
 
         1. In main process, create a `ProcessLogger` instance and start it:
 
-                pl = ProcessLogger().start()
+                pl = ProcessLogger(ctx=...).start()
 
         2. Pass this object to other processes. (Yes, this object is picklable.)
 
@@ -114,9 +213,12 @@ class ProcessLogger:
            then do
 
                 pl.start()
+
+    Remember to call the `stop` method in both main and the other process.
+    For this reason, you may want to use the context manager.
     '''
-    def __init__(self, *, ctx):
-        assert ctx.get_start_method() == 'spawn'
+    def __init__(self, *, ctx: multiprocessing.context.BaseContext):
+        # assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
         self._t = None
         self._creator = True
@@ -130,6 +232,13 @@ class ProcessLogger:
         # In another process.
         self._q = state
         self._creator = False
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
 
     def start(self):
         if self._creator:
@@ -150,7 +259,7 @@ class ProcessLogger:
         assert self._t is None
         self._q = self._ctx.Queue()
 
-        self._t = Thread(target=self._logger_thread, args=(self._q, ))
+        self._t = threading.Thread(target=self._logger_thread, args=(self._q, ))
         self._t.start()
 
     def _start_in_other_process(self):
@@ -165,22 +274,18 @@ class ProcessLogger:
         '''
         root = logging.getLogger()
         if root.handlers:
-            warnings.warn('root logger has handlers: {}; deleted'.format(root.handlers))
-            root.handlers = []
+            print('root logger has handlers: {}; deleted'.format(root.handlers))
         root.setLevel(logging.DEBUG)
         qh = logging.handlers.QueueHandler(self._q)
         root.addHandler(qh)
 
     @staticmethod
     def _logger_thread(q: multiprocessing.queues.Queue):
-        '''
-        In main thread, start another thread with this function as `target`.
-        '''
         threading.current_thread().name = 'logger_thread'
         while True:
             record = q.get()
             if record is None:
-                # User should put a `None` in `q` to indicate stop.
+                # This is put in the queue by `self.stop()`.
                 break
             logger = logging.getLogger(record.name)
             if record.levelno >= logger.getEffectiveLevel():

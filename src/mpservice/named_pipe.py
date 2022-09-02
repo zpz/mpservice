@@ -70,7 +70,7 @@ class _Pipe:
     def recv_bytes(self, maxlength=None):
         return self._get_reader().recv_bytes(maxlength)
 
-    def recv_bytes_info(self, buf, offset=0):
+    def recv_bytes_into(self, buf, offset=0):
         return self._get_reader().recv_bytes_into(buf, offset)
 
     def recv(self):

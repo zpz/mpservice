@@ -15,6 +15,9 @@ from .util import full_class_name
 # See also: package `eliot`: https://github.com/itamarst/eliot/blob/master/eliot/_traceback.py
 # See also: package `pebble`
 
+# TODO:
+# checkout `concurrent.futures.process._ExceptionWithTraceback`.
+
 
 class RemoteException(Exception):
     '''
@@ -97,7 +100,7 @@ class RemoteException(Exception):
         self._exc_tb = tb
 
         # TODO: how to use the __cause__ attribute with a `self.exc_value`
-        # that has a traceback properly attached?
+        # that has a traceback property attached?
 
         # There's a special attribute __cause__, which is not in `self.__dict__`.
         # This attribute makes the `raise` printout look like this:
@@ -206,6 +209,7 @@ def _my_excepthook(type_, value, tb):
     #
     #  https://stackoverflow.com/q/1261668/6178706
     #
+    # This is called only when the exception is NOT handled.
     if type_ is RemoteException:
         print("{}\n\n{}\n".format(
             value.format(),

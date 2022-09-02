@@ -1,5 +1,11 @@
 # Changelog
 
+## Release 0.11.4
+
+- `mpservice.util.ProcessLogger` gets context manager methods.
+- New class `mpservice.util.SpawnProcess`.
+
+
 ## Release 0.11.3
 
 - Add dependency `asgiref`.
