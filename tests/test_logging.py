@@ -1,6 +1,6 @@
 import multiprocessing as mp
 import logging
-from mpservice.logging import ProcessLogger
+from mpservice.util import ProcessLogger
 
 
 def worker1(pl):

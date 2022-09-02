@@ -93,8 +93,7 @@ from typing import Sequence, Union, Callable, Type, Any
 import psutil
 
 from .remote_exception import RemoteException, exit_err_msg
-from .util import is_exception, Thread, TimeoutError
-from .logging import ProcessLogger
+from .util import is_exception, Thread, TimeoutError, ProcessLogger
 from ._queues import SingleLane
 
 
@@ -1068,7 +1067,7 @@ class Server:
                       if not isinstance(w, Thread)]
                 msg = [f"  time from           {ts0}",
                        f"  time to             {datetime.utcnow()}",
-                       f"  items served        {logcounter}",
+                       f"  items served        {logcounter:_}",
                        ]
                 attrs = ['memory_full_info',
                          'cpu_affinity', 'cpu_percent', 'cpu_times',
@@ -1076,14 +1075,14 @@ class Server:
                          'status',
                          ]
                 for pname, pobj in pp:
-                    msg.append(f'    process {pname}')
+                    msg.append(f'  process {pname}')
                     info = pobj.as_dict(attrs)
                     for k in attrs:
                         v = info[k]
                         if k == 'memory_full_info':
-                            msg.append(f"      {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB")
+                            msg.append(f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB")
                         else:
-                            msg.append(f"      {k:<15} {v}")
+                            msg.append(f"        {k:<15} {v}")
                 logger.info('worker process stats:\n%s', '\n'.join(msg))
 
         try:

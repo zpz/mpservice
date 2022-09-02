@@ -1,9 +1,9 @@
 # Changelog
 
-## Release 0.11.4 (forthcoming)
+## Release 0.11.4
 
-- `mpservice.util.ProcessLogger` is moved into its own module, hence has become
-  `mpservice.logging.ProcessLogger`. `ProcessLogger` gets context manager methods.
+- `mpservice.util.ProcessLogger` gets context manager methods.
+- New class `mpservice.util.SpawnProcess`.
 
 
 ## Release 0.11.3
