@@ -129,6 +129,18 @@ class Thread(threading.Thread):
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
+    def __init__(self, *args, auto_start=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._auto_started = False
+        if auto_start:
+            self.start()
+
+    def start(self):
+        if self._auto_started:
+            return
+        super().start()
+        self._auto_started = True
+
     def run(self):
         self._result_ = None
         self._exc_ = None
@@ -193,10 +205,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         assert not hasattr(self, '__worker_logger__')
         self.__worker_logger__ = worker_logger
 
-        self._auto_started = False 
+        self._auto_started = False
         if auto_start:
             self.start()
-            self._auto_started = True
 
     def _stop_logger(self):
         if hasattr(self, '__worker_logger__') and self.__worker_logger__ is not None:
@@ -223,6 +234,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if self._auto_started:
             return
         super().start()
+        self._auto_started = True
 
     def run(self):
         with self._kwargs.pop('__worker_logger__'):
