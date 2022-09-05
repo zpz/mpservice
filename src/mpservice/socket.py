@@ -13,7 +13,7 @@ from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
-from .remote_exception import RemoteException, exit_err_msg
+from .util import RemoteException, exit_err_msg
 from ._queues import SingleLane
 
 logger = logging.getLogger(__name__)
@@ -365,12 +365,8 @@ class SocketServer(EnforceOverrides):
                 try:
                     z = await t
                 except Exception as e:
-                    if isinstance(e, RemoteException):
-                        z = e
-                    else:
-                        z = RemoteException(e)
-                enc = 'pickle' if isinstance(z, RemoteException) else self._encoder
-                await write_record(writer, req_id, z, encoder=enc)
+                    z = RemoteException(e)
+                await write_record(writer, req_id, z, encoder=self._encoder)
                 # TODO: what if client has closed the connection?
 
         trec = asyncio.create_task(_keep_receiving())

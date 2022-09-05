@@ -8,7 +8,9 @@ import multiprocessing.queues
 import multiprocessing.context
 import subprocess
 import threading
-from concurrent.futures.process import _ExceptionWithTraceback
+import traceback
+
+import pebble
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,15 @@ def is_exception(e):
     )
 
 
+def is_remote_exception(e) -> bool:
+    return isinstance(e.__cause__, pebble.common.RemoteTraceback)
+
+
+def get_remote_traceback(e) -> str:
+    # `e` has passed the check by `is_remote_exception`.
+    return e.__cause__.traceback
+
+
 def is_async(func):
     while isinstance(func, functools.partial):
         func = func.func
@@ -47,6 +58,68 @@ def full_class_name(cls):
     if mod is None or mod == 'builtins':
         return cls.__name__
     return mod + '.' + cls.__name__
+
+
+def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
+    if exc_type is None:
+        return
+    if is_remote_exception(exc_value):
+        msg = "Exiting {} with exception: {}\n{}".format(
+            obj.__class__.__name__, exc_type, exc_value,
+        )
+        msg = "{}\n\n{}\n\n{}".format(
+            msg, get_remote_traceback(exc_value),
+            "The above exception was the direct cause of the following exception:")
+        msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
+        return msg
+
+
+class RemoteException(pebble.common.RemoteException):
+    '''
+    The purpose of this class is to send an exception object across process boundaries,
+    hence undergoing pickling/unpickling, while keeping some traceback info.
+    This is achieved simply by keeping the traceback info as a formatted string, because
+    a traceback object is not pickle-able.
+
+    Once unpickled in another process, the object obtained is not an instance of `RemoteException`,
+    but rather of the original exception type. The object does not have `__traceback__` attribute,
+    which is impossible to reconstruct, but has `__cause__` attribute, which is a custom Exception
+    object that contains the string-form traceback info.
+
+    Most (maybe all) methods and attributes of the exception object behave the same as the original,
+    exception for `__traceback__`.
+
+    Again, the unpickled object, say `obj`, is not an instance of this class, hence
+    we can't define methods on this class to help using `obj`. The traceback string is
+    `obj.__cause__.traceback`. This string with proper linebreaks contains all the traceback info
+    except that in the "current process" (where `obj` comes into being via unpickling).
+    I have yet to find a way to get this last missing part of the printout without doing `raise obj`.
+
+    To determine that an exception object `obj` originates from another process via this mechanism, use
+    `is_remote_exception`.
+    '''
+
+    # `pebble.common.RemoteException` is almost the same as `concurrent.futures.process._ExceptionWithTraceback`,
+    # with slightly nicer printouts.
+    # `pebble` is on LGPL license.
+
+    # check out
+    #   https://github.com/ionelmc/python-tblib
+    #   https://stackoverflow.com/questions/6126007/python-getting-a-traceback-from-a-multiprocessing-process
+    # about pickling Exceptions with tracebacks.
+    #
+    # See also: boltons.tbutils
+    # See also: package `eliot`: https://github.com/itamarst/eliot/blob/master/eliot/_traceback.py
+    #
+    # Also check out `sys.excepthook`.
+
+    def __init__(self, exc, formatted_tb=None):
+        '''
+        `exc` is the exception instance.
+        '''
+        if formatted_tb is None:
+            formatted_tb = traceback.format_exc()
+        super().__init__(exc, formatted_tb)
 
 
 class Thread(threading.Thread):
@@ -99,23 +172,31 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
           process object, similar to `concurrent.futures.Future`.
         - make logs in the subprocess handled in the main process.
     '''
-    def __init__(self, *args, kwargs=None, **moreargs):
+    def __init__(self, *args, kwargs=None, auto_start=True, **moreargs):
         if kwargs is None:
             kwargs = {}
+
         assert '__result_and_error__' not in kwargs
-        assert '__worker_logger__' not in kwargs
         reader, writer = multiprocessing.connection.Pipe(duplex=False)
+        kwargs['__result_and_error__'] = writer
+
+        assert '__worker_logger__' not in kwargs
         worker_logger = ProcessLogger(ctx=multiprocessing.get_context('spawn'))
         worker_logger.__enter__()
-        kwargs['__result_and_error__'] = writer
         kwargs['__worker_logger__'] = worker_logger
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
         assert not hasattr(self, '__result_and_error__')
-        assert not hasattr(self, '__worker_logger__')
         self.__result_and_error__ = reader
+
+        assert not hasattr(self, '__worker_logger__')
         self.__worker_logger__ = worker_logger
+
+        self._auto_started = False 
+        if auto_start:
+            self.start()
+            self._auto_started = True
 
     def _stop_logger(self):
         if hasattr(self, '__worker_logger__') and self.__worker_logger__ is not None:
@@ -138,6 +219,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if self.done():
             self._stop_logger()
 
+    def start(self):
+        if self._auto_started:
+            return
+        super().start()
+
     def run(self):
         with self._kwargs.pop('__worker_logger__'):
             result_and_error = self._kwargs.pop('__result_and_error__')
@@ -148,8 +234,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                     z = self._target(*self._args, **self._kwargs)
                 except BaseException as e:
                     result_and_error.send(None)
-                    result_and_error.send(_ExceptionWithTraceback(e, e.__traceback__))
-                    raise
+                    result_and_error.send(RemoteException(e))
                 else:
                     result_and_error.send(z)
                     result_and_error.send(None)
@@ -221,39 +306,27 @@ class ProcessLogger:
         # assert ctx.get_start_method() == 'spawn'
         self._ctx = ctx
         self._t = None
-        self._creator = True
 
     def __getstate__(self):
-        assert self._creator
         assert self._t is not None
         return self._q
 
     def __setstate__(self, state):
         # In another process.
         self._q = state
-        self._creator = False
 
     def __enter__(self):
-        self.start()
-        return self
-
-    def __exit__(self, *args):
-        self.stop()
-
-    def start(self):
-        if self._creator:
+        if hasattr(self, '_t'):
             self._start_in_main_process()
         else:
             self._start_in_other_process()
         return self
 
-    def stop(self):
-        if self._creator:
-            assert self._t is not None
-            self._q.put(None)
-            self._t.join()
+    def __exit__(self, *args):
+        if hasattr(self, '_t'):
+            self._stop_in_main_process()
         else:
-            self._q.close()
+            self._stop_in_other_process()
 
     def _start_in_main_process(self):
         assert self._t is None
@@ -261,6 +334,18 @@ class ProcessLogger:
 
         self._t = threading.Thread(target=self._logger_thread, args=(self._q, ))
         self._t.start()
+
+    @staticmethod
+    def _logger_thread(q: multiprocessing.queues.Queue):
+        threading.current_thread().name = 'logger_thread'
+        while True:
+            record = q.get()
+            if record is None:
+                # This is put in the queue by `self.__exit__` in the other process.
+                break
+            logger = logging.getLogger(record.name)
+            if record.levelno >= logger.getEffectiveLevel():
+                logger.handle(record)
 
     def _start_in_other_process(self):
         '''
@@ -273,23 +358,18 @@ class ProcessLogger:
         Logging config should happen in the main process/thread.
         '''
         root = logging.getLogger()
-        if root.handlers:
-            print('root logger has handlers: {}; deleted'.format(root.handlers))
         root.setLevel(logging.DEBUG)
         qh = logging.handlers.QueueHandler(self._q)
         root.addHandler(qh)
 
-    @staticmethod
-    def _logger_thread(q: multiprocessing.queues.Queue):
-        threading.current_thread().name = 'logger_thread'
-        while True:
-            record = q.get()
-            if record is None:
-                # This is put in the queue by `self.stop()`.
-                break
-            logger = logging.getLogger(record.name)
-            if record.levelno >= logger.getEffectiveLevel():
-                logger.handle(record)
+    def _stop_in_main_process(self):
+        assert self._t is not None
+        self._q.put(None)
+        self._t.join()
+        self._t = None
+
+    def _stop_in_other_process(self):
+        self._q.close()
 
 
 def get_docker_host_ip():

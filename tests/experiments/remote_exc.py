@@ -1,38 +1,42 @@
-import asyncio
+from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
-import pickle
-from mpservice.remote_exception import RemoteException
-from mpservice.mpserver import EnqueueTimeout
-
-class MyError(Exception):
-    pass
+from mpservice.util import SpawnProcess
+import traceback
 
 
-def foo(q):
-    try:
-        raise MyError('wrong')
-    except Exception as e:
-        y = RemoteException(e)
-        q.put(y)
+def gee():
+    raise ValueError(3)
+
+
+def foo():
+    p = SpawnProcess(target=gee)
+    return p.result()
 
 
 def main():
-    q = mp.Queue()
-    p = mp.Process(target=foo, args=(q,))
-    p.start()
-    p.join()
-
-    y = q.get()
-
-    try:
-        raise y
-    except Exception as e:
-        #raise RemoteException(e)
-        z = RemoteException(e)
-        print(repr(z))
-        print(str(z))
-        print('')
-        z.print()
+    p = SpawnProcess(target=foo)
+    # print(p.result())
+    e = p.exception()
+    print('repr')
+    print(repr(e))
+    print('')
+    print('str')
+    print(str(e))
+    print('')
+    print('args')
+    print(e.args)
+    print('')
+    print('tb')
+    print(e.__cause__.traceback)
+    print('')
+    # print('raise')
+    # print('')
+    # raise e
+    print('__tb__')
+    print(e.__traceback__)
+    print(e.__context__)
+    print(e.__dir__())
+    print(e.__format__())
 
 
 if __name__ == '__main__':
