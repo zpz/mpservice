@@ -73,6 +73,3 @@ def test_exception():
     y = q.get()
     assert isinstance(y, ValueError)
     assert str(y) == 'wrong value!'
-
-    print('')
-    y.print()
