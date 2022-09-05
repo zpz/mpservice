@@ -204,7 +204,7 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides, final
 
-from .util import RemoteException, is_remote_exception, get_remote_traceback, exit_err_msg
+from .util import is_remote_exception, get_remote_traceback, exit_err_msg
 from .util import is_exception, MAX_THREADS, Thread
 from ._queues import SingleLane
 
