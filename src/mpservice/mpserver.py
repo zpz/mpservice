@@ -92,7 +92,7 @@ from typing import Sequence, Union, Callable, Type, Any
 
 import psutil
 
-from .remote_exception import RemoteException, exit_err_msg
+from .util import RemoteException, exit_err_msg
 from .util import is_exception, Thread, TimeoutError, ProcessLogger
 from ._queues import SingleLane
 
@@ -262,11 +262,10 @@ class Worker(metaclass=ABCMeta):
                     y = self.call([x])[0]
                 else:
                     y = self.call(x)
-            except Exception:
+            except Exception as e:
                 # There are opportunities to print traceback
-                # and details later using the `RemoteException`
-                # object. Be brief on the logging here.
-                y = RemoteException()
+                # and details later. Be brief on the logging here.
+                y = RemoteException(e)
 
             q_out.put((uid, y))
 
@@ -301,8 +300,8 @@ class Worker(metaclass=ABCMeta):
 
                 try:
                     results = self.call(batch)
-                except Exception:
-                    err = RemoteException()
+                except Exception as e:
+                    err = RemoteException(e)
                     for uid in uids:
                         q_out.put((uid, err))
                 else:
@@ -429,13 +428,10 @@ class ProcessWorker(Worker):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        try:
-            log_passer.start()
+        with log_passer:
             if cpus:
                 psutil.Process().cpu_affinity(cpus=cpus)
             super().run(**kwargs)
-        finally:
-            log_passer.stop()
 
 
 class ThreadWorker(Worker):
@@ -804,7 +800,7 @@ class Server:
         assert not self._started
 
         self._worker_logger = ProcessLogger(ctx=self.get_mpcontext())
-        self._worker_logger.start()
+        self._worker_logger.__enter__()
 
         self._threads = []
 
@@ -858,7 +854,7 @@ class Server:
         for t in self._threads:
             t.join()
 
-        self._worker_logger.stop()
+        self._worker_logger.__exit__()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -952,7 +948,7 @@ class Server:
             else:
                 try:
                     y = _wait(fut)
-                    # May raise RemoteException or TimeoutError.
+                    # May raise TimeoutError or an exception out of RemoteException.
                 except Exception as e:
                     if return_exceptions:
                         if return_x:
@@ -997,7 +993,7 @@ class Server:
                 raise TimeoutError(f"{timenow - t0:.3f} seconds total")
             await asyncio.sleep(min(0.001, t2 - timenow))
         return fut.result()
-        # This could raise RemoteException.
+        # This could raise an exception originating from RemoteException.
 
         # TODO: I don't understand why the following (along with
         # corresponding change in `_async_enqueue`) seems to work but
@@ -1007,7 +1003,6 @@ class Server:
         # t2 = t0 + fut.data['timeout']
         # try:
         #     return await asyncio.wait_for(fut, timeout=max(0, t2 - perf_counter()))
-        #     # this may raise RemoteException
         # except asyncio.TimeoutError:
         #     # `wait_for` has already cancelled `fut`.
         #     raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
@@ -1037,7 +1032,7 @@ class Server:
         t2 = t0 + fut.data['timeout']
         try:
             return fut.result(timeout=max(0, t2 - perf_counter()))
-            # this may raise RemoteException
+            # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError:
             fut.cancel()
             raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")

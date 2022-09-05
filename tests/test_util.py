@@ -1,8 +1,9 @@
 import logging
+import multiprocessing
 from time import sleep
 import pytest
 from mpservice.util import Thread, TimeoutError, SpawnProcess
-from mpservice.remote_exception import RemoteException
+from mpservice.util import RemoteException, is_remote_exception
 
 
 logger = logging.getLogger(__name__)
@@ -48,10 +49,30 @@ def test_thread():
     _test_thread_process(Thread)
 
 
-def _process_func(x):
-    print('in worker process')
-    return x
-
-
 def test_process():
     _test_thread_process(SpawnProcess)
+
+
+def goo(x, q):
+    try:
+        if x < 10:
+            q.put(x)
+        else:
+            raise ValueError('wrong value!')
+    except Exception as e:
+        q.put(RemoteException(e))
+
+
+def test_exception():
+    mp = multiprocessing.get_context('spawn')
+    q = mp.Queue()
+    p = mp.Process(target=goo, args=(20, q))
+    p.start()
+    p.join()
+
+    y = q.get()
+    assert isinstance(y, ValueError)
+    assert str(y) == 'wrong value!'
+
+    print('')
+    y.print()

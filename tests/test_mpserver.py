@@ -3,13 +3,13 @@ import time
 
 import pytest
 
-from mpservice.remote_exception import RemoteException
+from mpservice.util import RemoteException
 from mpservice.mpserver import (
     ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
     Sequential, Ensemble, Server, make_threadworker,
     TimeoutError
 )
-from mpservice.remote_exception import RemoteException
+from mpservice.util import RemoteException
 from mpservice.streamer import Streamer
 
 
@@ -110,7 +110,7 @@ def test_sequential_error():
         z = service.call(3)
         assert z == 3 * 2 + 4
 
-        with pytest.raises(RemoteException):
+        with pytest.raises(TypeError):
             z = service.call('a')
 
 

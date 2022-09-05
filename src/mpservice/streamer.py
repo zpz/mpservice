@@ -204,7 +204,7 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides, final
 
-from .remote_exception import RemoteException, exit_err_msg
+from .util import RemoteException, is_remote_exception, get_remote_traceback, exit_err_msg
 from .util import is_exception, MAX_THREADS, Thread
 from ._queues import SingleLane
 
@@ -399,8 +399,8 @@ class Streamer(EnforceOverrides):
             if is_exception(x):
                 trace = ''
                 if with_trace:
-                    if isinstance(x, RemoteException):
-                        trace = x.format()
+                    if is_remote_exception(x):
+                        trace = get_remote_traceback(x)
                     else:
                         try:
                             trace = ''.join(traceback.format_tb(x.__traceback__))
