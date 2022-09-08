@@ -9,6 +9,8 @@ import multiprocessing.context
 import subprocess
 import threading
 import traceback
+from types import TracebackType
+from typing import Optional, Union
 
 import pebble
 
@@ -33,11 +35,11 @@ def is_exception(e):
 
 
 def is_remote_exception(e) -> bool:
-    return isinstance(e.__cause__, pebble.common.RemoteTraceback)
+    return is_exception(e) and isinstance(e.__cause__, pebble.common.RemoteTraceback)
 
 
 def get_remote_traceback(e) -> str:
-    # `e` has passed the check by `is_remote_exception`.
+    # Assuming `e` has passed the check of `is_remote_exception`.
     return e.__cause__.traceback
 
 
@@ -113,13 +115,22 @@ class RemoteException(pebble.common.RemoteException):
     #
     # Also check out `sys.excepthook`.
 
-    def __init__(self, exc, formatted_tb=None):
-        '''
-        `exc` is the exception instance.
-        '''
-        if formatted_tb is None:
-            formatted_tb = traceback.format_exc()
-        super().__init__(exc, formatted_tb)
+    def __init__(self, exc: Exception, tb: Optional[Union[TracebackType, str]] = None):
+        if isinstance(tb, str):
+            pass
+        elif isinstance(tb, TracebackType):
+            tb = ''.join(traceback.format_exception(type(exc), exc, tb))
+        else:
+            assert tb is None
+            if exc.__traceback__ is not None:
+                tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            else:
+                if is_remote_exception(exc):
+                    tb = get_remote_traceback(exc)
+                else:
+                    logger.warning(f"exc '{repr(exc)}' has a None __traceback__")
+                    tb = ''.join(traceback.format_exception(type(exc), exc, None))
+        super().__init__(exc, tb)
 
 
 class Thread(threading.Thread):
