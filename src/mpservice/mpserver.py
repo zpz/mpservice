@@ -92,9 +92,11 @@ from typing import Sequence, Union, Callable, Type, Any
 
 import psutil
 
-from .util import RemoteException, exit_err_msg
-from .util import is_exception, Thread, TimeoutError, ProcessLogger
+from .util import RemoteException, exit_err_msg, is_exception
+from .util import Thread, SpawnProcess, TimeoutError
 from ._queues import SingleLane
+
+# This modules uses the 'spawn' method to create processes.
 
 
 # Set level for logs produced by the standard `multiprocessing` module.
@@ -107,7 +109,9 @@ NOMOREDATA = b'c7160a52-f8ed-40e4-8a38-ec6b84c2cd87'
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
     # Check out os.read, os.write, os.close with file-descriptor args.
-    def __init__(self, *, ctx):
+    def __init__(self, *, ctx=None):
+        if ctx is None:
+            ctx = multiprocessing.get_context('spawn')
         super().__init__(ctx=ctx)
         # Replace Lock by RLock to facilitate batching via greedy `get_many`.
         self._rlock = ctx.RLock()
@@ -277,7 +281,6 @@ class Worker(metaclass=ABCMeta):
         self._batch_buffer = SingleLane(self.batch_size + 10)
         self._batch_get_called = threading.Event()
         collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out))
-        collector_thread.start()
 
         n_batches = 0
         batch_size_log_cadence = self.batch_size_log_cadence
@@ -319,7 +322,7 @@ class Worker(metaclass=ABCMeta):
         finally:
             if batch_size_log_cadence and n_batches:
                 print_batching_info()
-            collector_thread.join()
+            _ = collector_thread.result()
 
     def _build_input_batches(self, q_in, q_out):
         threading.current_thread().name = f"{self.name}._build_input_batches"
@@ -414,21 +417,17 @@ class Worker(metaclass=ABCMeta):
 
 class ProcessWorker(Worker):
     @classmethod
-    def run(cls, *,
-            log_passer: ProcessLogger,
-            cpus: Sequence[int] = None,
-            **kwargs):
+    def run(cls, *, cpus: Sequence[int] = None, **kwargs):
         '''
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
 
-        This function is the parameter `target` to `Process`.
+        This function is the parameter `target` to `SpawnProcess`.
         As such, elements in `init_kwargs` go through pickling,
         hence they should consist
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        log_passer.start()
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
         super().run(**kwargs)
@@ -498,10 +497,7 @@ class ProcessServlet:
         self._workers = []
         self._started = False
 
-    def start(self, q_in, q_out, *, log_passer, ctx):
-        '''
-        `ctx` is a multiprocessing context passed in ultimately from `Server`.
-        '''
+    def start(self, q_in, q_out):
         assert not self._started
 
         # CPU allocation can look as flexible as this:
@@ -522,19 +518,16 @@ class ProcessServlet:
             else:
                 sname = f"{self._name}-{','.join(map(str, cpu))}"
             logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-            w = ctx.Process(
+            self._workers.append(SpawnProcess(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
                     'q_in': q_in,
                     'q_out': q_out,
                     'cpus': cpu,
-                    'log_passer': log_passer,
                     **self._init_kwargs,
                 },
-            )
-            self._workers.append(w)
-            w.start()
+            ))
             name = q_out.get()
             logger.debug(f"   ... worker <{name}> is ready")
 
@@ -544,7 +537,7 @@ class ProcessServlet:
     def stop(self):
         assert self._started
         for w in self._workers:
-            w.join()
+            _ = w.result()
         self._workers = []
         self._started = False
 
@@ -578,7 +571,6 @@ class ThreadServlet:
                 },
             )
             self._workers.append(w)
-            w.start()
             name = q_out.get()
             logger.debug(f"   ... worker <{name}> is ready")
 
@@ -588,7 +580,7 @@ class ThreadServlet:
     def stop(self):
         assert self._started
         for w in self._workers:
-            w.join()
+            _ = w.result()
         self._workers = []
         self._started = False
 
@@ -605,7 +597,7 @@ class Sequential:
         self._qs = []
         self._started = False
 
-    def start(self, q_in, q_out, *, log_passer, ctx):
+    def start(self, q_in, q_out):
         assert not self._started
         nn = len(self._servlets)
         q1 = q_in
@@ -614,14 +606,11 @@ class Sequential:
                 if isinstance(s, ThreadServlet) and isinstance(self._servlets[i + 1], ThreadServlet):
                     q2 = SimpleQueue()
                 else:
-                    q2 = FastQueue(ctx=ctx)
+                    q2 = FastQueue()
                 self._qs.append(q2)
             else:
                 q2 = q_out
-            if isinstance(s, ThreadServlet):
-                s.start(q1, q2)
-            else:
-                s.start(q1, q2, log_passer=log_passer, ctx=ctx)
+            s.start(q1, q2)
             q1 = q2
         self._started = True
 
@@ -659,7 +648,7 @@ class Ensemble:
         self._uid_to_results = {}
         self._threads = []
 
-    def start(self, q_in, q_out, *, log_passer, ctx):
+    def start(self, q_in, q_out):
         assert not self._started
         self._reset()
         self._qin = q_in
@@ -670,17 +659,13 @@ class Ensemble:
                 q2 = SimpleQueue()
                 s.start(q1, q2)
             else:
-                q1 = FastQueue(ctx=ctx)
-                q2 = FastQueue(ctx=ctx)
-                s.start(q1, q2, log_passer=log_passer, ctx=ctx)
+                q1 = FastQueue()
+                q2 = FastQueue()
+                s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
-        t = Thread(target=self._dequeue)
-        t.start()
-        self._threads.append(t)
-        t = Thread(target=self._enqueue)
-        t.start()
-        self._threads.append(t)
+        self._threads.append(Thread(target=self._dequeue))
+        self._threads.append(Thread(target=self._enqueue))
         self._started = True
 
     def _enqueue(self):
@@ -736,7 +721,7 @@ class Ensemble:
         for s in self._servlets:
             s.stop()
         for t in self._threads:
-            t.join()
+            _ = t.result()
         self._reset()
         self._started = False
 
@@ -757,7 +742,6 @@ class Server:
                  *,
                  main_cpu: int = 0,
                  backlog: int = 1024,
-                 ctx=None,
                  sys_info_log_cadence: int = 1_000_000,
                  ):
         '''
@@ -767,8 +751,6 @@ class Server:
         `backlog`: max number of requests concurrently in progress within this server,
             all pipes/servlets/stages combined.
 
-        `ctx`: a multiprocessing context. Leave this at default unless you know what you're doing.
-
         `sys_info_log_cadence`: log worker process system info (cpu/memory utilization)
             every this many requests; if `None`, do not log.
         '''
@@ -776,11 +758,6 @@ class Server:
 
         assert backlog > 0
         self._backlog = backlog
-
-        if ctx is None:
-            self._ctx = multiprocessing.get_context('spawn')
-        else:
-            self._ctx = ctx
 
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
@@ -798,9 +775,6 @@ class Server:
         # After adding servlets, all other methods of this object
         # should be used with context manager `__enter__`/`__exit__`
         assert not self._started
-
-        self._worker_logger = ProcessLogger(ctx=self.get_mpcontext())
-        self._worker_logger.start()
 
         self._threads = []
 
@@ -821,22 +795,12 @@ class Server:
             self._q_in = queue.Queue()
             self._q_out = queue.Queue()
         else:
-            self._q_in = FastQueue(ctx=self.get_mpcontext())
-            self._q_out = FastQueue(ctx=self.get_mpcontext())
-        if isinstance(self._servlet, ThreadServlet):
-            self._servlet.start(self._q_in, self._q_out)
-        else:
-            self._servlet.start(
-                self._q_in, self._q_out,
-                log_passer=self._worker_logger, ctx=self.get_mpcontext())
+            self._q_in = FastQueue()
+            self._q_out = FastQueue()
+        self._servlet.start(self._q_in, self._q_out)
 
-        t = Thread(target=self._gather_output)
-        t.start()
-        self._threads.append(t)
-
-        t = Thread(target=self._onboard_input)
-        t.start()
-        self._threads.append(t)
+        self._threads.append(Thread(target=self._gather_output))
+        self._threads.append(Thread(target=self._onboard_input))
 
         self._started = True
         return self
@@ -852,18 +816,18 @@ class Server:
         self._servlet.stop()
 
         for t in self._threads:
-            t.join()
-
-        self._worker_logger.stop()
+            _ = t.result()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
         self._started = False
 
-    def get_mpcontext(self):
+    @classmethod
+    def get_mpcontext(cls):
         # If subclasses need to use additional Queues, Locks, Conditions, etc,
         # they should create them out of this context.
-        return self._ctx
+        # Subclass should not customize this method. Always use spawned processes.
+        return multiprocessing.get_context('spawn')
 
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?

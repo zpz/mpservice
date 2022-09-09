@@ -29,6 +29,22 @@ class TimeoutError(RuntimeError):
     pass
 
 
+def get_docker_host_ip():
+    '''
+    From within a Docker container, this function finds the IP address
+    of the host machine.
+    '''
+    # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
+    # another idea:
+    # ip -4 route list match 0/0 | cut -d' ' -f3
+    #
+    # Usually the result is '172.17.0.1'
+
+    z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
+    z = z.decode()[len('default via '):]
+    return z[: z.find(' ')]
+
+
 def is_exception(e):
     return isinstance(e, BaseException) or (
         (type(e) is type) and issubclass(e, BaseException)
@@ -414,19 +430,3 @@ class ProcessLogger:
     def _stop_in_other_process(self):
         logging.getLogger().removeHandler(self._qh)
         self._q.close()
-
-
-def get_docker_host_ip():
-    '''
-    From within a Docker container, this function finds the IP address
-    of the host machine.
-    '''
-    # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
-    # another idea:
-    # ip -4 route list match 0/0 | cut -d' ' -f3
-    #
-    # Usually the result is '172.17.0.1'
-
-    z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
-    z = z.decode()[len('default via '):]
-    return z[: z.find(' ')]
