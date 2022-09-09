@@ -8,18 +8,17 @@ from mpservice.background_task import BackgroundTask
 class MyTask(BackgroundTask):
     @classmethod
     def run(cls, x, y, *, _cancelled, _info, wait=1.2):
-        waited = 0
+        t0 = time.perf_counter()
         while True:
             time.sleep(0.01)
-            waited += 0.01
-            if waited >= wait:
+            if time.perf_counter() - t0 >= wait:
                 break
             if _cancelled.is_set():
                 raise concurrent.futures.CancelledError(
                     'cancelled per request')
             if not _info.empty():
                 _ = _info.get_nowait()
-            _info.put_nowait({'x': x, 'y': y, 'time_waited': waited})
+            _info.put_nowait({'x': x, 'y': y, 'time_waited': time.perf_counter() - t0})
         return x + y
 
     @classmethod

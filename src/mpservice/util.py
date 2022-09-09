@@ -9,6 +9,7 @@ import multiprocessing.context
 import subprocess
 import threading
 import traceback
+from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional, Union
 
@@ -32,15 +33,6 @@ def is_exception(e):
     return isinstance(e, BaseException) or (
         (type(e) is type) and issubclass(e, BaseException)
     )
-
-
-def is_remote_exception(e) -> bool:
-    return is_exception(e) and isinstance(e.__cause__, pebble.common.RemoteTraceback)
-
-
-def get_remote_traceback(e) -> str:
-    # Assuming `e` has passed the check of `is_remote_exception`.
-    return e.__cause__.traceback
 
 
 def is_async(func):
@@ -76,33 +68,48 @@ def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
         return msg
 
 
+def is_remote_exception(e) -> bool:
+    return isinstance(e, BaseException) and isinstance(e.__cause__, RemoteTraceback)
+
+
+def get_remote_traceback(e) -> str:
+    # Assuming `e` has passed the check of `is_remote_exception`.
+    return e.__cause__.traceback
+
+
+RemoteTraceback = pebble.common.RemoteTraceback
+
+
 class RemoteException(pebble.common.RemoteException):
     '''
-    The purpose of this class is to send an exception object across process boundaries,
-    hence undergoing pickling/unpickling, while keeping some traceback info.
-    This is achieved simply by keeping the traceback info as a formatted string, because
-    a traceback object is not pickle-able.
+    This class is a pickle helper for Exception objects to preserve some traceback info.
+    This is needed because directly calling `pickle.dumps` on an Exception object will lose
+    its `__traceback__` and `__cause__` attributes.
 
-    Once unpickled in another process, the object obtained is not an instance of `RemoteException`,
-    but rather of the original exception type. The object does not have `__traceback__` attribute,
-    which is impossible to reconstruct, but has `__cause__` attribute, which is a custom Exception
-    object that contains the string-form traceback info.
+    One typical use case is to send an exception object across process boundaries,
+    hence undergoing pickling/unpickling.
 
-    Most (maybe all) methods and attributes of the exception object behave the same as the original,
-    exception for `__traceback__`.
+    This class preserves some traceback info simply by keeping it as a formatted string.
+    Once unpickled (e.g. in another process), the object obtained, say `obj`,
+    is not an instance of `RemoteException`, but rather of the original exception type.
+    The object does not have `__traceback__` attribute, which is impossible to reconstruct,
+    but rather has `__cause__` attribute, which is a custom Exception
+    object (`RemoteTraceback`) that contains the string-form traceback info.
+    The traceback string is `obj.__cause__.traceback`. This string contains proper linebreaks.
+
+    Most (probably all) methods and attributes of the unpickled exception object behave the same
+    as the original, exception for `__traceback__` and `__cause__`.
 
     Again, the unpickled object, say `obj`, is not an instance of this class, hence
-    we can't define methods on this class to help using `obj`. The traceback string is
-    `obj.__cause__.traceback`. This string with proper linebreaks contains all the traceback info
-    except that in the "current process" (where `obj` comes into being via unpickling).
-    I have yet to find a way to get this last missing part of the printout without doing `raise obj`.
+    we can't define methods on this class to help using `obj`.
 
-    To determine that an exception object `obj` originates from another process via this mechanism, use
-    `is_remote_exception`.
+    Note that `RemoteException` does not subclass `BaseException`, so you can't "raise" this object.
+
+    See also: `is_remote_exception`, `get_remote_traceback`.
     '''
 
     # `pebble.common.RemoteException` is almost the same as `concurrent.futures.process._ExceptionWithTraceback`,
-    # with slightly nicer printouts.
+    # with slightly nicer printouts. All the relevant code is trivial to re-implement, if there's a need to do it.
     # `pebble` is on LGPL license.
 
     # check out
@@ -123,13 +130,29 @@ class RemoteException(pebble.common.RemoteException):
         else:
             assert tb is None
             if exc.__traceback__ is not None:
+                # This is the most common use case---in an exception handler block:
+                #
+                #   try:
+                #       ...
+                #   except Exception as e:
+                #       ...
+                #       ee = RemoteException(e)
+                #       ...
+                #
+                # This includes the case where `e` has come from another process via `RemoteException`
+                # (hence `is_remote_exception(e)` is True) and is raised again, and because
+                # we intend to pickle it again (e.g. paassing it to another process via a queue),
+                # hence we put it in `RemoteException`.
                 tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             else:
+                # This use case is not in an "except" block. Somehow there's an
+                # exception object and we need to pickle it, so we put it in a
+                # `RemoteException`.
                 if is_remote_exception(exc):
                     tb = get_remote_traceback(exc)
                 else:
-                    logger.warning(f"exc '{repr(exc)}' has a None __traceback__")
-                    tb = ''.join(traceback.format_exception(type(exc), exc, None))
+                    raise ValueError(f"{repr(exc)} does not contain traceback info")
+                    # In this case, don't use RemoteException. Pickle the exc object directly.
         super().__init__(exc, tb)
 
 
@@ -160,7 +183,6 @@ class Thread(threading.Thread):
                 self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
             self._exc_ = e
-            # raise
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -205,7 +227,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         assert '__worker_logger__' not in kwargs
         worker_logger = ProcessLogger(ctx=multiprocessing.get_context('spawn'))
-        worker_logger.__enter__()
+        worker_logger.start()
         kwargs['__worker_logger__'] = worker_logger
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
@@ -220,27 +242,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if auto_start:
             self.start()
 
-    def _stop_logger(self):
-        if hasattr(self, '__worker_logger__') and self.__worker_logger__ is not None:
-            self.__worker_logger__.__exit__()
-            self.__worker_logger__ = None
-
-    def __del__(self):
-        self._stop_logger()
-
-    def terminate(self):
-        super().terminate()
-        self._stop_logger()
-
-    def kill(self):
-        super().kill()
-        self._stop_logger()
-
-    def join(self, *args, **kwargs):
-        super().join(*args, **kwargs)
-        if self.done():
-            self._stop_logger()
-
     def start(self):
         if self._auto_started:
             return
@@ -248,22 +249,23 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._auto_started = True
 
     def run(self):
-        with self._kwargs.pop('__worker_logger__'):
-            result_and_error = self._kwargs.pop('__result_and_error__')
-            # Upon completion, `result_and_error` will contain `result` and `exception`
-            # in this order; both may be `None`.
-            if self._target:
-                try:
-                    z = self._target(*self._args, **self._kwargs)
-                except BaseException as e:
-                    result_and_error.send(None)
-                    result_and_error.send(RemoteException(e))
-                else:
-                    result_and_error.send(z)
-                    result_and_error.send(None)
+        worker_logger = self._kwargs.pop('__worker_logger__')
+        worker_logger.start()
+        result_and_error = self._kwargs.pop('__result_and_error__')
+        # Upon completion, `result_and_error` will contain `result` and `exception`
+        # in this order; both may be `None`.
+        if self._target:
+            try:
+                z = self._target(*self._args, **self._kwargs)
+            except BaseException as e:
+                result_and_error.send(None)
+                result_and_error.send(RemoteException(e))
             else:
+                result_and_error.send(z)
                 result_and_error.send(None)
-                result_and_error.send(None)
+        else:
+            result_and_error.send(None)
+            result_and_error.send(None)
 
     def done(self):
         return self.exitcode is not None
@@ -322,8 +324,8 @@ class ProcessLogger:
 
                 pl.start()
 
-    Remember to call the `stop` method in both main and the other process.
-    For this reason, you may want to use the context manager.
+    Calling `stop` in either the main or the child process is optional.
+    The call will immediately stop processing logs in the respective process.
     '''
     def __init__(self, *, ctx: multiprocessing.context.BaseContext):
         # assert ctx.get_start_method() == 'spawn'
@@ -338,14 +340,14 @@ class ProcessLogger:
         # In another process.
         self._q = state
 
-    def __enter__(self):
+    def start(self):
         if hasattr(self, '_t'):
             self._start_in_main_process()
         else:
             self._start_in_other_process()
         return self
 
-    def __exit__(self, *args):
+    def stop(self, *args):
         if hasattr(self, '_t'):
             self._stop_in_main_process()
         else:
@@ -355,8 +357,17 @@ class ProcessLogger:
         assert self._t is None
         self._q = self._ctx.Queue()
 
-        self._t = threading.Thread(target=self._logger_thread, args=(self._q, ))
+        self._t = threading.Thread(
+            target=ProcessLogger._logger_thread,
+            args=(self._q, ),
+            name='ProcessLoggerThread')
+        self._t.daemon = True
         self._t.start()
+        self._finalize = Finalize(
+            self, ProcessLogger._finalize_logger_thread,
+            [self._t, self._q],
+            exitpriority=10,
+        )
 
     @staticmethod
     def _logger_thread(q: multiprocessing.queues.Queue):
@@ -364,11 +375,26 @@ class ProcessLogger:
         while True:
             record = q.get()
             if record is None:
-                # This is put in the queue by `self.__exit__` in the other process.
                 break
             logger = logging.getLogger(record.name)
             if record.levelno >= logger.getEffectiveLevel():
                 logger.handle(record)
+
+    @staticmethod
+    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing.queues.Queue):
+        q.put(None)
+        t.join()
+
+    def _stop_in_main_process(self):
+        # assert self._t is not None
+        # self._q.put(None)
+        # self._t.join()
+        # self._t = None
+        self._stopped = True
+        finalize = self._finalize
+        if finalize:
+            self._finalize = None
+            finalize()
 
     def _start_in_other_process(self):
         '''
@@ -382,16 +408,11 @@ class ProcessLogger:
         '''
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
-        qh = logging.handlers.QueueHandler(self._q)
-        root.addHandler(qh)
-
-    def _stop_in_main_process(self):
-        assert self._t is not None
-        self._q.put(None)
-        self._t.join()
-        self._t = None
+        self._qh = logging.handlers.QueueHandler(self._q)
+        root.addHandler(self._qh)
 
     def _stop_in_other_process(self):
+        logging.getLogger().removeHandler(self._qh)
         self._q.close()
 
 

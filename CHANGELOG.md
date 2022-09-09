@@ -2,7 +2,7 @@
 
 ## Release 0.11.5 (upcoming)
 
-- Radical simplification to `RemoteException`; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
+- `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
 
 
 ## Release 0.11.4

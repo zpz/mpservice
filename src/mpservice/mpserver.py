@@ -428,10 +428,10 @@ class ProcessWorker(Worker):
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
         '''
-        with log_passer:
-            if cpus:
-                psutil.Process().cpu_affinity(cpus=cpus)
-            super().run(**kwargs)
+        log_passer.start()
+        if cpus:
+            psutil.Process().cpu_affinity(cpus=cpus)
+        super().run(**kwargs)
 
 
 class ThreadWorker(Worker):
@@ -800,7 +800,7 @@ class Server:
         assert not self._started
 
         self._worker_logger = ProcessLogger(ctx=self.get_mpcontext())
-        self._worker_logger.__enter__()
+        self._worker_logger.start()
 
         self._threads = []
 
@@ -854,7 +854,7 @@ class Server:
         for t in self._threads:
             t.join()
 
-        self._worker_logger.__exit__()
+        self._worker_logger.stop()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
