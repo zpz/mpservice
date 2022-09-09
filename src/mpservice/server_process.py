@@ -70,6 +70,7 @@ from multiprocessing.managers import BaseManager
 
 class _MyManager(BaseManager):
     pass
+    # TODO: use SpawnProcess
 
 
 class ServerProcess:
