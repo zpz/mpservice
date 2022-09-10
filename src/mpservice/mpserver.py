@@ -843,6 +843,11 @@ class Server:
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?
 
+    @classmethod
+    def get_mpcontext(cls):
+        # TODO: remove
+        return cls.get_mp_context()
+
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.

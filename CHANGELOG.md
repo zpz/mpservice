@@ -3,6 +3,8 @@
 ## Release 0.11.5 (upcoming)
 
 - `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
+- New class `mpservice.util.SpawnProcessPoolExecutor`.
+- Extensively use `SpawnProcess` where appropriate.
 
 
 ## Release 0.11.4
