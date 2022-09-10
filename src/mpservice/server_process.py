@@ -66,6 +66,7 @@ Example use cases:
 '''
 
 from multiprocessing.managers import BaseManager
+from .util import MP_SPAWN_CTX
 
 
 class _MyManager(BaseManager):
@@ -79,7 +80,7 @@ class ServerProcess:
     # because subclass registration is by the class name.
 
     @classmethod
-    def start(cls, *args, ctx=None, **kwargs):
+    def start(cls, *args, **kwargs):
         '''
         `args` and `kwargs` are passed on to the `__init__`
         method of this class (implemented by a subclass as needed).
@@ -91,7 +92,7 @@ class ServerProcess:
                 cls.__name__,
                 cls,
             )
-        manager = _MyManager(ctx=ctx)
+        manager = _MyManager(ctx=MP_SPAWN_CTX)
         manager.start()  # pylint: disable=consider-using-with
         obj = getattr(manager, cls.__name__)(*args, **kwargs)
         return obj

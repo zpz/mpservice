@@ -1,16 +1,16 @@
 import logging
 from mpservice.server_process import ServerProcess
-from mpservice.util import SpawnProcess
+from mpservice.util import MP_SPAWN_CONTEXT, SpawnProcess
 from multiprocessing import Process
 
 
 class MyServerProcess(ServerProcess):
     def x(self, val):
         logger = logging.getLogger('server')
-        logger.error('worker error')
-        logger.warning('worker warning')
-        logger.info('worker info')
-        logger.debug('worker bug')
+        logger.error('server error')
+        logger.warning('server warning')
+        logger.info('server info')
+        logger.debug('server bug')
         return val
 
 

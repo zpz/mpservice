@@ -91,9 +91,15 @@ from time import perf_counter, sleep
 from typing import Sequence, Union, Callable, Type, Any
 
 import psutil
+from overrides import final
 
-from .util import RemoteException, exit_err_msg, is_exception
-from .util import Thread, SpawnProcess, TimeoutError
+from .util import (
+    MP_SPAWN_CTX, SpawnProcess,
+    Thread,
+    RemoteException,
+    exit_err_msg, is_exception,
+    TimeoutError,
+)
 from ._queues import SingleLane
 
 # This modules uses the 'spawn' method to create processes.
@@ -834,11 +840,12 @@ class Server:
         self._started = False
 
     @classmethod
+    @final
     def get_mp_context(cls):
         # If subclasses need to use additional Queues, Locks, Conditions, etc,
         # they should create them out of this context.
         # Subclass should not customize this method. Always use spawned processes.
-        return multiprocessing.get_context('spawn')
+        return MP_SPAWN_CTX
 
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?

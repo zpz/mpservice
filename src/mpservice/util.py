@@ -1,4 +1,3 @@
-import concurrent.futures
 import functools
 import inspect
 import logging
@@ -25,11 +24,38 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
 # For others, user may want to specify a smaller value.
 
-MP_SPAWN_CONTEXT = multiprocessing.get_context('spawn')
-
 
 class TimeoutError(RuntimeError):
     pass
+
+
+class _SpawnContext:
+    # We want too use `SpawnProcess` as the process class when
+    # the creation method is 'spawn'.
+    # However, because `multiprocessing.get_context('spawn')`
+    # is a global var, we shouldn't directly change its
+    # `.Process` attribute like this:
+    #
+    #   ctx = multiprocessing.get_context('spawn')
+    #   ctx.Process = SpawnProcess
+    #
+    # It would change the behavior of the spawn context in code
+    # outside of our own.
+    # To achieve the goal in a controlled way, we designed this class.
+
+    def __init__(self):
+        self._ctx = multiprocessing.get_context('spawn')
+
+    def __getattr__(self, name):
+
+        if name == 'Process':
+            return SpawnProcess
+        return getattr(self._ctx, name)
+
+
+MP_SPAWN_CTX = _SpawnContext()
+# Use this as the `mp_context` or `ctx` arguments to various multiprocessing
+# functions.
 
 
 def get_docker_host_ip():
@@ -233,7 +259,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         kwargs['__result_and_error__'] = writer
 
         assert '__worker_logger__' not in kwargs
-        worker_logger = ProcessLogger(ctx=MP_SPAWN_CONTEXT)
+        worker_logger = ProcessLogger()
         worker_logger.start()
         kwargs['__worker_logger__'] = worker_logger
 
@@ -324,9 +350,8 @@ class ProcessLogger:
     Calling `stop` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
     '''
-    def __init__(self, *, ctx: multiprocessing.context.BaseContext):
-        # assert ctx.get_start_method() == 'spawn'
-        self._ctx = ctx
+    def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
+        self._ctx = ctx or MP_SPAWN_CTX
         self._t = None
 
     def __getstate__(self):
@@ -411,30 +436,3 @@ class ProcessLogger:
     def _stop_in_other_process(self):
         logging.getLogger().removeHandler(self._qh)
         self._q.close()
-
-
-class SpawnProcessPoolExecutor(concurrent.futures.process.ProcessPoolExecutor):
-    '''
-    This class replaces
-    `concurrent.futures.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn'),...)`
-    and handles logging in the worker processes by `ProcessLogger` via `SpawnProcess`.
-    '''
-    def __init__(self, *args, **kwargs):
-        super().__init__(
-            *args,
-            mp_context=MP_SPAWN_CONTEXT,
-            **kwargs,
-        )
-
-        class obj:
-            def __init__(self, ctx):
-                self._ctx = ctx
-
-            def __getattr__(self, name):
-                if name == 'Process':
-                    return SpawnProcess
-                return getattr(self._ctx, name)
-
-        self._mp_context = obj(self._mp_context)
-        # Do not directly set `self._mp_context.Process = SpawnProcess`
-        # because `self._mp_context` is a global var.

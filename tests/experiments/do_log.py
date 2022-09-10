@@ -1,7 +1,7 @@
 import concurrent.futures
 import logging
 import multiprocessing as mp
-from mpservice.util import SpawnProcessPoolExecutor
+from mpservice.util import MP_SPAWN_CTX
 
 
 logger = logging.getLogger('mytest')
@@ -18,7 +18,7 @@ def worker(ev):
 def main():
     logger.error('main error')
     logger.info('main info')
-    with SpawnProcessPoolExecutor() as pool:  # mp_context=mp.get_context('spawn')) as pool:
+    with concurrent.futures.ProcessPoolExecutor(mp_context=MP_SPAWN_CTX) as pool:
         t = pool.submit(worker, mp.get_context('spawn').Manager().Event())
         t.result()
     logger.warning('main warning')
