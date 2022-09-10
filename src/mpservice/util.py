@@ -1,3 +1,4 @@
+import concurrent.futures
 import functools
 import inspect
 import logging
@@ -23,6 +24,8 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
 # This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
 # For others, user may want to specify a smaller value.
+
+MP_SPAWN_CONTEXT = multiprocessing.get_context('spawn')
 
 
 class TimeoutError(RuntimeError):
@@ -179,18 +182,6 @@ class Thread(threading.Thread):
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
-    def __init__(self, *args, auto_start=True, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._auto_started = False
-        if auto_start:
-            self.start()
-
-    def start(self):
-        if self._auto_started:
-            return
-        super().start()
-        self._auto_started = True
-
     def run(self):
         self._result_ = None
         self._exc_ = None
@@ -233,7 +224,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
           process object, similar to `concurrent.futures.Future`.
         - make logs in the subprocess handled in the main process.
     '''
-    def __init__(self, *args, kwargs=None, auto_start=True, **moreargs):
+    def __init__(self, *args, kwargs=None, **moreargs):
         if kwargs is None:
             kwargs = {}
 
@@ -242,7 +233,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         kwargs['__result_and_error__'] = writer
 
         assert '__worker_logger__' not in kwargs
-        worker_logger = ProcessLogger(ctx=multiprocessing.get_context('spawn'))
+        worker_logger = ProcessLogger(ctx=MP_SPAWN_CONTEXT)
         worker_logger.start()
         kwargs['__worker_logger__'] = worker_logger
 
@@ -253,16 +244,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         assert not hasattr(self, '__worker_logger__')
         self.__worker_logger__ = worker_logger
-
-        self._auto_started = False
-        if auto_start:
-            self.start()
-
-    def start(self):
-        if self._auto_started:
-            return
-        super().start()
-        self._auto_started = True
 
     def run(self):
         worker_logger = self._kwargs.pop('__worker_logger__')
@@ -430,3 +411,30 @@ class ProcessLogger:
     def _stop_in_other_process(self):
         logging.getLogger().removeHandler(self._qh)
         self._q.close()
+
+
+class SpawnProcessPoolExecutor(concurrent.futures.process.ProcessPoolExecutor):
+    '''
+    This class replaces
+    `concurrent.futures.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn'),...)`
+    and handles logging in the worker processes by `ProcessLogger` via `SpawnProcess`.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            *args,
+            mp_context=MP_SPAWN_CONTEXT,
+            **kwargs,
+        )
+
+        class obj:
+            def __init__(self, ctx):
+                self._ctx = ctx
+
+            def __getattr__(self, name):
+                if name == 'Process':
+                    return SpawnProcess
+                return getattr(self._ctx, name)
+
+        self._mp_context = obj(self._mp_context)
+        # Do not directly set `self._mp_context.Process = SpawnProcess`
+        # because `self._mp_context` is a global var.

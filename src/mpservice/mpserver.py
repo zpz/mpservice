@@ -281,6 +281,7 @@ class Worker(metaclass=ABCMeta):
         self._batch_buffer = SingleLane(self.batch_size + 10)
         self._batch_get_called = threading.Event()
         collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out))
+        collector_thread.start()
 
         n_batches = 0
         batch_size_log_cadence = self.batch_size_log_cadence
@@ -528,6 +529,7 @@ class ProcessServlet:
                     **self._init_kwargs,
                 },
             ))
+            self._workers[-1].start()
             name = q_out.get()
             logger.debug(f"   ... worker <{name}> is ready")
 
@@ -570,6 +572,7 @@ class ThreadServlet:
                     **self._init_kwargs,
                 },
             )
+            w.start()
             self._workers.append(w)
             name = q_out.get()
             logger.debug(f"   ... worker <{name}> is ready")
@@ -664,8 +667,12 @@ class Ensemble:
                 s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
-        self._threads.append(Thread(target=self._dequeue))
-        self._threads.append(Thread(target=self._enqueue))
+        t = Thread(target=self._dequeue)
+        t.start()
+        self._threads.append(t)
+        t = Thread(target=self._enqueue)
+        t.start()
+        self._threads.append(t)
         self._started = True
 
     def _enqueue(self):
@@ -799,8 +806,12 @@ class Server:
             self._q_out = FastQueue()
         self._servlet.start(self._q_in, self._q_out)
 
-        self._threads.append(Thread(target=self._gather_output))
-        self._threads.append(Thread(target=self._onboard_input))
+        t = Thread(target=self._gather_output)
+        t.start()
+        self._threads.append(t)
+        t = Thread(target=self._onboard_input)
+        t.start()
+        self._threads.append(t)
 
         self._started = True
         return self
@@ -823,7 +834,7 @@ class Server:
         self._started = False
 
     @classmethod
-    def get_mpcontext(cls):
+    def get_mp_context(cls):
         # If subclasses need to use additional Queues, Locks, Conditions, etc,
         # they should create them out of this context.
         # Subclass should not customize this method. Always use spawned processes.

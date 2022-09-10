@@ -1,40 +1,26 @@
+import concurrent.futures
 import logging
-import multiprocessing as mp 
-from mpservice.util import ProcessLogger
+import multiprocessing as mp
+from mpservice.util import SpawnProcessPoolExecutor
 
 
 logger = logging.getLogger('mytest')
 
 
-def worker2(pl):
-    with pl:
-        logger.error('worker 2 error')
-        logger.warning('worker 2 warning')
-        logger.info('worker 2 info')
-        logger.debug('worker 2 debug')
+def worker(ev):
+    logging.getLogger('worker').error('worker error')
+    logging.getLogger('worker.warn').warning('worker warning')
 
-
-def worker(pl):
-    with pl:
-        logging.getLogger('worker').error('worker error')
-        logging.getLogger('worker.warn').warning('worker warning')
-
-        with ProcessLogger(ctx=mp.get_context('spawn')) as pl2:
-            p = mp.get_context('spawn').Process(target=worker2, args=(pl2,))
-            p.start()
-            p.join()
-
-        logging.getLogger('worker.info').info('worker info')
-        logging.getLogger('worker.debug').debug('worker debug')
+    logging.getLogger('worker.info').info('worker info')
+    logging.getLogger('worker.debug').debug('worker debug')
 
 
 def main():
     logger.error('main error')
     logger.info('main info')
-    with ProcessLogger(ctx=mp.get_context('spawn')) as pl:
-        p = mp.get_context('spawn').Process(target=worker, args=(pl,))
-        p.start()
-        p.join()
+    with SpawnProcessPoolExecutor() as pool:  # mp_context=mp.get_context('spawn')) as pool:
+        t = pool.submit(worker, mp.get_context('spawn').Manager().Event())
+        t.result()
     logger.warning('main warning')
     logger.debug('main debug')
 
