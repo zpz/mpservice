@@ -29,6 +29,35 @@ class TimeoutError(RuntimeError):
     pass
 
 
+class _SpawnContext:
+    # We want too use `SpawnProcess` as the process class when
+    # the creation method is 'spawn'.
+    # However, because `multiprocessing.get_context('spawn')`
+    # is a global var, we shouldn't directly change its
+    # `.Process` attribute like this:
+    #
+    #   ctx = multiprocessing.get_context('spawn')
+    #   ctx.Process = SpawnProcess
+    #
+    # It would change the behavior of the spawn context in code
+    # outside of our own.
+    # To achieve the goal in a controlled way, we designed this class.
+
+    def __init__(self):
+        self._ctx = multiprocessing.get_context('spawn')
+
+    def __getattr__(self, name):
+
+        if name == 'Process':
+            return SpawnProcess
+        return getattr(self._ctx, name)
+
+
+MP_SPAWN_CTX = _SpawnContext()
+# Use this as the `mp_context` or `ctx` arguments to various multiprocessing
+# functions.
+
+
 def get_docker_host_ip():
     '''
     From within a Docker container, this function finds the IP address
@@ -179,18 +208,6 @@ class Thread(threading.Thread):
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
-    def __init__(self, *args, auto_start=True, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._auto_started = False
-        if auto_start:
-            self.start()
-
-    def start(self):
-        if self._auto_started:
-            return
-        super().start()
-        self._auto_started = True
-
     def run(self):
         self._result_ = None
         self._exc_ = None
@@ -233,7 +250,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
           process object, similar to `concurrent.futures.Future`.
         - make logs in the subprocess handled in the main process.
     '''
-    def __init__(self, *args, kwargs=None, auto_start=True, **moreargs):
+    def __init__(self, *args, kwargs=None, **moreargs):
         if kwargs is None:
             kwargs = {}
 
@@ -242,7 +259,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         kwargs['__result_and_error__'] = writer
 
         assert '__worker_logger__' not in kwargs
-        worker_logger = ProcessLogger(ctx=multiprocessing.get_context('spawn'))
+        worker_logger = ProcessLogger()
         worker_logger.start()
         kwargs['__worker_logger__'] = worker_logger
 
@@ -253,16 +270,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         assert not hasattr(self, '__worker_logger__')
         self.__worker_logger__ = worker_logger
-
-        self._auto_started = False
-        if auto_start:
-            self.start()
-
-    def start(self):
-        if self._auto_started:
-            return
-        super().start()
-        self._auto_started = True
 
     def run(self):
         worker_logger = self._kwargs.pop('__worker_logger__')
@@ -343,9 +350,8 @@ class ProcessLogger:
     Calling `stop` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
     '''
-    def __init__(self, *, ctx: multiprocessing.context.BaseContext):
-        # assert ctx.get_start_method() == 'spawn'
-        self._ctx = ctx
+    def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
+        self._ctx = ctx or MP_SPAWN_CTX
         self._t = None
 
     def __getstate__(self):

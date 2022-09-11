@@ -3,6 +3,11 @@
 ## Release 0.11.5 (upcoming)
 
 - `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
+- Enhancements to `SpawnProcess`.
+- Improvements to `mpservice.util.ProcessLogger`.
+- New constant `mpservice.util.MP_SPAWN_CTX` is a customization to the standard spawn
+  context that uses `SpawnProcess` instead of `Process`.
+- Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
 
 
 ## Release 0.11.4

@@ -22,7 +22,7 @@ class Task:
                  future: concurrent.futures.Future,
                  callers: int,
                  cancelled: threading.Event,
-                 info: Union[queue.Queue, multiprocessing.Queue],
+                 info: Union[queue.Queue, multiprocessing.queues.Queue],
                  task_catalog: dict):
         self.task_id = task_id
         self.future = future
@@ -270,8 +270,8 @@ class BackgroundTask(ABC):
             cancelled = threading.Event()
             info = queue.Queue(1)
         else:
-            cancelled = multiprocessing.Event()
-            info = multiprocessing.Queue(1)
+            cancelled = self._executor._mp_context.Event()
+            info = self._executor._mp_context.Manager().Queue(1)
 
         func = functools.partial(self.run, *args, **kwargs)
         fut = self._executor.submit(func, _cancelled=cancelled, _info=info)
