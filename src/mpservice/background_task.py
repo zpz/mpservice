@@ -165,6 +165,9 @@ class BackgroundTask(ABC):
     '''
 
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
+        # `executor`: if you provide your own *process* executor,
+        # it's recommended to use `mpservice.util.MP_SPAWN_CTX` for its
+        # `ctx` parameter.
         self._own_executor = False
         if executor is None:
             executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
@@ -270,7 +273,7 @@ class BackgroundTask(ABC):
             cancelled = threading.Event()
             info = queue.Queue(1)
         else:
-            cancelled = self._executor._mp_context.Event()
+            cancelled = self._executor._mp_context.Manager().Event()
             info = self._executor._mp_context.Manager().Queue(1)
 
         func = functools.partial(self.run, *args, **kwargs)

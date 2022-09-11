@@ -382,11 +382,11 @@ class ProcessLogger:
         self._t = threading.Thread(
             target=ProcessLogger._logger_thread,
             args=(self._q, ),
-            name='ProcessLoggerThread')
-        self._t.daemon = True
+            name='ProcessLoggerThread',
+            daemon=True)
         self._t.start()
         self._finalize = Finalize(
-            self, ProcessLogger._finalize_logger_thread,
+            self, type(self)._finalize_logger_thread,
             [self._t, self._q],
             exitpriority=10,
         )
