@@ -1,6 +1,6 @@
 import logging
 from mpservice.server_process import ServerProcess
-from mpservice.util import MP_SPAWN_CONTEXT, SpawnProcess
+from mpservice.util import MP_SPAWN_CTX, SpawnProcess
 from multiprocessing import Process
 
 
