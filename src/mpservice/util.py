@@ -68,6 +68,8 @@ def get_docker_host_ip():
     # ip -4 route list match 0/0 | cut -d' ' -f3
     #
     # Usually the result is '172.17.0.1'
+    #
+    # The command `ip` is provided by the Linux package `iproute2`.
 
     z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
     z = z.decode()[len('default via '):]
@@ -208,14 +210,17 @@ class Thread(threading.Thread):
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
-    def run(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._result_ = None
-        self._exc_ = None
+        self._exception_ = None
+
+    def run(self):
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
-            self._exc_ = e
+            self._exception_ = e
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -231,15 +236,15 @@ class Thread(threading.Thread):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        if self._exc_ is not None:
-            raise self._exc_
+        if self._exception_ is not None:
+            raise self._exception_
         return self._result_
 
     def exception(self, timeout=None):
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError
-        return self._exc_
+        return self._exception_
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -253,6 +258,8 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     def __init__(self, *args, kwargs=None, **moreargs):
         if kwargs is None:
             kwargs = {}
+        else:
+            kwargs = dict(kwargs)
 
         assert '__result_and_error__' not in kwargs
         reader, writer = multiprocessing.connection.Pipe(duplex=False)
@@ -272,6 +279,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.__worker_logger__ = worker_logger
 
     def run(self):
+        # This runs in a child process.
         worker_logger = self._kwargs.pop('__worker_logger__')
         worker_logger.start()
         result_and_error = self._kwargs.pop('__result_and_error__')
@@ -338,7 +346,7 @@ class ProcessLogger:
 
         1. In main process, create a `ProcessLogger` instance and start it:
 
-                pl = ProcessLogger(ctx=...).start()
+                pl = ProcessLogger().start()
 
         2. Pass this object to other processes. (Yes, this object is picklable.)
 
@@ -387,13 +395,12 @@ class ProcessLogger:
         self._t.start()
         self._finalize = Finalize(
             self, type(self)._finalize_logger_thread,
-            [self._t, self._q],
+            (self._t, self._q),
             exitpriority=10,
         )
 
     @staticmethod
     def _logger_thread(q: multiprocessing.queues.Queue):
-        threading.current_thread().name = 'logger_thread'
         while True:
             record = q.get()
             if record is None:

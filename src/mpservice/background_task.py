@@ -7,6 +7,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from datetime import datetime
+from multiprocessing.util import Finalize
 from typing import Optional, Union, Dict
 
 from .util import MAX_THREADS
@@ -175,9 +176,12 @@ class BackgroundTask(ABC):
         self._executor = executor
         self._tasks: Dict[Hashable, Task] = {}
 
-    def __del__(self):
         if self._own_executor:
-            self._executor.shutdown()
+            Finalize(self, type(self)._shutdown_executor, args=(executor, ))
+
+    @staticmethod
+    def _shutdown_executor(executor):
+        executor.shutdown()
 
     @classmethod
     @abstractmethod
