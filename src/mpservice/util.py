@@ -13,8 +13,6 @@ from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional, Union
 
-import pebble
-
 
 logger = logging.getLogger(__name__)
 
@@ -121,13 +119,24 @@ def is_remote_exception(e) -> bool:
 
 def get_remote_traceback(e) -> str:
     # Assuming `e` has passed the check of `is_remote_exception`.
-    return e.__cause__.traceback
+    return e.__cause__.tb
 
 
-RemoteTraceback = pebble.common.RemoteTraceback
+class RemoteTraceback(Exception):
+    def __init__(self, tb: str):
+        self.tb = tb
+
+    def __str__(self):
+        return self.tb
 
 
-class RemoteException(pebble.common.RemoteException):
+def rebuild_exception(exc: BaseException, tb: str):
+    exc.__cause__ = RemoteTraceback(tb)
+
+    return exc
+
+
+class RemoteException:
     '''
     This class is a pickle helper for Exception objects to preserve some traceback info.
     This is needed because directly calling `pickle.dumps` on an Exception object will lose
@@ -155,9 +164,9 @@ class RemoteException(pebble.common.RemoteException):
     See also: `is_remote_exception`, `get_remote_traceback`.
     '''
 
-    # `pebble.common.RemoteException` is almost the same as `concurrent.futures.process._ExceptionWithTraceback`,
-    # with slightly nicer printouts. All the relevant code is trivial to re-implement, if there's a need to do it.
-    # `pebble` is on LGPL license.
+    # This takes the idea of `concurrent.futures.process._ExceptionWithTraceback`
+    # with slightly tweaked traceback printout.
+    # `pebble.common` uses the same idea.
 
     # check out
     #   https://github.com/ionelmc/python-tblib
@@ -200,7 +209,12 @@ class RemoteException(pebble.common.RemoteException):
                 else:
                     raise ValueError(f"{repr(exc)} does not contain traceback info")
                     # In this case, don't use RemoteException. Pickle the exc object directly.
-        super().__init__(exc, tb)
+
+        self.exc = exc
+        self.tb = tb
+
+    def __reduce__(self):
+        return rebuild_exception, (self.exc, self.tb)
 
 
 class Thread(threading.Thread):

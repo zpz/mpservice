@@ -3,14 +3,13 @@ import time
 
 import pytest
 
-from mpservice.util import RemoteException
 from mpservice.mpserver import (
     ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
     Sequential, Ensemble, Server, make_threadworker,
     TimeoutError
 )
-from mpservice.util import RemoteException
 from mpservice.streamer import Streamer
+from mpservice.util import is_remote_exception
 
 
 class Double(ProcessWorker):
@@ -266,3 +265,85 @@ def test_thread():
             assert y == x + 3
 
 
+class Error1(Exception):
+    pass
+
+
+class Error2(Exception):
+    pass
+
+
+class Error3(Exception):
+    pass
+
+
+class Error4(Exception):
+    pass
+
+
+class Error5(Exception):
+    pass
+
+
+class Worker1(ProcessWorker):
+    def call(self, x):
+        if x == 1:
+            raise Error1(x)
+        return x
+
+
+class Worker2(ProcessWorker):
+    def call(self, x):
+        if x == 2:
+            raise Error2(x)
+        return x
+
+
+class Worker3(ProcessWorker):
+    def call(self, x):
+        if x == 3:
+            raise Error3(x)
+        return x
+
+
+class Worker4(ProcessWorker):
+    def call(self, x):
+        if x == 4:
+            raise Error4(x)
+        return x
+
+
+class Worker5(ProcessWorker):
+    def call(self, x):
+        if x == 5:
+            raise Error5(x)
+        return x
+
+
+def test_exceptions():
+    s = Sequential(
+        ProcessServlet(Worker1),
+        ProcessServlet(Worker2),
+        ProcessServlet(Worker3),
+        ProcessServlet(Worker4),
+        ProcessServlet(Worker5),
+    )
+    with Server(s, sys_info_log_cadence=None) as server:
+        assert server.call(0) == 0
+        with pytest.raises(Error1):
+            server.call(1)
+        with pytest.raises(Error2):
+            server.call(2)
+        with pytest.raises(Error3):
+            server.call(3)
+
+        try:
+            server.call(3)
+        except Exception as e:
+            assert is_remote_exception(e)
+
+        with pytest.raises(Error4):
+            server.call(4)
+        with pytest.raises(Error5):
+            server.call(5)
+        assert server.call(6) == 6
