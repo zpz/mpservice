@@ -371,6 +371,9 @@ class ProcessLogger:
 
     Calling `stop` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
+
+    Although user can use this class in their code, they are encouraged to
+    use `SpawnProcess`, which already handles logging via this class.
     '''
     def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
         self._ctx = ctx or MP_SPAWN_CTX
