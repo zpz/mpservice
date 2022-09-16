@@ -84,6 +84,7 @@ import multiprocessing
 import multiprocessing.queues
 import queue
 import threading
+import traceback
 from abc import ABCMeta, abstractmethod
 from datetime import datetime
 from queue import Empty
@@ -94,11 +95,8 @@ import psutil
 from overrides import final
 
 from .util import (
-    MP_SPAWN_CTX, SpawnProcess,
-    Thread,
-    RemoteException,
-    exit_err_msg, is_exception,
-    TimeoutError,
+    MP_SPAWN_CTX, SpawnProcess, Thread,
+    exit_err_msg, rebuild_exception, TimeoutError,
 )
 from ._queues import SingleLane
 
@@ -111,6 +109,18 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 NOMOREDATA = b'c7160a52-f8ed-40e4-8a38-ec6b84c2cd87'
+
+
+class _RemoteException_:
+    '''
+    This is a helper class to preserve the traceback info of an Exception object
+    during pickling/unpickling.
+    '''
+    def __init__(self, exc: BaseException):
+        tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        exc.__traceback__ = None
+        self.exc = exc
+        self.tb = tb
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
@@ -250,7 +260,7 @@ class Worker(metaclass=ABCMeta):
         except KeyboardInterrupt:
             print(self.name, 'stopped by KeyboardInterrupt')
             # The process will exit. Don't print the usual
-            # exception stuff as that's not need when user
+            # exception stuff as that's not needed when user
             # pressed Ctrl-C.
 
     def _start_single(self, *, q_in, q_out):
@@ -263,7 +273,7 @@ class Worker(metaclass=ABCMeta):
                 break
 
             uid, x = z
-            if is_exception(x):
+            if isinstance(x, (BaseException, _RemoteException_)):
                 q_out.put((uid, x))
                 continue
 
@@ -275,7 +285,7 @@ class Worker(metaclass=ABCMeta):
             except Exception as e:
                 # There are opportunities to print traceback
                 # and details later. Be brief on the logging here.
-                y = RemoteException(e)
+                y = _RemoteException_(e)
 
             q_out.put((uid, y))
 
@@ -311,7 +321,7 @@ class Worker(metaclass=ABCMeta):
                 try:
                     results = self.call(batch)
                 except Exception as e:
-                    err = RemoteException(e)
+                    err = _RemoteException_(e)
                     for uid in uids:
                         q_out.put((uid, err))
                 else:
@@ -356,7 +366,7 @@ class Worker(metaclass=ABCMeta):
                             buffer.put(z)
                             return
                         # Now `z` is a tuple like (uid, x).
-                        if is_exception(z[1]):
+                        if isinstance(z[1], (BaseException, _RemoteException_)):
                             q_out.put(z)
                         else:
                             buffer.put(z)
@@ -696,7 +706,7 @@ class Ensemble:
                 break
 
             uid, x = v
-            if is_exception(x):
+            if isinstance(x, (BaseException, _RemoteException_)):
                 qout.put((uid, x))
                 continue
             z = {'y': [None] * nn, 'n': 0}
@@ -903,7 +913,7 @@ class Server:
                             raise
                     tasks.put((x, fut, timedout))
                 # Exceptions in `fut` is covered by `return_exceptions`.
-                # Uncaptured exceptions will propagate and cause the thread to exit in
+                # Uncaught exceptions will propagate and cause the thread to exit in
                 # exception state. This exception is not covered by `return_exceptions`;
                 # it will be detected in the main thread.
             finally:
@@ -935,7 +945,7 @@ class Server:
             else:
                 try:
                     y = _wait(fut)
-                    # May raise TimeoutError or an exception out of RemoteException.
+                    # May raise TimeoutError or an exception out of _RemoteException_.
                 except Exception as e:
                     if return_exceptions:
                         if return_x:
@@ -980,7 +990,7 @@ class Server:
                 raise TimeoutError(f"{timenow - t0:.3f} seconds total")
             await asyncio.sleep(min(0.001, t2 - timenow))
         return fut.result()
-        # This could raise an exception originating from RemoteException.
+        # This could raise an exception originating from _RemoteException_.
 
         # TODO: I don't understand why the following (along with
         # corresponding change in `_async_enqueue`) seems to work but
@@ -1019,7 +1029,7 @@ class Server:
         t2 = t0 + fut.data['timeout']
         try:
             return fut.result(timeout=max(0, t2 - perf_counter()))
-            # this may raise an exception originating from RemoteException
+            # this may raise an exception originating from _RemoteException_
         except concurrent.futures.TimeoutError:
             fut.cancel()
             raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
@@ -1075,8 +1085,10 @@ class Server:
                 uid, y = z
                 fut = futures.pop(uid)
                 try:
-                    if is_exception(y):
+                    if isinstance(y, BaseException):
                         fut.set_exception(y)
+                    elif isinstance(y, _RemoteException_):
+                        fut.set_exception(rebuild_exception(y.exc, y.tb))
                     else:
                         fut.set_result(y)
                     fut.data['t1'] = perf_counter()
