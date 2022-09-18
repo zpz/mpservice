@@ -1,3 +1,4 @@
+import errno
 import functools
 import inspect
 import logging
@@ -235,6 +236,7 @@ class Thread(threading.Thread):
                 self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
             self._exception_ = e
+            raise
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -305,6 +307,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             except BaseException as e:
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
+                raise
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
@@ -320,8 +323,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if not self.done():
             raise TimeoutError
         if not hasattr(self, '__result__'):
-            self.__result__ = self.__result_and_error__.recv()
-            self.__error__ = self.__result_and_error__.recv()
+            try:
+                self.__result__ = self.__result_and_error__.recv()
+                self.__error__ = self.__result_and_error__.recv()
+            except EOFError as e:
+                exitcode = self.exitcode
+                if exitcode:
+                    raise e from ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+                raise
         if self.__error__ is not None:
             raise self.__error__
         return self.__result__
@@ -331,8 +340,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if not self.done():
             raise TimeoutError
         if not hasattr(self, '__result__'):
-            self.__result__ = self.__result_and_error__.recv()
-            self.__error__ = self.__result_and_error__.recv()
+            try:
+                self.__result__ = self.__result_and_error__.recv()
+                self.__error__ = self.__result_and_error__.recv()
+            except EOFError as e:
+                exitcode = self.exitcode
+                if exitcode:
+                    raise e from ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+                raise
         return self.__error__
 
 

@@ -238,7 +238,7 @@ class Worker(metaclass=ABCMeta):
         '''
         If `self.batch_size == 0`, then `x` is a single
         element, and this method returns result for `x`.
-        
+
         If `self.batch_size > 0` (including 1), then
         `x` is a list of input data elements, and this
         method returns a list of results corresponding
@@ -248,17 +248,17 @@ class Worker(metaclass=ABCMeta):
         into single results for individual elements of `x`.
         This is *vectorized* computation, or *batching*,
         handled by this service pipeline.
-        
+
         When batching is enabled, the number of
         elements in `x` varies between calls depending on the supply
         of data. The list `x` does not have a fixed length.
-        
+
         Be sure to distinguish this from the case where a single
         input is naturally a list. In that case, the output of
         the current method is the result corresponding to
         the single input `x`. The result could be anything---it
         may or may not be a list.
-        
+
         If a subclass fixes `batch_size` in its `__init__` to be
         0 or nonzero, make sure the current method is implemented
         accordingly. If `__init__` has no requirement on the value
@@ -266,7 +266,7 @@ class Worker(metaclass=ABCMeta):
         `self.batch_size` and act accordingly, because it is up to
         the uer in `Servlet` to specify a zero or nonzero `batch_size`
         for this worker.
-        
+
         In case of exceptions, unless the user has specific things to do,
         do not handle them; just let them happen. They will be handled
         in `_start_batch` and `_start_single`.
