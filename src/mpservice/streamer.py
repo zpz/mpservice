@@ -1,9 +1,11 @@
-'''Process a data stream through I/O-bound operations with concurrency.
+'''Process a data stream through operations with concurrency.
 
 An input data stream goes through a series of operations.
 The target use case is that one or more operations is I/O bound,
 hence can benefit from concurrency via threading.
 These operations are called `transform`s.
+
+CPU-bound operations are also supported.
 
 The other operations are typically light weight and supportive
 of the main (concurrent) operation. These operations perform batching,
@@ -205,7 +207,7 @@ from typing import (
 from overrides import EnforceOverrides, overrides, final
 
 from .util import is_remote_exception, get_remote_traceback, exit_err_msg
-from .util import is_exception, MAX_THREADS, Thread
+from .util import is_exception, Thread, MP_SPAWN_CTX
 from ._queues import SingleLane
 
 
@@ -459,7 +461,8 @@ class Streamer(EnforceOverrides):
     def transform(self,
                   func: Callable[[T], TT],
                   *,
-                  concurrency: Optional[Union[int, str]] = None,
+                  executor: str = 'thread',
+                  concurrency: Optional[int] = None,
                   return_x: bool = False,
                   return_exceptions: bool = False,
                   **func_args):
@@ -483,6 +486,8 @@ class Streamer(EnforceOverrides):
         Exception objects (if `return_exceptions` is `True`), which may be
         counted, logged, or handled in other ways.
 
+        `executor`: either 'thread' or 'process'.
+
         `concurrency`: max number of concurrent calls to `func`. By default
         there is no concurrency, but this is usually *not* what you want,
         because the point of this method is to run an I/O-bound operation
@@ -505,6 +510,7 @@ class Streamer(EnforceOverrides):
         self.streamlets.append(Transformer(
             self.streamlets[-1],
             func,
+            executor=executor,
             concurrency=concurrency,
             return_x=return_x,
             return_exceptions=return_exceptions,
@@ -690,7 +696,8 @@ class Transformer(Stream):
                  instream: Stream,
                  func: Callable[[T], TT],
                  *,
-                 concurrency: Union[int, str] = None,
+                 executor: str = 'thread',  # or 'process'
+                 concurrency: int = None,
                  return_x: bool = False,
                  return_exceptions: bool = False,
                  **func_args,
@@ -699,13 +706,15 @@ class Transformer(Stream):
 
         if concurrency is None:
             concurrency = 1
-        elif concurrency == 'max':
-            concurrency = MAX_THREADS
         else:
             assert concurrency > 0
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(concurrency)
+        if executor == 'thread':
+            self._executor = concurrent.futures.ThreadPoolExecutor(concurrency)
+        else:
+            assert executor == 'process'
+            self._executor = concurrent.futures.ProcessPoolExecutor(concurrency, mp_context=MP_SPAWN_CTX)
         self._tasks = SingleLane(concurrency * 2)
         self._t = Thread(target=self._start, args=(func,), kwargs=func_args)
         self._t.start()
@@ -723,7 +732,7 @@ class Transformer(Stream):
                 raise
             if self._stopped:
                 break
-            t = self._thread_pool.submit(func, x, **kwargs)
+            t = self._executor.submit(func, x, **kwargs)
             # The size of the queue `tasks` regulates how many
             # concurrent calls to `func` there can be.
             tasks.put((x, t))
@@ -734,7 +743,7 @@ class Transformer(Stream):
         while not self._tasks.empty():
             _ = self._tasks.get()
         self._t.join()
-        self._thread_pool.shutdown()
+        self._executor.shutdown()
 
     @overrides
     def _get_next(self):
@@ -757,6 +766,7 @@ class Transformer(Stream):
                 return y
         except Exception as e:
             if self._return_exceptions:
+                # TODO: think about when `e` is a "remote exception".
                 if self._return_x:
                     return x, e
                 else:
