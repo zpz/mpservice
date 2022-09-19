@@ -161,7 +161,7 @@ def test_transform():
         assert s.transform(f1, concurrency=10).collect() == expected
 
     with Streamer(SYNC_INPUT) as ss:
-        s = ss.transform(f1, concurrency='max').collect()
+        s = ss.transform(f1, concurrency=20).collect()
         assert s == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
@@ -307,3 +307,16 @@ def test_early_stop():
             if n == 10:
                 break
         assert n == 10
+
+
+
+def double(x):
+    return x * 2
+
+
+def test_transform_mp():
+    SYNC_INPUT = list(range(278))
+    with Streamer(SYNC_INPUT) as s:
+        s.transform(double, executor='process', concurrency=4)
+        got = [v for v in s]
+        assert got == [v * 2 for v in SYNC_INPUT]

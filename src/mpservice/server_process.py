@@ -71,7 +71,6 @@ from .util import MP_SPAWN_CTX
 
 class _MyManager(BaseManager):
     pass
-    # TODO: use SpawnProcess
 
 
 class ServerProcess:

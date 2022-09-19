@@ -8,6 +8,8 @@
 - The new constant `mpservice.util.MP_SPAWN_CTX` is a customization to the standard spawn
   context that uses `SpawnProcess` instead of `Process`.
 - Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
+- `Streamer.transform` gets new parameter `executor` to support multiprocessing for CPU-bound operators.
+- New module `mpservice.managers` (experimental; intention is to eventually replace `server_process`).
 
 
 ## Release 0.11.4

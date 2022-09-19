@@ -73,6 +73,11 @@ The user's main work is implementing the operations in the "workers".
 Another task (of some trial and error) by the user is experimenting with
 CPU allocations among workers to achieve best performance.
 
+Code in the "workers" should raise exceptions as it normally does, without handling them,
+if it considers the situation to be non-recoverable, e.g. input is of wrong type.
+The exceptions will be funneled through the pipelines and raised to the end-user
+with useful traceback info.
+
 Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/).
 This article describes roughly version 0.7.2.
 '''
@@ -114,7 +119,9 @@ NOMOREDATA = b'c7160a52-f8ed-40e4-8a38-ec6b84c2cd87'
 class _RemoteException_:
     '''
     This is a helper class to preserve the traceback info of an Exception object
-    during pickling/unpickling.
+    during pickling/unpickling. A useful Exception object of the original type
+    will be re-constructed and raised in the "API function", i.e. the touchpoint
+    with the end-user, such as `Server.call` and `Server.async_call`.
     '''
     def __init__(self, exc: BaseException):
         tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -124,7 +131,16 @@ class _RemoteException_:
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
-    # Check out os.read, os.write, os.close with file-descriptor args.
+    '''
+    This class reduces some overhead in a particular use-case in this module,
+    where one consumer of the queue greedily grabs elements out of the queue
+    towards a batch-size limit.
+
+    It is not "fast" in the general sense, hence the class may not be useful
+    outside of this module.
+
+    Check out os.read, os.write, os.close with file-descriptor args.
+    '''
     def __init__(self, *, ctx=None):
         if ctx is None:
             ctx = multiprocessing.get_context('spawn')
@@ -134,6 +150,9 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
 
 class SimpleQueue(queue.SimpleQueue):
+    '''
+    Analogous to `FastQueue`.
+    '''
     def __init__(self):
         super().__init__()
         self._rlock = threading.RLock()
@@ -152,7 +171,8 @@ class Worker(metaclass=ABCMeta):
         # For a `ThreadWorker`, `q_in` and `q_out` are either `FastQueue` or `SimpleQueue`.
         obj = cls(**init_kwargs)
         q_out.put(obj.name)
-        # This sends a signal to caller indicating completion of init.
+        # This sends a signal to the caller (or "coordinator")
+        # indicating completion of init.
         obj.start(q_in=q_in, q_out=q_out)
 
     def __init__(self, *,
@@ -215,40 +235,42 @@ class Worker(metaclass=ABCMeta):
 
     @abstractmethod
     def call(self, x):
-        # If `self.batch_size == 0`, then `x` is a single
-        # element, and this method returns result for `x`.
-        #
-        # If `self.batch_size > 0` (including 1), then
-        # `x` is a list of input data elements, and this
-        # method returns a list of results corresponding
-        # to the elements in `x`.
-        # However, the service (see near the end of `_start_batch`)
-        # will split the resultant list
-        # into single results for individual elements of `x`.
-        # This is *vectorized* computation, or *batching*,
-        # handled by this service pipeline.
-        #
-        # When batching is enabled, the number of
-        # elements in `x` varies between calls depending on the supply
-        # of data. The list `x` does not have a fixed length.
-        #
-        # Be sure to distinguish this from the case where a single
-        # input is naturally a list. In that case, the output of
-        # the current method is the result corresponding to
-        # the single input `x`. The result could be anything---it
-        # may or may not be a list.
-        #
-        # If a subclass fixes `batch_size` in its `__init__` to be
-        # 0 or nonzero, make sure the current method is implemented
-        # accordingly. If `__init__` has no requirement on the value
-        # of `batch_size`, then the current method needs to check
-        # `self.batch_size` and act accordingly, because it is up to
-        # the uer in `Servlet` to specify a zero or nonzero `batch_size`
-        # for this worker.
-        #
-        # In case of exceptions, unless the user has specific things to do,
-        # do not handle them; just let them happen. They will be handled
-        # in `_start_batch` and `_start_single`.
+        '''
+        If `self.batch_size == 0`, then `x` is a single
+        element, and this method returns result for `x`.
+
+        If `self.batch_size > 0` (including 1), then
+        `x` is a list of input data elements, and this
+        method returns a list of results corresponding
+        to the elements in `x`.
+        However, the service (see near the end of `_start_batch`)
+        will split the resultant list
+        into single results for individual elements of `x`.
+        This is *vectorized* computation, or *batching*,
+        handled by this service pipeline.
+
+        When batching is enabled, the number of
+        elements in `x` varies between calls depending on the supply
+        of data. The list `x` does not have a fixed length.
+
+        Be sure to distinguish this from the case where a single
+        input is naturally a list. In that case, the output of
+        the current method is the result corresponding to
+        the single input `x`. The result could be anything---it
+        may or may not be a list.
+
+        If a subclass fixes `batch_size` in its `__init__` to be
+        0 or nonzero, make sure the current method is implemented
+        accordingly. If `__init__` has no requirement on the value
+        of `batch_size`, then the current method needs to check
+        `self.batch_size` and act accordingly, because it is up to
+        the uer in `Servlet` to specify a zero or nonzero `batch_size`
+        for this worker.
+
+        In case of exceptions, unless the user has specific things to do,
+        do not handle them; just let them happen. They will be handled
+        in `_start_batch` and `_start_single`.
+        '''
         raise NotImplementedError
 
     def start(self, *, q_in, q_out):
@@ -607,8 +629,7 @@ class ThreadServlet:
 class Sequential:
     '''
     A sequence of operations performed in order,
-    the previous op's output becoming the subsequent
-    op's input.
+    one op's output becoming the next op's input.
     '''
     def __init__(self, *servlets: Servlet):
         assert len(servlets) > 0
@@ -650,9 +671,9 @@ class Sequential:
 
 class Ensemble:
     '''
-    A number of operations performed on the same input
-    in parallel, the list of results are gathered and combined
-    to form a final result.
+    A number of operations are performed on the same input in parallel;
+    the list of results, corresponding to the order of the operators,
+    is returned as the result.
     '''
     def __init__(self, *servlets: Servlet):
         assert len(servlets) > 1
@@ -859,11 +880,6 @@ class Server:
 
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?
-
-    @classmethod
-    def get_mpcontext(cls):
-        # TODO: remove
-        return cls.get_mp_context()
 
     async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
         # When this is called, it's usually backing a (http or other) service.
@@ -1086,6 +1102,8 @@ class Server:
                 fut = futures.pop(uid)
                 try:
                     if isinstance(y, BaseException):
+                        # Unexpected situation; to be investigated.
+                        logger.warning("A non-remote exception has occurred, likely a bug: %r", y)
                         fut.set_exception(y)
                     elif isinstance(y, _RemoteException_):
                         fut.set_exception(rebuild_exception(y.exc, y.tb))
