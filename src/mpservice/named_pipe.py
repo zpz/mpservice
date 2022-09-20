@@ -1,5 +1,4 @@
-'''
-This module provides tools to use a "named pipe" to communicate between
+'''This module provides tools to use a "named pipe" to communicate between
 two Python processes on the same machine.
 
 Usually the two Python processes are two separately started programs.
