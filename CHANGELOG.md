@@ -9,7 +9,7 @@
   context that uses `SpawnProcess` instead of `Process`.
 - Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
 - `Streamer.transform` gets new parameter `executor` to support multiprocessing for CPU-bound operators.
-- New module `mpservice.managers` (experimental; intention is to eventually replace `server_process`).
+- The module `mpservice.server_process` is re-written.
 
 
 ## Release 0.11.4

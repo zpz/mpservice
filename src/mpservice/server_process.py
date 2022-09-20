@@ -1,97 +1,106 @@
 '''`ServerProcess` provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
-User should subclass this class to implement the functionalities they need.
-
-Usage:
-
-  (1) Define a subclass,
-
-      class MyServerProcess(ServerProcess):
-          def do_x(self, x):
-              ...
-              y = ...
-              return y
-
-    The subclass can define `__init__` and helper methods as needed,
-    plus public methods as service APIs.
-
-  (2) in main process,
-
-      obj = MyServerProcess.start(...)
-
-  (3) pass `obj` to other processes
-
-  (4) in other processes, cal public methods of `obj`, e.g.
-
-      y = obj.do_x(123)
-
-`obj` is NOT an instance of the class `MyServerProcess`.
-It's a "proxy" object, which is like a reference to a
-`MyServerProcess` object in the "server process".
-All public methods (i.e. named without a leading '_')
-of `MyServerProcess` can be used on this proxy object from other processes.
-Input and output should all be picklable objects, since this cross-process
-communiation.
-
-When the proxy of one server object is passed to multiple processes,
-the calls to its public methods (even the same method) from different processes
-are concurrent. This will show benefit if the method is I/O bound.
-I guess we can think of the method call in the server process as if it is
-happening in separate threads.
-
-When all references to this proxy object have
-been garbage-collected, the server process is shut down.
-Usually user doesn't need to worry about it.
-In order to proactively shut down the server process,
-delete (all references to) the proxy object.
-
-`ServerProcess.start()` can be used multiple times
-to create multiple server objects, which reside in diff
-processes and are independent of each other.
-
-Example use cases:
-
-  (1) Worker processes need to call an external service with
-      certain categorical input, i.e. some return values are
-      repeated. Use a server process to call the external
-      service and do some caching of the results; worker
-      processes call this server process.
-
-  (2) Worker processes all need to load a large dataset
-      into memory for some look up. Instead of have a copy
-      of this large dataset in each worker process, load
-      a single copy in a server process, which provides
-      lookup service for the worker processes.
+This module corresponds to the standard `multiprocessing.managers` module
+with simplified APIs for targeted use cases.
 '''
+import multiprocessing.managers
+from typing import Type
 
-from multiprocessing.managers import BaseManager
 from .util import MP_SPAWN_CTX
 
 
-class _MyManager(BaseManager):
-    pass
+# Overhead of Thread:
+# sequentially creating/running/joining
+# threads with a trivial worker function:
+#   20000 took 1 sec.
 
 
-class ServerProcess:
-    # In one application, there should not be two subclasses
-    # of `ServerProcess` with the same name,
-    # because subclass registration is by the class name.
+class Manager(multiprocessing.managers.SyncManager):
+    '''
+    Usage:
+
+        1. Register one or more classes with the Manager class:
+
+                class Doubler:
+                    def __init__(self, ...):
+                        ...
+
+                    def double(self, x):
+                        return x * 2
+
+                class Tripler:
+                    def __init__(self, ...):
+                        ...
+
+                    def triple(self, x):
+                        return x * 3
+
+                Manager.register(Doubler)
+                Manager.register(Tripler)
+
+        2. Create a manager object and start it:
+
+                manager = Manager()
+                manager.start()
+
+        3. Create one or more proxies:
+
+                doubler = manager.Doubler(...)
+                tripler = manager.Tripler(...)
+
+           A manager object has a "server process".
+           The above causes corresponding class objects to be created
+           in the server process; the returned objects are "proxies"
+           for the real objects. These proxies can be passed to any other
+           processes and used there.
+
+           The arguments in the above calls are passed to the server process
+           and used in the `__init__` methods of the corresponding classes.
+           For this reason, the parameters to `__init__` of a registered class
+           must all be pickle-able.
+
+           Calling one registered class multiple times, like
+
+                prox1 = manager.Doubler(...)
+                prox2 = manager.Doubler(...)
+
+           will create independent objects in the server process.
+
+           Multiple manager objects will run their corresponding
+           server processes independently.
+
+        4. Pass the proxy objects to any process and use them there.
+
+           Public methods defined by the registered classes can be
+           invoked on a proxy with the same parameters and get the expected
+           result. For example
+
+                prox1.double(3)
+
+           will return 6. Inputs and output of the public method
+           should all be pickle-able.
+
+        In a new thread or process, a proxy object will create a new
+        connection to the server process (see `multiprocessing.managers.Server.accepter`,
+        ..., `Server.accept_connection`); the server process creates a new thread
+        to handle requests from this connection (see `Server.serve_client`).
+    '''
+    def __init__(self):
+        super().__init__(ctx=MP_SPAWN_CTX)
+
+        # `self._ctx` is `MP_SPAWN_CTX`
 
     @classmethod
-    def start(cls, *args, **kwargs):
+    def register(cls, server_cls: Type, /):
         '''
-        `args` and `kwargs` are passed on to the `__init__`
-        method of this class (implemented by a subclass as needed).
-        The method `__init__` is executed in the process that hosts
-        the real server object.
+        `server_cls` is a class object. Suppose this is actually the class `MyClass`,
+        then on a started object `manager` of `Manager`,
+
+            prox = manager.MyClass(...)
+
+        will create an object of `MyClass` in the server process and return a proxy.
+
+        This method should be called before a manager object is "started".
         '''
-        if cls.__name__ not in _MyManager._registry:
-            _MyManager.register(
-                cls.__name__,
-                cls,
-            )
-        manager = _MyManager(ctx=MP_SPAWN_CTX)
-        manager.start()  # pylint: disable=consider-using-with
-        obj = getattr(manager, cls.__name__)(*args, **kwargs)
-        return obj
+        super().register(server_cls.__name__, server_cls)
