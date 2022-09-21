@@ -608,7 +608,7 @@ class SocketClient(EnforceOverrides):
         '''
         fut = self._enqueue(path, data, timeout=enqueue_timeout)
         if response_timeout is not None and response_timeout <= 0:
-            return
+            return None
         return fut.result(timeout=response_timeout)
 
     def stream(self, path: str, data: Iterable, *,
