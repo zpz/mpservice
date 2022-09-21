@@ -1,6 +1,6 @@
 import concurrent.futures
 import os
-from mpservice.named_pipe import Server, Client
+from mpservice.pipe import Server, Client
 
 
 def _server(path):
@@ -25,9 +25,9 @@ def test_basic():
         os.unlink(path)
     except FileNotFoundError:
         pass
-    executor = concurrent.futures.ProcessPoolExecutor()
-    p1 = executor.submit(_client, path)
-    p2 = executor.submit(_server, path)
-    assert p1.result() == 'client done'
-    assert p2.result() == 'server done'
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        p1 = executor.submit(_client, path)
+        p2 = executor.submit(_server, path)
+        assert p1.result() == 'client done'
+        assert p2.result() == 'server done'
 

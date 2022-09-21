@@ -69,7 +69,7 @@ async def test_sequential_server_async():
     with Server(Sequential(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
-            )) as service:
+            ), sys_info_log_cadence=None) as service:
         z = await service.async_call(3)
         assert z == 3 * 2 + 3
 
@@ -83,7 +83,7 @@ def test_sequential_server():
     with Server(Sequential(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
-            )) as service:
+            ), sys_info_log_cadence=None) as service:
         z = service.call(3)
         assert z == 3 * 2 + 3
 
@@ -93,7 +93,8 @@ def test_sequential_server():
 
 
 def test_sequential_batch():
-    with Server(ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)) as service:
+    with Server(ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4),
+            sys_info_log_cadence=None) as service:
         z = service.call(3)
         assert z == 3 + 4
 
@@ -105,7 +106,7 @@ def test_sequential_batch():
 def test_sequential_error():
     s1 = ProcessServlet(Double, cpus=[1, 2])
     s2 = ProcessServlet(Shift, cpus=[3], stepsize=4)
-    with Server(Sequential(s1, s2)) as service:
+    with Server(Sequential(s1, s2), sys_info_log_cadence=None) as service:
         z = service.call(3)
         assert z == 3 * 2 + 4
 
@@ -115,19 +116,20 @@ def test_sequential_error():
 
 @pytest.mark.asyncio
 async def test_sequential_timeout_async():
-    with Server(ProcessServlet(Delay)) as service:
+    with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
             z = await service.async_call(2.2, timeout=1)
 
 
 def test_sequential_timeout():
-    with Server(ProcessServlet(Delay)) as service:
+    with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
             z = service.call(2.2, timeout=1)
 
 
 def test_sequential_stream():
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3]),
+            sys_info_log_cadence=None) as service:
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [v*v for v in data]
@@ -163,7 +165,7 @@ my_wide_server = Sequential(
 
 @pytest.mark.asyncio
 async def test_ensemble_server_async():
-    with Server(my_wide_server) as service:
+    with Server(my_wide_server, sys_info_log_cadence=None) as service:
         z = await service.async_call('abcde')
         assert z == 'aeaeaeaeae'
 
@@ -174,7 +176,7 @@ async def test_ensemble_server_async():
 
 
 def test_ensemble_server():
-    with Server(my_wide_server) as service:
+    with Server(my_wide_server, sys_info_log_cadence=None) as service:
         z = service.call('abcde')
         assert z == 'aeaeaeaeae'
 
@@ -205,13 +207,13 @@ your_wide_server = Sequential(
 
 @pytest.mark.asyncio
 async def test_ensemble_timeout_async():
-    with Server(your_wide_server) as service:
+    with Server(your_wide_server, sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
             z = await service.async_call(8.2, timeout=1)
 
 
 def test_ensemble_timeout():
-    with Server(your_wide_server) as service:
+    with Server(your_wide_server, sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
             z = service.call(8.2, timeout=1)
 
@@ -227,7 +229,7 @@ his_wide_server = Sequential(
 
 
 def test_ensemble_stream():
-    with Server(his_wide_server) as service:
+    with Server(his_wide_server, sys_info_log_cadence=None) as service:
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
@@ -259,7 +261,7 @@ def test_thread():
     s2 = ThreadServlet(AddFive)
     s3 = ThreadServlet(TakeMean)
     s = Sequential(Ensemble(s1, s2), s3)
-    with Server(s) as service:
+    with Server(s, sys_info_log_cadence=None) as service:
         assert service.call(3) == 6
         for x, y in service.stream(range(100), return_x=True):
             assert y == x + 3

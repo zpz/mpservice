@@ -13,7 +13,7 @@ from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
 from overrides import EnforceOverrides
 
 from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
-from .util import RemoteException, exit_err_msg
+from .util import RemoteException
 from ._queues import SingleLane
 
 logger = logging.getLogger(__name__)
@@ -343,12 +343,12 @@ class SocketServer(EnforceOverrides):
                     self.to_shutdown = True
                     t.set_result(None)
                     break
-                else:
-                    f = self.app.handle_request(path, data)
-                    t = asyncio.create_task(f)
-                    await reqs.put((req_id, t))
-                    # The queue size will restrict how many concurrent calls
-                    # to `handle_request` can be in progress.
+
+                f = self.app.handle_request(path, data)
+                t = asyncio.create_task(f)
+                await reqs.put((req_id, t))
+                # The queue size will restrict how many concurrent calls
+                # to `handle_request` can be in progress.
 
         # `write_record` needs to be called sequentially because it's not atomic;
         # that's why we don't use `add_done_callback` on the Futures to do
@@ -475,11 +475,12 @@ class SocketClient(EnforceOverrides):
         logger.info('client %s is ready', self)
         return self
 
-    def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
-        msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
-        if msg:
-            logger.error(msg)
+    # def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
+        # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
+        # if msg:
+        #     logger.error(msg)
 
+    def __exit__(self, *args, **kwargs):
         self._prepare_shutdown.set()
         t0 = perf_counter()
         while not self._pending_requests.empty():

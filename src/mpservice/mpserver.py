@@ -101,7 +101,7 @@ from overrides import final
 
 from .util import (
     MP_SPAWN_CTX, SpawnProcess, Thread,
-    exit_err_msg, rebuild_exception, TimeoutError,
+    rebuild_exception, TimeoutError,
 )
 from ._queues import SingleLane
 
@@ -479,7 +479,6 @@ class ThreadWorker(Worker):
     Another use-case of this class is to perform some very simple and quick
     pre-processing or post-processing.
     '''
-    pass
 
 
 def make_threadworker(func: Callable[[Any], Any]):
@@ -569,9 +568,9 @@ class ProcessServlet:
             ))
             self._workers[-1].start()
             name = q_out.get()
-            logger.debug(f"   ... worker <{name}> is ready")
+            logger.debug("   ... worker <%s> is ready", name)
 
-        logger.info(f"servlet {self._name} is ready")
+        logger.info("servlet %s is ready", self._name)
         self._started = True
 
     def stop(self):
@@ -613,9 +612,9 @@ class ThreadServlet:
             w.start()
             self._workers.append(w)
             name = q_out.get()
-            logger.debug(f"   ... worker <{name}> is ready")
+            logger.debug("   ... worker <%s> is ready", name)
 
-        logger.info(f"servlet {self._name} is ready")
+        logger.info("servlet %s is ready", self._name)
         self._started = True
 
     def stop(self):
@@ -853,11 +852,12 @@ class Server:
         self._started = True
         return self
 
-    def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
+    # def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
+    def __exit__(self, *args, **kwargs):
         assert self._started
-        msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
-        if msg:
-            logger.error(msg)
+        # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
+        # if msg:
+        #     logger.error(msg)
 
         self._input_buffer.put(NOMOREDATA)
 
@@ -1046,9 +1046,9 @@ class Server:
         try:
             return fut.result(timeout=max(0, t2 - perf_counter()))
             # this may raise an exception originating from _RemoteException_
-        except concurrent.futures.TimeoutError:
+        except concurrent.futures.TimeoutError as e:
             fut.cancel()
-            raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
+            raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total") from e
 
     def _onboard_input(self):
         qin = self._input_buffer
@@ -1073,9 +1073,9 @@ class Server:
                 pp = [(w.name, psutil.Process(w.pid))
                       for w in self._servlet._workers
                       if not isinstance(w, Thread)]
-                msg = [f"  time from           {ts0}",
-                       f"  time to             {datetime.utcnow()}",
-                       f"  items served        {logcounter:_}",
+                msg = [f"  time from             {ts0}",
+                       f"  time to               {datetime.utcnow()}",
+                       f"  items served          {logcounter:_}",
                        ]
                 attrs = ['memory_full_info',
                          'cpu_affinity', 'cpu_percent', 'cpu_times',
