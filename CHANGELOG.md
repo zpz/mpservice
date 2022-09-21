@@ -10,6 +10,7 @@
 - Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
 - `Streamer.transform` gets new parameter `executor` to support multiprocessing for CPU-bound operators.
 - The module `mpservice.server_process` is re-written.
+- The module `named_pipe` is renamed `pipe`.
 
 
 ## Release 0.11.4

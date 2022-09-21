@@ -4,10 +4,14 @@ to be called from other processes for shared data or functionalities.
 This module corresponds to the standard `multiprocessing.managers` module
 with simplified APIs for targeted use cases.
 '''
+import logging
 import multiprocessing.managers
-from typing import Type
+from typing import Callable, Union
 
 from .util import MP_SPAWN_CTX
+
+
+logger = logging.getLogger(__name__)
 
 
 # Overhead of Thread:
@@ -44,6 +48,11 @@ class Manager(multiprocessing.managers.SyncManager):
                 manager = Manager()
                 manager.start()
 
+           You can also use a context manager:
+
+                with Manager() as manager:
+                    ...
+
         3. Create one or more proxies:
 
                 doubler = manager.Doubler(...)
@@ -72,8 +81,8 @@ class Manager(multiprocessing.managers.SyncManager):
 
         4. Pass the proxy objects to any process and use them there.
 
-           Public methods defined by the registered classes can be
-           invoked on a proxy with the same parameters and get the expected
+           Public methods (minus "properties") defined by the registered classes
+           can be invoked on a proxy with the same parameters and get the expected
            result. For example
 
                 prox1.double(3)
@@ -81,10 +90,11 @@ class Manager(multiprocessing.managers.SyncManager):
            will return 6. Inputs and output of the public method
            should all be pickle-able.
 
-        In a new thread or process, a proxy object will create a new
-        connection to the server process (see `multiprocessing.managers.Server.accepter`,
-        ..., `Server.accept_connection`); the server process creates a new thread
-        to handle requests from this connection (see `Server.serve_client`).
+    In each new thread or process, a proxy object will create a new
+    connection to the server process (see `multiprocessing.managers.Server.accepter`,
+    ..., `Server.accept_connection`, and `BaseProxy._connect`);
+    the server process then creates a new thread
+    to handle requests from this connection (see `Server.serve_client`).
     '''
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
@@ -92,9 +102,9 @@ class Manager(multiprocessing.managers.SyncManager):
         # `self._ctx` is `MP_SPAWN_CTX`
 
     @classmethod
-    def register(cls, server_cls: Type, /):
+    def register(cls, typeid_or_callable: Union[str, Callable], /, **kwargs):
         '''
-        `server_cls` is a class object. Suppose this is actually the class `MyClass`,
+        `typeid_or_callable` is a usually class object. Suppose this is actually the class `MyClass`,
         then on a started object `manager` of `Manager`,
 
             prox = manager.MyClass(...)
@@ -103,4 +113,18 @@ class Manager(multiprocessing.managers.SyncManager):
 
         This method should be called before a manager object is "started".
         '''
-        super().register(server_cls.__name__, server_cls)
+        if isinstance(typeid_or_callable, str):
+            # This form allows the full API of the base class.
+            # I have not encountered a need for this.
+            # This is allowed just in case for experiments and expansions.
+            # You almost always should use the other form.
+            typeid = typeid_or_callable
+            callable_ = kwargs.pop('callable', None)
+        else:
+            assert callable(typeid_or_callable)
+            # Usually, `typeid_or_callable` is a class object and the sole argument.
+            typeid = typeid_or_callable.__name__
+            callable_ = typeid_or_callable
+        if typeid in cls._registry:
+            logger.warning('"%s" was registered; the existing registry is overwritten.', typeid)
+        super().register(typeid, callable_, **kwargs)

@@ -88,5 +88,5 @@ class SingleLane:
         if len(self._queue):
             # This is not necessarily an error, but user should understand
             # whether this is expected behavior in their particular application.
-            logger.warning(f"{self!r} closed with {self.qsize()} data items un-consumed and abandoned")
+            logger.warning("%r closed with %d data items un-consumed and abandoned", self, self.qsize())
         self._closed = True

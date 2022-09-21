@@ -19,7 +19,7 @@ while doing heavy-lifting in other processes, acts as an I/O bound operator in t
 Indeed, `mpservice.mpserver.Server` provides method `stream` for using the server to process data streams.
 
 A `Server` object could be used either in "embedded" mode or to back a service.
-Utilities are provided in `mpservice.http`, `mpservice.socket`, and `mpservice.named_pipe`
+Utilities are provided in `mpservice.http`, `mpservice.socket`, and `mpservice.pipe`
 for the latter use case.
 
 The package also contains some other related utilities.

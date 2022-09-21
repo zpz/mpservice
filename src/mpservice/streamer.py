@@ -195,6 +195,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import queue
 import random
 import threading
 import traceback
@@ -206,7 +207,7 @@ from typing import (
 
 from overrides import EnforceOverrides, overrides, final
 
-from .util import is_remote_exception, get_remote_traceback, exit_err_msg
+from .util import is_remote_exception, get_remote_traceback
 from .util import is_exception, Thread, MP_SPAWN_CTX
 from ._queues import SingleLane
 
@@ -241,12 +242,17 @@ class Streamer(EnforceOverrides):
         self._started = True
         return self
 
-    def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
+    # def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
+    #     for s in self.streamlets:
+    #         s._stop()
+    #     msg = exit_err_msg(self, exc_type, exc_value, exc_tb)
+    #     if msg:
+    #         logger.error(msg)
+    #     self._stopped = True
+
+    def __exit__(self, *args, **kwargs):
         for s in self.streamlets:
             s._stop()
-        msg = exit_err_msg(self, exc_type, exc_value, exc_tb)
-        if msg:
-            logger.error(msg)
         self._stopped = True
 
     @final
@@ -627,7 +633,7 @@ class Header(Stream):
             raise StopIteration
         if self.index >= self.n:
             raise StopIteration
-        return self._instream.__next__()
+        return next(self._instream)
 
 
 class Peeker(Stream):
@@ -650,7 +656,7 @@ class Buffer(Stream):
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._q = SingleLane(maxsize)
-        self._t = Thread(target=self._start)
+        self._t = Thread(target=self._start, loud_exception=False)
         self._t.start()
         # This requires that `instream` is already context managed.
 
@@ -681,7 +687,16 @@ class Buffer(Stream):
     def _get_next(self):
         if self._stopped:
             raise StopIteration
-        z = self._q.get()
+        while True:
+            try:
+                z = self._q.get(timeout=1)
+                break
+            except queue.Empty as e:
+                if self._t.is_alive():
+                    continue
+                if self._stopped:
+                    raise StopIteration
+                raise RuntimeError('unknown situation occurred') from e
         if z == FINISHED:
             self._stop()
             raise StopIteration
@@ -716,7 +731,7 @@ class Transformer(Stream):
             assert executor == 'process'
             self._executor = concurrent.futures.ProcessPoolExecutor(concurrency, mp_context=MP_SPAWN_CTX)
         self._tasks = SingleLane(concurrency * 2)
-        self._t = Thread(target=self._start, args=(func,), kwargs=func_args)
+        self._t = Thread(target=self._start, args=(func,), kwargs=func_args, loud_exception=False)
         self._t.start()
 
     def _start(self, func, **kwargs):
@@ -762,15 +777,13 @@ class Transformer(Stream):
             y = fut.result()
             if self._return_x:
                 return x, y
-            else:
-                return y
+            return y
         except Exception as e:
             if self._return_exceptions:
                 # TODO: think about when `e` is a "remote exception".
                 if self._return_x:
                     return x, e
-                else:
-                    return e
+                return e
             else:
                 self._stop()
                 raise

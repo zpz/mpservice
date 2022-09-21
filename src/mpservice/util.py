@@ -24,8 +24,8 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # For others, user may want to specify a smaller value.
 
 
-class TimeoutError(RuntimeError):
-    pass
+TimeoutError = TimeoutError  # make local alias for the standard exception
+# `concurrent.futures._base` does this; I don't quite know the point.
 
 
 class _SpawnContext:
@@ -100,18 +100,18 @@ def full_class_name(cls):
     return mod + '.' + cls.__name__
 
 
-def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
-    if exc_type is None:
-        return
-    if is_remote_exception(exc_value):
-        msg = "Exiting {} with exception: {}\n{}".format(
-            obj.__class__.__name__, exc_type, exc_value,
-        )
-        msg = "{}\n\n{}\n\n{}".format(
-            msg, get_remote_traceback(exc_value),
-            "The above exception was the direct cause of the following exception:")
-        msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
-        return msg
+# def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
+#     if exc_type is None:
+#         return None
+#     if is_remote_exception(exc_value):
+#         msg = "Exiting {} with exception: {}\n{}".format(
+#             obj.__class__.__name__, exc_type, exc_value,
+#         )
+#         msg = "{}\n\n{}\n\n{}".format(
+#             msg, get_remote_traceback(exc_value),
+#             "The above exception was the direct cause of the following exception:")
+#         msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
+#         return msg
 
 
 def is_remote_exception(e) -> bool:
@@ -225,10 +225,15 @@ class Thread(threading.Thread):
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
     '''
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, loud_exception: bool = True, **kwargs):
+        '''
+        `loud_exception`: if True, it's the standard Thread behavior;
+            if False, it's the `concurrent.futures` behavior.
+        '''
         super().__init__(*args, **kwargs)
         self._result_ = None
         self._exception_ = None
+        self._loud_exception_ = loud_exception
 
     def run(self):
         try:
@@ -236,7 +241,8 @@ class Thread(threading.Thread):
                 self._result_ = self._target(*self._args, **self._kwargs)
         except BaseException as e:
             self._exception_ = e
-            raise
+            if self._loud_exception_:
+                raise
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -271,7 +277,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
           process object, similar to `concurrent.futures.Future`.
         - make logs in the subprocess handled in the main process.
     '''
-    def __init__(self, *args, kwargs=None, **moreargs):
+    def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
+        '''
+        `loud_exception`: if True, it's the standard Process behavior;
+            if False, it's the `concurrent.futures` behavior.
+        '''
         if kwargs is None:
             kwargs = {}
         else:
@@ -285,6 +295,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         worker_logger = ProcessLogger()
         worker_logger.start()
         kwargs['__worker_logger__'] = worker_logger
+
+        assert '__loud_exception__' not in kwargs
+        kwargs['__loud_exception__'] = loud_exception
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
@@ -301,13 +314,15 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         result_and_error = self._kwargs.pop('__result_and_error__')
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
+        loud_exception = self._kwargs.pop('__loud_exception__')
         if self._target:
             try:
                 z = self._target(*self._args, **self._kwargs)
             except BaseException as e:
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
-                raise
+                if loud_exception:
+                    raise
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
@@ -402,6 +417,13 @@ class ProcessLogger:
         # In another process.
         self._q = state
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.stop()
+
     def start(self):
         if hasattr(self, '_t'):
             self._start_in_main_process()
@@ -409,7 +431,7 @@ class ProcessLogger:
             self._start_in_other_process()
         return self
 
-    def stop(self, *args):
+    def stop(self):
         if hasattr(self, '_t'):
             self._stop_in_main_process()
         else:
@@ -473,5 +495,7 @@ class ProcessLogger:
         root.addHandler(self._qh)
 
     def _stop_in_other_process(self):
-        logging.getLogger().removeHandler(self._qh)
-        self._q.close()
+        if self._q is not None:
+            logging.getLogger().removeHandler(self._qh)
+            self._q.close()
+            self._q = None
