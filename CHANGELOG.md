@@ -1,6 +1,6 @@
 # Changelog
 
-## Release 0.11.5 (upcoming)
+## Release 0.11.5
 
 - `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
 - Enhancements to `SpawnProcess`.
