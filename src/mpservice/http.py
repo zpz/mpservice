@@ -21,18 +21,18 @@ logger = logging.getLogger(__name__)
 
 # Adapted from `uvicorn.main.run`.
 def make_server(
-        app: Union[str, ASGIApplication],
-        *,
-        host='0.0.0.0',
-        port: int = 8000,
-        log_level: str = None,
-        debug: bool = None,
-        access_log: bool = None,
-        loop='auto',
-        backlog: int = 32,
-        **kwargs,
+    app: Union[str, ASGIApplication],
+    *,
+    host="0.0.0.0",
+    port: int = 8000,
+    log_level: str = None,
+    debug: bool = None,
+    access_log: bool = None,
+    loop="auto",
+    backlog: int = 32,
+    **kwargs,
 ):
-    '''
+    """
     This function is specifically for use with `mpservice.mpserver`.
     The argument `workers` is fixed to 1.
 
@@ -55,13 +55,13 @@ def make_server(
     `backlog`: this is passed to asyncio `loop.create_server` (in `asyncio.base_events`,
     where default is 100), and in-turn to `socket.listen`. Don't make this large
     unless you know what you're doing.
-    '''
+    """
     if log_level is None:
         log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()
-    assert log_level in ('debug', 'info', 'warning', 'error')
+    assert log_level in ("debug", "info", "warning", "error")
 
     if debug is None:
-        debug = log_level == 'debug'
+        debug = log_level == "debug"
     else:
         debug = bool(debug)
 
@@ -81,7 +81,8 @@ def make_server(
         workers=1,
         backlog=backlog,
         reload=debug and isinstance(app, str),
-        **kwargs)
+        **kwargs,
+    )
 
     server = uvicorn.Server(config=config)
 

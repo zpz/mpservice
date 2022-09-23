@@ -43,11 +43,11 @@ class _SpawnContext:
     # To achieve the goal in a controlled way, we designed this class.
 
     def __init__(self):
-        self._ctx = multiprocessing.get_context('spawn')
+        self._ctx = multiprocessing.get_context("spawn")
 
     def __getattr__(self, name):
 
-        if name == 'Process':
+        if name == "Process":
             return SpawnProcess
         return getattr(self._ctx, name)
 
@@ -58,10 +58,10 @@ MP_SPAWN_CTX = _SpawnContext()
 
 
 def get_docker_host_ip():
-    '''
+    """
     From within a Docker container, this function finds the IP address
     of the host machine.
-    '''
+    """
     # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
     # another idea:
     # ip -4 route list match 0/0 | cut -d' ' -f3
@@ -70,9 +70,9 @@ def get_docker_host_ip():
     #
     # The command `ip` is provided by the Linux package `iproute2`.
 
-    z = subprocess.check_output(['ip', '-4', 'route', 'list', 'match', '0/0'])
-    z = z.decode()[len('default via '):]
-    return z[: z.find(' ')]
+    z = subprocess.check_output(["ip", "-4", "route", "list", "match", "0/0"])
+    z = z.decode()[len("default via ") :]
+    return z[: z.find(" ")]
 
 
 def is_exception(e):
@@ -86,7 +86,7 @@ def is_async(func):
         func = func.func
     return inspect.iscoroutinefunction(func) or (
         not inspect.isfunction(func)
-        and hasattr(func, '__call__')
+        and hasattr(func, "__call__")
         and inspect.iscoroutinefunction(func.__call__)
     )
 
@@ -95,9 +95,9 @@ def full_class_name(cls):
     if not isinstance(cls, type):
         cls = cls.__class__
     mod = cls.__module__
-    if mod is None or mod == 'builtins':
+    if mod is None or mod == "builtins":
         return cls.__name__
-    return mod + '.' + cls.__name__
+    return mod + "." + cls.__name__
 
 
 # def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
@@ -138,7 +138,7 @@ def rebuild_exception(exc: BaseException, tb: str):
 
 
 class RemoteException:
-    '''
+    """
     This class is a pickle helper for Exception objects to preserve some traceback info.
     This is needed because directly calling `pickle.dumps` on an Exception object will lose
     its `__traceback__` and `__cause__` attributes.
@@ -163,7 +163,7 @@ class RemoteException:
     Note that `RemoteException` does not subclass `BaseException`, so you can't "raise" this object.
 
     See also: `is_remote_exception`, `get_remote_traceback`.
-    '''
+    """
 
     # This takes the idea of `concurrent.futures.process._ExceptionWithTraceback`
     # with slightly tweaked traceback printout.
@@ -183,7 +183,7 @@ class RemoteException:
         if isinstance(tb, str):
             pass
         elif isinstance(tb, TracebackType):
-            tb = ''.join(traceback.format_exception(type(exc), exc, tb))
+            tb = "".join(traceback.format_exception(type(exc), exc, tb))
         else:
             assert tb is None
             if exc.__traceback__ is not None:
@@ -200,7 +200,9 @@ class RemoteException:
                 # (hence `is_remote_exception(e)` is True) and is raised again, and because
                 # we intend to pickle it again (e.g. paassing it to another process via a queue),
                 # hence we put it in `RemoteException`.
-                tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                tb = "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                )
             else:
                 # This use case is not in an "except" block. Somehow there's an
                 # exception object and we need to pickle it, so we put it in a
@@ -219,17 +221,18 @@ class RemoteException:
 
 
 class Thread(threading.Thread):
-    '''
+    """
     This class makes the result or exception produced in a thread
     accessible from the thread object itself. This makes the `Thread`
     object's behavior somewhat similar to the `Future` object returned
     by `concurrent.futures.ThreadPoolExecutor.submit`.
-    '''
+    """
+
     def __init__(self, *args, loud_exception: bool = True, **kwargs):
-        '''
+        """
         `loud_exception`: if True, it's the standard Thread behavior;
             if False, it's the `concurrent.futures` behavior.
-        '''
+        """
         super().__init__(*args, **kwargs)
         self._result_ = None
         self._exception_ = None
@@ -270,51 +273,52 @@ class Thread(threading.Thread):
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
-    '''
+    """
     This customization adds two things to the standard class:
 
         - make result and exception available as attributes of the
           process object, similar to `concurrent.futures.Future`.
         - make logs in the subprocess handled in the main process.
-    '''
+    """
+
     def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
-        '''
+        """
         `loud_exception`: if True, it's the standard Process behavior;
             if False, it's the `concurrent.futures` behavior.
-        '''
+        """
         if kwargs is None:
             kwargs = {}
         else:
             kwargs = dict(kwargs)
 
-        assert '__result_and_error__' not in kwargs
+        assert "__result_and_error__" not in kwargs
         reader, writer = multiprocessing.connection.Pipe(duplex=False)
-        kwargs['__result_and_error__'] = writer
+        kwargs["__result_and_error__"] = writer
 
-        assert '__worker_logger__' not in kwargs
+        assert "__worker_logger__" not in kwargs
         worker_logger = ProcessLogger()
         worker_logger.start()
-        kwargs['__worker_logger__'] = worker_logger
+        kwargs["__worker_logger__"] = worker_logger
 
-        assert '__loud_exception__' not in kwargs
-        kwargs['__loud_exception__'] = loud_exception
+        assert "__loud_exception__" not in kwargs
+        kwargs["__loud_exception__"] = loud_exception
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
-        assert not hasattr(self, '__result_and_error__')
+        assert not hasattr(self, "__result_and_error__")
         self.__result_and_error__ = reader
 
-        assert not hasattr(self, '__worker_logger__')
+        assert not hasattr(self, "__worker_logger__")
         self.__worker_logger__ = worker_logger
 
     def run(self):
         # This runs in a child process.
-        worker_logger = self._kwargs.pop('__worker_logger__')
+        worker_logger = self._kwargs.pop("__worker_logger__")
         worker_logger.start()
-        result_and_error = self._kwargs.pop('__result_and_error__')
+        result_and_error = self._kwargs.pop("__result_and_error__")
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
-        loud_exception = self._kwargs.pop('__loud_exception__')
+        loud_exception = self._kwargs.pop("__loud_exception__")
         if self._target:
             try:
                 z = self._target(*self._args, **self._kwargs)
@@ -337,14 +341,16 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.join(timeout)
         if not self.done():
             raise TimeoutError
-        if not hasattr(self, '__result__'):
+        if not hasattr(self, "__result__"):
             try:
                 self.__result__ = self.__result_and_error__.recv()
                 self.__error__ = self.__result_and_error__.recv()
             except EOFError as e:
                 exitcode = self.exitcode
                 if exitcode:
-                    raise e from ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+                    raise e from ChildProcessError(
+                        f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
+                    )
                 raise
         if self.__error__ is not None:
             raise self.__error__
@@ -354,14 +360,16 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.join(timeout)
         if not self.done():
             raise TimeoutError
-        if not hasattr(self, '__result__'):
+        if not hasattr(self, "__result__"):
             try:
                 self.__result__ = self.__result_and_error__.recv()
                 self.__error__ = self.__result_and_error__.recv()
             except EOFError as e:
                 exitcode = self.exitcode
                 if exitcode:
-                    raise e from ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+                    raise e from ChildProcessError(
+                        f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
+                    )
                 raise
         return self.__error__
 
@@ -369,12 +377,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 def Process(*args, ctx, **kwargs):
     # This is a "factory" function.
     method = ctx.get_start_method()
-    assert method == 'spawn', f"process start method '{method}' not implemented; the 'spwan' method is preferred"
+    assert (
+        method == "spawn"
+    ), f"process start method '{method}' not implemented; the 'spwan' method is preferred"
     return SpawnProcess(*args, **kwargs)
 
 
 class ProcessLogger:
-    '''
+    """
     Logging messages produced in worker processes are tricky.
     First, some settings should be concerned in the main process only,
     including log formatting, log-level control, log handler (destination), etc.
@@ -404,7 +414,8 @@ class ProcessLogger:
 
     Although user can use this class in their code, they are encouraged to
     use `SpawnProcess`, which already handles logging via this class.
-    '''
+    """
+
     def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
         self._ctx = ctx or MP_SPAWN_CTX
         self._t = None
@@ -425,14 +436,14 @@ class ProcessLogger:
         self.stop()
 
     def start(self):
-        if hasattr(self, '_t'):
+        if hasattr(self, "_t"):
             self._start_in_main_process()
         else:
             self._start_in_other_process()
         return self
 
     def stop(self):
-        if hasattr(self, '_t'):
+        if hasattr(self, "_t"):
             self._stop_in_main_process()
         else:
             self._stop_in_other_process()
@@ -443,12 +454,14 @@ class ProcessLogger:
 
         self._t = threading.Thread(
             target=ProcessLogger._logger_thread,
-            args=(self._q, ),
-            name='ProcessLoggerThread',
-            daemon=True)
+            args=(self._q,),
+            name="ProcessLoggerThread",
+            daemon=True,
+        )
         self._t.start()
         self._finalize = Finalize(
-            self, type(self)._finalize_logger_thread,
+            self,
+            type(self)._finalize_logger_thread,
             (self._t, self._q),
             exitpriority=10,
         )
@@ -480,7 +493,7 @@ class ProcessLogger:
             finalize()
 
     def _start_in_other_process(self):
-        '''
+        """
         In a Process (created using the "spawn" method),
         run this function at the beginning to set up putting all log messages
         ever produced in that process into the queue that will be consumed
@@ -488,7 +501,7 @@ class ProcessLogger:
 
         During the execution of the process, logging should not be configured.
         Logging config should happen in the main process/thread.
-        '''
+        """
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
         self._qh = logging.handlers.QueueHandler(self._q)

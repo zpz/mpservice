@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 class SingleLane:
-    '''
+    """
     This queue has a single reader and a single writer, possibly in different threads.
-    '''
+    """
+
     def __init__(self, maxsize=1_000_000):
-        '''
+        """
         `maxisze`: max number of elements in the queue. `0` means no limit.
-        '''
+        """
         assert 0 <= maxsize
         self.maxsize = maxsize
         self._queue = deque()
@@ -88,5 +89,9 @@ class SingleLane:
         if len(self._queue):
             # This is not necessarily an error, but user should understand
             # whether this is expected behavior in their particular application.
-            logger.warning("%r closed with %d data items un-consumed and abandoned", self, self.qsize())
+            logger.warning(
+                "%r closed with %d data items un-consumed and abandoned",
+                self,
+                self.qsize(),
+            )
         self._closed = True

@@ -1,4 +1,4 @@
-'''Service using multiprocessing to perform CPU-bound operations
+"""Service using multiprocessing to perform CPU-bound operations
 making use of multiple CPUs (i.e. cores) on the machine.
 
 There are 4 levels of constructs.
@@ -80,7 +80,7 @@ with useful traceback info.
 
 Reference: [Service Batching from Scratch, Again](https://zpz.github.io/blog/batched-service-redesign/).
 This article describes roughly version 0.7.2.
-'''
+"""
 from __future__ import annotations
 import asyncio
 import concurrent.futures
@@ -100,8 +100,11 @@ import psutil
 from overrides import final
 
 from .util import (
-    MP_SPAWN_CTX, SpawnProcess, Thread,
-    rebuild_exception, TimeoutError,
+    MP_SPAWN_CTX,
+    SpawnProcess,
+    Thread,
+    rebuild_exception,
+    TimeoutError,
 )
 from ._queues import SingleLane
 
@@ -113,25 +116,26 @@ multiprocessing.log_to_stderr(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-NOMOREDATA = b'c7160a52-f8ed-40e4-8a38-ec6b84c2cd87'
+NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 
 
 class _RemoteException_:
-    '''
+    """
     This is a helper class to preserve the traceback info of an Exception object
     during pickling/unpickling. A useful Exception object of the original type
     will be re-constructed and raised in the "API function", i.e. the touchpoint
     with the end-user, such as `Server.call` and `Server.async_call`.
-    '''
+    """
+
     def __init__(self, exc: BaseException):
-        tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         exc.__traceback__ = None
         self.exc = exc
         self.tb = tb
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
-    '''
+    """
     This class reduces some overhead in a particular use-case in this module,
     where one consumer of the queue greedily grabs elements out of the queue
     towards a batch-size limit.
@@ -140,19 +144,21 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
     outside of this module.
 
     Check out os.read, os.write, os.close with file-descriptor args.
-    '''
+    """
+
     def __init__(self, *, ctx=None):
         if ctx is None:
-            ctx = multiprocessing.get_context('spawn')
+            ctx = multiprocessing.get_context("spawn")
         super().__init__(ctx=ctx)
         # Replace Lock by RLock to facilitate batching via greedy `get_many`.
         self._rlock = ctx.RLock()
 
 
 class SimpleQueue(queue.SimpleQueue):
-    '''
+    """
     Analogous to `FastQueue`.
-    '''
+    """
+
     def __init__(self):
         super().__init__()
         self._rlock = threading.RLock()
@@ -163,10 +169,13 @@ class Worker(metaclass=ABCMeta):
     # `__init__` and implement `call`.
 
     @classmethod
-    def run(cls, *,
-            q_in: Union[FastQueue, SimpleQueue],
-            q_out: Union[FastQueue, SimpleQueue],
-            **init_kwargs):
+    def run(
+        cls,
+        *,
+        q_in: Union[FastQueue, SimpleQueue],
+        q_out: Union[FastQueue, SimpleQueue],
+        **init_kwargs,
+    ):
         # For a `ProcessWorker`, `q_in` and `q_out` should be `FastQueue`.
         # For a `ThreadWorker`, `q_in` and `q_out` are either `FastQueue` or `SimpleQueue`.
         obj = cls(**init_kwargs)
@@ -175,11 +184,14 @@ class Worker(metaclass=ABCMeta):
         # indicating completion of init.
         obj.start(q_in=q_in, q_out=q_out)
 
-    def __init__(self, *,
-                 batch_size: int = None,
-                 batch_wait_time: float = None,
-                 batch_size_log_cadence: int = 1_000_000):
-        '''
+    def __init__(
+        self,
+        *,
+        batch_size: int = None,
+        batch_wait_time: float = None,
+        batch_size_log_cadence: int = 1_000_000,
+    ):
+        """
         `batch_size`: max batch size; see `call`.
 
         `batch_wait_time`: seconds, may be 0; the total duration
@@ -210,7 +222,7 @@ class Worker(metaclass=ABCMeta):
 
         The `__init__` of a subclass may define additional input parameters;
         they can be passed in through `run`.
-        '''
+        """
         if batch_size is None or batch_size == 0:
             batch_size = 0
             if batch_wait_time is None:
@@ -235,7 +247,7 @@ class Worker(metaclass=ABCMeta):
 
     @abstractmethod
     def call(self, x):
-        '''
+        """
         If `self.batch_size == 0`, then `x` is a single
         element, and this method returns result for `x`.
 
@@ -270,7 +282,7 @@ class Worker(metaclass=ABCMeta):
         In case of exceptions, unless the user has specific things to do,
         do not handle them; just let them happen. They will be handled
         in `_start_batch` and `_start_single`.
-        '''
+        """
         raise NotImplementedError
 
     def start(self, *, q_in, q_out):
@@ -280,7 +292,7 @@ class Worker(metaclass=ABCMeta):
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
-            print(self.name, 'stopped by KeyboardInterrupt')
+            print(self.name, "stopped by KeyboardInterrupt")
             # The process will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
@@ -313,8 +325,13 @@ class Worker(metaclass=ABCMeta):
 
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
-            logger.info('%d batches with sizes %d--%d, mean %.1f',
-                        n_batches, batch_size_min, batch_size_max, batch_size_mean)
+            logger.info(
+                "%d batches with sizes %d--%d, mean %.1f",
+                n_batches,
+                batch_size_min,
+                batch_size_max,
+                batch_size_mean,
+            )
 
         self._batch_buffer = SingleLane(self.batch_size + 10)
         self._batch_get_called = threading.Event()
@@ -354,7 +371,9 @@ class Worker(metaclass=ABCMeta):
                     n_batches += 1
                     batch_size_max = max(batch_size_max, n)
                     batch_size_min = min(batch_size_min, n)
-                    batch_size_mean = (batch_size_mean * (n_batches - 1) + n) / n_batches
+                    batch_size_mean = (
+                        batch_size_mean * (n_batches - 1) + n
+                    ) / n_batches
                     if n_batches >= batch_size_log_cadence:
                         print_batching_info()
                         n_batches = 0
@@ -457,7 +476,7 @@ class Worker(metaclass=ABCMeta):
 class ProcessWorker(Worker):
     @classmethod
     def run(cls, *, cpus: Sequence[int] = None, **kwargs):
-        '''
+        """
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
 
@@ -466,19 +485,19 @@ class ProcessWorker(Worker):
         hence they should consist
         mainly of small, native types such as string, number,small dict.
         Be careful about passing custom class objects in `init_kwargs`.
-        '''
+        """
         if cpus:
             psutil.Process().cpu_affinity(cpus=cpus)
         super().run(**kwargs)
 
 
 class ThreadWorker(Worker):
-    '''
+    """
     Use this class if the operation is I/O bound (e.g. calling an external service
     to get some info), and computation is very light compared to the I/O part.
     Another use-case of this class is to perform some very simple and quick
     pre-processing or post-processing.
-    '''
+    """
 
 
 def make_threadworker(func: Callable[[Any], Any]):
@@ -518,16 +537,18 @@ PassThrough = make_threadworker(lambda x: x)
 
 
 class ProcessServlet:
-    def __init__(self,
-                 worker_cls: Type[ProcessWorker],
-                 *,
-                 cpus: list = None,
-                 name: str = None,
-                 **kwargs):
-        '''
+    def __init__(
+        self,
+        worker_cls: Type[ProcessWorker],
+        *,
+        cpus: list = None,
+        name: str = None,
+        **kwargs,
+    ):
+        """
         `cpus`: specifies how many processes to create and how they are pinned
                 to specific CPUs. The default is a single unpinned process.
-        '''
+        """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         self._cpus = cpus
@@ -555,17 +576,19 @@ class ProcessServlet:
                 sname = self._name
             else:
                 sname = f"{self._name}-{','.join(map(str, cpu))}"
-            logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
-            self._workers.append(SpawnProcess(
-                target=self._worker_cls.run,
-                name=sname,
-                kwargs={
-                    'q_in': q_in,
-                    'q_out': q_out,
-                    'cpus': cpu,
-                    **self._init_kwargs,
-                },
-            ))
+            logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
+            self._workers.append(
+                SpawnProcess(
+                    target=self._worker_cls.run,
+                    name=sname,
+                    kwargs={
+                        "q_in": q_in,
+                        "q_out": q_out,
+                        "cpus": cpu,
+                        **self._init_kwargs,
+                    },
+                )
+            )
             self._workers[-1].start()
             name = q_out.get()
             logger.debug("   ... worker <%s> is ready", name)
@@ -582,12 +605,14 @@ class ProcessServlet:
 
 
 class ThreadServlet:
-    def __init__(self,
-                 worker_cls: Type[ThreadWorker],
-                 *,
-                 num_threads: int = None,
-                 name: str = None,
-                 **kwargs):
+    def __init__(
+        self,
+        worker_cls: Type[ThreadWorker],
+        *,
+        num_threads: int = None,
+        name: str = None,
+        **kwargs,
+    ):
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         self._num_threads = num_threads or 1
@@ -599,13 +624,13 @@ class ThreadServlet:
         assert not self._started
         for ithread in range(self._num_threads):
             sname = f"{self._name}-{ithread}"
-            logger.info('adding worker <%s> in thread ...', sname)
+            logger.info("adding worker <%s> in thread ...", sname)
             w = Thread(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
-                    'q_in': q_in,
-                    'q_out': q_out,
+                    "q_in": q_in,
+                    "q_out": q_out,
                     **self._init_kwargs,
                 },
             )
@@ -626,10 +651,11 @@ class ThreadServlet:
 
 
 class Sequential:
-    '''
+    """
     A sequence of operations performed in order,
     one op's output becoming the next op's input.
-    '''
+    """
+
     def __init__(self, *servlets: Servlet):
         assert len(servlets) > 0
         self._servlets = servlets
@@ -642,7 +668,9 @@ class Sequential:
         q1 = q_in
         for i, s in enumerate(self._servlets):
             if i + 1 < nn:
-                if isinstance(s, ThreadServlet) and isinstance(self._servlets[i + 1], ThreadServlet):
+                if isinstance(s, ThreadServlet) and isinstance(
+                    self._servlets[i + 1], ThreadServlet
+                ):
                     q2 = SimpleQueue()
                 else:
                     q2 = FastQueue()
@@ -669,11 +697,12 @@ class Sequential:
 
 
 class Ensemble:
-    '''
+    """
     A number of operations are performed on the same input in parallel;
     the list of results, corresponding to the order of the operators,
     is returned as the result.
-    '''
+    """
+
     def __init__(self, *servlets: Servlet):
         assert len(servlets) > 1
         self._servlets = servlets
@@ -729,7 +758,7 @@ class Ensemble:
             if isinstance(x, (BaseException, _RemoteException_)):
                 qout.put((uid, x))
                 continue
-            z = {'y': [None] * nn, 'n': 0}
+            z = {"y": [None] * nn, "n": 0}
             catalog[uid] = z
             for q in qins:
                 q.put((uid, x))
@@ -751,12 +780,12 @@ class Ensemble:
                         return
                     uid, y = v
                     z = catalog[uid]
-                    z['y'][idx] = y
-                    z['n'] += 1
-                    if z['n'] == nn:
+                    z["y"][idx] = y
+                    z["n"] += 1
+                    if z["n"] == nn:
                         # All results for this request have been collected.
                         catalog.pop(uid)
-                        y = z['y']
+                        y = z["y"]
                         qout.put((uid, y))
 
     def stop(self):
@@ -780,14 +809,15 @@ Servlet = Union[ProcessServlet, ThreadServlet, Sequential, Ensemble]
 
 
 class Server:
-    def __init__(self,
-                 servlet: Servlet,
-                 *,
-                 main_cpu: int = 0,
-                 backlog: int = 1024,
-                 sys_info_log_cadence: int = 1_000_000,
-                 ):
-        '''
+    def __init__(
+        self,
+        servlet: Servlet,
+        *,
+        main_cpu: int = 0,
+        backlog: int = 1024,
+        sys_info_log_cadence: int = 1_000_000,
+    ):
+        """
         `main_cpu`: specifies the cpu for the "main process",
         i.e. the process in which this server objects resides.
 
@@ -796,7 +826,7 @@ class Server:
 
         `sys_info_log_cadence`: log worker process system info (cpu/memory utilization)
             every this many requests; if `None`, do not log.
-        '''
+        """
         self._servlet = servlet
 
         assert backlog > 0
@@ -895,22 +925,28 @@ class Server:
         fut = self._enqueue(x, timeout)
         return self._wait_for_result(fut)
 
-    def stream(self, data_stream, /, *,
-               return_x: bool = False,
-               return_exceptions: bool = False,
-               timeout=60,
-               ):
-        '''
+    def stream(
+        self,
+        data_stream,
+        /,
+        *,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        timeout=60,
+    ):
+        """
         The order of elements in the stream is preserved, i.e.,
         elements in the output stream corresponds to elements
         in the input stream in the same order.
-        '''
+        """
 
         # For streaming, "timeout" is usually not a concern.
         # The concern is overall throughput.
 
         def _enqueue(tasks, return_exceptions):
-            threading.current_thread().name = f"{self.__class__.__name__}.stream._enqueue"
+            threading.current_thread().name = (
+                f"{self.__class__.__name__}.stream._enqueue"
+            )
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -990,15 +1026,15 @@ class Server:
 
         # fut = asyncio.Future()
         fut = concurrent.futures.Future()
-        fut.data = {'t0': t0, 'timeout': timeout}
+        fut.data = {"t0": t0, "timeout": timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put((uid, x))
         return fut
 
     async def _async_wait_for_result(self, fut):
-        t0 = fut.data['t0']
-        t2 = t0 + fut.data['timeout']
+        t0 = fut.data["t0"]
+        t2 = t0 + fut.data["timeout"]
         while not fut.done():
             timenow = perf_counter()
             if timenow > t2:
@@ -1034,15 +1070,15 @@ class Server:
             # because the pipe is full and busy.
 
         fut = concurrent.futures.Future()
-        fut.data = {'t0': t0, 'timeout': timeout}
+        fut.data = {"t0": t0, "timeout": timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put((uid, x))
         return fut
 
     def _wait_for_result(self, fut):
-        t0 = fut.data['t0']
-        t2 = t0 + fut.data['timeout']
+        t0 = fut.data["t0"]
+        t2 = t0 + fut.data["timeout"]
         try:
             return fut.result(timeout=max(0, t2 - perf_counter()))
             # this may raise an exception originating from _RemoteException_
@@ -1070,28 +1106,38 @@ class Server:
             logcounter = 0
 
             def _log_sys_info():
-                pp = [(w.name, psutil.Process(w.pid))
-                      for w in self._servlet._workers
-                      if not isinstance(w, Thread)]
-                msg = [f"  time from             {ts0}",
-                       f"  time to               {datetime.utcnow()}",
-                       f"  items served          {logcounter:_}",
-                       ]
-                attrs = ['memory_full_info',
-                         'cpu_affinity', 'cpu_percent', 'cpu_times',
-                         'num_threads', 'num_fds', 'io_counters',
-                         'status',
-                         ]
+                pp = [
+                    (w.name, psutil.Process(w.pid))
+                    for w in self._servlet._workers
+                    if not isinstance(w, Thread)
+                ]
+                msg = [
+                    f"  time from             {ts0}",
+                    f"  time to               {datetime.utcnow()}",
+                    f"  items served          {logcounter:_}",
+                ]
+                attrs = [
+                    "memory_full_info",
+                    "cpu_affinity",
+                    "cpu_percent",
+                    "cpu_times",
+                    "num_threads",
+                    "num_fds",
+                    "io_counters",
+                    "status",
+                ]
                 for pname, pobj in pp:
-                    msg.append(f'  process {pname}')
+                    msg.append(f"  process {pname}")
                     info = pobj.as_dict(attrs)
                     for k in attrs:
                         v = info[k]
-                        if k == 'memory_full_info':
-                            msg.append(f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB")
+                        if k == "memory_full_info":
+                            msg.append(
+                                f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB"
+                            )
                         else:
                             msg.append(f"        {k:<15} {v}")
-                logger.info('worker process stats:\n%s', '\n'.join(msg))
+                logger.info("worker process stats:\n%s", "\n".join(msg))
 
         try:
             while True:
@@ -1103,14 +1149,19 @@ class Server:
                 try:
                     if isinstance(y, BaseException):
                         # Unexpected situation; to be investigated.
-                        logger.warning("A non-remote exception has occurred, likely a bug: %r", y)
+                        logger.warning(
+                            "A non-remote exception has occurred, likely a bug: %r", y
+                        )
                         fut.set_exception(y)
                     elif isinstance(y, _RemoteException_):
                         fut.set_exception(rebuild_exception(y.exc, y.tb))
                     else:
                         fut.set_result(y)
-                    fut.data['t1'] = perf_counter()
-                except (concurrent.futures.InvalidStateError, asyncio.InvalidStateError) as e:
+                    fut.data["t1"] = perf_counter()
+                except (
+                    concurrent.futures.InvalidStateError,
+                    asyncio.InvalidStateError,
+                ) as e:
                     if fut.cancelled():
                         # Could have been cancelled due to TimeoutError.
                         # logger.debug('Future object is already cancelled')
@@ -1122,7 +1173,9 @@ class Server:
 
                 if log_cadence:
                     logcounter += 1
-                    if (logcounter >= log_cadence and q_out.empty()) or logcounter >= log_cadence * 10:
+                    if (
+                        logcounter >= log_cadence and q_out.empty()
+                    ) or logcounter >= log_cadence * 10:
                         _log_sys_info()
                         logcounter = 0
                         ts0 = datetime.utcnow()

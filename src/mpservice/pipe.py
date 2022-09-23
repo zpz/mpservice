@@ -1,4 +1,4 @@
-'''This module provides tools to use a "named pipe" to communicate between
+"""This module provides tools to use a "named pipe" to communicate between
 two Python processes on the same machine.
 
 Usually the two Python processes are two separately started programs.
@@ -24,7 +24,7 @@ to use special values to signal start, finish, and the like.
 
 See `multiprocessing.connection.Connection` for documentation on the
 `send` and `recv` methods.
-'''
+"""
 
 import os
 import stat
@@ -33,7 +33,9 @@ from multiprocessing.connection import Connection
 
 def _mkfifo(path: str):
     if os.path.exists(path):
-        assert stat.S_ISFIFO(os.stat(path).st_mode), f"file '{path}' exists but is not a FIFO"
+        assert stat.S_ISFIFO(
+            os.stat(path).st_mode
+        ), f"file '{path}' exists but is not a FIFO"
     else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
@@ -41,7 +43,9 @@ def _mkfifo(path: str):
         except FileExistsError:
             # The file may have been created by the other side of the connection
             # in another process since the above `exists` check.
-            assert stat.S_ISFIFO(os.stat(path).st_mode), f"file '{path}' exists but is not a FIFO"
+            assert stat.S_ISFIFO(
+                os.stat(path).st_mode
+            ), f"file '{path}' exists but is not a FIFO"
 
 
 class _Pipe:
@@ -83,9 +87,9 @@ class _Pipe:
 
 class Server(_Pipe):
     def __init__(self, path: str):
-        super().__init__(path + '.1', path + '.2')
+        super().__init__(path + ".1", path + ".2")
 
 
 class Client(_Pipe):
     def __init__(self, path: str):
-        super().__init__(path + '.2', path + '.1')
+        super().__init__(path + ".2", path + ".1")
