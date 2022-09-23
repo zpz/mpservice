@@ -1,9 +1,9 @@
-'''`ServerProcess` provides a server running in one process,
+"""`ServerProcess` provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
 This module corresponds to the standard `multiprocessing.managers` module
 with simplified APIs for targeted use cases.
-'''
+"""
 import logging
 import multiprocessing.managers
 from typing import Callable, Union
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class Manager(multiprocessing.managers.SyncManager):
-    '''
+    """
     Usage:
 
         1. Register one or more classes with the Manager class:
@@ -95,7 +95,8 @@ class Manager(multiprocessing.managers.SyncManager):
     ..., `Server.accept_connection`, and `BaseProxy._connect`);
     the server process then creates a new thread
     to handle requests from this connection (see `Server.serve_client`).
-    '''
+    """
+
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
 
@@ -103,7 +104,7 @@ class Manager(multiprocessing.managers.SyncManager):
 
     @classmethod
     def register(cls, typeid_or_callable: Union[str, Callable], /, **kwargs):
-        '''
+        """
         `typeid_or_callable` is a usually class object. Suppose this is actually the class `MyClass`,
         then on a started object `manager` of `Manager`,
 
@@ -112,19 +113,21 @@ class Manager(multiprocessing.managers.SyncManager):
         will create an object of `MyClass` in the server process and return a proxy.
 
         This method should be called before a manager object is "started".
-        '''
+        """
         if isinstance(typeid_or_callable, str):
             # This form allows the full API of the base class.
             # I have not encountered a need for this.
             # This is allowed just in case for experiments and expansions.
             # You almost always should use the other form.
             typeid = typeid_or_callable
-            callable_ = kwargs.pop('callable', None)
+            callable_ = kwargs.pop("callable", None)
         else:
             assert callable(typeid_or_callable)
             # Usually, `typeid_or_callable` is a class object and the sole argument.
             typeid = typeid_or_callable.__name__
             callable_ = typeid_or_callable
         if typeid in cls._registry:
-            logger.warning('"%s" was registered; the existing registry is overwritten.', typeid)
+            logger.warning(
+                '"%s" was registered; the existing registry is overwritten.', typeid
+            )
         super().register(typeid, callable_, **kwargs)

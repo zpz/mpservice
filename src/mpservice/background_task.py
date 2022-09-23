@@ -18,13 +18,15 @@ class Task:
 
     _NOTSET_ = object()
 
-    def __init__(self,
-                 task_id: Hashable,
-                 future: concurrent.futures.Future,
-                 callers: int,
-                 cancelled: threading.Event,
-                 info: Union[queue.Queue, multiprocessing.queues.Queue],
-                 task_catalog: dict):
+    def __init__(
+        self,
+        task_id: Hashable,
+        future: concurrent.futures.Future,
+        callers: int,
+        cancelled: threading.Event,
+        info: Union[queue.Queue, multiprocessing.queues.Queue],
+        task_catalog: dict,
+    ):
         self.task_id = task_id
         self.future = future
         self.callers = callers
@@ -135,7 +137,7 @@ class Task:
         return self.a_result().__await__()
 
     def exception(self):
-        '''
+        """
         Returns `None` if task is not yet completed
         or has completed successfully.
 
@@ -143,7 +145,7 @@ class Task:
 
         If the task raised an exception, this method will
         raise the same exception.
-        '''
+        """
         if self.cancelled():
             raise concurrent.futures.CancelledError()
 
@@ -155,7 +157,7 @@ class Task:
 
 
 class BackgroundTask(ABC):
-    '''
+    """
     `BackgroundTask` provides a mechanism to manager "tasks" run in a
     thread pool or process pool. Given a user-specified way to determine
     a task based on the task parameters, a repeat submission of an
@@ -163,7 +165,7 @@ class BackgroundTask(ABC):
     access to the existing task rather than making a new submission.
 
     Facilities are provided to check task status, and cancel an ongoing task.
-    '''
+    """
 
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
         # `executor`: if you provide your own *process* executor,
@@ -177,7 +179,7 @@ class BackgroundTask(ABC):
         self._tasks: Dict[Hashable, Task] = {}
 
         if self._own_executor:
-            Finalize(self, type(self)._shutdown_executor, args=(executor, ))
+            Finalize(self, type(self)._shutdown_executor, args=(executor,))
 
     @staticmethod
     def _shutdown_executor(executor):
@@ -185,12 +187,14 @@ class BackgroundTask(ABC):
 
     @classmethod
     @abstractmethod
-    def run(cls,
-            *args,
-            _cancelled: threading.Event,
-            _info: Union[queue.Queue, multiprocessing.Queue],
-            **kwargs):
-        '''
+    def run(
+        cls,
+        *args,
+        _cancelled: threading.Event,
+        _info: Union[queue.Queue, multiprocessing.Queue],
+        **kwargs
+    ):
+        """
         This method contains the operations of the user task.
         It runs in `self._executor`.
 
@@ -223,12 +227,12 @@ class BackgroundTask(ABC):
 
         It is not mandatory that the user task code makes use of
         `_cancelled` and `_info`.
-        '''
+        """
         raise NotImplementedError
 
     @classmethod
     def get_task_id(cls, *args, **kwargs) -> Hashable:
-        '''
+        """
         Determine an ID for the task based on the input parameters.
         Next time when a task is submitted, if its task ID
         turns out to be identical to an in-progress task,
@@ -251,7 +255,7 @@ class BackgroundTask(ABC):
         of `run`, minus `_cancelled` and `_status`.
 
         The default implementation retruns a random value.
-        '''
+        """
         return str(datetime.utcnow())
 
     def submit(self, *args, **kwargs) -> Task:
@@ -267,8 +271,7 @@ class BackgroundTask(ABC):
                 # this user also wants to "forget", we
                 # need to remove the "forget" callback.
                 try:
-                    task.future._done_callbacks.remove(
-                        self._cb_remove_once_done)
+                    task.future._done_callbacks.remove(self._cb_remove_once_done)
                 except ValueError:
                     pass
             return task
