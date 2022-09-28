@@ -1,4 +1,4 @@
-"""`ServerProcess` provides a server running in one process,
+"""A "server process" provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
 This module corresponds to the standard `multiprocessing.managers` module

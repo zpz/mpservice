@@ -1020,7 +1020,7 @@ class Server:
         while len(self._uid_to_futures) >= self._backlog:
             if (t := perf_counter()) > deadline:
                 raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
-            await asyncio.sleep(min(0.01, deadline - t))
+            await asyncio.sleep(min(0.1, deadline - t))
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
 
@@ -1040,7 +1040,7 @@ class Server:
             if timenow > t2:
                 fut.cancel()
                 raise TimeoutError(f"{timenow - t0:.3f} seconds total")
-            await asyncio.sleep(min(0.001, t2 - timenow))
+            await asyncio.sleep(min(0.01, t2 - timenow))
         return fut.result()
         # This could raise an exception originating from _RemoteException_.
 
@@ -1065,7 +1065,7 @@ class Server:
         while len(self._uid_to_futures) >= self._backlog:
             if (t := perf_counter()) >= deadline:
                 raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
-            sleep(min(0.01, deadline - t))
+            sleep(min(0.1, deadline - t))
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
 
