@@ -1,5 +1,10 @@
 # Changelog
 
+## Release 0.11.6 (forthcoming)
+
+- `mpserver` wait-time fine tunning.
+
+
 ## Release 0.11.5
 
 - `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.

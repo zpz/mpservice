@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Run in a subshell so that directory changes do not take effect for the user.
+(
+    thisfile="${BASH_SOURCE[0]}"
+    cd "$(dirname "${thisfile}")"
+    cd ..
+    bash <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/.githooks/pre-push)
+)
+
