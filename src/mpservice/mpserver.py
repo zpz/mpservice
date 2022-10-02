@@ -1164,11 +1164,9 @@ class Server:
                 ) as e:
                     if fut.cancelled():
                         # Could have been cancelled due to TimeoutError.
-                        # logger.debug('Future object is already cancelled')
                         pass
                     else:
                         # Unexpected situation; to be investigated.
-                        logger.exception(e)
                         raise
 
                 if log_cadence:
