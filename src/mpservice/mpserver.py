@@ -1161,7 +1161,7 @@ class Server:
                 except (
                     concurrent.futures.InvalidStateError,
                     asyncio.InvalidStateError,
-                ) as e:
+                ):
                     if fut.cancelled():
                         # Could have been cancelled due to TimeoutError.
                         pass
