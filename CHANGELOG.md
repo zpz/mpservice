@@ -1,8 +1,10 @@
 # Changelog
 
-## Release 0.11.6 (forthcoming)
+## Release 0.11.6
 
 - `mpserver` wait-time fine tunning.
+- `mpserver.Server.async_call` gets new parameter `shed_load` with default `True`.
+- New exception class `PipelineFull` in `mpserver`.
 
 
 ## Release 0.11.5

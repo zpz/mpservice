@@ -15,9 +15,6 @@ from types import TracebackType
 from typing import Optional, Union
 
 
-logger = logging.getLogger(__name__)
-
-
 MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 # This default is suitable for I/O bound operations.
 # This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
@@ -25,7 +22,10 @@ MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
 
 
 TimeoutError = TimeoutError  # make local alias for the standard exception
-# `concurrent.futures._base` does this; I don't quite know the point.
+# `concurrent.futures._base` does this.
+# I guess the point is to ask user to import this class to check, instead of checking
+# against the builtin class directly. This prepares for possible customization
+# later, although currently it just re-uses the builtin one.
 
 
 class _SpawnContext:

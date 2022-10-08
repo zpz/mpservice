@@ -4,14 +4,11 @@ to be called from other processes for shared data or functionalities.
 This module corresponds to the standard `multiprocessing.managers` module
 with simplified APIs for targeted use cases.
 """
-import logging
 import multiprocessing.managers
+import warnings
 from typing import Callable, Union
 
 from .util import MP_SPAWN_CTX
-
-
-logger = logging.getLogger(__name__)
 
 
 # Overhead of Thread:
@@ -127,7 +124,7 @@ class Manager(multiprocessing.managers.SyncManager):
             typeid = typeid_or_callable.__name__
             callable_ = typeid_or_callable
         if typeid in cls._registry:
-            logger.warning(
-                '"%s" was registered; the existing registry is overwritten.', typeid
+            warnings.warn(
+                '"%s" was registered; the existing registry is overwritten.' % typeid
             )
         super().register(typeid, callable_, **kwargs)
