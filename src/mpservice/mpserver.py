@@ -110,6 +110,7 @@ from ._queues import SingleLane
 
 # This modules uses the 'spawn' method to create processes.
 
+# User should import the `TimeoutError` from this module for exception handling purposes.
 
 # Set level for logs produced by the standard `multiprocessing` module.
 multiprocessing.log_to_stderr(logging.WARNING)
@@ -117,6 +118,10 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
+
+
+class PipelineFull(RuntimeError):
+    pass
 
 
 class _RemoteException_:
@@ -911,11 +916,11 @@ class Server:
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?
 
-    async def async_call(self, x, /, *, timeout: Union[int, float] = 60):
+    async def async_call(self, x, /, *, timeout: Union[int, float] = 60, shed_load: bool = True):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.
         # At the same time, `call` and `stream` are not used.
-        fut = await self._async_enqueue(x, timeout)
+        fut = await self._async_enqueue(x, timeout=timeout, shed_load=shed_load)
         return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
@@ -1013,11 +1018,15 @@ class Server:
                     else:
                         yield y
 
-    async def _async_enqueue(self, x, timeout):
+    async def _async_enqueue(self, x, timeout, shed_load):
         t0 = perf_counter()
         deadline = t0 + timeout
 
         while len(self._uid_to_futures) >= self._backlog:
+            if shed_load:
+                raise PipelineFull(len(self._uid_to_futures))
+                # If this is behind a HTTP service, should return
+                # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline:
                 raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
             await asyncio.sleep(min(0.1, deadline - t))

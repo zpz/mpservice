@@ -3,6 +3,7 @@
 ## Release 0.11.6 (forthcoming)
 
 - `mpserver` wait-time fine tunning.
+- `mpserver.Server.async_call` gets new parameter `shed_load` with default `True`.
 
 
 ## Release 0.11.5
