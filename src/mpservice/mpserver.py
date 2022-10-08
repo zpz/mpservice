@@ -916,7 +916,9 @@ class Server:
         # TODO: how to track helper processes created by subclasses, so that
         # the sys info log in `_gather_output` can include them?
 
-    async def async_call(self, x, /, *, timeout: Union[int, float] = 60, shed_load: bool = True):
+    async def async_call(
+        self, x, /, *, timeout: Union[int, float] = 60, shed_load: bool = True
+    ):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.
         # At the same time, `call` and `stream` are not used.
