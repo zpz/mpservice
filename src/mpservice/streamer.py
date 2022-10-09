@@ -581,10 +581,10 @@ class Stream(EnforceOverrides):
 
 class Batcher(Stream):
     def __init__(self, instream: Stream, /, batch_size: int):
-        '''
+        """
         Aggregate the stream into batches (lists) of the specified size.
         The last batch may have less elements.
-        '''
+        """
         super().__init__(instream)
         assert 1 <= batch_size <= 10_000
         self.batch_size = batch_size
@@ -607,7 +607,7 @@ class Batcher(Stream):
 
 class Unbatcher(Stream):
     def __init__(self, instream: Stream, /):
-        '''
+        """
         The incoming stream consists of lists.
         This object "expands" or "flattens" the lists into a stream
         of individual elements. Usually, the output stream
@@ -615,7 +615,7 @@ class Unbatcher(Stream):
 
         This may correspond to a "Batcher" operator upstream,
         but that is by no means a requirement.
-        '''
+        """
         super().__init__(instream)
         self._batch = None
 
@@ -636,7 +636,7 @@ class Unbatcher(Stream):
 
 class Dropper(Stream):
     def __init__(self, instream: Stream, func: Callable[[int, T], bool], /):
-        '''
+        """
         `func`: takes element index and the element value; if returns True,
             the element is dropped (i.e. not produced; proceed to check the next
             elements until one returns False and gets produced); if returns
@@ -649,7 +649,7 @@ class Dropper(Stream):
         object. This is because that, when the user designed the predicate function
         `func`, if the logic depends on the first argument, this is the
         interpretation of the "index" that's more natural and useful.
-        '''
+        """
         super().__init__(instream)
         self.func = func
 
@@ -667,9 +667,9 @@ class Dropper(Stream):
 
 class Header(Stream):
     def __init__(self, instream: Stream, /, n: int):
-        '''
+        """
         Keeps the first `n` elements and ignores all the rest.
-        '''
+        """
         super().__init__(instream)
         assert n > 0
         self.n = n
@@ -685,7 +685,7 @@ class Header(Stream):
 
 class Peeker(Stream):
     def __init__(self, instream: Stream, func: Callable[[int, T], None], /):
-        '''
+        """
         This class provides a mechanism to log or print some info for elements
         that meet certain conditions.
 
@@ -694,7 +694,7 @@ class Peeker(Stream):
         Usually, the action is to log or print about the element
         if the element (its index and/or value) meets certain conditions;
         do nothing if the element does not meet the conditions.
-        '''
+        """
         super().__init__(instream)
         self.func = func
 
