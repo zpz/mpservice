@@ -342,10 +342,10 @@ class Streamer(EnforceOverrides):
         first: int = 0,
         last: int = None,
     ):
-        '''
+        """
         `base`: if 0, peek at indices 0, n, 2*n, 3*n, ... (0-based);
             if 1, peek at indices n, 2*n, 3*n, ... (1-based).
-        '''
+        """
         assert n > 0
         assert base in (0, 1)
 
