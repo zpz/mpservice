@@ -41,15 +41,15 @@ def test_batch():
         assert s.collect() == []
 
     with Streamer(list(range(11))) as s:
-        assert s.batch(3).unbatch().collect() == list(range(11))
-        assert s.collect() == []
+        assert list(s.batch(3).unbatch()) == list(range(11))
+        assert list(s) == []
 
 
 def test_buffer():
     with Streamer(range(11)) as s:
-        assert s.buffer(5).collect() == list(range(11))
+        assert list(s.buffer(5)) == list(range(11))
     with Streamer(range(11)) as s:
-        assert s.buffer(20).collect() == list(range(11))
+        assert list(s.buffer(20)) == list(range(11))
 
 
 def test_buffer_batch():
