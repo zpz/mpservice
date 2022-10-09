@@ -5,10 +5,10 @@ The target use case is that one or more operations is I/O bound,
 hence can benefit from concurrency via threading.
 These operations are called `transform`s.
 
-CPU-bound operations are also supported.
+CPU-bound transforms are also supported, via multiprocessing.
 
 The other operations are typically light weight and supportive
-of the main (concurrent) operation. These operations perform batching,
+of the main (concurrent) transforms. These operations perform batching,
 unbatching, buffering, filtering, logging, etc.
 
 ===========
@@ -39,7 +39,15 @@ The above is equivalent to the following:
         stream.unbatch()
         pipeline = stream
 
-After this setup, there are several ways to use the object `stream`.
+As the Streamer object undergoes the series of operations, it remains a "stream"
+of elements but the content of the elements is changing. At any moment,
+the object represents the state of the final operation up to that time.
+The stream may consist of the same number of elements as the very original input stream of data,
+where each element has gone through a series of operations, or, if
+`batch` and `unbatch` have been applied, the stream may consist more or less elements
+than the original input.
+
+After this setup, there are several ways to use the object `stream` (or `pipeline`).
 
     1. Since `stream` is an Iterable and an Iterator, we can use it as such.
        Most naturally, iterate over it and process each element however
@@ -62,37 +70,24 @@ After this setup, there are several ways to use the object `stream`.
                 pipeline.transform(yet_another_io_op)
                 ...
 
-    2. If the stream is not too long (not "big data"), we can convert it to
-       a list by the method `collect`:
+       If the stream is not too long (not "big data"), we can pass it to `list` to
+       convert it to a list:
 
-            result = stream.collect()
+            result = list(stream)
 
-    3. If we don't need the elements coming out of `stream`, but rather
-       just need the original data (`data`) to flow through all the operations
+    2. If we don't need the elements coming out of `stream`, but rather
+       just need the original data to flow through all the operations
        of the pipeline (e.g. if the last "substantial" operation is inserting
        the data into a database), we can "drain" the stream:
 
-            n = stream.drain()
+            stream.drain()
 
-       where the returned `n` is the number of elements coming out of the
-       last operation in the pipeline.
-
-    4. We can continue to add more operations to the pipeline, for example,
+    3. We can continue to add more operations to the pipeline, for example,
 
             stream.transform(another_op, concurrency=3)
 
-Of all the methods on a Streamer instance, two will start new threads, namely
-`.buffer()` and `.transform()`. In order to guarantee proper startup and shutdown
-of the threads, these two methods require the Streamer object to be context-managed,
-that is, within the `with` block:
-
-    with Streamer(...) as streamer:
-        streamer.buffer(...)
-        streamer.transform(...)
-
-The other methods do not start new threads, hence do not require context manager.
-However, to reduce memory load, one may as well always enter the context manager
-right upon the creation of a Streamer instance.
+Of all the methods on a Streamer object, two will start new threads, namely
+`.buffer()` and `.transform()`. (The latter may also start new processes.)
 
 
 ======================
@@ -195,11 +190,11 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 
 import concurrent.futures
-import logging
 import queue
 import random
 import threading
 import traceback
+from multiprocessing.util import Finalize
 from typing import (
     Callable,
     TypeVar,
@@ -208,6 +203,7 @@ from typing import (
     Iterable,
     Iterator,
     Tuple,
+    List,
 )
 
 from overrides import EnforceOverrides, overrides, final
@@ -216,8 +212,6 @@ from .util import is_remote_exception, get_remote_traceback
 from .util import is_exception, Thread, MP_SPAWN_CTX
 from ._queues import SingleLane
 
-
-logger = logging.getLogger(__name__)
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
@@ -229,36 +223,27 @@ TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
 def _default_peek_func(i, x):
-    print("")
-    print("#", i)
-    if is_exception(x):
-        print(repr(x))
-    else:
-        print(x)
+    # print("")
+    # print("#", i)
+    # if is_exception(x):
+    #     print(repr(x))
+    # else:
+    #     print(x)
+    print(f"#{i}:  {x!r}")
 
 
 class Streamer(EnforceOverrides):
     def __init__(self, instream: Union[Iterator, Iterable], /):
-        self.streamlets = [Stream(instream)]
+        self.streamlets: List[Stream] = [Stream(instream)]
         self._started = False
-        self._stopped = False
 
     def __enter__(self):
         self._started = True
         return self
 
-    # def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
-    #     for s in self.streamlets:
-    #         s._stop()
-    #     msg = exit_err_msg(self, exc_type, exc_value, exc_tb)
-    #     if msg:
-    #         logger.error(msg)
-    #     self._stopped = True
-
     def __exit__(self, *args, **kwargs):
         for s in self.streamlets:
             s._stop()
-        self._stopped = True
 
     @final
     def __iter__(self):
@@ -271,12 +256,6 @@ class Streamer(EnforceOverrides):
     @final
     def __next__(self):
         return self.streamlets[-1].__next__()
-
-    def collect(self) -> list:
-        """
-        Gather the stream in a list. DO NOT do this on big data.
-        """
-        return list(self)
 
     def drain(self) -> Tuple[int, int]:
         """Drain off the stream.
@@ -297,9 +276,9 @@ class Streamer(EnforceOverrides):
                 nexc += 1
         return n, nexc
 
-    def drop_if(self, func: Callable[[int, T], bool]):
+    def drop_if(self, func: Callable[[int, T], bool], /):
         """
-        `func`: a function that takes the data element index (`self.index`)
+        `func`: a function that takes the data element index
             along with the element value, and returns `True` if the element
             should be skipped, that is, not included in the output stream.
         """
@@ -315,45 +294,33 @@ class Streamer(EnforceOverrides):
         """
         return self.drop_if(lambda i, x: is_exception(x))
 
-    def drop_nones(self):
-        return self.drop_if(lambda i, x: x is None)
-
     def drop_first_n(self, n: int):
         assert n >= 0
         return self.drop_if(lambda i, x: i < n)
 
-    def keep_if(self, func: Callable[[int, T], bool]):
+    def keep_if(self, func: Callable[[int, T], bool], /):
         """Keep an element in the stream only if a condition is met.
 
         This is the opposite of `drop_if`.
         """
         return self.drop_if(lambda i, x: not func(i, x))
 
-    def keep_every_nth(self, nth: int):
-        assert nth > 0
-        return self.keep_if(lambda i, x: i % nth == 0)
-
-    def keep_random(self, frac: float):
-        assert 0 < frac <= 1
-        rand = random.random
-        return self.keep_if(lambda i, x: rand() < frac)
-
     def head(self, n: int):
         """
-        Takes the first `n` elements and ignore the rest.
+        Take the first `n` elements and ignore the rest.
         """
-        # This does not delegate to `keep`, because `keep`
-        # would need to walk throught the entire stream,
+        # This does not delegate to `keep_if`, because `keep_if`
+        # would need to walk through the entire stream,
         # which is not needed for `head`.
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
-    def peek(self, func: Callable[[int, T], None] = None):
+    def peek(self, func: Callable[[int, T], None] = None, /):
         """Take a peek at the data element *before* it is sent
         on for processing.
 
-        The function `func` takes the data index (`self.index`)
-        and the data element. Typical actions include print out
+        The function `func` takes the data element index and value.
+        Typical actions include print out
         info or save the data for later inspection. Usually this
         function should not modify the data element in the stream.
 
@@ -367,14 +334,19 @@ class Streamer(EnforceOverrides):
 
     def peek_every_nth(
         self,
-        nth: int,
+        n: int,
         peek_func: Callable[[int, T], None] = None,
+        /,
         *,
         base: int = 0,
         first: int = 0,
         last: int = None,
     ):
-        assert nth > 0
+        """
+        `base`: if 0, peek at indices 0, n, 2*n, 3*n, ... (0-based);
+            if 1, peek at indices n, 2*n, 3*n, ... (1-based).
+        """
+        assert n > 0
         assert base in (0, 1)
 
         if peek_func is None:
@@ -386,12 +358,12 @@ class Streamer(EnforceOverrides):
                 return
             if last and k > last:
                 return
-            if k % nth == 0:
+            if k % n == 0:
                 peek_func(k, x)
 
         return self.peek(foo)
 
-    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None):
+    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
         assert 0 < frac <= 1
         rand = random.random
 
@@ -404,17 +376,10 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def log_every_nth(self, nth: int, level: str = "info", **kwargs):
-        assert nth > 0
-        flog = getattr(logger, level)
-
-        def foo(i, x):
-            flog("#%d:  %r", i, x)
-
-        return self.peek_every_nth(nth, foo, **kwargs)
-
-    def log_exceptions(self, level: str = "error", with_trace: bool = True):
-        flog = getattr(logger, level)
+    def peek_exceptions(self, *, with_trace: bool = True, print_func: Callable = None):
+        # User may want to pass in `logger.error` as `print_func`.
+        if print_func is None:
+            print_func = print
 
         def func(i, x):
             if is_exception(x):
@@ -428,9 +393,9 @@ class Streamer(EnforceOverrides):
                         except AttributeError:
                             pass
                 if trace:
-                    flog("#%d:  %r\n%s", i, x, trace)
+                    print_func("#%d:  %r\n%s" % (i, x, trace))
                 else:
-                    flog("#%d:  %r", i, x)
+                    print_func("#%d:  %r" % (i, x))
 
         return self.peek(func)
 
@@ -439,13 +404,14 @@ class Streamer(EnforceOverrides):
 
         Take elements from an input stream,
         and bundle them up into batches up to a size limit,
-        and produce the batches in an iterable.
+        and produce the batches.
 
         The output batches are all of the specified size,
         except possibly the final batch.
         There is no 'timeout' logic to proceed eagerly with a partial batch .
         For efficiency, this requires the input stream to have a steady supply.
-        If that is a concern, having a `buffer` on the input stream may help.
+        If that is a concern, having a `buffer` on the input stream
+        prior to `batch` may help.
         """
         self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
         return self
@@ -467,13 +433,11 @@ class Streamer(EnforceOverrides):
 
         A buffer is useful after any operation that can not guarantee
         (almost) instant availability of output. A buffer allows its
-        output to "pile up" when the downstream consumer is slow in requests,
+        output to "pile up" when the downstream consumer is slow,
         so that data *is* available when the downstream does come to request
-        data. The buffer evens out unstabilities in the speeds of upstream
+        data. The buffer evens out irregularities in the speeds of upstream
         production and downstream consumption.
         """
-        if not self._started:
-            raise RuntimeError("`buffer` requires the object to be in context manager")
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
 
@@ -526,10 +490,6 @@ class Streamer(EnforceOverrides):
         User may want to add a `buffer` to the output of this method,
         esp if the `func` operations are slow.
         """
-        if not self._started:
-            raise RuntimeError(
-                "`transform` requires the object to be in context manager"
-            )
         self.streamlets.append(
             Transformer(
                 self.streamlets[-1],
@@ -552,12 +512,14 @@ class Stream(EnforceOverrides):
             self._instream = iter(instream)
         self.index = 0
         # Index of the upcoming element; 0 based.
-        # This is also the count of finished elements.
-        self._stopped = False
+        # Here, "element" refers to the element to be produced by
+        # `self.__next__`, which does not need to have the same index
+        # as the element to be produced by `next(self._instream)`.
+        self._stopped = threading.Event()
 
     def _stop(self):
         # Clean up and deal with early-stop situations.
-        self._stopped = True
+        self._stopped.set()
 
     @final
     def __iter__(self):
@@ -568,13 +530,17 @@ class Stream(EnforceOverrides):
 
         Subclasses refine this method rather than `__next__`.
         In a subclass, almost always it will not get the next element
-        from `_instream`, but rather from some object that holds
-        results of transformations on its `_instream`.
-        Subclass should take efforts to handle exceptions in this method.
+        from `self._instream`, but rather from some object that holds
+        results of transformations on `self._instream`.
+        In other words, subclass typically needs to override this method.
+        Subclass should take care to handle exceptions in this method.
         """
-        if self._stopped:
+        # This method should not increment `self.index` for the element
+        # that is returned by this method. That is done by `__next__`.
+        if self._stopped.is_set():
             raise StopIteration
-        return next(self._instream)
+        z = next(self._instream)
+        return z
 
     @final
     def __next__(self):
@@ -584,14 +550,18 @@ class Stream(EnforceOverrides):
 
 
 class Batcher(Stream):
-    def __init__(self, instream: Stream, batch_size: int):
+    def __init__(self, instream: Stream, /, batch_size: int):
+        """
+        Aggregate the stream into batches (lists) of the specified size.
+        The last batch may have less elements.
+        """
         super().__init__(instream)
-        assert 1 < batch_size <= 10_000
+        assert 1 <= batch_size <= 10_000
         self.batch_size = batch_size
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         batch = []
         for _ in range(self.batch_size):
@@ -606,31 +576,56 @@ class Batcher(Stream):
 
 
 class Unbatcher(Stream):
-    def __init__(self, instream: Stream):
+    def __init__(self, instream: Stream, /):
+        """
+        The incoming stream consists of lists.
+        This object "expands" or "flattens" the lists into a stream
+        of individual elements. Usually, the output stream
+        is "longer" than the input stream.
+
+        This may correspond to a "Batcher" operator upstream,
+        but that is by no means a requirement.
+        """
         super().__init__(instream)
         self._batch = None
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         if self._batch:
             return self._batch.pop(0)
         z = next(self._instream)
-        if isinstance(z, Exception):
+        if is_exception(z):
             return z
         self._batch = z
-        return self._get_next()
+        if self._stopped.is_set():
+            raise StopIteration
+        return self._batch.pop(0)
 
 
 class Dropper(Stream):
-    def __init__(self, instream: Stream, func: Callable[[int, T], bool]):
+    def __init__(self, instream: Stream, func: Callable[[int, T], bool], /):
+        """
+        `func`: takes element index and the element value; if returns True,
+            the element is dropped (i.e. not produced; proceed to check the next
+            elements until one returns False and gets produced); if returns
+            False, the element is not drop (i.e., it is produced, hence the
+            Dropper object becomes a simple pass-through for that element).
+
+        `self.index` of this object has different meaning from other Stream
+        classes. It is the index of the next element of the instream,
+        not the index of the element to be produced (not-dropped) by the current
+        object. This is because that, when the user designed the predicate function
+        `func`, if the logic depends on the first argument, this is the
+        interpretation of the "index" that's more natural and useful.
+        """
         super().__init__(instream)
         self.func = func
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         while True:
             z = next(self._instream)
@@ -641,14 +636,17 @@ class Dropper(Stream):
 
 
 class Header(Stream):
-    def __init__(self, instream: Stream, n: int):
+    def __init__(self, instream: Stream, /, n: int):
+        """
+        Keeps the first `n` elements and ignores all the rest.
+        """
         super().__init__(instream)
         assert n > 0
         self.n = n
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         if self.index >= self.n:
             raise StopIteration
@@ -656,13 +654,23 @@ class Header(Stream):
 
 
 class Peeker(Stream):
-    def __init__(self, instream: Stream, func: Callable[[int, T], None]):
+    def __init__(self, instream: Stream, func: Callable[[int, T], None], /):
+        """
+        This class provides a mechanism to log or print some info for elements
+        that meet certain conditions.
+
+        `func`: takes element index and value, does whatever as long as the action
+        does not modify the element (if it is of a mutable type).
+        Usually, the action is to log or print about the element
+        if the element (its index and/or value) meets certain conditions;
+        do nothing if the element does not meet the conditions.
+        """
         super().__init__(instream)
         self.func = func
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         z = next(self._instream)
         self.func(self.index, z)
@@ -670,18 +678,23 @@ class Peeker(Stream):
 
 
 class Buffer(Stream):
-    def __init__(self, instream: Stream, maxsize: int):
+    def __init__(self, instream: Stream, /, maxsize: int):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
-        self._q = SingleLane(maxsize)
-        self._t = Thread(target=self._start, loud_exception=False)
-        self._t.start()
-        # This requires that `instream` is already context managed.
+        self._tasks = SingleLane(maxsize)
+        self._worker = Thread(target=self._start, loud_exception=False)
+        self._worker.start()
+        self._finalize_func = Finalize(
+            self,
+            type(self)._finalize,
+            (self._stopped, self._tasks, self._worker),
+            exitpriority=10,
+        )
 
     def _start(self):
         threading.current_thread().name = "BufferThread"
-        q = self._q
+        q = self._tasks
         while True:
             try:
                 v = next(self._instream)
@@ -691,37 +704,45 @@ class Buffer(Stream):
             except Exception:
                 q.put(STOPPED)
                 raise
-            if self._stopped:
+            if self._stopped.is_set():
                 break
-            q.put(v)
+            q.put(v)  # if `q` is full, will wait here
 
     @overrides
     def _stop(self):
-        self._stopped = True
-        while not self._q.empty():
-            _ = self._q.get()
-        self._t.join()
+        self._finalize_func()
+
+    @staticmethod
+    def _finalize(stopped, tasks, worker):
+        stopped.set()
+        while not tasks.empty():
+            _ = tasks.get()
+        # `tasks` is now empty. The thread needs to put at most one
+        # more element into the queue, which is safe.
+        worker.join()
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         while True:
             try:
-                z = self._q.get(timeout=1)
+                z = self._tasks.get(timeout=1)
                 break
             except queue.Empty as e:
-                if self._t.is_alive():
+                if self._worker.is_alive():
                     continue
-                if self._stopped:
+                if self._stopped.is_set():
                     raise StopIteration
+                if self._worker.exception():
+                    raise self._worker.exception()
                 raise RuntimeError("unknown situation occurred") from e
         if z == FINISHED:
             self._stop()
             raise StopIteration
         if z == STOPPED:
             self._stop()
-            raise self._t.exception()
+            raise self._worker.exception()
         return z
 
 
@@ -749,14 +770,21 @@ class Transformer(Stream):
             self._executor = concurrent.futures.ThreadPoolExecutor(concurrency)
         else:
             assert executor == "process"
+            self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
                 concurrency, mp_context=MP_SPAWN_CTX
             )
-        self._tasks = SingleLane(concurrency * 2)
-        self._t = Thread(
+        self._tasks = SingleLane(concurrency)
+        self._worker = Thread(
             target=self._start, args=(func,), kwargs=func_args, loud_exception=False
         )
-        self._t.start()
+        self._worker.start()
+        self._finalize_func = Finalize(
+            self,
+            type(self)._finalize,
+            (self._stopped, self._tasks, self._worker, self._executor),
+            exitpriority=10,
+        )
 
     def _start(self, func, **kwargs):
         tasks = self._tasks
@@ -769,7 +797,7 @@ class Transformer(Stream):
             except Exception:
                 tasks.put(STOPPED)
                 raise
-            if self._stopped:
+            if self._stopped.is_set():
                 break
             t = self._executor.submit(func, x, **kwargs)
             # The size of the queue `tasks` regulates how many
@@ -778,15 +806,19 @@ class Transformer(Stream):
 
     @overrides
     def _stop(self):
-        self._stopped = True
-        while not self._tasks.empty():
-            _ = self._tasks.get()
-        self._t.join()
-        self._executor.shutdown()
+        self._finalize_func()
+
+    @staticmethod
+    def _finalize(stopped, tasks, worker, executor):
+        stopped.set()
+        while not tasks.empty():
+            _ = tasks.get()
+        worker.join()
+        executor.shutdown()
 
     @overrides
     def _get_next(self):
-        if self._stopped:
+        if self._stopped.is_set():
             raise StopIteration
         z = self._tasks.get()
         if z == FINISHED:
@@ -794,7 +826,7 @@ class Transformer(Stream):
             raise StopIteration
         if z == STOPPED:
             self._stop()
-            raise self._t.exception()
+            raise self._worker.exception()
 
         x, fut = z
         try:

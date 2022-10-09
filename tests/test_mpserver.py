@@ -136,7 +136,7 @@ def test_sequential_stream():
 
         with Streamer(data) as s:
             s.transform(service.call, concurrency=10)
-            assert s.collect() == [v*v for v in data]
+            assert list(s) == [v*v for v in data]
 
 
 class GetHead(ProcessWorker):
@@ -236,7 +236,7 @@ def test_ensemble_stream():
 
         with Streamer(data) as s:
             s.transform(service.call, concurrency=10)
-            assert s.collect() == [[v + 1, v + 7] for v in data]
+            assert list(s) == [[v + 1, v + 7] for v in data]
 
 
 class AddOne(ThreadWorker):

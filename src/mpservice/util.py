@@ -100,20 +100,6 @@ def full_class_name(cls):
     return mod + "." + cls.__name__
 
 
-# def exit_err_msg(obj, exc_type=None, exc_value=None, exc_tb=None):
-#     if exc_type is None:
-#         return None
-#     if is_remote_exception(exc_value):
-#         msg = "Exiting {} with exception: {}\n{}".format(
-#             obj.__class__.__name__, exc_type, exc_value,
-#         )
-#         msg = "{}\n\n{}\n\n{}".format(
-#             msg, get_remote_traceback(exc_value),
-#             "The above exception was the direct cause of the following exception:")
-#         msg = f"{msg}\n\n{''.join(traceback.format_tb(exc_tb))}"
-#         return msg
-
-
 def is_remote_exception(e) -> bool:
     return isinstance(e, BaseException) and isinstance(e.__cause__, RemoteTraceback)
 
@@ -372,15 +358,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                     )
                 raise
         return self.__error__
-
-
-def Process(*args, ctx, **kwargs):
-    # This is a "factory" function.
-    method = ctx.get_start_method()
-    assert (
-        method == "spawn"
-    ), f"process start method '{method}' not implemented; the 'spwan' method is preferred"
-    return SpawnProcess(*args, **kwargs)
 
 
 class ProcessLogger:
