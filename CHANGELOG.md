@@ -1,5 +1,12 @@
 # Changelog
 
+## Release 0.11.7 (forthcoming)
+
+- `Streamer` implementation finetune, mainly about worker thread/process finalization.
+- `Streamer` removes methods that are trivial (so user can implement them if needed) and unnecessary or not very needed: `collect`, `drop_nones`, `keep_every_nth`, `keep_random`, `log_every_nth`.
+- `Streamer.log_exceptions` was renamed `peek_exceptions` with minor changes.
+
+
 ## Release 0.11.6
 
 - `mpserver` wait-time fine tunning.
