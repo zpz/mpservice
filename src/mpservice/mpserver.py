@@ -917,12 +917,12 @@ class Server:
         # the sys info log in `_gather_output` can include them?
 
     async def async_call(
-        self, x, /, *, timeout: Union[int, float] = 60, shed_load: bool = True
+        self, x, /, *, timeout: Union[int, float] = 60, back_pressure: bool = True
     ):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.
         # At the same time, `call` and `stream` are not used.
-        fut = await self._async_enqueue(x, timeout=timeout, shed_load=shed_load)
+        fut = await self._async_enqueue(x, timeout=timeout, back_pressure=back_pressure)
         return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
@@ -1020,12 +1020,12 @@ class Server:
                     else:
                         yield y
 
-    async def _async_enqueue(self, x, timeout, shed_load):
+    async def _async_enqueue(self, x, timeout, back_pressure):
         t0 = perf_counter()
         deadline = t0 + timeout
 
         while len(self._uid_to_futures) >= self._backlog:
-            if shed_load:
+            if back_pressure:
                 raise PipelineFull(len(self._uid_to_futures))
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
