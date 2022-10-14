@@ -921,7 +921,8 @@ class Server:
     ):
         # When this is called, it's usually backing a (http or other) service.
         # Concurrent async calls to this may happen.
-        # At the same time, `call` and `stream` are not used.
+        # In such use cases, `call` and `stream` should not be called to this object
+        # at the same time.
         fut = await self._async_enqueue(x, timeout=timeout, back_pressure=back_pressure)
         return await self._async_wait_for_result(fut)
 
