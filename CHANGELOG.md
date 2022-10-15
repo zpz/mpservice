@@ -1,11 +1,11 @@
 # Changelog
 
-## Release 0.11.7 (forthcoming)
+## Release 0.11.7
 
 - `Streamer` implementation finetune, mainly about worker thread/process finalization.
 - `Streamer` removes methods that are trivial (so user can implement them if needed) and unnecessary or not very needed: `collect`, `drop_nones`, `keep_every_nth`, `keep_random`, `log_every_nth`.
 - `Streamer.log_exceptions` was renamed `peek_exceptions` with minor changes.
-- Parameter `shed_load` to `mpserver.Server.async_call` is renamed to `back_pressure`.
+- Parameter `shed_load` to `mpserver.Server.async_call` is renamed to `backpressure`.
 
 
 ## Release 0.11.6
