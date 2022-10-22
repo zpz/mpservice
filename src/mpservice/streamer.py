@@ -2,7 +2,7 @@
 
 An input data stream goes through a series of operations.
 The target use case is that one or more operations are so heavy
-that they can benefit from concurrency via threading 
+that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
 These operations are called `transform`s.
 
