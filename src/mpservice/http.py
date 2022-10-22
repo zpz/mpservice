@@ -25,11 +25,9 @@ def make_server(
     *,
     host="0.0.0.0",
     port: int = 8000,
-    log_level: str = None,
-    debug: bool = None,
-    access_log: bool = None,
+    access_log: bool = False,
     loop="auto",
-    backlog: int = 32,
+    backlog: int = 64,
     **kwargs,
 ):
     """
@@ -56,31 +54,14 @@ def make_server(
     where default is 100), and in-turn to `socket.listen`. Don't make this large
     unless you know what you're doing.
     """
-    if log_level is None:
-        log_level = logging.getLevelName(logger.getEffectiveLevel()).lower()
-    assert log_level in ("debug", "info", "warning", "error")
-
-    if debug is None:
-        debug = log_level == "debug"
-    else:
-        debug = bool(debug)
-
-    if access_log is None:
-        access_log = debug
-    else:
-        access_log = bool(access_log)
-
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
         access_log=access_log,
-        debug=debug,
-        log_level=log_level,
         loop=loop,
         workers=1,
         backlog=backlog,
-        reload=debug and isinstance(app, str),
         **kwargs,
     )
 

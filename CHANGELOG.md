@@ -1,5 +1,10 @@
 # Changelog
 
+## Release 0.11.7.post1
+
+- Upgrade for a breaking change in `uvicorn` 0.19.0.
+
+
 ## Release 0.11.7
 
 - `Streamer` implementation finetune, mainly about worker thread/process finalization.
