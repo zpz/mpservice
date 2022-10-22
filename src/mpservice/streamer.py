@@ -1,11 +1,10 @@
 """Process a data stream through operations with concurrency.
 
 An input data stream goes through a series of operations.
-The target use case is that one or more operations is I/O bound,
-hence can benefit from concurrency via threading.
+The target use case is that one or more operations are so heavy
+that they can benefit from concurrency via threading 
+(if they are I/O bound) or multiprocessing (if they are CPU bound).
 These operations are called `transform`s.
-
-CPU-bound transforms are also supported, via multiprocessing.
 
 The other operations are typically light weight and supportive
 of the main (concurrent) transforms. These operations perform batching,
@@ -475,7 +474,7 @@ class Streamer(EnforceOverrides):
 
         `concurrency`: max number of concurrent calls to `func`. By default
         there is no concurrency, but this is usually *not* what you want,
-        because the point of this method is to run an I/O-bound operation
+        because the point of this method is to speed up heavy operations
         with concurrency.
 
         `return_x`: if True, output stream will contain tuples `(x, y)`;
