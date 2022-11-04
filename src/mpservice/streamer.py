@@ -759,7 +759,7 @@ class Transformer(Stream):
         super().__init__(instream)
 
         if concurrency is None:
-            if executor == 'thread':
+            if executor == "thread":
                 concurrency = min(32, (os.cpu_count() or 1) + 4)
             else:
                 concurrency = os.cpu_count() or 1
