@@ -1,5 +1,10 @@
 # Changelog
 
+## not yet released
+
+- `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
+
+
 ## Release 0.11.7.post1
 
 - Upgrade for a breaking change in `uvicorn` 0.19.0.
