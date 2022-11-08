@@ -4,10 +4,10 @@ import functools
 import multiprocessing
 import queue
 import threading
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from datetime import datetime
-from multiprocessing.util import Finalize
 from typing import Optional, Union, Dict
 
 from .util import MAX_THREADS
@@ -179,7 +179,7 @@ class BackgroundTask(ABC):
         self._tasks: Dict[Hashable, Task] = {}
 
         if self._own_executor:
-            Finalize(self, type(self)._shutdown_executor, args=(executor,))
+            weakref.finalize(self, type(self)._shutdown_executor, executor)
 
     @staticmethod
     def _shutdown_executor(executor):
