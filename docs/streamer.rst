@@ -1,0 +1,5 @@
+========
+streamer
+========
+
+.. automodule:: mpservice.streamer
