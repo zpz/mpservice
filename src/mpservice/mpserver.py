@@ -7,7 +7,7 @@ import multiprocessing.queues
 import queue
 import threading
 import traceback
-from abc import ABCMeta, abstractmethod, ABC
+from abc import abstractmethod, ABC
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
@@ -477,7 +477,7 @@ class ProcessWorker(Worker):
         This function is the parameter ``target`` to ``SpawnProcess``.
         As such, elements in ``kwargs`` go through pickling,
         hence they should consist
-        mainly of small, Python builtin types such as string, number, small ``dict``\s, etc.
+        mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
 
         Parameters
