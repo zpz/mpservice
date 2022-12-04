@@ -87,14 +87,14 @@ class SimpleQueue(queue.SimpleQueue):
 
 
 class Worker(ABC):
-    '''
+    """
     ``Worker`` defines operations on a single input item or a batch of items
     in usual synchronous code. This is supposed to run in its own process
     and use that single process only.
 
     Typically a subclass needs to enhance ``__init__`` and implement ``call``,
     and leave the other methods intact.
-    '''
+    """
 
     @classmethod
     def run(
@@ -104,11 +104,11 @@ class Worker(ABC):
         q_out: Union[FastQueue, SimpleQueue],
         **init_kwargs,
     ):
-        '''
+        """
         A ``Servlet`` object will arrange to start a ``Worker`` object
         in a thread or process. This classmethod will be the ``target`` argument
         to ``Thread`` or ``Process``.
-        
+
         This method creates a ``Worker`` object and calls its ``start`` method
         to kick off the work.
 
@@ -124,12 +124,12 @@ class Worker(ABC):
 
             In the subclass ``ProcessWorker``, ``q_out`` is a ``FastQueue``.
             In the subclass ``ThreadWorker``, ``q_out`` is either a ``FastQueue`` or a ``SimpleQueue``.
-            
+
             The elements in ``q_out`` correspond to those in ``q_in``.
             This is the case regardless of the settings for batching.
         **init_kwargs
             Passed on to ``__init__``.
-        '''
+        """
         obj = cls(**init_kwargs)
         q_out.put(obj.name)
         # This sends a signal to the caller (or "coordinator")
@@ -167,7 +167,7 @@ class Worker(ABC):
             is a single element.
 
             If ``None``, then 0 is used, meaning no batching.
-            
+
             If ``batch_size=1``, then processing is batched in form without
             speed benefits of batching.
         batch_wait_time
@@ -180,7 +180,7 @@ class Worker(ABC):
             if less than 99 elements arrive within 1 second, then the wait will stop
             at 1 second, hence a batch of less than 100 elements will be produced;
             the batch could have only one element.
-            
+
             If 0, then there's no wait. After the first element is obtained,
             if there are more elements in ``q_in`` "right there right now",
             they will be retrieved until a batch of ``batch_size`` elements is produced.
@@ -189,12 +189,12 @@ class Worker(ABC):
             will make a batch.
             In other words, batching happens only for items that are already
             "piled up" in ``q_in`` at the moment.
-        
+
             To leverage batching, it is recommended to set ``batch_wait_time``
             to a small positive value. Small, so that there is not much futile waiting.
             Positive (as opposed to 0), so that it always waits a little bit
             just in case more elements are coming in.
-            
+
             When ``batch_wait_time > 0``, it will hurt performance during
             sequential calls (i.e. send a request with a single element, wait for the result,
             then send the next, and so on), because this worker will always
@@ -202,14 +202,14 @@ class Worker(ABC):
             yet additional items will never come during sequential calls.
             However, when batching is enabled, sequential calls are not
             the intended use case. Beware of this factor in benchmarking.
-            
+
             If ``batch_size`` is 0 or 1, then ``batch_wait_time`` should be left unspecified,
             otherwise the only valid value is 0.
-            
+
             If ``batch_size > 1`, then ``batch_wait_time`` is 0.01 by default.
         batch_size_log_cadence
             Log batch size statistics every this many batches. If ``None``, this log is turned off.
-            
+
             This is ignored if ``batch_size=0``.
         """
         if batch_size is None or batch_size == 0:
@@ -265,7 +265,7 @@ class Worker(ABC):
 
         If a subclass fixes `batch_size` in its ``__init__`` to be
         0 or nonzero, make sure this method is implemented accordingly.
-        
+
         If ``__init__`` does not fix the value of ``batch_size``,
         then a particular instance may have been created with or without batching.
         In this case, this method needs to check ``self.batch_size`` and act accordingly,
@@ -277,9 +277,9 @@ class Worker(ABC):
         raise NotImplementedError
 
     def start(self, *, q_in, q_out):
-        '''
+        """
         This is called by ``run`` to kick off the processing loop.
-        '''
+        """
         try:
             if self.batch_size > 1:
                 self._start_batch(q_in=q_in, q_out=q_out)
@@ -479,14 +479,14 @@ class ProcessWorker(Worker):
         hence they should consist
         mainly of small, Python builtin types such as string, number, small ``dict``\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
-        
+
         Parameters
         ----------
         cpus
             Specifies what CPUs (or cores) this process should run on.
             This operation is known as "pin a process to certain CPUs"
             or "set the CPU/processor affinity of a process".
-            
+
             If ``None``, no CPU pinning is done. This process may "jump"
             around CPUs depending on which one is available at the time of need.
             This has some overhead.
@@ -506,17 +506,18 @@ class ThreadWorker(Worker):
 
 
 def make_threadworker(func: Callable[[Any], Any]) -> Type[ThreadWorker]:
-    '''
+    """
     This function defines and returns a simple ``ThreadWorker`` subclass
     for quick, "on-the-fly" use.
     This can be useful when we want to introduce simple servlets
     for pre-processing and post-processing.
-    
+
     Parameters
     ----------
     func
         This function is what happens in the method ``call``.
-    '''
+    """
+
     class MyThreadWorker(ThreadWorker):
         def call(self, x):
             return func(x)
