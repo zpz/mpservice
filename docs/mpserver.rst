@@ -17,7 +17,7 @@ There are four levels of constructs.
    each executing one instance of said ``Worker`` independently. Optionally, it can specify exactly
    which CPU(s) each worker process uses.
 
-3. Servlets can be composed in ``Sequential``\s or ``Ensemble``\s. In a ``Sequential``,
+3. Servlets can compose a ``Sequential`` or an ``Ensemble``. In a ``Sequential``,
    one servlet's output becomes the next servlet's input.
    In an ``Ensemble``, each input item is processed by all the constituent servlets, and their
    results are collected and combined. Interestingly, both ``Sequential`` and ``Ensemble``
@@ -35,8 +35,6 @@ This article describes roughly version 0.7.2.
 Workers
 =======
 
-There are two worker classes: `ProcessWorker` and `ThreadWorker`.
-
 .. autoclass:: mpservice.mpserver.Worker
 
 .. autoclass:: mpservice.mpserver.ProcessWorker
@@ -48,7 +46,7 @@ There are two worker classes: `ProcessWorker` and `ThreadWorker`.
 .. autofunction:: mpservice.mpserver.make_threadworker
 
 
-.. autoattribute:: mpservice.mpserver.PassThrough
+.. autodata:: mpservice.mpserver.PassThrough
 
 
 Servlets
