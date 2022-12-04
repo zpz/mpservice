@@ -17,7 +17,7 @@ dependencies = [
     "uvloop",
 ]
 requires-python = ">=3.8"
-readme = "README.md"
+readme = "README.rst"
 license = {file = "LICENSE"}
 classifiers = [
     "Intended Audience :: Developers",
