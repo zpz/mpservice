@@ -1,4 +1,5 @@
-# mpservice
+mpservice
+=========
 
 Utilities for Python concurrency, including
 
@@ -26,6 +27,7 @@ The package also contains some other related utilities.
 
 To install, do `pip install mpservice`.
 
-## Status
+Status
+======
 
 Production ready. Under active development.

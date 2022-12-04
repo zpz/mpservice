@@ -1,11 +1,21 @@
 # Changelog
 
-## Release 0.11.7.post1
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+
+## [unreleased]
+
+- `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
+
+
+## [0.11.7.post1] - 2022-10-21
 
 - Upgrade for a breaking change in `uvicorn` 0.19.0.
 
 
-## Release 0.11.7
+## [0.11.7] - 2022-10-15
 
 - `Streamer` implementation finetune, mainly about worker thread/process finalization.
 - `Streamer` removes methods that are trivial (so user can implement them if needed) and unnecessary or not very needed: `collect`, `drop_nones`, `keep_every_nth`, `keep_random`, `log_every_nth`.
@@ -13,14 +23,14 @@
 - Parameter `shed_load` to `mpserver.Server.async_call` is renamed to `backpressure`.
 
 
-## Release 0.11.6
+## [0.11.6] - 2022-10-07
 
 - `mpserver` wait-time fine tunning.
 - `mpserver.Server.async_call` gets new parameter `shed_load` with default `True`.
 - New exception class `PipelineFull` in `mpserver`.
 
 
-## Release 0.11.5
+## [0.11.5] - 2022-09-22
 
 - `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
 - Enhancements to `SpawnProcess`.
@@ -33,14 +43,13 @@
 - The module `named_pipe` is renamed `pipe`.
 
 
-## Release 0.11.4
+## [0.11.4] - 2022-09-01
 
 - `mpservice.util.ProcessLogger` gets context manager methods.
 - New class `mpservice.util.SpawnProcess`.
 
 
-
-## Release 0.11.3
+## [0.11.3] - 2022-06-24
 
 - Add dependency `asgiref`.
   Previously we've relied on getting `asgiref` from `uvicorn` dependency,
@@ -48,20 +57,20 @@
 - Reduce the default frequency of resource utilization logs.
 
 
-## Release 0.11.2
+## [0.11.2] - 2022-06-05
 
 - Refinement and simplification to `mpservice.streamer`.
 - Refinement to `mpservice.server_process`.
 
 
-## Release 0.11.1
+## [0.11.1] - 2022-05-31
 
 - Added `mpserver.ThreadWorker` and `ThreadServlet`.
 - Simplified `mpserver` parameter for CPU pinning spec.
 - Added log on worker process CPU/memory utilization in `mpserver`.
 
 
-## Release 0.11.0
+## [0.11.0] - 2022-05-27
 
 - Refactor to `mpservice.mpserver` with API changes.
   New design allows flexible composition of sequential and ensemble setups,
@@ -73,20 +82,20 @@
 - Added module `mpservice.named_pipe`.
 
 
-## Release 0.10.9
+## [0.10.9] - 2022-05-21
 
 - Added (or brought back) parameter `backlog` to `MPServer`.
 - Implimentation improvements: simplified utitlity queues; removed error pipe of MPServer.
 
 
-## Release 0.10.8
+## [0.10.8] - 2022-05-18
 
 - Finetune to `EnsembleServer`: ensemble elements could be `RemoteException`
   objects, i.e. failure of one ensemble component will not halt or invalidate
   the other components.
 
 
-## Release 0.10.7
+## [0.10.7] - 2022-05-15
 
 - By default, `MPServer` uses the new, custom queue type `Unique` for faster
   buildup of batches for servlets. Removed `ZeroQueue` and `BasicQueue`.
@@ -96,7 +105,7 @@
 - `ServerProcess` gets new parameter `ctx` for multiprocessing context.
 
 
-## Release 0.10.6
+## [0.10.6] - 2022-04-29
 
 - Added alternative multiprocessing queues, namely `BasicQueue`, `FastQueue` and `ZeroQueue`,
   in an attempt to improve service speed, expecially batching.
@@ -106,12 +115,12 @@
 - `MPServer` parameter `cpus` renamed to `main_cpu` with default value `0`.
 
 
-## Release 0.10.5
+## [0.10.5] - 2022-04-08
 
 - Minor fine-tuning and documentation touch-ups.
 
 
-## Release 0.10.4
+## [0.10.4] - 2022-04-03
 
 - Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
 - Refactored socket server side to make its usage similar to a web app.
@@ -128,7 +137,7 @@
 - Removed some contents of `mpservice.util`.
 
 
-## Release 0.10.3.post1, post2, post3, post4, post5
+## [0.10.3.post1, post2, post3, post4, post5] - 2022-03-25
 
 - Add async-based `MPServer.stream2`.
 - Improve printing of RemoteException in `__exit__`.
@@ -136,13 +145,13 @@
 - Small improvements.
 
 
-## Release 0.10.3
+## [0.10.3] - 2022-03-19
 
 - Removed async streamer.
 - Simplified implementation of the `transform` method of streamer.
 
 
-## Release 0.10.2
+## [0.10.2] - 2022-03-19
 
 - Simplify `MPServer.stream`; remove `MPServer.async_stream`; the functionality
   of `async_stream` is provided by `stream`.
@@ -150,25 +159,25 @@
 - Simplify `mpservice._async_streamer`.
 
 
-## Release 0.10.1
+## [0.10.1] - 2022-03-17
 
 - `mpservice.http_server` was renamed to `mpservice.http`.
 - Initial implementation of socket client/server.
 
 
-## Release 0.10.0
+## [0.10.0] - 2022-03-13
 
 - `mpserver` fine tune, esp about graceful shutdown.
 - Use `overrides` to help keep sanity checks on class inheritance.
 - Bug fixes in streamer.
 
 
-## Release 0.9.9.post1
+## [0.9.9.post1] - 2022-03-11
 
 - Handle logging in multiprocessing.
 
 
-## Release 0.9.9
+## [0.9.9] - 2022-03-10
 
 - Use 'spawn' method for process creation.
 - Refactored and simplified test/build process.
@@ -176,76 +185,72 @@
 - Minor bug fixes.
 
 
-## Release 0.9.8.post2
+## [0.9.8.post2] - 2022-01-31
 
 - Improvements to the utilities in `mpservice.http_server`, esp regarding service shutdown.
 
 
-## Release 0.9.8.post1
+## [0.9.8.post1] - 2022-01-31
 
 - Requirement on `uvicorn` changes to `uvicorn[standard]`, which uses `uvloop`.
 
 
-## Release 0.9.8
+## [0.9.8] - 2022-01-30
 
 - Reworked error propagation in streamer; fixed bugs therein.
 - Renamed `mpservice.exception` to `mpservice.remote_exception`.
-
-
-## Release 0.9.8b1
-
 - Corner-case bug fixes in `MPServer`.
 - Increase queue size in `ConcurrentTransformer`.
 
 
-## Release 0.9.7
+## [0.9.7] - 2022-01-16
 
 - Refactor the `MPError` class, with a renaming to `RemoteException`.
 
 
-## Release 0.9.6
+## [0.9.6] - 2022-01-09
 
 - Refactor the `MPError` class.
 
 
-## Release 0.9.5.post3
+## [0.9.5.post3] - 2021-12-31
 
 - Relax version requirements on dependencies.
 
 
-## Release 0.9.5.post2
+## [0.9.5.post2] - 2021-12-05
 
 - `BackgroundTask` refinements, esp about support for asyncio.
 
 
-## Release 0.9.5.post1
+## [0.9.5.post1] - 2021-12-05 [YANKED]
 
 - `BackgroundTask` bug fix.
 
 
-## Release 0.9.5
+## [0.9.5] - 2021-12-05 [YANKED]
 
 - `BackgroundTask` refactor.
 
 
-## Release 0.9.4
+## [0.9.4] - 2021-12-05
 
 - `MPServer.start` starts the servlets sequentially by default.
 
 
-## Release 0.9.3
+## [0.9.3] - 2021-11-16
 
 - Bug fix in `streamer.{Stream, AsyncStream}.batch`.
 - Change Python version requirement from 3.7 to 3.8, due to the use of
   parameter `name` in `asyncio.create_task`.
 
 
-## Release 0.9.2
+## [0.9.2] - 2021-10-31
 
 - Revise `background_task` API.
 
 
-## Release 0.9.1
+## [0.9.1] - 2021-10-31
 
 - Rewrite `streamer` and `async_streamer` to avoid queues in simple "pass-through" ops, such as `drop_if`, `log_exceptions`.
 - Minor improvements to `http_server`.
@@ -253,46 +258,46 @@
 - Added new module `background_task`.
 
 
-## Release 0.9.0
+## [0.9.0] - 2021-08-28
 
 - Bug fix.
 - `mpservice.mpserver.Servlet.__call__` is renamed to `call`.
 
 
-## Release 0.8.9
+## [0.8.9] - 2021-08-16
 
 - Add `mpserver.EnsembleServer` to implement ensembles; rename `Server` to `SequentialServer`.
 - Add `mpserver.SimpleServer`.
 - Revise `cpu` specification in `mpserver`.
 
 
-## Release 0.8.8
+## [0.8.8] - 2021-08-10
 
 - `mpserver.Server` gets a sync API, in addition to the existing async API.
 - `mpserver.Server` gets sync and async stream methods.
 
 
-## Release 0.8.7
+## [0.8.7] - 2021-08-05
 
 Streamer API fine-tuning and bug fixes.
 
 
-## Release 0.8.6
+## [0.8.6] - 2021-08-02
 
 Added sync streamer.
 
 
-## Release 0.8.5
+## [0.8.5] - 2021-08-01
 
 Refactor the async streamer API and tests.
 
 
-## Release 0.8.4
+## [0.8.4] - 2021-07-28
 
 Fine tuning on `streamer`.
 
 
-## Release 0.8.3
+## [0.8.3] - 2021-07-27
 
 Added:
 
@@ -300,14 +305,14 @@ Added:
   Similarly, `drain` gets new parameter `ignore_exceptions`.
 
 
-## Release 0.8.2
+## [0.8.2] - 2021-07-25
 
 Added:
 
 - `mpservice.streamer`
 
 
-## Release 0.8.1
+## [0.8.1] - 2021-07-24
 
 Changed:
 
@@ -316,7 +321,7 @@ Changed:
 - `mpservice._server_process` renamed to `mpservice.server_process`.
 
 
-## Release 0.8.0
+## [0.8.0] - 2021-05-19
 
 Changed:
 
@@ -326,7 +331,7 @@ Changed:
   finishes.
 
 
-## Release 0.7.3
+## [0.7.3] - 2021-05-09
 
 Added:
 

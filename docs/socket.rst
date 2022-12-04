@@ -1,0 +1,5 @@
+======
+socket
+======
+
+.. automodule:: mpservice.socket

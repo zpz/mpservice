@@ -189,6 +189,7 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 
 import concurrent.futures
+import os
 import queue
 import random
 import threading
@@ -472,10 +473,8 @@ class Streamer(EnforceOverrides):
 
         `executor`: either 'thread' or 'process'.
 
-        `concurrency`: max number of concurrent calls to `func`. By default
-        there is no concurrency, but this is usually *not* what you want,
-        because the point of this method is to speed up heavy operations
-        with concurrency.
+        `concurrency`: max number of concurrent calls to `func`.
+        If `None`, a default value is used.
 
         `return_x`: if True, output stream will contain tuples `(x, y)`;
         if False, output stream will contain `y` only.
@@ -760,7 +759,10 @@ class Transformer(Stream):
         super().__init__(instream)
 
         if concurrency is None:
-            concurrency = 1
+            if executor == "thread":
+                concurrency = min(32, (os.cpu_count() or 1) + 4)
+            else:
+                concurrency = os.cpu_count() or 1
         else:
             assert concurrency > 0
         self._return_x = return_x

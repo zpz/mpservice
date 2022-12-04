@@ -7,6 +7,7 @@ import multiprocessing
 import multiprocessing.connection
 import multiprocessing.queues
 import multiprocessing.context
+import os
 import subprocess
 import threading
 import traceback
@@ -15,7 +16,7 @@ from types import TracebackType
 from typing import Optional, Union
 
 
-MAX_THREADS = min(32, multiprocessing.cpu_count() + 4)
+MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 # This default is suitable for I/O bound operations.
 # This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
 # For others, user may want to specify a smaller value.
