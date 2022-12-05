@@ -474,21 +474,22 @@ class Worker(ABC):
 
 
 class CpuAffinity:
-    '''
+    """
     ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
 
     This operation is known as "pinning a process to certain CPUs"
     or "setting the CPU/processor affinity of a process".
-    
+
     The ``value`` attribute of a ``CpuAffinity`` instance is accepted
     by |psutil.cpu_affinity|_.
 
     .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
     .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
     .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
-    '''
+    """
+
     def __init__(self, x: Union[None, int, Sequence[int]] = None, /):
-        '''
+        """
         Parameters
         ----------
         x
@@ -498,20 +499,20 @@ class CpuAffinity:
 
             If an ``int``, it is the zero-based index of the CPU.
             Otherwise, it is a list of such ``int``\s.
-        '''
+        """
         if x is not None:
             if isinstance(x, int):
                 x = [x]
             else:
                 assert all(isinstance(v, int) for v in x)
         self.value = x
-                
+
     def __repr__(self):
         return f"{self.__class__.__name__}({self.value})"
 
     def __str__(self):
         return self.__repr__()
-    
+
 
 class ProcessWorker(Worker):
     @classmethod
@@ -604,22 +605,22 @@ class ProcessServlet:
         cpus
             Specifies how many processes to create and how they are pinned
             to specific CPUs.
-            
+
             The default is ``None``, indicating a single unpinned process.
-            
+
             Otherwise, a list of ``CpuAffinity`` objects.
             For convenience, values of primitive types are accepted; they will be
             used to construct ``CpuAffinity`` objects.
             The number of processes created is the number of elements in ``cpus``.
             The CPU spec is very flexible. For example,
-            
+
             ::
-            
+
                 cpus=[[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
-                
+
             This instructs the servlet to create 6 processes, each running an instance
             of ``worker_cls``. The CPU affinity of each process is as follows:
-            
+
             1. CPUs 0, 1, 2
             2. CPU 0
             3. CPUs 2, 3
@@ -645,10 +646,10 @@ class ProcessServlet:
         self._started = False
 
     def start(self, q_in: FastQueue, q_out: FastQueue):
-        '''
+        """
         Create the requested number of processes, in each starting an instance
         of ``self._worker_cls``.
-        
+
         Parameters
         ----------
         q_in
@@ -656,7 +657,7 @@ class ProcessServlet:
             exactly one worker process.
         q_out
             A queue for results.
-        '''
+        """
         assert not self._started
         for cpu in self._cpus:
             # Create as many processes as the length of `cpus`.
@@ -686,7 +687,7 @@ class ProcessServlet:
         self._started = True
 
     def stop(self):
-        '''Stop the workers.'''
+        """Stop the workers."""
         assert self._started
         for w in self._workers:
             _ = w.result()
@@ -703,7 +704,7 @@ class ThreadServlet:
         name: str = None,
         **kwargs,
     ):
-        '''
+        """
         Parameters
         ----------
         woker_cls
@@ -717,7 +718,7 @@ class ThreadServlet:
             Each thread is named after this value plus a serial number.
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
-        '''
+        """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         self._num_threads = num_threads or 1
@@ -726,10 +727,10 @@ class ThreadServlet:
         self._started = False
 
     def start(self, q_in, q_out):
-        '''
+        """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
-        
+
         Parameters
         ----------
         q_in
@@ -737,7 +738,7 @@ class ThreadServlet:
             exactly one worker thread.
         q_out
             A queue for results.
-        '''
+        """
         assert not self._started
         for ithread in range(self._num_threads):
             sname = f"{self._name}-{ithread}"
@@ -760,7 +761,7 @@ class ThreadServlet:
         self._started = True
 
     def stop(self):
-        '''Stop the worker threads.'''
+        """Stop the worker threads."""
         assert self._started
         for w in self._workers:
             _ = w.result()
