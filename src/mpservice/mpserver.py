@@ -445,12 +445,18 @@ class Worker(ABC):
         n = 1
 
         deadline = perf_counter() + extra_timeout
-        # Timeout starts after the first item is secured.
+        # Timeout starts after the first item is obtained.
 
         while n < batchsize:
             t = deadline - perf_counter()
+            # `t` is the remaining time to wait.
+            # If `extra_timeout == 0`, then `t <= 0`.
+            # If `t <= 0`, will still get an item if it is already
+            # in the buffer.
             try:
                 z = buffer.get(timeout=max(0, t))
+                # If `extra_timeout == 0`, then `timeout=0`,
+                # hence will get an item w/o wait.
             except Empty:
                 break
             if z == NOMOREDATA:
@@ -467,9 +473,50 @@ class Worker(ABC):
         return out
 
 
+class CpuAffinity:
+    """
+    ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
+
+    This operation is known as "pinning a process to certain CPUs"
+    or "setting the CPU/processor affinity of a process".
+
+    The ``value`` attribute of a ``CpuAffinity`` instance is accepted
+    by |psutil.cpu_affinity|_.
+
+    .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
+    .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
+    .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
+    """
+
+    def __init__(self, x: Union[None, int, Sequence[int]] = None, /):
+        """
+        Parameters
+        ----------
+        x
+            If ``None``, no pinning is done. The process may "jump"
+            around CPUs depending on which one is available at the time of need.
+            This has some overhead.
+
+            If an ``int``, it is the zero-based index of the CPU.
+            Otherwise, it is a list of such ``int``\\s.
+        """
+        if x is not None:
+            if isinstance(x, int):
+                x = [x]
+            else:
+                assert all(isinstance(v, int) for v in x)
+        self.value = x
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.value})"
+
+    def __str__(self):
+        return self.__repr__()
+
+
 class ProcessWorker(Worker):
     @classmethod
-    def run(cls, *, cpus: Sequence[int] = None, **kwargs):
+    def run(cls, *, cpus: CpuAffinity = None, **kwargs):
         """
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
@@ -479,20 +526,9 @@ class ProcessWorker(Worker):
         hence they should consist
         mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
-
-        Parameters
-        ----------
-        cpus
-            Specifies what CPUs (or cores) this process should run on.
-            This operation is known as "pin a process to certain CPUs"
-            or "set the CPU/processor affinity of a process".
-
-            If ``None``, no CPU pinning is done. This process may "jump"
-            around CPUs depending on which one is available at the time of need.
-            This has some overhead.
         """
         if cpus:
-            psutil.Process().cpu_affinity(cpus=cpus)
+            psutil.Process().cpu_affinity(cpus=cpus.value)
         super().run(**kwargs)
 
 
@@ -557,41 +593,79 @@ class ProcessServlet:
         self,
         worker_cls: Type[ProcessWorker],
         *,
-        cpus: list = None,
+        cpus: Sequence[Union[CpuAffinity, None, int, Sequence[int]]] = None,
         name: str = None,
         **kwargs,
     ):
         """
-        `cpus`: specifies how many processes to create and how they are pinned
-                to specific CPUs. The default is a single unpinned process.
+        Parameters
+        ----------
+        worker_cls
+            A subclass of ``ProcessWorker``.
+        cpus
+            Specifies how many processes to create and how they are pinned
+            to specific CPUs.
+
+            The default is ``None``, indicating a single unpinned process.
+
+            Otherwise, a list of ``CpuAffinity`` objects.
+            For convenience, values of primitive types are accepted; they will be
+            used to construct ``CpuAffinity`` objects.
+            The number of processes created is the number of elements in ``cpus``.
+            The CPU spec is very flexible. For example,
+
+            ::
+
+                cpus=[[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
+
+            This instructs the servlet to create 6 processes, each running an instance
+            of ``worker_cls``. The CPU affinity of each process is as follows:
+
+            1. CPUs 0, 1, 2
+            2. CPU 0
+            3. CPUs 2, 3
+            4. CPUs 4, 5, 6
+            5. CPU 4
+            6. Any CPU, no pinning
+        name
+            The main part of the names of the worker processes.
+            If not specified, the name of this class is used.
+            Each process is named after this value plus its CPU affinity info.
+        **kwargs
+            Passed to the ``__init__`` method of ``worker_cls``.
         """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
+        if cpus is None:
+            self._cpus = [CpuAffinity(None)]
+        else:
+            cpus = [v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus]
         self._cpus = cpus
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
 
-    def start(self, q_in, q_out):
+    def start(self, q_in: FastQueue, q_out: FastQueue):
+        """
+        Create the requested number of processes, in each starting an instance
+        of ``self._worker_cls``.
+
+        Parameters
+        ----------
+        q_in
+            A queue with input elements. Each element will be passed to and processed by
+            exactly one worker process.
+        q_out
+            A queue for results.
+        """
         assert not self._started
-
-        # CPU allocation can look as flexible as this:
-        #   [[0, 1, 2], [0], [2, 3], [4, 5, 6], 4, None]
-        cpus = self._cpus or [None]
-        for i, c in enumerate(cpus):
-            if c is not None:
-                if isinstance(c, int):
-                    cpus[i] = [c]
-                else:
-                    assert all(isinstance(v, int) for v in c)
-
-        for cpu in cpus:
+        for cpu in self._cpus:
             # Create as many processes as the length of `cpus`.
             # Each process is pinned to the specified cpu core.
-            if cpu is None:
+            if cpu.value is None:
                 sname = self._name
             else:
-                sname = f"{self._name}-{','.join(map(str, cpu))}"
+                sname = f"{self._name}-{cpu}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
             self._workers.append(
                 SpawnProcess(
@@ -613,6 +687,7 @@ class ProcessServlet:
         self._started = True
 
     def stop(self):
+        """Stop the workers."""
         assert self._started
         for w in self._workers:
             _ = w.result()
@@ -629,6 +704,21 @@ class ThreadServlet:
         name: str = None,
         **kwargs,
     ):
+        """
+        Parameters
+        ----------
+        woker_cls
+            A subclass of ``ThreadWorker``
+        num_threads
+            The number of threads to create. Each thread will host and run
+            an instance of ``worker_cls``.
+        name
+            The main part of the names of the worker processes.
+            If not specified, the name of this class is used.
+            Each thread is named after this value plus a serial number.
+        **kwargs
+            Passed on the ``__init__`` method of ``worker_cls``.
+        """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         self._num_threads = num_threads or 1
@@ -637,6 +727,18 @@ class ThreadServlet:
         self._started = False
 
     def start(self, q_in, q_out):
+        """
+        Create the requested number of threads, in each starting an instance
+        of ``self._worker_cls``.
+
+        Parameters
+        ----------
+        q_in
+            A queue with input elements. Each element will be passed to and processed by
+            exactly one worker thread.
+        q_out
+            A queue for results.
+        """
         assert not self._started
         for ithread in range(self._num_threads):
             sname = f"{self._name}-{ithread}"
@@ -659,6 +761,7 @@ class ThreadServlet:
         self._started = True
 
     def stop(self):
+        """Stop the worker threads."""
         assert self._started
         for w in self._workers:
             _ = w.result()

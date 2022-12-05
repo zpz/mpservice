@@ -7,7 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [unreleased]
 
+Changed
+-------
+
 - `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
+
+Added or enhanced
+-----------------
+
+- Enhanced documentation. Started to host generated doc on Read the Docs.
+- New class ``mpservice.mpserver.CpuAffinity``.
 
 
 ## [0.11.7.post1] - 2022-10-21
