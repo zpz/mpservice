@@ -52,25 +52,24 @@ Workers
 Servlets
 ========
 
-There are two servelet classess: `ProcessServlet` and `ThreadServlet`.
+A "servlet" manages the execution of a ``Worker``.
+To be precise, a servlet manages one or more instances of one ``Worker`` subclass.
+The servlet runs in the "main" process, whereas the ``Worker`` instances run in other processes or threads.
 
-If `W1` is a subclass of `ProcessWorker`, then the simplest servlet
-is like this::
+We make a distinction between "simple" servlets, including ``ProcessServlet`` and ``ThreadServlet``,
+and "compound" servlets, including ``Sequential`` and ``Ensemble``.
 
-    s = ProcessServlet(W1)
+In the case of a simple servlet, each input item is passed to and processed by
+exactly one worker process or thread.
 
-This creates one worker process that is not pinned to a particular CPU.
-
-The servlet code runs in the "main process",
-whereas workers run in other processes. Each input item is processed by one
-and only one worker.
+.. autoclass:: mpservice.mpserver.CpuAffinity
 
 .. autoclass:: mpservice.mpserver.ProcessServlet
 
 .. autoclass:: mpservice.mpserver.ThreadServlet
 
 
-"Compound Servelet"
+"Compound Servlets"
 ===================
 
 Servlets can be composed in ``Sequential``'s or ``Ensemble``'s. In a ```Sequential``,
