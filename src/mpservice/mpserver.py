@@ -11,7 +11,7 @@ from abc import abstractmethod, ABC
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Sequence, Union, Callable, Type, Any, Optional
+from typing import Sequence, Union, Callable, Type, Any
 
 import psutil
 from overrides import final
@@ -498,7 +498,7 @@ class CpuAffinity:
             This has some overhead.
 
             If an ``int``, it is the zero-based index of the CPU.
-            Otherwise, it is a list of such ``int``\s.
+            Otherwise, it is a list of such ``int``\\s.
         """
         if x is not None:
             if isinstance(x, int):
