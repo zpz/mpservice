@@ -54,10 +54,10 @@ class _SpawnContext:
 
 
 MP_SPAWN_CTX = _SpawnContext()
-'''
+"""
 Use this as the ``mp_context`` or ``ctx`` arguments to various multiprocessing
 functions.
-'''
+"""
 
 
 def get_docker_host_ip():
@@ -386,7 +386,7 @@ class ProcessLogger:
 
         3. In the other process, start it. Suppose the object is also called ``pl``,
            then do
-           
+
            ::
 
                 pl.start()

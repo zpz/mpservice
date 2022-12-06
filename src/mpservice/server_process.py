@@ -67,7 +67,7 @@ class Manager(multiprocessing.managers.SyncManager):
            must all be pickle-able.
 
            Calling one registered class multiple times, like
-           
+
            ::
 
                 prox1 = manager.Doubler(...)
@@ -83,7 +83,7 @@ class Manager(multiprocessing.managers.SyncManager):
            Public methods (minus "properties") defined by the registered classes
            can be invoked on a proxy with the same parameters and get the expected
            result. For example,
-           
+
            ::
 
                 prox1.double(3)

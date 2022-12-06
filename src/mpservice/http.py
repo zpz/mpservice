@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # https://stackoverflow.com/questions/36594400/what-is-backlog-in-tcp-connections
 # http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
 
+
 def make_server(
     app: Union[str, ASGIApplication],
     *,
@@ -56,12 +57,12 @@ def make_server(
         This is passed to asyncio ``loop.create_server`` (in ``asyncio.base_events``,
         where default is 100), and in-turn to ``socket.listen``. Don't make this large
         unless you know what you're doing.
-    
+
     **kwargs
         Passed to ``uvicorn.Config``.
         If user has their own ways to config logging, then pass in
         ``log_config=None`` in ``kwargs``.
-    
+
     """
     config = uvicorn.Config(
         app,

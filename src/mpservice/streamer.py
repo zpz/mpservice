@@ -377,9 +377,9 @@ class Streamer(EnforceOverrides):
         return self.peek(foo)
 
     def peek_exceptions(self, *, with_trace: bool = True, print_func: Callable = None):
-        '''
+        """
         User may want to pass in `logger.error` as `print_func`.
-        '''
+        """
         if print_func is None:
             print_func = print
 

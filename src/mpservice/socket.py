@@ -164,7 +164,7 @@ async def open_unix_connection(path: str, *, timeout=None):
     """
     Parameters
     ----------
-    path 
+    path
         The same string that has been used by ``run_unix_server``.
     """
     t0 = perf_counter()
@@ -202,8 +202,8 @@ class SocketApplication(EnforceOverrides):
     def __init__(
         self,
         *,
-        on_startup: 'Sequence[Callable]' = None,
-        on_shutdown: 'Sequence[Callable]' = None,
+        on_startup: "Sequence[Callable]" = None,
+        on_shutdown: "Sequence[Callable]" = None,
     ):
         self.on_startup = on_startup or []
         self.on_shutdown = on_shutdown or []
@@ -331,11 +331,11 @@ class SocketServer(EnforceOverrides):
                 raise
 
     async def _handle_connection(self, reader, writer):
-        '''
+        """
         This is called upon a new connection that is openned
         at the request from a client to the server.
         This method handles requests in that connection.
-        '''
+        """
         if self._path:
             addr = writer.get_extra_info("sockname")
         else:

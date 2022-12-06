@@ -14,7 +14,7 @@ from .util import MAX_THREADS
 
 
 class Task:
-    '''Objects of this class are created by ``BackgroundTask``.'''
+    """Objects of this class are created by ``BackgroundTask``."""
 
     _NOTSET_ = object()
 
@@ -168,14 +168,14 @@ class BackgroundTask(ABC):
     """
 
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
-        '''
+        """
         Parameters
         ----------
         executor
             If you provide your own *process* executor,
             it's recommended to use ``mpservice.util.MP_SPAWN_CTX`` for its
             ``ctx`` parameter.
-        '''
+        """
         self._own_executor = False
         if executor is None:
             executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)

@@ -497,11 +497,11 @@ class CpuAffinity:
 
             If ``None``, no pinning is done. This object is used only to query the current affinity.
             (I believe all process starts in an un-pinned status.)
-            
+
             If an ``int``, it is the zero-based index of the CPU. Valid values are 0, 1,...,
             the number of CPUs minus 1. If a list, the elements are CPU indices.
             Duplicate values will be removed. Invalid values will raise ``ValueError``.
-            
+
             If ``[]``, pin to all eligible CPUs.
         """
         if target is not None:
@@ -519,15 +519,15 @@ class CpuAffinity:
         return self.__repr__()
 
     def set(self) -> None:
-        '''
+        """
         Set CPU affinity to the value passed into ``__init__``.
         If that value was ``None``, do nothing.
-        '''
+        """
         if self.target is not None:
             psutil.Process().cpu_affinity(self.target)
 
     def get(self) -> list[int]:
-        '''Return the current CPU affinity.'''
+        """Return the current CPU affinity."""
         return psutil.Process().cpu_affinity()
 
 
@@ -655,7 +655,9 @@ class ProcessServlet:
         if cpus is None:
             self._cpus = [CpuAffinity(None)]
         else:
-            self._cpus = [v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus]
+            self._cpus = [
+                v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus
+            ]
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
@@ -741,7 +743,9 @@ class ThreadServlet:
         self._workers = []
         self._started = False
 
-    def start(self, q_in: Union[FastQueue, SimpleQueue], q_out: Union[FastQueue, SimpleQueue]):
+    def start(
+        self, q_in: Union[FastQueue, SimpleQueue], q_out: Union[FastQueue, SimpleQueue]
+    ):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
@@ -753,7 +757,7 @@ class ThreadServlet:
             exactly one worker thread.
         q_out
             A queue for results.
-            
+
             ``q_in`` and ``q_out` are either ``FastQueue``\s (for processes)
             or ``SimpleQueue``\s (for threads). Because this servlet may be connected to
             either ``ProcessServlet``\s or ``ThreadServlet``\s, either type of queues may
@@ -947,30 +951,30 @@ class EnsembleServlet:
 
 
 # Sequential = SequentialServlet
-'''An alias to ``SequentialServlet`` for backward compatibility.
+"""An alias to ``SequentialServlet`` for backward compatibility.
 
 .. deprecated:: 0.11.8
     Will be removed in 0.12.0.
     Use ``SequentialSevlet`` instead.
-'''
+"""
 
 
 # Ensemble = EnsembleServlet
-'''An alias to ``EnsembleServlet`` for backward compatibility.
+"""An alias to ``EnsembleServlet`` for backward compatibility.
 
 .. deprecated:: 0.11.8
     Will be removed in 0.12.0.
     Use ``EnsembleSevlet`` instead.
-'''
+"""
 
 
 Servlet = Union[ProcessServlet, ThreadServlet, SequentialServlet, EnsembleServlet]
-'''The type ``Servlet`` refers to any of the four classes and subclasses thereof:
+"""The type ``Servlet`` refers to any of the four classes and subclasses thereof:
 ``ProcessServlet``, ``ThreadServlet``, ``SequentialServlet``, ``EnsembleServlet``.
 
 Currently this is defined as a type alias. There is no subclassing relationship
 between them. However, their interfaces are very similar.
-'''
+"""
 
 
 class Server:
