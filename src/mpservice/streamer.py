@@ -56,7 +56,7 @@ After this setup, there are several ways to use the object ``stream`` (or ``pipe
        or iterator is expected. For example, the ``mpservice.mpserver.Server``
        class has a method ``stream`` that expects an iterable, hence
        we can do things like
-       
+
        ::
 
             server = Server(...)

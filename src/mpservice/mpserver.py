@@ -758,11 +758,11 @@ class ThreadServlet:
         q_out
             A queue for results.
 
-            ``q_in`` and ``q_out` are either ``FastQueue``\s (for processes)
-            or ``SimpleQueue``\s (for threads). Because this servlet may be connected to
-            either ``ProcessServlet``\s or ``ThreadServlet``\s, either type of queues may
+            ``q_in`` and ``q_out` are either ``FastQueue``\\s (for processes)
+            or ``SimpleQueue``\\s (for threads). Because this servlet may be connected to
+            either ``ProcessServlet``\\s or ``ThreadServlet``\\s, either type of queues may
             be appropriate. In contrast, for ``ProcessServlet``, the input and output
-            queues are both ``FastQueue``\s.
+            queues are both ``FastQueue``\\s.
         """
         assert not self._started
         for ithread in range(self._num_threads):
