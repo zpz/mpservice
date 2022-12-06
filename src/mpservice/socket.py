@@ -6,9 +6,10 @@ import queue
 import stat
 import threading
 import time
+from collections.abc import Iterable, Sequence
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from time import perf_counter
-from typing import Iterable, Union, Sequence, Callable, Awaitable, Any
+from typing import Union, Callable, Awaitable, Any
 
 from overrides import EnforceOverrides
 
@@ -21,18 +22,18 @@ logger = logging.getLogger(__name__)
 
 def put_in_queue(q, x, stop_event, timeout=0.1):
     """
-    `q` is either a `threading.Queue` or a `multiprocessing.queues.Queue`,
-    but not an `asyncio.Queue`, because the latter does not take
-    the `timeout` argument.
+    ``q`` is either a ``threading.Queue`` or a ``multiprocessing.queues.Queue``,
+    but not an ``asyncio.Queue``, because the latter does not take
+    the ``timeout`` argument.
 
-    This is used in a blocking mode to put `x` in the queue
+    This is used in a blocking mode to put ``x`` in the queue
     till success. It checks for any request of early-stop indicated by
-    `stop_event`, which is either `threading.Event` or `multiprocessing.synchronize.Event`.
-    Usually there is not need to customize the value of `timeout`,
-    because in this usecase it's OK to try a little long before checking
+    ``stop_event``, which is either ``threading.Event`` or ``multiprocessing.synchronize.Event``.
+    Usually there is not need to customize the value of ``timeout``,
+    because in this use case it's OK to try a little long before checking
     early-stop.
 
-    Return `True` if successfully put in queue; `False` if early-stop is detected.
+    Return ``True`` if successfully put in queue; ``False`` if early-stop is detected.
     """
     while True:
         try:
@@ -125,7 +126,10 @@ async def run_tcp_server(conn_handler: Callable, host: str, port: int):
 
 async def run_unix_server(conn_handler: Callable, path: str):
     """
-    `path`: a file path accessible by both the server and the client,
+    Parameters
+    ----------
+    path
+        A file path accessible by both the server and the client,
         which run on the same machine. This is not a regular file,
         and it (including parent directories) does not need to exist.
         In fact, if the file exists, it will be removed first.
@@ -158,7 +162,10 @@ async def open_tcp_connection(host, port, *, timeout=None):
 
 async def open_unix_connection(path: str, *, timeout=None):
     """
-    `path`: the same string that has been used by `run_unix_server`.
+    Parameters
+    ----------
+    path
+        The same string that has been used by ``run_unix_server``.
     """
     t0 = perf_counter()
     while True:
@@ -176,12 +183,12 @@ class SocketApplication(EnforceOverrides):
     """
     SocketApplication is designed to to used similar to the "application" in a
     HTTP framework. The main API is to register "endpoint" functions by the method
-    `add_route`. This allows to back the socket service by multiple functions
+    ``add_route``. This allows to back the socket service by multiple functions
     for different purposes. Usually there is only one main function, which involves
     transmitting substantial amount of data between the server and the client.
-    For simplicity, one may use '/' for the `path` of this route.
+    For simplicity, one may use ``'/'`` for the ``path`` of this route.
     The other routes are usually supportive, for example, getting server info
-    or setting options. For example
+    or setting options. For example::
 
         app.add_route('/', make_prediction)
         app.add_route('/server-info', get_server_info)
@@ -195,8 +202,8 @@ class SocketApplication(EnforceOverrides):
     def __init__(
         self,
         *,
-        on_startup: Sequence[Callable] = None,
-        on_shutdown: Sequence[Callable] = None,
+        on_startup: "Sequence[Callable]" = None,
+        on_shutdown: "Sequence[Callable]" = None,
     ):
         self.on_startup = on_startup or []
         self.on_shutdown = on_shutdown or []
@@ -208,16 +215,16 @@ class SocketApplication(EnforceOverrides):
         route: Union[Callable[[Any], Awaitable[Any]], Callable[[], Awaitable[Any]]],
     ):
         """
-        `route` is an *async* function that takes a single positional arg,
-        and returns a response (which could be `None` if so desired).
+        ``route`` is an *async* function that takes a single positional arg,
+        and returns a response (which could be ``None`` if so desired).
         The response should be serializable by the encoder.
         To be safe, return a object of Python native types.
-        If exception is raised in this method, appropriate `RemoteException`
+        If exception is raised in this method, appropriate ``RemoteException``
         object will be sent in the response.
-        The method could also proactively return a `RemoteException` object.
+        The method could also proactively return a ``RemoteException`` object.
 
-        `path` is any string. The route is identified by this string. For familiarity,
-        it may be a good idea to start the string with '/', although this is in no
+        ``path`` is any string. The route is identified by this string. For familiarity,
+        it may be a good idea to start the string with ``'/'``, although this is in no
         way necessary.
 
         There is no GET/POST distinction like in the case of HTTP.
@@ -246,13 +253,13 @@ class SocketServer(EnforceOverrides):
         shutdown_path: str = "/shutdown",
     ):
         """
-        `backlog`: max concurrent in-progress requests per connection.
-            (Note, the client may open many connections.)
-            This "concurrency" is in terms of concurrent calls to
-            `handle_request`.
+        ``backlog`` is the max concurrent in-progress requests per connection.
+        (Note, the client may open many connections.)
+        This "concurrency" is in terms of concurrent calls to
+        ``handle_request``.
 
         The type of the service, between 'tcp' and 'unix', is determined
-        by the parameters `path`, `host`, and `port`. See code for details.
+        by the parameters ``path``, ``host``, and ``port``. See code for details.
         """
         self.app = app
         if path:
@@ -324,9 +331,11 @@ class SocketServer(EnforceOverrides):
                 raise
 
     async def _handle_connection(self, reader, writer):
-        # This is called upon a new connection that is openned
-        # at the request from a client to the server.
-        # This method handles requests in that connection.
+        """
+        This is called upon a new connection that is openned
+        at the request from a client to the server.
+        This method handles requests in that connection.
+        """
         if self._path:
             addr = writer.get_extra_info("sockname")
         else:
@@ -403,7 +412,7 @@ def make_server(app: SocketApplication, **kwargs):
 
 def run_app(app, **kwargs):
     """
-    End user typicall calls this function to start the server.
+    End user typically calls this function to start the server.
     The server will stay up until the client requests its shutdown.
     """
     server = make_server(app, **kwargs)
@@ -422,16 +431,22 @@ class SocketClient(EnforceOverrides):
         backlog: int = 2048,
     ):
         """
-        `path`, `host`, `port`: either `path` is given (for Unix socket),
-            or `port` (plus optionally `host`) is given (for Tcp socket).
+        Parameters
+        ----------
+        path, host, port
+            Either ``path`` is given (for Unix socket),
+            or ``port`` (plus optionally ``host``) is given (for Tcp socket).
             These values should, of course, be consistent with the corresponding
             server.
-        `num_connections`: this is expected to have a direct impact on the performance,
-            hence needs experimentations.
-        `connection_timeout`: how many seconds to wait while connecting to the server.
+        num_connections
+            This is expected to have a direct impact on the performance,
+            hence needs experimentation.
+        connection_timeout
+            How many seconds to wait while connecting to the server.
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
-        `backlog`: size of queue for in-progress requests.
+        backlog
+            Size of queue for in-progress requests.
         """
         # Experiments showed `max_connections` can be up to 200.
         # This needs to be improved.
@@ -609,20 +624,20 @@ class SocketClient(EnforceOverrides):
         self, path: str, data=None, *, enqueue_timeout=None, response_timeout=None
     ):
         """
-        This could raise `concurrent.futures.TimeoutError`.
+        This could raise ``concurrent.futures.TimeoutError``.
         That means result is not available in the specified time,
         but the request may have well been sent to the server.
         However the user handles the exception, it will not affect
         the server's response to the request. The user will not be
         able to resume the wait for the result.
 
-        If caller does not need the response, use `response_timeout=0`.
+        If caller does not need the response, use ``response_timeout=0``.
 
         In some cases, the request does not need to send data, e.g. if the request
         if for certain info query. In such situations, the corresponding function on
-        the server side takes no argument, and in this call to `request`, `data` should be `None`.
+        the server side takes no argument, and in this call to ``request``, ``data`` should be ``None``.
 
-        Example:
+        Example::
 
             request('/shutdown', response_timeout=0)
         """
@@ -642,10 +657,10 @@ class SocketClient(EnforceOverrides):
         response_timeout=60,
     ):
         """
-        If `return_x` is `True`, return a stream of `(x, y)` tuples,
-        where `x` is the input data, and `y` is a dict with element 'data'.
-        If `return_x` is `False`, return a stream of `y`.
-        If `return_exceptions` is `True`, `y` could be an Exception object.
+        If ``return_x`` is ``True``, return a stream of ``(x, y)`` tuples,
+        where ``x`` is the input data, and ``y`` is a dict with element 'data'.
+        If ``return_x`` is ``False``, return a stream of ``y``.
+        If ``return_exceptions`` is ``True``, ``y`` could be an Exception object.
         """
         # Refer to `mpserver.Server.stream` for in-code documentation.
         tasks = SingleLane(self._backlog)

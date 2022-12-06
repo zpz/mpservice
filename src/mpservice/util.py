@@ -30,7 +30,7 @@ TimeoutError = TimeoutError  # make local alias for the standard exception
 
 
 class _SpawnContext:
-    # We want too use `SpawnProcess` as the process class when
+    # We want to use `SpawnProcess` as the process class when
     # the creation method is 'spawn'.
     # However, because `multiprocessing.get_context('spawn')`
     # is a global var, we shouldn't directly change its
@@ -54,8 +54,10 @@ class _SpawnContext:
 
 
 MP_SPAWN_CTX = _SpawnContext()
-# Use this as the `mp_context` or `ctx` arguments to various multiprocessing
-# functions.
+"""
+Use this as the ``mp_context`` or ``ctx`` arguments to various multiprocessing
+functions.
+"""
 
 
 def get_docker_host_ip():
@@ -127,29 +129,29 @@ def rebuild_exception(exc: BaseException, tb: str):
 class RemoteException:
     """
     This class is a pickle helper for Exception objects to preserve some traceback info.
-    This is needed because directly calling `pickle.dumps` on an Exception object will lose
-    its `__traceback__` and `__cause__` attributes.
+    This is needed because directly calling ``pickle.dumps`` on an Exception object will lose
+    its ``__traceback__`` and ``__cause__`` attributes.
 
     One typical use case is to send an exception object across process boundaries,
     hence undergoing pickling/unpickling.
 
     This class preserves some traceback info simply by keeping it as a formatted string.
-    Once unpickled (e.g. in another process), the object obtained, say `obj`,
-    is not an instance of `RemoteException`, but rather of the original exception type.
-    The object does not have `__traceback__` attribute, which is impossible to reconstruct,
-    but rather has `__cause__` attribute, which is a custom Exception
-    object (`RemoteTraceback`) that contains the string-form traceback info.
-    The traceback string is `obj.__cause__.traceback`. This string contains proper linebreaks.
+    Once unpickled (e.g. in another process), the object obtained, say ``obj``,
+    is not an instance of ``RemoteException``, but rather of the original exception type.
+    The object does not have ``__traceback__`` attribute, which is impossible to reconstruct,
+    but rather has ``__cause__`` attribute, which is a custom Exception
+    object (``RemoteTraceback``) that contains the string-form traceback info.
+    The traceback string is ``obj.__cause__.traceback``. This string contains proper linebreaks.
 
     Most (probably all) methods and attributes of the unpickled exception object behave the same
-    as the original, exception for `__traceback__` and `__cause__`.
+    as the original, exception for ``__traceback__`` and ``__cause__``.
 
-    Again, the unpickled object, say `obj`, is not an instance of this class, hence
+    Again, the unpickled object, say ``obj``, is not an instance of this class, hence
     we can't define methods on this class to help using `obj`.
 
-    Note that `RemoteException` does not subclass `BaseException`, so you can't "raise" this object.
+    Note that ``RemoteException`` does not subclass ``BaseException``, so you can't "raise" this object.
 
-    See also: `is_remote_exception`, `get_remote_traceback`.
+    See also: ``is_remote_exception``, ``get_remote_traceback``.
     """
 
     # This takes the idea of `concurrent.futures.process._ExceptionWithTraceback`
@@ -210,15 +212,15 @@ class RemoteException:
 class Thread(threading.Thread):
     """
     This class makes the result or exception produced in a thread
-    accessible from the thread object itself. This makes the `Thread`
-    object's behavior somewhat similar to the `Future` object returned
-    by `concurrent.futures.ThreadPoolExecutor.submit`.
+    accessible from the thread object itself. This makes the ``Thread``
+    object's behavior somewhat similar to the ``Future`` object returned
+    by ``concurrent.futures.ThreadPoolExecutor.submit``.
     """
 
     def __init__(self, *args, loud_exception: bool = True, **kwargs):
         """
-        `loud_exception`: if True, it's the standard Thread behavior;
-            if False, it's the `concurrent.futures` behavior.
+        ``loud_exception``: if ``True``, it's the standard ``Thread`` behavior;
+        if ``False``, it's the ``concurrent.futures`` behavior.
         """
         super().__init__(*args, **kwargs)
         self._result_ = None
@@ -264,14 +266,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     This customization adds two things to the standard class:
 
         - make result and exception available as attributes of the
-          process object, similar to `concurrent.futures.Future`.
+          process object, similar to ``concurrent.futures.Future``.
         - make logs in the subprocess handled in the main process.
     """
 
     def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
         """
-        `loud_exception`: if True, it's the standard Process behavior;
-            if False, it's the `concurrent.futures` behavior.
+        ``loud_exception``: if True, it's the standard ``Process`` behavior;
+        if False, it's the ``concurrent.futures`` behavior.
         """
         if kwargs is None:
             kwargs = {}
@@ -376,22 +378,24 @@ class ProcessLogger:
 
     Usage:
 
-        1. In main process, create a `ProcessLogger` instance and start it:
+        1. In main process, create a ``ProcessLogger`` instance and start it::
 
                 pl = ProcessLogger().start()
 
-        2. Pass this object to other processes. (Yes, this object is picklable.)
+        2. Pass this object to other processes. (Yes, this object is pickle-able.)
 
-        3. In the other process, start it. Suppose the object is also called `pl`,
+        3. In the other process, start it. Suppose the object is also called ``pl``,
            then do
+
+           ::
 
                 pl.start()
 
-    Calling `stop` in either the main or the child process is optional.
+    Calling ``stop`` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
 
     Although user can use this class in their code, they are encouraged to
-    use `SpawnProcess`, which already handles logging via this class.
+    use ``SpawnProcess``, which already handles logging via this class.
     """
 
     def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
@@ -475,7 +479,7 @@ class ProcessLogger:
         In a Process (created using the "spawn" method),
         run this function at the beginning to set up putting all log messages
         ever produced in that process into the queue that will be consumed
-        in the main process by `self._logger_thread`.
+        in the main process by ``self._logger_thread``.
 
         During the execution of the process, logging should not be configured.
         Logging config should happen in the main process/thread.

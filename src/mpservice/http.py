@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # https://stackoverflow.com/questions/36594400/what-is-backlog-in-tcp-connections
 # http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
 
-# Adapted from `uvicorn.main.run`.
+
 def make_server(
     app: Union[str, ASGIApplication],
     *,
@@ -31,28 +31,38 @@ def make_server(
     **kwargs,
 ):
     """
-    This function is specifically for use with `mpservice.mpserver`.
-    The argument `workers` is fixed to 1.
+    This function is specifically for use with ``mpservice.mpserver``.
+    The argument ``workers`` is fixed to 1.
 
-    `app`: a `Starlette` instance or the import string for such
-        an instance, like 'mymodule:app'.
+    This function is adapted from ``uvicorn.main.run``.
 
-    `loop`: if you encounter errors, esp if you need to use
-        the event loop before calling this function, use 'none'.
+    Parameters
+    ----------
+    app
+        A ``Starlette`` instance or the import string for such
+        an instance, like ``'mymodule:app'``.
+
+    loop
+        If you encounter errors, esp if you need to use
+        the event loop before calling this function, use ``'none'``.
 
         If you don't need to use the eventloop at all before
         calling this function, then it's OK to pass in
-        `loop='auto'`. In that case, `uvicorn` will use `uvloop`
+        ``loop='auto'``. In that case, ``uvicorn`` will use ``uvloop``
         if that package is installed (w/o creating a new loop);
-        otherwise it will create a new `asyncio` native event loop
+        otherwise it will create a new ``asyncio`` native event loop
         and set it as the default loop.
 
-    If user has their own ways to config logging, then pass in
-    `log_config=None` in `kwargs`.
+    backlog
+        This is passed to asyncio ``loop.create_server`` (in ``asyncio.base_events``,
+        where default is 100), and in-turn to ``socket.listen``. Don't make this large
+        unless you know what you're doing.
 
-    `backlog`: this is passed to asyncio `loop.create_server` (in `asyncio.base_events`,
-    where default is 100), and in-turn to `socket.listen`. Don't make this large
-    unless you know what you're doing.
+    **kwargs
+        Passed to ``uvicorn.Config``.
+        If user has their own ways to config logging, then pass in
+        ``log_config=None`` in ``kwargs``.
+
     """
     config = uvicorn.Config(
         app,

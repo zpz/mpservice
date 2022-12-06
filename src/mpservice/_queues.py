@@ -32,7 +32,10 @@ class SingleLane:
 
     def __init__(self, maxsize=1_000_000):
         """
-        `maxisze`: max number of elements in the queue. `0` means no limit.
+        Parameters
+        ----------
+        maxisze
+            Max number of elements in the queue. 0 means no limit.
         """
         assert 0 <= maxsize
         self.maxsize = maxsize

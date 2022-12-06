@@ -5,7 +5,7 @@ import pytest
 
 from mpservice.mpserver import (
     ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
-    Sequential, Ensemble, Server, make_threadworker,
+    SequentialServlet, EnsembleServlet, Server, make_threadworker,
     TimeoutError
 )
 from mpservice.streamer import Streamer
@@ -49,10 +49,10 @@ def test_basic():
 
 
 def test_sysinfolog():
-    s = Sequential(
+    s = SequentialServlet(
             ProcessServlet(Double, cpus=[0, 1]),
             ProcessServlet(Square, cpus=[1]),
-            Ensemble(
+            EnsembleServlet(
                 ProcessServlet(Double),
                 ThreadServlet(make_threadworker(lambda x: x + 1)),
                 ProcessServlet(Square, cpus=[1]),
@@ -66,7 +66,7 @@ def test_sysinfolog():
 
 @pytest.mark.asyncio
 async def test_sequential_server_async():
-    with Server(Sequential(
+    with Server(SequentialServlet(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
             ), sys_info_log_cadence=None) as service:
@@ -80,7 +80,7 @@ async def test_sequential_server_async():
 
 
 def test_sequential_server():
-    with Server(Sequential(
+    with Server(SequentialServlet(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
             ), sys_info_log_cadence=None) as service:
@@ -106,7 +106,7 @@ def test_sequential_batch():
 def test_sequential_error():
     s1 = ProcessServlet(Double, cpus=[1, 2])
     s2 = ProcessServlet(Shift, cpus=[3], stepsize=4)
-    with Server(Sequential(s1, s2), sys_info_log_cadence=None) as service:
+    with Server(SequentialServlet(s1, s2), sys_info_log_cadence=None) as service:
         z = service.call(3)
         assert z == 3 * 2 + 4
 
@@ -154,8 +154,8 @@ class GetLen(ProcessWorker):
         return len(x)
 
 
-my_wide_server = Sequential(
-        Ensemble(
+my_wide_server = SequentialServlet(
+        EnsembleServlet(
             ProcessServlet(GetHead, cpus=[1,2]),
             ProcessServlet(GetTail, cpus=[3]),
             ProcessServlet(GetLen, cpus=[2])),
@@ -196,8 +196,8 @@ class PostCombine(ThreadWorker):
         return x + y[0] + y[1]
 
 
-your_wide_server = Sequential(
-        Ensemble(
+your_wide_server = SequentialServlet(
+        EnsembleServlet(
             ThreadServlet(PassThrough),
             ProcessServlet(AddThree, cpus=[1, 2]),
             ProcessServlet(Delay, cpus=[3])),
@@ -218,8 +218,8 @@ def test_ensemble_timeout():
             z = service.call(8.2, timeout=1)
 
 
-his_wide_server = Sequential(
-    Ensemble(
+his_wide_server = SequentialServlet(
+    EnsembleServlet(
         ProcessServlet(Shift, stepsize=1, cpus=[1], batch_size=0),
         ProcessServlet(Shift, stepsize=3, cpus=[1, 2], batch_size=1),
         ProcessServlet(Shift, stepsize=5, cpus=[0, 3], batch_size=4),
@@ -260,7 +260,7 @@ def test_thread():
     s1 = ThreadServlet(AddOne, num_threads=3)
     s2 = ThreadServlet(AddFive)
     s3 = ThreadServlet(TakeMean)
-    s = Sequential(Ensemble(s1, s2), s3)
+    s = SequentialServlet(EnsembleServlet(s1, s2), s3)
     with Server(s, sys_info_log_cadence=None) as service:
         assert service.call(3) == 6
         for x, y in service.stream(range(100), return_x=True):
@@ -323,7 +323,7 @@ class Worker5(ProcessWorker):
 
 
 def test_exceptions():
-    s = Sequential(
+    s = SequentialServlet(
         ProcessServlet(Worker1),
         ProcessServlet(Worker2),
         ProcessServlet(Worker3),

@@ -2,11 +2,11 @@
 two Python processes on the same machine.
 
 Usually the two Python processes are two separately started programs.
-If they are two processes created by `multiprocessing` in a single program,
-then one would directly use `multiprocessing.Pipe` instead of this module.
+If they are two processes created by ``multiprocessing`` in a single program,
+then one would directly use ``multiprocessing.Pipe`` instead of this module.
 
-One creates a `Server` object in one process and a `Client` object in
-the other process, providing the same `path` argument.
+One creates a ``Server`` object in one process and a ``Client`` object in
+the other process, providing the same ``path`` argument.
 The two objects can be created in any order, and their roles are symmetric.
 The different names simply remind the application to create one of each
 in the two processes.
@@ -15,15 +15,15 @@ Two uni-directional pipes are created between the two processes.
 In each process, one "sends" (or writes) to one pipe and "receives" (or reads)
 from the other pipe. The roles of the two pipes in the two processes are flipped.
 
-The `send` and `recv` functions take and return picklable Python objects.
-While `send` does not block as long as system buffer has space,
-`recv` blocks until one data item is read.
+The ``send`` and ``recv`` functions take and return pickle-able Python objects.
+While ``send`` does not block as long as system buffer has space,
+``recv`` blocks until one data item is read.
 
 It's up to the application to design conventions understood by both sides
 to use special values to signal start, finish, and the like.
 
-See `multiprocessing.connection.Connection` for documentation on the
-`send` and `recv` methods.
+See ``multiprocessing.connection.Connection`` for documentation on the
+``send`` and ``recv`` methods.
 """
 
 import os

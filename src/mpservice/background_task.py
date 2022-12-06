@@ -8,13 +8,13 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from datetime import datetime
-from typing import Optional, Union, Dict
+from typing import Optional, Union
 
 from .util import MAX_THREADS
 
 
 class Task:
-    # Objects of this class are created by `BackgroundTask`.
+    """Objects of this class are created by ``BackgroundTask``."""
 
     _NOTSET_ = object()
 
@@ -138,10 +138,10 @@ class Task:
 
     def exception(self):
         """
-        Returns `None` if task is not yet completed
+        Returns ``None`` if task is not yet completed
         or has completed successfully.
 
-        Raises `CancelledError` if the task was cancelled.
+        Raises ``CancelledError`` if the task was cancelled.
 
         If the task raised an exception, this method will
         raise the same exception.
@@ -158,7 +158,7 @@ class Task:
 
 class BackgroundTask(ABC):
     """
-    `BackgroundTask` provides a mechanism to manager "tasks" run in a
+    ``BackgroundTask`` provides a mechanism to manager "tasks" run in a
     thread pool or process pool. Given a user-specified way to determine
     a task based on the task parameters, a repeat submission of an
     existing task (i.e. a task with the same ID) will simply get
@@ -168,15 +168,20 @@ class BackgroundTask(ABC):
     """
 
     def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
-        # `executor`: if you provide your own *process* executor,
-        # it's recommended to use `mpservice.util.MP_SPAWN_CTX` for its
-        # `ctx` parameter.
+        """
+        Parameters
+        ----------
+        executor
+            If you provide your own *process* executor,
+            it's recommended to use ``mpservice.util.MP_SPAWN_CTX`` for its
+            ``ctx`` parameter.
+        """
         self._own_executor = False
         if executor is None:
             executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
             self._own_executor = True
         self._executor = executor
-        self._tasks: Dict[Hashable, Task] = {}
+        self._tasks: dict[Hashable, Task] = {}
 
         if self._own_executor:
             weakref.finalize(self, type(self)._shutdown_executor, executor)
@@ -196,28 +201,28 @@ class BackgroundTask(ABC):
     ):
         """
         This method contains the operations of the user task.
-        It runs in `self._executor`.
+        It runs in ``self._executor``.
 
         In order to make sure these operations do not keep state
-        in an instance of this class, it is a `classmethod`.
+        in an instance of this class, it is a classmethod.
 
         Subclass implementation may want to make the parameter listing
         more specific.
 
-        The parameters `_cancelled` and `_info` are provided by
+        The parameters ``_cancelled`` and ``_info`` are provided by
         the background-task mechanism rather than the user task itself,
         but are to be used by the user task.
 
         If the task tends to take long, and wants to support cancellation,
-        then it should check `_cancelled.is_set()` periodically (preferrably
+        then it should check ``_cancelled.is_set()`` periodically (preferrably
         rather frequently), and stops if the flag is set.
-        Note that `concurrent.futures.Future.cancel`
+        Note that ``concurrent.futures.Future.cancel``
         can only cancel the execution of a scheduled task if it has not started
-        running yet. Once the task is ongoing, `Future.cancel` can't stop
+        running yet. Once the task is ongoing, ``Future.cancel`` can't stop
         the execution. Therefore user code needs to be proactive, using
-        `_cancelled` to detect the cancellation request and act accordingly.
+        ``_cancelled`` to detect the cancellation request and act accordingly.
 
-        The queue `_info` is used to pass info to the caller, e.g. periodic
+        The queue ``_info`` is used to pass info to the caller, e.g. periodic
         progress reports. Because there is no guarantee that this queue
         is being checked by the caller timely or at all,
         we can't let it have unlimited capacity and keep elements in it.
@@ -226,7 +231,7 @@ class BackgroundTask(ABC):
         An element in this queue is typically a small dict.
 
         It is not mandatory that the user task code makes use of
-        `_cancelled` and `_info`.
+        ``_cancelled`` and ``_info``.
         """
         raise NotImplementedError
 
@@ -252,9 +257,9 @@ class BackgroundTask(ABC):
         Then, simply return a random task ID.
 
         The parameter list should be identical to that
-        of `run`, minus `_cancelled` and `_status`.
+        of ``run``, minus ``_cancelled`` and ``_status``.
 
-        The default implementation retruns a random value.
+        The default implementation returns a random value.
         """
         return str(datetime.utcnow())
 

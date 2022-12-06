@@ -17,12 +17,12 @@ There are four levels of constructs.
    each executing one instance of said ``Worker`` independently. Optionally, it can specify exactly
    which CPU(s) each worker process uses.
 
-3. Servlets can compose a ``Sequential`` or an ``Ensemble``. In a ``Sequential``,
+3. Servlets can compose a ``SequentialServlet`` or an ``EnsembleServlet``. In a ``SequentialServlet``,
    one servlet's output becomes the next servlet's input.
-   In an ``Ensemble``, each input item is processed by all the constituent servlets, and their
-   results are collected and combined. Interestingly, both ``Sequential`` and ``Ensemble``
-   are also ``Servlet``\s, hence they can participate in composing other ``Sequential``\s
-   and ``Ensemble``\s.
+   In an ``EnsembleServlet``, each input item is processed by all the constituent servlets, and their
+   results are collected and combined. Interestingly, both ``SequentialServlet`` and ``EnsembleServlet``
+   are also ``Servlet``\s, hence they can participate in composing other ``SequentialServlet``\s
+   and ``EnsembleServlet``\s.
 
 4. On the top level is ``Server``. A ``Server``
    handles interfacing with the outside world, while passing the "real work" to
@@ -57,7 +57,7 @@ To be precise, a servlet manages one or more instances of one ``Worker`` subclas
 The servlet runs in the "main" process, whereas the ``Worker`` instances run in other processes or threads.
 
 We make a distinction between "simple" servlets, including ``ProcessServlet`` and ``ThreadServlet``,
-and "compound" servlets, including ``Sequential`` and ``Ensemble``.
+and "compound" servlets, including ``SequentialServlet`` and ``EnsembleServlet``.
 
 In the case of a simple servlet, each input item is passed to and processed by
 exactly one worker process or thread.
@@ -69,15 +69,12 @@ exactly one worker process or thread.
 .. autoclass:: mpservice.mpserver.ThreadServlet
 
 
-"Compound Servlets"
-===================
-
-Servlets can be composed in ``Sequential``'s or ``Ensemble``'s. In a ```Sequential``,
+Servlets can be composed in ``SequentialServlet``'s or ``EnsembleServlet``'s. In a ```SequentialServlet``,
 the first servlet's output becomes the second servlet's input, and so on.
-In an ``Ensemble``, each input item is processed by all the servlets, and their
+In an ``EnsembleServlet``, each input item is processed by all the servlets, and their
 results are collected in a list.
 
-Great power comes from the fact that both `Sequential` and `Ensemble`
+Great power comes from the fact that both `SequentialServlet` and `EnsembleServlet`
 also follow the `Servlet` API, hence both can be constituents of other compositions.
 In principle, you can freely compose and nest them.
 For example, suppose `W1`, `W2`,..., are `Worker` subclasses,
@@ -85,24 +82,24 @@ then you may design such a workflow,
 
 ::
 
-    s = Sequential(
+    s = SequentialServlet(
             ProcessServlet(W1),
-            Ensemble(
+            EnsembleServlet(
                 ThreadServlet(W2),
-                Sequential(ProcessServlet(W3), ThreadServlet(W4)),
+                SequentialServlet(ProcessServlet(W3), ThreadServlet(W4)),
                 ),
-            Ensemble(
+            EnsembleServlet(
                 Sequetial(ProcessServlet(W5), ProcessServlet(W6)),
                 Sequetial(ProcessServlet(W7), ThreadServlet(W8), ProcessServlet(W9)),
                 ),
         )
 
-In sum, `ProcessServlet`, `ThreadServlet`, `Sequential`, `Ensemble` are collectively
+In sum, `ProcessServlet`, `ThreadServlet`, `SequentialServlet`, `EnsembleServlet` are collectively
 referred to and used as `Servlet`.
 
-.. autoclass:: mpservice.mpserver.Sequential
+.. autoclass:: mpservice.mpserver.SequentialServlet
 
-.. autoclass:: mpservice.mpserver.Ensemble
+.. autoclass:: mpservice.mpserver.EnsembleServlet
 
 .. autoattribute:: mpservice.mpserver.Servlet
 
@@ -118,7 +115,7 @@ a potentially unlimited stream of data through the service
 to get a stream of results. The first usage supports a sync API and an async API.
 
 
-On the top level is `Server`. Pass a `Servlet`, or `Sequential` or `Ensemble`
+On the top level is `Server`. Pass a `Servlet`, or `SequentialServlet` or `EnsembleServlet`
 into a `Server`, which handles scheduling as well as interfacing with the outside
 world::
 
