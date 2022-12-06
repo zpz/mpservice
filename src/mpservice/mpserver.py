@@ -8,10 +8,11 @@ import queue
 import threading
 import traceback
 from abc import abstractmethod, ABC
+from collections.abc import Sequence
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Sequence, Union, Callable, Type, Any
+from typing import Union, Callable, Any
 
 import psutil
 from overrides import final
@@ -480,43 +481,59 @@ class CpuAffinity:
     This operation is known as "pinning a process to certain CPUs"
     or "setting the CPU/processor affinity of a process".
 
-    The ``value`` attribute of a ``CpuAffinity`` instance is accepted
-    by |psutil.cpu_affinity|_.
+    Setting and getting CPU affinity is done via |psutil.cpu_affinity|_.
 
     .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
     .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
     .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
     """
 
-    def __init__(self, x: Union[None, int, Sequence[int]] = None, /):
+    def __init__(self, target: Union[None, int, Sequence[int]] = None, /):
         """
         Parameters
         ----------
-        x
-            If ``None``, no pinning is done. The process may "jump"
-            around CPUs depending on which one is available at the time of need.
-            This has some overhead.
+        target
+            The CPUs to pin the current process to.
 
-            If an ``int``, it is the zero-based index of the CPU.
-            Otherwise, it is a list of such ``int``\\s.
+            If ``None``, no pinning is done. This object is used only to query the current affinity.
+            (I believe all process starts in an un-pinned status.)
+            
+            If an ``int``, it is the zero-based index of the CPU. Valid values are 0, 1,...,
+            the number of CPUs minus 1. If a list, the elements are CPU indices.
+            Duplicate values will be removed. Invalid values will raise ``ValueError``.
+            
+            If ``[]``, pin to all eligible CPUs.
         """
-        if x is not None:
-            if isinstance(x, int):
-                x = [x]
+        if target is not None:
+            if isinstance(target, int):
+                target = [target]
             else:
-                assert all(isinstance(v, int) for v in x)
-        self.value = x
+                assert all(isinstance(v, int) for v in target)
+                # `psutil` would truncate floats but I don't like that.
+        self.target = target
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.value})"
+        return f"{self.__class__.__name__}({self.target})"
 
     def __str__(self):
         return self.__repr__()
 
+    def set(self) -> None:
+        '''
+        Set CPU affinity to the value passed into ``__init__``.
+        If that value was ``None``, do nothing.
+        '''
+        if self.target is not None:
+            psutil.Process().cpu_affinity(self.target)
+
+    def get(self) -> list[int]:
+        '''Return the current CPU affinity.'''
+        return psutil.Process().cpu_affinity()
+
 
 class ProcessWorker(Worker):
     @classmethod
-    def run(cls, *, cpus: CpuAffinity = None, **kwargs):
+    def run(cls, *, cpus: CpuAffinity, **kwargs):
         """
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
@@ -527,8 +544,7 @@ class ProcessWorker(Worker):
         mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
         """
-        if cpus:
-            psutil.Process().cpu_affinity(cpus=cpus.value)
+        cpus.set()
         super().run(**kwargs)
 
 
@@ -541,7 +557,7 @@ class ThreadWorker(Worker):
     """
 
 
-def make_threadworker(func: Callable[[Any], Any]) -> Type[ThreadWorker]:
+def make_threadworker(func: Callable[[Any], Any]) -> type[ThreadWorker]:
     """
     This function defines and returns a simple ``ThreadWorker`` subclass
     for quick, "on-the-fly" use.
@@ -578,20 +594,20 @@ Example use of this class::
         else:
             return max(y)
 
-    s = Ensemble(
+    s = EnsembleServlet(
             ThreadServlet(PassThrough),
             ProcessServlet(W1),
             ProcessServlet(W2)
             ProcessServlet(W3),
         )
-    ss = Sequential(s, ThreadServlet(make_threadworker(combine)))
+    ss = SequentialServlet(s, ThreadServlet(make_threadworker(combine)))
 """
 
 
 class ProcessServlet:
     def __init__(
         self,
-        worker_cls: Type[ProcessWorker],
+        worker_cls: type[ProcessWorker],
         *,
         cpus: Sequence[Union[CpuAffinity, None, int, Sequence[int]]] = None,
         name: str = None,
@@ -609,8 +625,8 @@ class ProcessServlet:
             The default is ``None``, indicating a single unpinned process.
 
             Otherwise, a list of ``CpuAffinity`` objects.
-            For convenience, values of primitive types are accepted; they will be
-            used to construct ``CpuAffinity`` objects.
+            For convenience, values of primitive types are also accepted;
+            they will be used to construct ``CpuAffinity`` objects.
             The number of processes created is the number of elements in ``cpus``.
             The CPU spec is very flexible. For example,
 
@@ -639,8 +655,7 @@ class ProcessServlet:
         if cpus is None:
             self._cpus = [CpuAffinity(None)]
         else:
-            cpus = [v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus]
-        self._cpus = cpus
+            self._cpus = [v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus]
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
@@ -662,7 +677,7 @@ class ProcessServlet:
         for cpu in self._cpus:
             # Create as many processes as the length of `cpus`.
             # Each process is pinned to the specified cpu core.
-            if cpu.value is None:
+            if cpu.target is None:
                 sname = self._name
             else:
                 sname = f"{self._name}-{cpu}"
@@ -698,7 +713,7 @@ class ProcessServlet:
 class ThreadServlet:
     def __init__(
         self,
-        worker_cls: Type[ThreadWorker],
+        worker_cls: type[ThreadWorker],
         *,
         num_threads: int = None,
         name: str = None,
@@ -707,7 +722,7 @@ class ThreadServlet:
         """
         Parameters
         ----------
-        woker_cls
+        worker_cls
             A subclass of ``ThreadWorker``
         num_threads
             The number of threads to create. Each thread will host and run
@@ -726,7 +741,7 @@ class ThreadServlet:
         self._workers = []
         self._started = False
 
-    def start(self, q_in, q_out):
+    def start(self, q_in: Union[FastQueue, SimpleQueue], q_out: Union[FastQueue, SimpleQueue]):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
@@ -738,6 +753,12 @@ class ThreadServlet:
             exactly one worker thread.
         q_out
             A queue for results.
+            
+            ``q_in`` and ``q_out` are either ``FastQueue``\s (for processes)
+            or ``SimpleQueue``\s (for threads). Because this servlet may be connected to
+            either ``ProcessServlet``\s or ``ThreadServlet``\s, either type of queues may
+            be appropriate. In contrast, for ``ProcessServlet``, the input and output
+            queues are both ``FastQueue``\s.
         """
         assert not self._started
         for ithread in range(self._num_threads):
@@ -769,9 +790,10 @@ class ThreadServlet:
         self._started = False
 
 
-class Sequential:
+class SequentialServlet:
     """
-    A sequence of operations performed in order,
+    A ``SequentialServlet`` represents
+    a sequence of operations performed in order,
     one op's output becoming the next op's input.
     """
 
@@ -815,7 +837,7 @@ class Sequential:
         return w
 
 
-class Ensemble:
+class EnsembleServlet:
     """
     A number of operations are performed on the same input in parallel;
     the list of results, corresponding to the order of the operators,
@@ -924,7 +946,31 @@ class Ensemble:
         return w
 
 
-Servlet = Union[ProcessServlet, ThreadServlet, Sequential, Ensemble]
+# Sequential = SequentialServlet
+'''An alias to ``SequentialServlet`` for backward compatibility.
+
+.. deprecated:: 0.11.8
+    Will be removed in 0.12.0.
+    Use ``SequentialSevlet`` instead.
+'''
+
+
+# Ensemble = EnsembleServlet
+'''An alias to ``EnsembleServlet`` for backward compatibility.
+
+.. deprecated:: 0.11.8
+    Will be removed in 0.12.0.
+    Use ``EnsembleSevlet`` instead.
+'''
+
+
+Servlet = Union[ProcessServlet, ThreadServlet, SequentialServlet, EnsembleServlet]
+'''The type ``Servlet`` refers to any of the four classes and subclasses thereof:
+``ProcessServlet``, ``ThreadServlet``, ``SequentialServlet``, ``EnsembleServlet``.
+
+Currently this is defined as a type alias. There is no subclassing relationship
+between them. However, their interfaces are very similar.
+'''
 
 
 class Server:
@@ -983,7 +1029,7 @@ class Server:
 
         self._q_in = None
         self._q_out = None
-        if isinstance(self._servlet, (Ensemble, ThreadServlet)):
+        if isinstance(self._servlet, (EnsembleServlet, ThreadServlet)):
             self._q_in = queue.Queue()
             self._q_out = queue.Queue()
         else:

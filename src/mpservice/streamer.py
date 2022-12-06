@@ -10,12 +10,12 @@ The other operations are typically light weight and supportive
 of the main (concurrent) transforms. These operations perform batching,
 unbatching, buffering, filtering, logging, etc.
 
-===========
+
 Basic usage
 ===========
 
-In a typical use case, one starts with a `Streamer` object, places it under
-context management, and calls its methods in a "chained" fashion:
+In a typical use case, one starts with a ``Streamer`` object, places it under
+context management, and calls its methods in a "chained" fashion::
 
     data = range(100)
     with Streamer(data) as stream:
@@ -26,11 +26,11 @@ context management, and calls its methods in a "chained" fashion:
             .unbatch()
             )
 
-The methods `batch`, `transform`, and `unbatch` (and some others)
-all modify the object `stream` "in-place" and return the original object,
+The methods ``batch``, ``transform``, and ``unbatch`` (and some others)
+all modify the object ``stream`` "in-place" and return the original object,
 hence it's fine to add these operations one at a time,
 and it's not necessary to assign the intermediate results to new identifiers.
-The above is equivalent to the following:
+The above is equivalent to the following::
 
     with Streamer(range(100)) as stream:
         stream.batch(10)
@@ -43,53 +43,57 @@ of elements but the content of the elements is changing. At any moment,
 the object represents the state of the final operation up to that time.
 The stream may consist of the same number of elements as the very original input stream of data,
 where each element has gone through a series of operations, or, if
-`batch` and `unbatch` have been applied, the stream may consist more or less elements
+``batch`` and ``unbatch`` have been applied, the stream may consist more or less elements
 than the original input.
 
-After this setup, there are several ways to use the object `stream` (or `pipeline`).
+After this setup, there are several ways to use the object ``stream`` (or ``pipeline``).
 
-    1. Since `stream` is an Iterable and an Iterator, we can use it as such.
+    1. Since ``stream`` is an Iterable and an Iterator, we can use it as such.
        Most naturally, iterate over it and process each element however
        we like.
 
-       We can of couse also provide `stream` as a parameter where an iterable
-       or iterator is expected. For example, the `mpservice.mpserver.Server`
-       class has a method `stream` that expects an iterable, hence
+       We can of course also provide ``stream`` as a parameter where an iterable
+       or iterator is expected. For example, the ``mpservice.mpserver.Server``
+       class has a method ``stream`` that expects an iterable, hence
        we can do things like
+       
+       ::
 
             server = Server(...)
             with server:
                 for y in server.stream(stream):
                     ...
-       Note that `server.stream(...)` does not produce a `Streamer` object.
+
+       Note that ``server.stream(...)`` does not produce a ``Streamer`` object.
        If we want to put it in subsequent operations, simply turn it into a
-       `Streamer` object:
+       ``Streamer`` object::
 
                 pipeline = Streamer(server.stream(stream))
                 pipeline.transform(yet_another_io_op)
                 ...
 
-       If the stream is not too long (not "big data"), we can pass it to `list` to
-       convert it to a list:
+       If the stream is not too long (not "big data"), we can pass it to ``list`` to
+       convert it to a list::
 
             result = list(stream)
 
-    2. If we don't need the elements coming out of `stream`, but rather
+    2. If we don't need the elements coming out of ``stream``, but rather
        just need the original data to flow through all the operations
        of the pipeline (e.g. if the last "substantial" operation is inserting
-       the data into a database), we can "drain" the stream:
+       the data into a database), we can "drain" the stream::
 
             stream.drain()
 
     3. We can continue to add more operations to the pipeline, for example,
 
+       ::
+
             stream.transform(another_op, concurrency=3)
 
 Of all the methods on a Streamer object, two will start new threads, namely
-`.buffer()` and `.transform()`. (The latter may also start new processes.)
+``.buffer()`` and ``.transform()``. (The latter may also start new processes.)
 
 
-======================
 Handling of exceptions
 ======================
 
@@ -99,13 +103,13 @@ a printout of traceback. Any not-yet-processed data is discarded.
 
 In the second mode, exception object is passed on in the pipeline as if it is
 a regular data item. Subsequent data items are processed as usual.
-This mode is enabled by `return_exceptions=True` to the function `transform`.
+This mode is enabled by ``return_exceptions=True`` to the function ``transform``.
 However, to the next operation, the exception object that is coming along
 with regular data elements (i.e. regular output of the previous operation)
-is most likely a problem. One may want to call `drop_exceptions` to remove
+is most likely a problem. One may want to call ``drop_exceptions`` to remove
 exception objects from the data stream before they reach the next operation.
 In order to be knowledgeable about exceptions before they are removed,
-the function `log_exceptions` can be used. Therefore, this is a useful pattern:
+the function ``log_exceptions`` can be used. Therefore, this is a useful pattern::
 
     (
         data_stream
@@ -115,10 +119,9 @@ the function `log_exceptions` can be used. Therefore, this is a useful pattern:
         .transform(func2,..., return_exceptions=True)
     )
 
-Bear in mind that the first mode, with `return_exceptions=False` (the default),
+Bear in mind that the first mode, with ``return_exceptions=False`` (the default),
 is a totally legitimate and useful mode.
 
-=====
 Hooks
 =====
 
@@ -130,11 +133,11 @@ perform operations tailored to their need. Check out the following functions:
     `peek`
     `transform`
 
-Both `drop_if` and `keep_if` accept a function that evaluates a data element
-and return a boolean value. Dependending on the return value, the element
+Both ``drop_if`` and ``keep_if`` accept a function that evaluates a data element
+and return a boolean value. Depending on the return value, the element
 is dropped from or kept in the data stream.
 
-`peek` accepts a function that takes a data element and usually does
+``peek`` accepts a function that takes a data element and usually does
 informational printing or logging (including persisting info to files).
 This function may check conditions on the data element to decide whether
 to do the printing or do nothing. (Usually we don't want to print for
@@ -143,18 +146,18 @@ This function is called for the side-effect;
 it does not affect the flow of the data stream. The user-provided operator
 should not modify the data element.
 
-`transform` accepts a function that takes a data element, does something
+``transform`` accepts a function that takes a data element, does something
 about it, and returns a value. For example, modify the element and return
 a new value, or call an external service with the data element as part of
-the payload. Each input element will produce a new elment, becoming the
+the payload. Each input element will produce a new element, becoming the
 resultant stream. This method can not "drop" a data element (i.e do not
 produce a result corresponding to an input element), neither can it produce
 multiple results for a single input element (if it produces a list, say,
 that list would be the result for the single input.)
 If the operation is mainly for the side effect, e.g.
 saving data in files or a database, hence there isn't much useful result,
-then the result could be `None`, which is perfectly valid. Regardless,
-the returned `None`s will still become the resultant stream.
+then the result could be ``None``, which is perfectly valid. Regardless,
+the returned ``None``\\s will still become the resultant stream.
 
 Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
 """
@@ -194,16 +197,13 @@ import queue
 import random
 import threading
 import traceback
+from collections.abc import Iterable, Iterator
 from multiprocessing.util import Finalize
 from typing import (
     Callable,
     TypeVar,
     Union,
     Optional,
-    Iterable,
-    Iterator,
-    Tuple,
-    List,
 )
 
 from overrides import EnforceOverrides, overrides, final
@@ -234,7 +234,7 @@ def _default_peek_func(i, x):
 
 class Streamer(EnforceOverrides):
     def __init__(self, instream: Union[Iterator, Iterable], /):
-        self.streamlets: List[Stream] = [Stream(instream)]
+        self.streamlets: list[Stream] = [Stream(instream)]
         self._started = False
 
     def __enter__(self):
@@ -257,14 +257,14 @@ class Streamer(EnforceOverrides):
     def __next__(self):
         return self.streamlets[-1].__next__()
 
-    def drain(self) -> Tuple[int, int]:
+    def drain(self) -> tuple[int, int]:
         """Drain off the stream.
 
         Return a tuple of the number of elements processed
         as well as the number of exceptions (hopefully 0!).
 
         The number of exceptions could be non-zero only if
-        upstream transformers have set `return_exceptions` to True.
+        upstream transformers have set ``return_exceptions`` to True.
         Otherwise, any exception would have propagated and
         prevented this method from completing.
         """
@@ -278,9 +278,9 @@ class Streamer(EnforceOverrides):
 
     def drop_if(self, func: Callable[[int, T], bool], /):
         """
-        `func`: a function that takes the data element index
-            along with the element value, and returns `True` if the element
-            should be skipped, that is, not included in the output stream.
+        ``func`` is a function that takes the data element index
+        along with the element value, and returns ``True`` if the element
+        should be skipped, that is, not included in the output stream.
         """
         self.streamlets.append(Dropper(self.streamlets[-1], func))
         return self
@@ -288,7 +288,7 @@ class Streamer(EnforceOverrides):
     def drop_exceptions(self):
         """
         Used to skip exception objects that are produced in an upstream
-        transform that has `return_exceptions=True`. This way,
+        transform that has ``return_exceptions=True``. This way,
         the previous op allows exceptions (i.e. do not crash), and
         this op removes the exception objects from the output stream.
         """
@@ -301,13 +301,13 @@ class Streamer(EnforceOverrides):
     def keep_if(self, func: Callable[[int, T], bool], /):
         """Keep an element in the stream only if a condition is met.
 
-        This is the opposite of `drop_if`.
+        This is the opposite of ``drop_if``.
         """
         return self.drop_if(lambda i, x: not func(i, x))
 
     def head(self, n: int):
         """
-        Take the first `n` elements and ignore the rest.
+        Take the first ``n`` elements and ignore the rest.
         """
         # This does not delegate to `keep_if`, because `keep_if`
         # would need to walk through the entire stream,
@@ -319,12 +319,12 @@ class Streamer(EnforceOverrides):
         """Take a peek at the data element *before* it is sent
         on for processing.
 
-        The function `func` takes the data element index and value.
+        The function ``func`` takes the data element index and value.
         Typical actions include print out
         info or save the data for later inspection. Usually this
         function should not modify the data element in the stream.
 
-        User has flexibilities in `func`, e.g. to not print anything
+        User has flexibilities in ``func``, e.g. to not print anything
         under certain conditions.
         """
         if func is None:
@@ -343,8 +343,8 @@ class Streamer(EnforceOverrides):
         last: int = None,
     ):
         """
-        `base`: if 0, peek at indices 0, n, 2*n, 3*n, ... (0-based);
-            if 1, peek at indices n, 2*n, 3*n, ... (1-based).
+        ``base``: if 0, peek at indices 0, n, 2*n, 3*n, ... (0-based);
+        if 1, peek at indices n, 2*n, 3*n, ... (1-based).
         """
         assert n > 0
         assert base in (0, 1)
@@ -377,7 +377,9 @@ class Streamer(EnforceOverrides):
         return self.peek(foo)
 
     def peek_exceptions(self, *, with_trace: bool = True, print_func: Callable = None):
-        # User may want to pass in `logger.error` as `print_func`.
+        '''
+        User may want to pass in `logger.error` as `print_func`.
+        '''
         if print_func is None:
             print_func = print
 
@@ -408,21 +410,21 @@ class Streamer(EnforceOverrides):
 
         The output batches are all of the specified size,
         except possibly the final batch.
-        There is no 'timeout' logic to proceed eagerly with a partial batch .
+        There is no 'timeout' logic to proceed eagerly with a partial batch.
         For efficiency, this requires the input stream to have a steady supply.
-        If that is a concern, having a `buffer` on the input stream
-        prior to `batch` may help.
+        If that is a concern, having a ``buffer`` on the input stream
+        prior to ``batch`` may help.
         """
         self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
         return self
 
     def unbatch(self):
-        """Reverse of "batch".
+        """Reverse of ``batch``.
 
         Turn a stream of lists into a stream of individual elements.
 
-        This is usually used to correpond with a previous
-        `.batch()`, but that is not required. The only requirement
+        This is usually used to correspond with a previous
+        ``.batch()``, but that is not required. The only requirement
         is that the input elements are lists.
         """
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
@@ -454,39 +456,39 @@ class Streamer(EnforceOverrides):
         """Apply a transformation on each element of the data stream,
         producing a stream of corresponding results.
 
-        `func`: a sync function that takes a single input item
+        ``func``: a sync function that takes a single input item
         as the first positional argument and produces a result.
-        Additional keyword args can be passed in via `func_args`.
+        Additional keyword args can be passed in via ``func_args``.
         Async can be supported, but it's a little more involved than the sync case.
         Since the need seems to be low, it's not supported for now.
 
         The outputs are in the order of the input elements.
 
-        The main point of `func` does not have to be the output.
+        The main point of ``func`` does not have to be the output.
         It could rather be some side effect. For example,
         saving data in a database. In that case, the output may be
-        `None`. Regardless, the output is yielded to be consumed by the next
-        operator in the pipeline. A stream of `None`s could be used
+        ``None``. Regardless, the output is yielded to be consumed by the next
+        operator in the pipeline. A stream of ``None``\\s could be used
         in counting, for example. The output stream may also contain
-        Exception objects (if `return_exceptions` is `True`), which may be
+        Exception objects (if ``return_exceptions`` is ``True``), which may be
         counted, logged, or handled in other ways.
 
-        `executor`: either 'thread' or 'process'.
+        ``executor``: either 'thread' or 'process'.
 
-        `concurrency`: max number of concurrent calls to `func`.
-        If `None`, a default value is used.
+        ``concurrency``: max number of concurrent calls to ``func``.
+        If ``None``, a default value is used.
 
-        `return_x`: if True, output stream will contain tuples `(x, y)`;
-        if False, output stream will contain `y` only.
+        ``return_x``: if True, output stream will contain tuples ``(x, y)``;
+        if ``False``, output stream will contain ``y`` only.
 
-        `return_exceptions`: if True, exceptions raised by `func` will be
+        ``return_exceptions``: if True, exceptions raised by ``func`` will be
         in the output stream as if they were regular results; if False,
-        they will propagate. Note that this does not absorbe exceptions
-        raised by previous components in the pipeline; it is concered about
-        exceptions raised by `func` only.
+        they will propagate. Note that this does not absorb exceptions
+        raised by previous components in the pipeline; it is concerned about
+        exceptions raised by ``func`` only.
 
-        User may want to add a `buffer` to the output of this method,
-        esp if the `func` operations are slow.
+        User may want to add a ``buffer`` to the output of this method,
+        esp if the ``func`` operations are slow.
         """
         self.streamlets.append(
             Transformer(
@@ -526,10 +528,10 @@ class Stream(EnforceOverrides):
     def _get_next(self):
         """Produce the next element in the stream.
 
-        Subclasses refine this method rather than `__next__`.
+        Subclasses refine this method rather than ``__next__``.
         In a subclass, almost always it will not get the next element
-        from `self._instream`, but rather from some object that holds
-        results of transformations on `self._instream`.
+        from ``self._instream``, but rather from some object that holds
+        results of transformations on ``self._instream``.
         In other words, subclass typically needs to override this method.
         Subclass should take care to handle exceptions in this method.
         """
@@ -605,17 +607,17 @@ class Unbatcher(Stream):
 class Dropper(Stream):
     def __init__(self, instream: Stream, func: Callable[[int, T], bool], /):
         """
-        `func`: takes element index and the element value; if returns True,
-            the element is dropped (i.e. not produced; proceed to check the next
-            elements until one returns False and gets produced); if returns
-            False, the element is not drop (i.e., it is produced, hence the
-            Dropper object becomes a simple pass-through for that element).
+        ``func``: takes element index and the element value; if returns True,
+        the element is dropped (i.e. not produced; proceed to check the next
+        elements until one returns False and gets produced); if returns
+        False, the element is not drop (i.e., it is produced, hence the
+        Dropper object becomes a simple pass-through for that element).
 
-        `self.index` of this object has different meaning from other Stream
+        ``self.index`` of this object has different meaning from other Stream
         classes. It is the index of the next element of the instream,
         not the index of the element to be produced (not-dropped) by the current
         object. This is because that, when the user designed the predicate function
-        `func`, if the logic depends on the first argument, this is the
+        ``func``, if the logic depends on the first argument, this is the
         interpretation of the "index" that's more natural and useful.
         """
         super().__init__(instream)
@@ -636,7 +638,7 @@ class Dropper(Stream):
 class Header(Stream):
     def __init__(self, instream: Stream, /, n: int):
         """
-        Keeps the first `n` elements and ignores all the rest.
+        Keeps the first ``n`` elements and ignores all the rest.
         """
         super().__init__(instream)
         assert n > 0
@@ -657,7 +659,7 @@ class Peeker(Stream):
         This class provides a mechanism to log or print some info for elements
         that meet certain conditions.
 
-        `func`: takes element index and value, does whatever as long as the action
+        ``func``: takes element index and value, does whatever as long as the action
         does not modify the element (if it is of a mutable type).
         Usually, the action is to log or print about the element
         if the element (its index and/or value) meets certain conditions;

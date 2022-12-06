@@ -1,7 +1,7 @@
 """A "server process" provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
-This module corresponds to the standard `multiprocessing.managers` module
+This module corresponds to the standard ``multiprocessing.managers`` module
 with simplified APIs for targeted use cases.
 """
 import multiprocessing.managers
@@ -21,7 +21,7 @@ class Manager(multiprocessing.managers.SyncManager):
     """
     Usage:
 
-        1. Register one or more classes with the Manager class:
+        1. Register one or more classes with the Manager class::
 
                 class Doubler:
                     def __init__(self, ...):
@@ -40,17 +40,17 @@ class Manager(multiprocessing.managers.SyncManager):
                 Manager.register(Doubler)
                 Manager.register(Tripler)
 
-        2. Create a manager object and start it:
+        2. Create a manager object and start it::
 
                 manager = Manager()
                 manager.start()
 
-           You can also use a context manager:
+           You can also use a context manager::
 
                 with Manager() as manager:
                     ...
 
-        3. Create one or more proxies:
+        3. Create one or more proxies::
 
                 doubler = manager.Doubler(...)
                 tripler = manager.Tripler(...)
@@ -62,11 +62,13 @@ class Manager(multiprocessing.managers.SyncManager):
            processes and used there.
 
            The arguments in the above calls are passed to the server process
-           and used in the `__init__` methods of the corresponding classes.
-           For this reason, the parameters to `__init__` of a registered class
+           and used in the ``__init__`` methods of the corresponding classes.
+           For this reason, the parameters to ``__init__`` of a registered class
            must all be pickle-able.
 
            Calling one registered class multiple times, like
+           
+           ::
 
                 prox1 = manager.Doubler(...)
                 prox2 = manager.Doubler(...)
@@ -80,7 +82,9 @@ class Manager(multiprocessing.managers.SyncManager):
 
            Public methods (minus "properties") defined by the registered classes
            can be invoked on a proxy with the same parameters and get the expected
-           result. For example
+           result. For example,
+           
+           ::
 
                 prox1.double(3)
 
@@ -88,10 +92,10 @@ class Manager(multiprocessing.managers.SyncManager):
            should all be pickle-able.
 
     In each new thread or process, a proxy object will create a new
-    connection to the server process (see `multiprocessing.managers.Server.accepter`,
-    ..., `Server.accept_connection`, and `BaseProxy._connect`);
+    connection to the server process (see ``multiprocessing.managers.Server.accepter``,
+    ..., ``Server.accept_connection``, and ``BaseProxy._connect``);
     the server process then creates a new thread
-    to handle requests from this connection (see `Server.serve_client`).
+    to handle requests from this connection (see ``Server.serve_client``).
     """
 
     def __init__(self):
@@ -102,12 +106,14 @@ class Manager(multiprocessing.managers.SyncManager):
     @classmethod
     def register(cls, typeid_or_callable: Union[str, Callable], /, **kwargs):
         """
-        `typeid_or_callable` is a usually class object. Suppose this is actually the class `MyClass`,
-        then on a started object `manager` of `Manager`,
+        ``typeid_or_callable`` is a usually class object. Suppose this is actually the class ``MyClass``,
+        then on a started object ``manager`` of ``Manager``,
+
+        ::
 
             prox = manager.MyClass(...)
 
-        will create an object of `MyClass` in the server process and return a proxy.
+        will create an object of ``MyClass`` in the server process and return a proxy.
 
         This method should be called before a manager object is "started".
         """

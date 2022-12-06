@@ -1,3 +1,3 @@
 "Serving with asyncio, multiprocessing, and batching"
 
-__version__ = "0.11.7.post1"
+__version__ = "0.11.8b1"
