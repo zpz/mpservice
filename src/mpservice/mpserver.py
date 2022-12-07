@@ -1,3 +1,25 @@
+"""
+``mpservice.mpserver`` provides classes that use ``multiprocessing`` to perform CPU-bound operations
+taking advantage of all the CPUs (i.e. cores) on the machine.
+
+Using threads to perform IO-bound operations is also supported, although that is not the initial focus.
+
+There are three levels of constructs.
+
+1. On the lowest level is ``Worker``. This defines operations on a single input item
+   or a batch of items in usual sync code. This is supposed to run in its own process (thread)
+   and use that single process (thread) only.
+
+2. On the middle level is ``Servlet``. A basic form of ``Servlet`` arranges to execute a ``Worker`` in multiple
+   processes (threads). A more "advanced" form of ``Servlet`` arranges to executive multiple
+   ``Servlet``\\s as a sequence or an ensemble.
+
+3. On the top level is ``Server``. A ``Server``
+   handles interfacing with the outside world, while passing the "real work" to
+   a ``Servlet`` and relays the latter's result to the requester.
+"""
+
+
 from __future__ import annotations
 import asyncio
 import concurrent.futures
@@ -12,7 +34,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Union, Callable, Any
+from typing import Union, Callable, Any, Optional
 
 import psutil
 from overrides import final
@@ -66,6 +88,11 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
     It is not "fast" in the general sense, hence the class may not be useful
     outside of this module.
 
+    This queue is meant to be used between two processes or between a process
+    and a thread.
+
+    The main use case of this class is in ``ProcessWorker._build_input_batches``.
+
     Check out ``os.read``, ``os.write``, ``os.close`` with file-descriptor args.
     """
 
@@ -79,7 +106,7 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
 class SimpleQueue(queue.SimpleQueue):
     """
-    Analogous to `FastQueue`.
+    Analogous to `FastQueue` but designed to be used between two threads.
     """
 
     def __init__(self):
@@ -140,8 +167,8 @@ class Worker(ABC):
     def __init__(
         self,
         *,
-        batch_size: int = None,
-        batch_wait_time: float = None,
+        batch_size: Optional[int] = None,
+        batch_wait_time: Optional[float] = None,
         batch_size_log_cadence: int = 1_000_000,
     ):
         """
@@ -302,6 +329,7 @@ class Worker(ABC):
                 break
 
             uid, x = z
+            # Element in the input queue is always a 2-tuple, that is, (ID, value).
             if isinstance(x, (BaseException, _RemoteException_)):
                 q_out.put((uid, x))
                 continue
@@ -317,6 +345,7 @@ class Worker(ABC):
                 y = _RemoteException_(e)
 
             q_out.put((uid, y))
+            # Element in the output queue is always a 2-tuple, that is, (ID, value).
 
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
@@ -348,6 +377,7 @@ class Worker(ABC):
                     q_out.put(batch)
                     break
 
+                # The batch is a list of (ID, value) tuples.
                 uids = [v[0] for v in batch]
                 batch = [v[1] for v in batch]
                 n = len(batch)
@@ -361,6 +391,7 @@ class Worker(ABC):
                 else:
                     for z in zip(uids, results):
                         q_out.put(z)
+                # Each element in the output queue is a (ID, value) tuple.
 
                 if batch_size_log_cadence:
                     n_batches += 1
@@ -543,6 +574,11 @@ class ProcessWorker(Worker):
         hence they should consist
         mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
+
+        Parameters
+        ----------
+        cpus
+            Specify which CPUs the current process should run on.
         """
         cpus.set()
         super().run(**kwargs)
@@ -609,8 +645,8 @@ class ProcessServlet:
         self,
         worker_cls: type[ProcessWorker],
         *,
-        cpus: Sequence[Union[CpuAffinity, None, int, Sequence[int]]] = None,
-        name: str = None,
+        cpus: Optional[Sequence[Union[CpuAffinity, None, int, Sequence[int]]]] = None,
+        name: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -717,8 +753,8 @@ class ThreadServlet:
         self,
         worker_cls: type[ThreadWorker],
         *,
-        num_threads: int = None,
-        name: str = None,
+        num_threads: Optional[int] = None,
+        name: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -798,7 +834,11 @@ class SequentialServlet:
     """
     A ``SequentialServlet`` represents
     a sequence of operations performed in order,
-    one op's output becoming the next op's input.
+    one operations's output becoming the next operation's input.
+
+    Each operation is performed by a "servlet", that is,
+    a ``ProcessServlet`` or ``ThreadServlet`` or ``SequentialServlet``
+    or ``EnsembleServlet``.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -808,6 +848,23 @@ class SequentialServlet:
         self._started = False
 
     def start(self, q_in, q_out):
+        """
+        Start the member servlets.
+
+        A main concern is to connect the servlets by "pipes", or queues,
+        for input and output, in addition to the very first ``q_in``,
+        which carries input items from the "outside world" and the very last ``q_out``,
+        which sends output items to the "outside world".
+
+        Each item in ``q_in`` goes to the first member servlet;
+        the result goes to the second servlet; and so on.
+        The result out of the last servlet goes to ``q_out``.
+
+        The types of ``q_in`` and ``q_out`` are decided by the caller.
+        The types of intermediate queues are decided within this function.
+        As a rule, use ``SimpleQueue`` between two threads; use ``FastQueue``
+        between two processes or between a process and a thread.
+        """
         assert not self._started
         nn = len(self._servlets)
         q1 = q_in
@@ -827,6 +884,7 @@ class SequentialServlet:
         self._started = True
 
     def stop(self):
+        """Stop the member servlets."""
         assert self._started
         for s in self._servlets:
             s.stop()
@@ -843,9 +901,14 @@ class SequentialServlet:
 
 class EnsembleServlet:
     """
-    A number of operations are performed on the same input in parallel;
-    the list of results, corresponding to the order of the operators,
+    A ``EnsembleServlet`` represents
+    an ensemble of operations performed in parallel on each input item.
+    The list of results, corresponding to the order of the operators,
     is returned as the result.
+
+    Each operation is performed by a "servlet", that is,
+    a ``ProcessServlet`` or ``ThreadServlet`` or ``SequentialServlet``
+    or ``EnsembleServlet``.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -862,6 +925,16 @@ class EnsembleServlet:
         self._threads = []
 
     def start(self, q_in, q_out):
+        """
+        Start the member servlets.
+
+        A main concern is to wire up the parallel execution of all the servlets
+        on each input item.
+
+        ``q_in`` and ``q_out` contain inputs from and outputs to
+        the "outside world". Their types, either ``FastQueue`` or ``SimpleQueue``,
+        are decided by the caller.
+        """
         assert not self._started
         self._reset()
         self._qin = q_in
@@ -894,19 +967,24 @@ class EnsembleServlet:
         nn = len(qins)
         while True:
             v = qin.get()
-            if v == NOMOREDATA:
+            if v == NOMOREDATA:  # sentinel for end of input
                 for q in qins:
-                    q.put(v)
+                    q.put(v)  # send the same sentinel to each servlet
                 break
 
             uid, x = v
             if isinstance(x, (BaseException, _RemoteException_)):
+                # short circuit exception to the output queue
                 qout.put((uid, x))
                 continue
             z = {"y": [None] * nn, "n": 0}
+            # `y` is the list of outputs from the servlets, in order.
+            # `n` is number of outputs already received.
             catalog[uid] = z
             for q in qins:
                 q.put((uid, x))
+                # Element in the queue to each servlet is in the standard format,
+                # i.e. a (ID, value) tuple.
 
     def _dequeue(self):
         threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
@@ -914,16 +992,25 @@ class EnsembleServlet:
         qouts = self._qouts
         catalog = self._uid_to_results
         nn = len(qouts)
+        n_nomore = 0
         while True:
+            n_nonempty = 0
             for idx, q in enumerate(qouts):
-                while not q.empty():
+                if q.empty():
+                    continue
+                n_nonempty += 1
+                while True:
                     # Get all available results out of this queue.
                     # They are for different requests.
                     v = q.get()
                     if v == NOMOREDATA:
                         qout.put(v)
-                        return
+                        n_nomore += 1
+                        if n_nomore == nn:
+                            return
+                        break
                     uid, y = v
+                    # `y` can be an exception object or a regular result.
                     z = catalog[uid]
                     z["y"][idx] = y
                     z["n"] += 1
@@ -932,6 +1019,10 @@ class EnsembleServlet:
                         catalog.pop(uid)
                         y = z["y"]
                         qout.put((uid, y))
+                    if q.empty():
+                        break
+            if n_nonempty == 0:
+                sleep(0.01)  # TODO: what is a good duration?
 
     def stop(self):
         assert self._started
@@ -950,7 +1041,7 @@ class EnsembleServlet:
         return w
 
 
-# Sequential = SequentialServlet
+Sequential = SequentialServlet
 """An alias to ``SequentialServlet`` for backward compatibility.
 
 .. deprecated:: 0.11.8
@@ -959,7 +1050,7 @@ class EnsembleServlet:
 """
 
 
-# Ensemble = EnsembleServlet
+Ensemble = EnsembleServlet
 """An alias to ``EnsembleServlet`` for backward compatibility.
 
 .. deprecated:: 0.11.8

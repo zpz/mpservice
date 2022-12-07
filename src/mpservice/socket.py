@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
@@ -9,7 +10,7 @@ import time
 from collections.abc import Iterable, Sequence
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from time import perf_counter
-from typing import Union, Callable, Awaitable, Any
+from typing import Union, Callable, Awaitable, Any, Optional
 
 from overrides import EnforceOverrides
 
@@ -202,8 +203,8 @@ class SocketApplication(EnforceOverrides):
     def __init__(
         self,
         *,
-        on_startup: "Sequence[Callable]" = None,
-        on_shutdown: "Sequence[Callable]" = None,
+        on_startup: Optional[Sequence[Callable]] = None,
+        on_shutdown: Optional[Sequence[Callable]] = None,
     ):
         self.on_startup = on_startup or []
         self.on_shutdown = on_shutdown or []
@@ -246,10 +247,10 @@ class SocketServer(EnforceOverrides):
         self,
         app: SocketApplication,
         *,
-        path: str = None,
-        host: str = None,
-        port: int = None,
-        backlog: int = None,
+        path: Optional[str] = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        backlog: Optional[int] = None,
         shutdown_path: str = "/shutdown",
     ):
         """
@@ -423,10 +424,10 @@ class SocketClient(EnforceOverrides):
     def __init__(
         self,
         *,
-        path: str = None,
-        host: str = None,
-        port: int = None,
-        num_connections: int = None,
+        path: Optional[str] = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        num_connections: Optional[int] = None,
         connection_timeout: int = 60,
         backlog: int = 2048,
     ):
@@ -476,7 +477,7 @@ class SocketClient(EnforceOverrides):
         self._to_shutdown = threading.Event()
         self._executor = concurrent.futures.ThreadPoolExecutor()
         self._tasks = []
-        self._pending_requests: queue.Queue = None
+        self._pending_requests: Optional[queue.Queue] = None
         self._active_requests = {}
         self._shutdown_timeout = 60
 

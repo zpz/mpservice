@@ -265,9 +265,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     """
     This customization adds two things to the standard class:
 
-        - make result and exception available as attributes of the
-          process object, similar to ``concurrent.futures.Future``.
-        - make logs in the subprocess handled in the main process.
+    - make result and exception available as attributes of the
+      process object, similar to ``concurrent.futures.Future``.
+    - make logs in the subprocess handled in the main process.
     """
 
     def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
@@ -378,18 +378,18 @@ class ProcessLogger:
 
     Usage:
 
-        1. In main process, create a ``ProcessLogger`` instance and start it::
+    1. In main process, create a ``ProcessLogger`` instance and start it::
 
-                pl = ProcessLogger().start()
+            pl = ProcessLogger().start()
 
-        2. Pass this object to other processes. (Yes, this object is pickle-able.)
+    2. Pass this object to other processes. (Yes, this object is pickle-able.)
 
-        3. In the other process, start it. Suppose the object is also called ``pl``,
-           then do
+    3. In the other process, start it. Suppose the object is also called ``pl``,
+       then do
 
-           ::
+       ::
 
-                pl.start()
+            pl.start()
 
     Calling ``stop`` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
@@ -398,7 +398,7 @@ class ProcessLogger:
     use ``SpawnProcess``, which already handles logging via this class.
     """
 
-    def __init__(self, *, ctx: multiprocessing.context.BaseContext = None):
+    def __init__(self, *, ctx: Optional[multiprocessing.context.BaseContext] = None):
         self._ctx = ctx or MP_SPAWN_CTX
         self._t = None
 

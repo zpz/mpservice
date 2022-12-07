@@ -48,6 +48,7 @@ test = [
     "pylint-exit",
     "pytest",
     "pytest-asyncio",
+    "pytest-xdist",
     "requests",
     "starlette",
     "zpz",

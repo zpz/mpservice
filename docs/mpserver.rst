@@ -2,49 +2,26 @@
 mpserver
 ========
 
-``mpservice.mpserver`` provides classes that use ``multiprocessing`` to perform CPU-bound operations
-taking advantage of all the CPUs (i.e. cores) on the machine.
-
-Using threads to perform IO-bound operations is also supported, although that is not the focus.
-
-There are four levels of constructs.
-
-1. On the lowest level is ``Worker``. This defines operations on a single input item
-   or a batch of items in usual sync code. This is supposed to run in its own process
-   and use that single process only.
-
-2. A ``Servlet`` manages a ``Worker``, specifying how many processes are to be created,
-   each executing one instance of said ``Worker`` independently. Optionally, it can specify exactly
-   which CPU(s) each worker process uses.
-
-3. Servlets can compose a ``SequentialServlet`` or an ``EnsembleServlet``. In a ``SequentialServlet``,
-   one servlet's output becomes the next servlet's input.
-   In an ``EnsembleServlet``, each input item is processed by all the constituent servlets, and their
-   results are collected and combined. Interestingly, both ``SequentialServlet`` and ``EnsembleServlet``
-   are also ``Servlet``\s, hence they can participate in composing other ``SequentialServlet``\s
-   and ``EnsembleServlet``\s.
-
-4. On the top level is ``Server``. A ``Server``
-   handles interfacing with the outside world, while passing the "real work" to
-   a ``Servlet`` and relays the latter's result to the requester.
-
-Reference: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
-This article describes roughly version 0.7.2.
+.. automodule:: mpservice.mpserver
+    :no-members:
+    :no-undoc-members:
+    :no-special-members:
 
 
 Workers
 =======
 
+.. autoclass:: mpservice.mpserver.FastQueue
+
+.. autoclass:: mpservice.mpserver.SimpleQueue
+
 .. autoclass:: mpservice.mpserver.Worker
 
 .. autoclass:: mpservice.mpserver.ProcessWorker
 
-
 .. autoclass:: mpservice.mpserver.ThreadWorker
 
-
 .. autofunction:: mpservice.mpserver.make_threadworker
-
 
 .. autodata:: mpservice.mpserver.PassThrough
 
@@ -52,33 +29,22 @@ Workers
 Servlets
 ========
 
-A "servlet" manages the execution of a ``Worker``.
-To be precise, a servlet manages one or more instances of one ``Worker`` subclass.
-The servlet runs in the "main" process, whereas the ``Worker`` instances run in other processes or threads.
-
+A "servlet" manages the execution of a ``Worker`` or ``Worker``\s.
 We make a distinction between "simple" servlets, including ``ProcessServlet`` and ``ThreadServlet``,
 and "compound" servlets, including ``SequentialServlet`` and ``EnsembleServlet``.
 
-In the case of a simple servlet, each input item is passed to and processed by
-exactly one worker process or thread.
+A simple servlet arranges to execute one ``Worker`` in requested number of processes (threads).
+Optionally, it can specify exactly which CPU(s) each worker process uses.
+Each input item is passed to and processed by exactly one worker process (thread).
 
-.. autoclass:: mpservice.mpserver.CpuAffinity
+A compound servlet arranges to execute multiple ``Servlet``\s as a sequence or an ensemble.
+There's a flavor of recursion in this definition in that a member servlet can very well be
+a compound servlet.
 
-.. autoclass:: mpservice.mpserver.ProcessServlet
-
-.. autoclass:: mpservice.mpserver.ThreadServlet
-
-
-Servlets can be composed in ``SequentialServlet``'s or ``EnsembleServlet``'s. In a ```SequentialServlet``,
-the first servlet's output becomes the second servlet's input, and so on.
-In an ``EnsembleServlet``, each input item is processed by all the servlets, and their
-results are collected in a list.
-
-Great power comes from the fact that both `SequentialServlet` and `EnsembleServlet`
-also follow the `Servlet` API, hence both can be constituents of other compositions.
-In principle, you can freely compose and nest them.
+Great power comes from this recursive definition.
+In principle, we can freely compose and nest the ``Servlet`` types.
 For example, suppose `W1`, `W2`,..., are `Worker` subclasses,
-then you may design such a workflow,
+then we may design such a workflow,
 
 ::
 
@@ -94,14 +60,23 @@ then you may design such a workflow,
                 ),
         )
 
-In sum, `ProcessServlet`, `ThreadServlet`, `SequentialServlet`, `EnsembleServlet` are collectively
-referred to and used as `Servlet`.
+In precise language, the type ``Servlet`` is an alias to
+``Union[ProcessServlet, ThreadServlet, SequentialServlet, EnsembleServlet]``.
+
+
+.. autoclass:: mpservice.mpserver.CpuAffinity
+
+.. autoclass:: mpservice.mpserver.ProcessServlet
+
+.. autoclass:: mpservice.mpserver.ThreadServlet
 
 .. autoclass:: mpservice.mpserver.SequentialServlet
 
 .. autoclass:: mpservice.mpserver.EnsembleServlet
 
-.. autoattribute:: mpservice.mpserver.Servlet
+.. autodata:: mpservice.mpserver.Sequential
+
+.. autodata:: mpservice.mpserver.Ensemble
 
 
 Server
@@ -139,3 +114,7 @@ Another task (of some trial and error) by the user is experimenting with
 CPU allocations among workers to achieve best performance.
 
 .. autoclass:: mpservice.mpserver.Server
+
+
+Reference: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
+This article describes roughly version 0.7.2. Things have changed a lot.
