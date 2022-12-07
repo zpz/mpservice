@@ -21,75 +21,75 @@ class Manager(multiprocessing.managers.SyncManager):
     """
     Usage:
 
-        1. Register one or more classes with the Manager class::
+    1. Register one or more classes with the Manager class::
 
-                class Doubler:
-                    def __init__(self, ...):
-                        ...
-
-                    def double(self, x):
-                        return x * 2
-
-                class Tripler:
-                    def __init__(self, ...):
-                        ...
-
-                    def triple(self, x):
-                        return x * 3
-
-                Manager.register(Doubler)
-                Manager.register(Tripler)
-
-        2. Create a manager object and start it::
-
-                manager = Manager()
-                manager.start()
-
-           You can also use a context manager::
-
-                with Manager() as manager:
+            class Doubler:
+                def __init__(self, ...):
                     ...
 
-        3. Create one or more proxies::
+                def double(self, x):
+                    return x * 2
 
-                doubler = manager.Doubler(...)
-                tripler = manager.Tripler(...)
+            class Tripler:
+                def __init__(self, ...):
+                    ...
 
-           A manager object has a "server process".
-           The above causes corresponding class objects to be created
-           in the server process; the returned objects are "proxies"
-           for the real objects. These proxies can be passed to any other
-           processes and used there.
+                def triple(self, x):
+                    return x * 3
 
-           The arguments in the above calls are passed to the server process
-           and used in the ``__init__`` methods of the corresponding classes.
-           For this reason, the parameters to ``__init__`` of a registered class
-           must all be pickle-able.
+            Manager.register(Doubler)
+            Manager.register(Tripler)
 
-           Calling one registered class multiple times, like
+    2. Create a manager object and start it::
 
-           ::
+            manager = Manager()
+            manager.start()
 
-                prox1 = manager.Doubler(...)
-                prox2 = manager.Doubler(...)
+       You can also use a context manager::
 
-           will create independent objects in the server process.
+            with Manager() as manager:
+                ...
 
-           Multiple manager objects will run their corresponding
-           server processes independently.
+    3. Create one or more proxies::
 
-        4. Pass the proxy objects to any process and use them there.
+            doubler = manager.Doubler(...)
+            tripler = manager.Tripler(...)
 
-           Public methods (minus "properties") defined by the registered classes
-           can be invoked on a proxy with the same parameters and get the expected
-           result. For example,
+       A manager object has a "server process".
+       The above causes corresponding class objects to be created
+       in the server process; the returned objects are "proxies"
+       for the real objects. These proxies can be passed to any other
+       processes and used there.
 
-           ::
+       The arguments in the above calls are passed to the server process
+       and used in the ``__init__`` methods of the corresponding classes.
+       For this reason, the parameters to ``__init__`` of a registered class
+       must all be pickle-able.
 
-                prox1.double(3)
+       Calling one registered class multiple times, like
 
-           will return 6. Inputs and output of the public method
-           should all be pickle-able.
+       ::
+
+            prox1 = manager.Doubler(...)
+            prox2 = manager.Doubler(...)
+
+       will create independent objects in the server process.
+
+       Multiple manager objects will run their corresponding
+       server processes independently.
+
+    4. Pass the proxy objects to any process and use them there.
+
+       Public methods (minus "properties") defined by the registered classes
+       can be invoked on a proxy with the same parameters and get the expected
+       result. For example,
+
+       ::
+
+            prox1.double(3)
+
+       will return 6. Inputs and output of the public method
+       should all be pickle-able.
 
     In each new thread or process, a proxy object will create a new
     connection to the server process (see ``multiprocessing.managers.Server.accepter``,
