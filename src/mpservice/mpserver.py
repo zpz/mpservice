@@ -1,4 +1,4 @@
-'''
+"""
 ``mpservice.mpserver`` provides classes that use ``multiprocessing`` to perform CPU-bound operations
 taking advantage of all the CPUs (i.e. cores) on the machine.
 
@@ -17,7 +17,7 @@ There are three levels of constructs.
 3. On the top level is ``Server``. A ``Server``
    handles interfacing with the outside world, while passing the "real work" to
    a ``Servlet`` and relays the latter's result to the requester.
-'''
+"""
 
 
 from __future__ import annotations
@@ -346,6 +346,7 @@ class Worker(ABC):
 
             q_out.put((uid, y))
             # Element in the output queue is always a 2-tuple, that is, (ID, value).
+
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
             logger.info(
@@ -573,7 +574,7 @@ class ProcessWorker(Worker):
         hence they should consist
         mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
         Be careful about passing custom class objects in ``kwargs``.
-        
+
         Parameters
         ----------
         cpus
@@ -834,7 +835,7 @@ class SequentialServlet:
     A ``SequentialServlet`` represents
     a sequence of operations performed in order,
     one operations's output becoming the next operation's input.
-    
+
     Each operation is performed by a "servlet", that is,
     a ``ProcessServlet`` or ``ThreadServlet`` or ``SequentialServlet``
     or ``EnsembleServlet``.
@@ -847,14 +848,14 @@ class SequentialServlet:
         self._started = False
 
     def start(self, q_in, q_out):
-        '''
+        """
         Start the member servlets.
-        
+
         A main concern is to connect the servlets by "pipes", or queues,
         for input and output, in addition to the very first ``q_in``,
         which carries input items from the "outside world" and the very last ``q_out``,
         which sends output items to the "outside world".
-    
+
         Each item in ``q_in`` goes to the first member servlet;
         the result goes to the second servlet; and so on.
         The result out of the last servlet goes to ``q_out``.
@@ -863,7 +864,7 @@ class SequentialServlet:
         The types of intermediate queues are decided within this function.
         As a rule, use ``SimpleQueue`` between two threads; use ``FastQueue``
         between two processes or between a process and a thread.
-        '''
+        """
         assert not self._started
         nn = len(self._servlets)
         q1 = q_in
@@ -883,7 +884,7 @@ class SequentialServlet:
         self._started = True
 
     def stop(self):
-        '''Stop the member servlets.'''
+        """Stop the member servlets."""
         assert self._started
         for s in self._servlets:
             s.stop()
@@ -924,16 +925,16 @@ class EnsembleServlet:
         self._threads = []
 
     def start(self, q_in, q_out):
-        '''
+        """
         Start the member servlets.
-        
+
         A main concern is to wire up the parallel execution of all the servlets
         on each input item.
-        
+
         ``q_in`` and ``q_out` contain inputs from and outputs to
         the "outside world". Their types, either ``FastQueue`` or ``SimpleQueue``,
         are decided by the caller.
-        '''
+        """
         assert not self._started
         self._reset()
         self._qin = q_in

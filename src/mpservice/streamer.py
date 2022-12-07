@@ -212,7 +212,9 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def peek_random(self, frac: float, peek_func: Optional[Callable[[int, T], None]] = None, /):
+    def peek_random(
+        self, frac: float, peek_func: Optional[Callable[[int, T], None]] = None, /
+    ):
         assert 0 < frac <= 1
         rand = random.random
 
@@ -225,7 +227,9 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def peek_exceptions(self, *, with_trace: bool = True, print_func: Optional[Callable] = None):
+    def peek_exceptions(
+        self, *, with_trace: bool = True, print_func: Optional[Callable] = None
+    ):
         """
         User may want to pass in `logger.error` as `print_func`.
         """
