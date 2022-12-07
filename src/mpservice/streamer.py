@@ -212,9 +212,7 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def peek_random(
-        self, frac: float, peek_func: Callable[[int, T], None] = None, /
-    ):
+    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
         assert 0 < frac <= 1
         rand = random.random
 
