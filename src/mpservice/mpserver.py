@@ -1073,12 +1073,12 @@ class Server:
     @classmethod
     @final
     def get_mp_context(cls):
-        '''
+        """
         If subclasses need to use additional Queues, Locks, Conditions, etc,
         they should create them out of this context.
         This returns a spawn context.
         Subclasses should not customize this method.
-        '''
+        """
         return MP_SPAWN_CTX
 
     # TODO: how to track helper processes created by subclasses, so that
@@ -1136,9 +1136,9 @@ class Server:
         self._started = False
 
     def __enter__(self):
-        '''
+        """
         Start the servlet and get the server ready to take requests.
-        '''
+        """
         assert not self._started
 
         self._threads = []
@@ -1194,26 +1194,26 @@ class Server:
     async def async_call(
         self, x, /, *, timeout: Union[int, float] = 60, backpressure: bool = True
     ):
-        '''
+        """
         When this is called, this server is usually backing a (http or other) service.
         Concurrent async calls to this object may happen.
         In such use cases, ``call`` and ``stream`` should not be called to this object
         at the same time.
-        
+
         Parameters
         ----------
         x
             Input data element.
         timeout
             In seconds. If result is not ready after this time, ``TimeoutError`` is raised.
-            
+
             There are two situations where timeout happens.
             At first, ``x`` is placed in an input queue for processing.
             This step is called "enqueue".
             If the queue is full for the moment, the code will wait.
             If a spot does not become available during the ``timeout`` period,
             the ``TimeoutError`` message will be "... seconds enqueue".
-            
+
             Once ``x`` is placed in the input queue, code will wait for the result at the end
             of an output queue. If result is not yet ready when the ``timeout`` period
             is over, the ``TimeoutError`` message will be ".. seconds total".
@@ -1223,20 +1223,20 @@ class Server:
             If ``True``, and the input queue is full, do not wait; raise ``PipelineFull``
             exception right away. If ``False``, wait on the input queue for as long as
             ``timeout`` seconds. Effectively, the input queue is considered full if
-            there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests 
+            there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
             in the server, where ``backlog`` is the parameter to ``__init__`.
-        '''
+        """
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
-        '''
+        """
         This is called in "embedded" mode for sporadic uses.
         It is not designed to serve high load from multi-thread concurrent
         calls. To process large amounts in embedded model, use ``stream``.
-        
+
         The parameters ``x`` and ``timeout`` have the same meanings as in ``async_call``.
-        '''
+        """
         fut = self._enqueue(x, timeout)
         return self._wait_for_result(fut)
 
@@ -1247,7 +1247,7 @@ class Server:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: Union[int, float]=60,
+        timeout: Union[int, float] = 60,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
