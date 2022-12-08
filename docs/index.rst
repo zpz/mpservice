@@ -10,11 +10,20 @@
 =============
 
 .. automodule:: mpservice
+   :no-members:
+   :no-undoc-members:
+   :no-special-members:
+
+To install, do
+
+::
+
+   python3 -m pip install mpservice
+
 
 .. toctree::
    :maxdepth: 2
 
-   install
    mpserver
    streamer
    server_process

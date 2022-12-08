@@ -8,6 +8,144 @@ mpserver
     :no-special-members:
 
 
+Example
+=======
+
+Let's make up an interesting problem that involves several expensive steps that demand a lot of computing power.
+We decided to use ``multiprocessing`` to speed thing up.
+First, define the few operations that will take place in separate processes::
+
+    from time import sleep
+    from mpservice.mpserver import ProcessWorker, ProcessServlet, SequentialServlet, EnsembleServlet
+
+
+    class GetHead(ProcessWorker):
+        def call(self, x):
+            sleep(0.01)
+            return x[0]
+
+
+    class GetTail(ProcessWorker):
+        def call(self, x):
+            sleep(0.011)
+            return x[-1]
+
+
+    class GetLen(ProcessWorker):
+        def call(self, x):
+            sleep(0.012)
+            return len(x)
+
+
+    class Solute(ProcessWorker):
+        def call(self, x):
+            return f"Hello, {x}!"
+
+This is what they do:
+
+- Given a sequence, ``GetHead`` returns the first element, ``GetTail`` returns the last element, ``GetLen`` returns the length of the sequence.
+- Given something, ``Solute`` returns a welcome message.
+
+
+Second, specify how these operations work together.
+In other words, define a flow that any input value will go through.
+
+::
+
+    from mpservice.mpserver import ThreadServlet, make_threadworker
+
+    servlet = SequentialServlet(
+        EnsembleServlet(
+            ProcessServlet(GetHead, cpus=[0]),
+            ProcessServlet(GetTail, cpus=[0, 1]),
+            ProcessServlet(GetLen, cpus=[1]),
+            ),
+        ThreadServlet(make_threadworker(lambda x: (x[0] + x[1]) * x[2])),
+        ProcessServlet(Solute),
+        )
+
+In words, given input ``x``, it goes through such a flow of operations:
+
+1. On the high level, the flow is a "sequence" of three components.
+   The first is an ``EnsembleServlet``, the second is a ``ThreadServlet``,
+   and the third is a ``ProcessServlet``.
+
+   The input ``x`` enters the ``EnsembleServlet``, the output of which
+   enters the ``ThreadServlet``, the output of which enters the ``ProcessServlet``,
+   the output of which is the final result.
+   
+2. The ``EnsembleServlet`` arranges ``GetHead``, ``GetTail``, and ``GetLen``
+   to run in separate processes because they are compute-intensive.
+
+   For precise control, we have specified which CPUs each component should run on.
+   This also shows how many processes each component creates and runs in.
+   ``GetTail`` uses two processes running on the first and the second CPU, respectively,
+   because this operation is especially heavy.
+   (The CPU allocations could be more interesting if my computer had more than two cores!)
+
+   Being an *ensemble* servlet, each of its components ``GetHead``, ``GetTail``, and ``GetLen``
+   will get the input ``x`` and produce its output.
+   The three outputs will form a list (respecting the order of the operators), which
+   is the output of the ``EnsembleServlet``.
+   In other words, the output is the list ``[first_elem, last_elem, len]``.
+
+3. On the output of the ``EnsembleServlet``, we apply a simple function, which adds up
+   the first two elements and multiply the sum by the third element.
+   This is a light-weight operation, so we do it in a thread instead of a process.
+
+   We could have defined a subclass of ``ThreadWorker`` (similar to the ``ProcessWorker``
+   subclasses ``GetHead`` etc) and then wrap it in a ``ThreadServlet``.
+   For demonstration, we chose to use ``make_threadworker`` to dynamically define and return such
+   a class.
+
+4. The output of the ``ThreadServlet`` becomes the input to ``Solute``.
+   This is again a heavy computation, hence we run it in another process.
+   This process can use any CPU because we did not provide the ``cpus`` argument.
+
+   The output of ``Solute`` is the final result of the ``SequentialServlet``.
+
+All the ``ProcessWorker``, ``ThreadWorker``, ``ProcessServlet``, ``ThreadServlet``, ``EnsembleServlet``,
+and ``SequentialServlet`` are just "spec" of the flow. They do not run by themselves.
+There needs to be a "driver" that starts them, connects them to the "outside world", 
+passes input to them, and collects output from them.
+That's the work of a ``Server``.
+To correct, a ``Server`` does not interact with all of "them";
+it has direct interactions with the ``SequentialServlet`` only::
+
+
+    from mpservice.mpserver import Server
+
+    server = Server(servlet, sys_info_log_cadence=None)
+
+(The ``sys_info_log_cadence=None`` turns off some logging.)
+All this code is in a script named "test.py".
+Here's the remaining content of the script::
+
+    def main():
+
+        with server:
+            x = 'world'
+            y = server.call(x)
+            print(y)
+            
+            x = [1, 2, 3, 4]
+            y = server.call(x)
+            print(y)
+
+
+    if __name__ == '__main__':
+        main()
+        
+Before continuing, can you review the setup and figure out what will be printed?
+
+Now let's see it::
+
+
+    $ python test.py 
+    Hello, wdwdwdwdwd!
+    Hello, 20!
+
+
 Workers
 =======
 
@@ -29,7 +167,7 @@ Workers
 Servlets
 ========
 
-A "servlet" manages the execution of a ``Worker`` or ``Worker``\s.
+A ``Servlet`` manages the execution of a ``Worker`` or ``Worker``\s.
 We make a distinction between "simple" servlets, including ``ProcessServlet`` and ``ThreadServlet``,
 and "compound" servlets, including ``SequentialServlet`` and ``EnsembleServlet``.
 
@@ -59,9 +197,6 @@ then we may design such a workflow,
                 Sequetial(ProcessServlet(W7), ThreadServlet(W8), ProcessServlet(W9)),
                 ),
         )
-
-In precise language, the type ``Servlet`` is an alias to
-``Union[ProcessServlet, ThreadServlet, SequentialServlet, EnsembleServlet]``.
 
 
 .. autoclass:: mpservice.mpserver.CpuAffinity
@@ -116,5 +251,5 @@ CPU allocations among workers to achieve best performance.
 .. autoclass:: mpservice.mpserver.Server
 
 
-Reference: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
-This article describes roughly version 0.7.2. Things have changed a lot.
+**Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
+This article describes roughly version 0.7.2. Things have evolved a lot.

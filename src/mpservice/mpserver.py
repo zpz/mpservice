@@ -30,7 +30,7 @@ import queue
 import threading
 import traceback
 from abc import abstractmethod, ABC
-from collections.abc import Sequence
+from collections.abc import Sequence, Iterable, Iterator
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
@@ -640,7 +640,17 @@ Example use of this class::
 """
 
 
-class ProcessServlet:
+class Servlet(ABC):
+    @abstractmethod
+    def start(self, q_in, q_out) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop(self) -> None:
+        raise NotImplementedError
+
+
+class ProcessServlet(Servlet):
     def __init__(
         self,
         worker_cls: type[ProcessWorker],
@@ -748,7 +758,7 @@ class ProcessServlet:
         self._started = False
 
 
-class ThreadServlet:
+class ThreadServlet(Servlet):
     def __init__(
         self,
         worker_cls: type[ThreadWorker],
@@ -830,7 +840,7 @@ class ThreadServlet:
         self._started = False
 
 
-class SequentialServlet:
+class SequentialServlet(Servlet):
     """
     A ``SequentialServlet`` represents
     a sequence of operations performed in order,
@@ -899,7 +909,7 @@ class SequentialServlet:
         return w
 
 
-class EnsembleServlet:
+class EnsembleServlet(Servlet):
     """
     A ``EnsembleServlet`` represents
     an ensemble of operations performed in parallel on each input item.
@@ -1059,16 +1069,21 @@ Ensemble = EnsembleServlet
 """
 
 
-Servlet = Union[ProcessServlet, ThreadServlet, SequentialServlet, EnsembleServlet]
-"""The type ``Servlet`` refers to any of the four classes and subclasses thereof:
-``ProcessServlet``, ``ThreadServlet``, ``SequentialServlet``, ``EnsembleServlet``.
-
-Currently this is defined as a type alias. There is no subclassing relationship
-between them. However, their interfaces are very similar.
-"""
-
-
 class Server:
+    @classmethod
+    @final
+    def get_mp_context(cls):
+        '''
+        If subclasses need to use additional Queues, Locks, Conditions, etc,
+        they should create them out of this context.
+        This returns a spawn context.
+        Subclasses should not customize this method.
+        '''
+        return MP_SPAWN_CTX
+
+    # TODO: how to track helper processes created by subclasses, so that
+    # the sys info log in ``_gather_output`` can include them?
+
     def __init__(
         self,
         servlet: Servlet,
@@ -1078,14 +1093,30 @@ class Server:
         sys_info_log_cadence: int = 1_000_000,
     ):
         """
-        `main_cpu`: specifies the cpu for the "main process",
-        i.e. the process in which this server objects resides.
+        Parameters
+        ----------
+        servlet
+            The servlet to run by this server.
 
-        `backlog`: max number of requests concurrently in progress within this server,
+        main_cpu
+            Specifies the cpu for the "main process",
+            i.e. the process in which this server objects resides.
+
+        backlog
+            Max number of requests concurrently in progress within this server,
             all pipes/servlets/stages combined.
 
-        `sys_info_log_cadence`: log worker process system info (cpu/memory utilization)
-            every this many requests; if `None`, do not log.
+            For each request received, a UUID is assigned to it.
+            An entry is added to an internal book-keeping dict.
+            Then this ID along with the input data enter the processing pipeline.
+            Coming out of the pipeline is the ID along with the result.
+            The book-keeping record is found by the ID, used, and removed from the dict.
+            The result is returned to the requester.
+            The ``backlog`` value is simply the size limit on this internal
+            book-keeping dict.
+        sys_info_log_cadence
+            Log worker process system info (cpu/memory utilization)
+            every this many requests; if ``None``, turn off this log.
         """
         self._servlet = servlet
 
@@ -1105,8 +1136,9 @@ class Server:
         self._started = False
 
     def __enter__(self):
-        # After adding servlets, all other methods of this object
-        # should be used with context manager `__enter__`/`__exit__`
+        '''
+        Start the servlet and get the server ready to take requests.
+        '''
         assert not self._started
 
         self._threads = []
@@ -1142,7 +1174,6 @@ class Server:
         self._started = True
         return self
 
-    # def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
     def __exit__(self, *args, **kwargs):
         assert self._started
         # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
@@ -1160,51 +1191,91 @@ class Server:
         psutil.Process().cpu_affinity(cpus=[])
         self._started = False
 
-    @classmethod
-    @final
-    def get_mp_context(cls):
-        # If subclasses need to use additional Queues, Locks, Conditions, etc,
-        # they should create them out of this context.
-        # Subclass should not customize this method. Always use spawned processes.
-        return MP_SPAWN_CTX
-
-        # TODO: how to track helper processes created by subclasses, so that
-        # the sys info log in `_gather_output` can include them?
-
     async def async_call(
         self, x, /, *, timeout: Union[int, float] = 60, backpressure: bool = True
     ):
-        # When this is called, it's usually backing a (http or other) service.
-        # Concurrent async calls to this may happen.
-        # In such use cases, `call` and `stream` should not be called to this object
-        # at the same time.
+        '''
+        When this is called, this server is usually backing a (http or other) service.
+        Concurrent async calls to this object may happen.
+        In such use cases, ``call`` and ``stream`` should not be called to this object
+        at the same time.
+        
+        Parameters
+        ----------
+        x
+            Input data element.
+        timeout
+            In seconds. If result is not ready after this time, ``TimeoutError`` is raised.
+            
+            There are two situations where timeout happens.
+            At first, ``x`` is placed in an input queue for processing.
+            This step is called "enqueue".
+            If the queue is full for the moment, the code will wait.
+            If a spot does not become available during the ``timeout`` period,
+            the ``TimeoutError`` message will be "... seconds enqueue".
+            
+            Once ``x`` is placed in the input queue, code will wait for the result at the end
+            of an output queue. If result is not yet ready when the ``timeout`` period
+            is over, the ``TimeoutError`` message will be ".. seconds total".
+            This wait, as well as the error message, includes the time that has been spent
+            in the "enqueue" step, that is, the timer starts upon receiving the request.
+        backpressure
+            If ``True``, and the input queue is full, do not wait; raise ``PipelineFull``
+            exception right away. If ``False``, wait on the input queue for as long as
+            ``timeout`` seconds. Effectively, the input queue is considered full if
+            there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests 
+            in the server, where ``backlog`` is the parameter to ``__init__`.
+        '''
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: Union[int, float] = 60):
-        # This is called in "embedded" mode for sporadic uses.
-        # It is not designed to serve high load from multi-thread concurrent
-        # calls. To process large amounts in embedded model, use `stream`.
+        '''
+        This is called in "embedded" mode for sporadic uses.
+        It is not designed to serve high load from multi-thread concurrent
+        calls. To process large amounts in embedded model, use ``stream``.
+        
+        The parameters ``x`` and ``timeout`` have the same meanings as in ``async_call``.
+        '''
         fut = self._enqueue(x, timeout)
         return self._wait_for_result(fut)
 
     def stream(
         self,
-        data_stream,
+        data_stream: Iterable,
         /,
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout=60,
-    ):
+        timeout: Union[int, float]=60,
+    ) -> Iterator:
         """
+        Use this method for high-throughput processing of a long stream of
+        data elements. In theory, this method achieves the throughput upper-bound
+        of the server, as it saturates the pipeline.
+
         The order of elements in the stream is preserved, i.e.,
         elements in the output stream corresponds to elements
         in the input stream in the same order.
-        """
 
-        # For streaming, "timeout" is usually not a concern.
-        # The concern is overall throughput.
+        Parameters
+        ----------
+        data_stream
+            An iterable, possibly unlimited, of input data elements.
+        return_x
+            If ``True``, each output element is a length-two tuple
+            containing the input data and the result.
+            If ``False``, each output element is just the result.
+        return_exceptions
+            If ``True``, any Exception object will be produced in the output stream
+            in place of the would-be regular result.
+            If ``False``, exceptions will be propagated right away, crashing the program.
+        timeout
+            Interpreted the same as in ``call`` and ``async_call``.
+
+            In a streaming task, "timeout" is usually not a concern compared
+            to overall throughput. You can usually leave it at the default value.
+        """
 
         def _enqueue(tasks, return_exceptions):
             threading.current_thread().name = (
