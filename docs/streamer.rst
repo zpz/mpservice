@@ -11,17 +11,99 @@ streamer
 Basic usage
 ===========
 
-In a typical use case, one starts with a ``Streamer`` object, places it under
-context management, and calls its methods in a "chained" fashion::
+Let's make up an I/O-bound operation which takes an input and produces an output.
+(Think calling a remote service with an input and wait to get a result.)
 
-    data = range(100)
-    with Streamer(data) as stream:
-        pipeline = (
-            stream
-            .batch(10)
-            .transform(my_op_that_takes_a_batch, concurrency=4)
-            .unbatch()
-            )
+>>> from time import sleep
+>>> from random import random
+>>> def double(x):
+...     sleep(random() * 0.1)
+...     return x * 2
+
+Suppose we have a long stream of input values we want to process.
+We feed this stream into a ``Streamer`` object::
+
+>>> from mpservice.streamer import Streamer
+>>> data_stream = Streamer(range(100))
+  
+The input stream if often a list, but more generally, it can be any
+`Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_,
+possibly unlimited.
+Since ``double`` is an I/O-bound operation, let's use multiple threads to speed up
+the processing of the input stream.
+We need to use the ``Streamer`` in a context manager,
+add the worker to it as a *transform*,
+then retrieve results out of it.
+
+>>> with data_stream:
+...     data_stream.transform(double, executor='thread', concurrency=8)
+
+For this particular transform, we requested the function ``double`` to be run in 8 threads;
+they will collectively process the input stream.
+Adding the transform is just "setup"--nothing runs until we start to retrive results.
+Later we'll see that we can add more than one transform, as well as other lighter-weight operations.
+Because a ``Streamer`` is an `Iterator <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator>`_,
+"retrieving the results" usually amounts to iterating over it.
+All of this must be done with the context manager.
+Let's complete the code block:
+
+>>> with data_stream:
+...     data_stream.transform(double, executor='thread', concurrency=8)
+...     total = 0
+...     for y in data_stream:
+...         total += y
+>>> total
+9900
+
+What is the expected result?
+
+>>> sum((v*2 for v in range(100)))
+9900
+
+Despite the concurrency in the transform, the order of the input elements is preserved.
+In other words, the output elements correspond to the input elements in order.
+Let's print out the output elements to verify:
+
+>>> with Streamer(range(100)) as data_stream:
+...     data_stream.transform(double, executor='thread', concurrency=8)
+...     for k, y in enumerate(data_stream):
+...         if k % 10 == 0:
+...             print('')
+...         print(y, end='  ')
+...     print('')
+
+0  2  4  6  8  10  12  14  16  18
+20  22  24  26  28  30  32  34  36  38
+40  42  44  46  48  50  52  54  56  58
+60  62  64  66  68  70  72  74  76  78
+80  82  84  86  88  90  92  94  96  98
+100  102  104  106  108  110  112  114  116  118
+120  122  124  126  128  130  132  134  136  138
+140  142  144  146  148  150  152  154  156  158
+160  162  164  166  168  170  172  174  176  178
+180  182  184  186  188  190  192  194  196  198
+>>>
+
+There can be many transforms in a "chain".
+Suppose we want the output of ``double`` to go through another operation, like this:
+
+>>> def shift(x, amount):
+...     return x + amount
+>>>
+>>> with Streamer(range(20)) as data_stream:
+...     data_stream.transform(double, executor='thread', concurrency=8)
+...     data_stream.transform(shift, executor='thread', concurrency=3, amount=0.8)
+...     for k, y in enumerate(data_stream):
+...         if k % 10 == 0:
+...             print('')
+...         print(y, end='  ')
+...     print('')
+
+0.8  2.8  4.8  6.8  8.8  10.8  12.8  14.8  16.8  18.8
+20.8  22.8  24.8  26.8  28.8  30.8  32.8  34.8  36.8  38.8
+
+If the operation is CPU-intensive, we should set ``executor='process'``.
+Unfortunately we can not demo it in an interactive session because it uses "spawned processes".
 
 The methods ``batch``, ``transform``, and ``unbatch`` (and some others)
 all modify the object ``stream`` "in-place" and return the original object,
@@ -72,19 +154,6 @@ After this setup, there are several ways to use the object ``stream`` (or ``pipe
    convert it to a list::
 
         result = list(stream)
-
-2. If we don't need the elements coming out of ``stream``, but rather
-   just need the original data to flow through all the operations
-   of the pipeline (e.g. if the last "substantial" operation is inserting
-   the data into a database), we can "drain" the stream::
-
-        stream.drain()
-
-3. We can continue to add more operations to the pipeline, for example,
-
-   ::
-
-        stream.transform(another_op, concurrency=3)
 
 Of all the methods on a Streamer object, two will start new threads, namely
 ``.buffer()`` and ``.transform()``. (The latter may also start new processes.)

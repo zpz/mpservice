@@ -1,15 +1,18 @@
-"""Process a data stream through operations with concurrency.
+"""
+The module ``mpservice.streamer`` provides utilities for stream processing with threading or multiprocessing concurrencies.
 
 An input data stream goes through a series of operations.
-The target use case is that one or more operations are so heavy
+The output from one operation becomes the input to the next operation.
+One or more "primary" operations are so heavy
 that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
 These operations are called "transform"s.
 
 The other operations are typically light weight and supportive
-of the main (concurrent) transforms. These operations perform batching,
+of the primary transforms. These operations perform batching,
 unbatching, buffering, filtering, logging, etc.
 """
+
 
 # Iterable vs iterator
 #
@@ -81,8 +84,18 @@ def _default_peek_func(i, x):
     print(f"#{i}:  {x!r}")
 
 
-class Streamer(EnforceOverrides):
+class Streamer(EnforceOverrides, Iterator):
     def __init__(self, instream: Union[Iterator, Iterable], /):
+        '''
+        Parameters
+        ----------
+        instream
+            The input stream of elements. This is an
+            `Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_
+            or
+            `Iterator <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator>`_,
+            which could be unlimited.
+        '''
         self.streamlets: list[Stream] = [Stream(instream)]
         self._started = False
 
@@ -106,24 +119,22 @@ class Streamer(EnforceOverrides):
     def __next__(self):
         return self.streamlets[-1].__next__()
 
-    def drain(self) -> tuple[int, int]:
-        """Drain off the stream.
+    def drain(self) -> int:
+        """Drain off the stream and return the number of elements processed.
 
-        Return a tuple of the number of elements processed
-        as well as the number of exceptions (hopefully 0!).
+        This method is for the side effect: the entire stream has been processed
+        by all the operations and results have been taken care of, for example,
+        the final operation has saved results in a database.
 
-        The number of exceptions could be non-zero only if
-        upstream transformers have set ``return_exceptions`` to True.
-        Otherwise, any exception would have propagated and
-        prevented this method from completing.
+        If you need more info about the processing, such as inspecting exceptions
+        as they happen (if ``return_expections`` is ``True``),
+        then don't use this method. Instead, iterate the streamer yourself
+        and do whatever you need to do.
         """
         n = 0
-        nexc = 0
         for v in self:
             n += 1
-            if is_exception(v):
-                nexc += 1
-        return n, nexc
+        return n
 
     def drop_if(self, func: Callable[[int, T], bool], /):
         """
