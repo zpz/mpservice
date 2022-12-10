@@ -67,11 +67,10 @@ Let's print out the output elements to verify:
 >>> with Streamer(range(100)) as data_stream:
 ...     data_stream.transform(double, executor='thread', concurrency=8)
 ...     for k, y in enumerate(data_stream):
-...         if k % 10 == 0:
-...             print('')
 ...         print(y, end='  ')
+...         if (k + 1) % 10 == 0:
+...             print('')
 ...     print('')
-
 0  2  4  6  8  10  12  14  16  18
 20  22  24  26  28  30  32  34  36  38
 40  42  44  46  48  50  52  54  56  58
@@ -94,16 +93,18 @@ Suppose we want the output of ``double`` to go through another operation, like t
 ...     data_stream.transform(double, executor='thread', concurrency=8)
 ...     data_stream.transform(shift, executor='thread', concurrency=3, amount=0.8)
 ...     for k, y in enumerate(data_stream):
-...         if k % 10 == 0:
-...             print('')
 ...         print(y, end='  ')
+...         if (k + 1) % 10 == 0:
+...             print('')
 ...     print('')
-
 0.8  2.8  4.8  6.8  8.8  10.8  12.8  14.8  16.8  18.8
 20.8  22.8  24.8  26.8  28.8  30.8  32.8  34.8  36.8  38.8
 
 If the operation is CPU-intensive, we should set ``executor='process'``.
 Unfortunately we can not demo it in an interactive session because it uses "spawned processes".
+
+Helper operations
+=================
 
 The methods ``batch``, ``transform``, and ``unbatch`` (and some others)
 all modify the object ``stream`` "in-place" and return the original object,
@@ -158,35 +159,6 @@ After this setup, there are several ways to use the object ``stream`` (or ``pipe
 Of all the methods on a Streamer object, two will start new threads, namely
 ``.buffer()`` and ``.transform()``. (The latter may also start new processes.)
 
-
-Handling of exceptions
-======================
-
-There are two modes of exception handling.
-In the first mode, exception propagates and, as it should, halts the program with
-a printout of traceback. Any not-yet-processed data is discarded.
-
-In the second mode, exception object is passed on in the pipeline as if it is
-a regular data item. Subsequent data items are processed as usual.
-This mode is enabled by ``return_exceptions=True`` to the function ``transform``.
-However, to the next operation, the exception object that is coming along
-with regular data elements (i.e. regular output of the previous operation)
-is most likely a problem. One may want to call ``drop_exceptions`` to remove
-exception objects from the data stream before they reach the next operation.
-In order to be knowledgeable about exceptions before they are removed,
-the function ``log_exceptions`` can be used. Therefore, this is a useful pattern::
-
-    (
-        data_stream
-        .transform(func1,..., return_exceptions=True)
-        .log_exceptions()
-        .drop_exceptions()
-        .transform(func2,..., return_exceptions=True)
-    )
-
-Bear in mind that the first mode, with ``return_exceptions=False`` (the default),
-is a totally legitimate and useful mode.
-
 Hooks
 =====
 
@@ -223,6 +195,35 @@ If the operation is mainly for the side effect, e.g.
 saving data in files or a database, hence there isn't much useful result,
 then the result could be ``None``, which is perfectly valid. Regardless,
 the returned ``None``\s will still become the resultant stream.
+
+
+Handling of exceptions
+======================
+
+There are two modes of exception handling.
+In the first mode, exception propagates and, as it should, halts the program with
+a printout of traceback. Any not-yet-processed data is discarded.
+
+In the second mode, exception object is passed on in the pipeline as if it is
+a regular data item. Subsequent data items are processed as usual.
+This mode is enabled by ``return_exceptions=True`` to the function ``transform``.
+However, to the next operation, the exception object that is coming along
+with regular data elements (i.e. regular output of the previous operation)
+is most likely a problem. One may want to call ``drop_exceptions`` to remove
+exception objects from the data stream before they reach the next operation.
+In order to be knowledgeable about exceptions before they are removed,
+the function ``log_exceptions`` can be used. Therefore, this is a useful pattern::
+
+    (
+        data_stream
+        .transform(func1,..., return_exceptions=True)
+        .log_exceptions()
+        .drop_exceptions()
+        .transform(func2,..., return_exceptions=True)
+    )
+
+Bear in mind that the first mode, with ``return_exceptions=False`` (the default),
+is a totally legitimate and useful mode.
 
 
 End-user API
