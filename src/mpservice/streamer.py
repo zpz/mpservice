@@ -86,7 +86,7 @@ def _default_peek_func(i, x):
 
 class Streamer(EnforceOverrides, Iterator):
     def __init__(self, instream: Union[Iterator, Iterable], /):
-        '''
+        """
         Parameters
         ----------
         instream
@@ -95,7 +95,7 @@ class Streamer(EnforceOverrides, Iterator):
             or
             `Iterator <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator>`_,
             which could be unlimited.
-        '''
+        """
         self.streamlets: list[Stream] = [Stream(instream)]
         self._started = False
 
