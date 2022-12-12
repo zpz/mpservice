@@ -132,7 +132,7 @@ class Streamer(EnforceOverrides, Iterator):
         and do whatever you need to do.
         """
         n = 0
-        for v in self:
+        for _ in self:
             n += 1
         return n
 
