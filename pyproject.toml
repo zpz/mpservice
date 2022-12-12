@@ -71,6 +71,10 @@ show_missing = true
 skip_empty = true
 
 
+[tool.flake8]
+ignore = ["E203", "E231", "E501", "W503"]
+
+
 [tool.pylint.messages_control]
 max-line-length = 88
 disable = [
