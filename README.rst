@@ -6,7 +6,11 @@ The central theme is concurrency by threads or processes.
 
 Read the `documentation <https://mpservice.readthedocs.io/en/latest/>`_.
 
-To install, do `pip install mpservice`.
+To install, do
+
+::
+    
+    python3 -m pip install mpservice
 
 Status
 ======
