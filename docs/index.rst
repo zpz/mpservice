@@ -23,11 +23,11 @@ To install, do ``python3 -m pip install mpservice``.
    :maxdepth: 2
 
    mpserver
-   streamer
    server_process
    socket
    pipe
    http
+   streamer
    util
 
 

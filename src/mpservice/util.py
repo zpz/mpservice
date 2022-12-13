@@ -1,3 +1,4 @@
+from __future__ import annotations
 import errno
 import functools
 import inspect
@@ -13,7 +14,7 @@ import threading
 import traceback
 from multiprocessing.util import Finalize
 from types import TracebackType
-from typing import Optional, Union
+from typing import Optional
 
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
@@ -168,7 +169,7 @@ class RemoteException:
     #
     # Also check out `sys.excepthook`.
 
-    def __init__(self, exc: Exception, tb: Optional[Union[TracebackType, str]] = None):
+    def __init__(self, exc: Exception, tb: Optional[TracebackType | str] = None):
         if isinstance(tb, str):
             pass
         elif isinstance(tb, TracebackType):

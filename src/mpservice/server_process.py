@@ -4,9 +4,11 @@ to be called from other processes for shared data or functionalities.
 This module corresponds to the standard ``multiprocessing.managers`` module
 with simplified APIs for targeted use cases.
 """
+from __future__ import annotations
+
 import multiprocessing.managers
 import warnings
-from typing import Callable, Union
+from typing import Callable
 
 from .util import MP_SPAWN_CTX
 
@@ -104,7 +106,7 @@ class Manager(multiprocessing.managers.SyncManager):
         # `self._ctx` is `MP_SPAWN_CTX`
 
     @classmethod
-    def register(cls, typeid_or_callable: Union[str, Callable], /, **kwargs):
+    def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
         """
         ``typeid_or_callable`` is a usually class object. Suppose this is actually the class ``MyClass``,
         then on a started object ``manager`` of ``Manager``,

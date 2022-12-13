@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import logging
-from typing import Union
 
 import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def make_server(
-    app: Union[str, ASGIApplication],
+    app: str | ASGIApplication,
     *,
     host="0.0.0.0",
     port: int = 8000,

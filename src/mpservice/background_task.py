@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import concurrent.futures
 import functools
@@ -8,7 +10,7 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from datetime import datetime
-from typing import Optional, Union
+from typing import Optional
 
 from .util import MAX_THREADS
 
@@ -24,7 +26,7 @@ class Task:
         future: concurrent.futures.Future,
         callers: int,
         cancelled: threading.Event,
-        info: Union[queue.Queue, multiprocessing.queues.Queue],
+        info: queue.Queue | multiprocessing.queues.Queue,
         task_catalog: dict,
     ):
         self.task_id = task_id
@@ -196,7 +198,7 @@ class BackgroundTask(ABC):
         cls,
         *args,
         _cancelled: threading.Event,
-        _info: Union[queue.Queue, multiprocessing.Queue],
+        _info: queue.Queue | multiprocessing.Queue,
         **kwargs
     ):
         """

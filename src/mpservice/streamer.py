@@ -46,7 +46,6 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import queue
-import random
 import threading
 import traceback
 from collections.abc import Iterable, Iterator
@@ -54,7 +53,6 @@ from multiprocessing.util import Finalize
 from typing import (
     Callable,
     TypeVar,
-    Union,
     Optional,
 )
 
@@ -85,7 +83,7 @@ def _default_peek_func(i, x):
 
 
 class Streamer(EnforceOverrides, Iterator):
-    def __init__(self, instream: Union[Iterator, Iterable], /):
+    def __init__(self, instream: Iterator | Iterable, /):
         """
         Parameters
         ----------
@@ -141,6 +139,12 @@ class Streamer(EnforceOverrides, Iterator):
         ``func`` is a function that takes the data element index
         along with the element value, and returns ``True`` if the element
         should be skipped, that is, not included in the output stream.
+
+        For example, to implement "drop first n", call
+
+        ::
+
+            drop_if(lambda i, x: i < n)
         """
         self.streamlets.append(Dropper(self.streamlets[-1], func))
         return self
@@ -154,9 +158,9 @@ class Streamer(EnforceOverrides, Iterator):
         """
         return self.drop_if(lambda i, x: is_exception(x))
 
-    def drop_first_n(self, n: int):
-        assert n >= 0
-        return self.drop_if(lambda i, x: i < n)
+    # def drop_first_n(self, n: int):
+    #     assert n >= 0
+    #     return self.drop_if(lambda i, x: i < n)
 
     def keep_if(self, func: Callable[[int, T], bool], /):
         """Keep an element in the stream only if a condition is met.
@@ -168,10 +172,11 @@ class Streamer(EnforceOverrides, Iterator):
     def head(self, n: int):
         """
         Take the first ``n`` elements and ignore the rest.
+
+        This does not delegate to ``keep_if``, because ``keep_if``
+        would need to walk through the entire stream,
+        which is not needed for ``head``.
         """
-        # This does not delegate to `keep_if`, because `keep_if`
-        # would need to walk through the entire stream,
-        # which is not needed for `head`.
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
@@ -186,6 +191,18 @@ class Streamer(EnforceOverrides, Iterator):
 
         User has flexibilities in ``func``, e.g. to not print anything
         under certain conditions.
+
+        Examples
+        --------
+
+        To randomly peek 5% of the items, we can define such a function to be used
+        as ``func``::
+
+            import random
+
+            def foo(i, x):
+                if random.random() < 0.3:
+                    print(i, x)
         """
         if func is None:
             func = _default_peek_func
@@ -223,18 +240,18 @@ class Streamer(EnforceOverrides, Iterator):
 
         return self.peek(foo)
 
-    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
-        assert 0 < frac <= 1
-        rand = random.random
+    # def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
+    #     assert 0 < frac <= 1
+    #     rand = random.random
 
-        if peek_func is None:
-            peek_func = _default_peek_func
+    #     if peek_func is None:
+    #         peek_func = _default_peek_func
 
-        def foo(i, x):
-            if rand() < frac:
-                peek_func(i, x)
+    #     def foo(i, x):
+    #         if rand() < frac:
+    #             peek_func(i, x)
 
-        return self.peek(foo)
+    #     return self.peek(foo)
 
     def peek_exceptions(
         self, *, with_trace: bool = True, print_func: Optional[Callable] = None
@@ -367,7 +384,7 @@ class Streamer(EnforceOverrides, Iterator):
 
 
 class Stream(EnforceOverrides):
-    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
+    def __init__(self, instream: Stream | Iterator | Iterable, /):
         if hasattr(instream, "__next__"):
             self._instream = instream
         else:

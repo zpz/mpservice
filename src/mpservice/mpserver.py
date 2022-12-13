@@ -19,7 +19,6 @@ There are three levels of constructs.
    a ``Servlet`` and relays the latter's result to the requester.
 """
 
-
 from __future__ import annotations
 import asyncio
 import concurrent.futures
@@ -34,7 +33,7 @@ from collections.abc import Sequence, Iterable, Iterator
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Union, Callable, Any, Optional
+from typing import Callable, Any, Optional
 
 import psutil
 from overrides import final
@@ -128,8 +127,8 @@ class Worker(ABC):
     def run(
         cls,
         *,
-        q_in: Union[FastQueue, SimpleQueue],
-        q_out: Union[FastQueue, SimpleQueue],
+        q_in: FastQueue | SimpleQueue,
+        q_out: FastQueue | SimpleQueue,
         **init_kwargs,
     ):
         """
@@ -519,7 +518,7 @@ class CpuAffinity:
     .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
     """
 
-    def __init__(self, target: Union[None, int, Sequence[int]] = None, /):
+    def __init__(self, target: Optional[int | Sequence[int]] = None, /):
         """
         Parameters
         ----------
@@ -655,7 +654,7 @@ class ProcessServlet(Servlet):
         self,
         worker_cls: type[ProcessWorker],
         *,
-        cpus: Optional[Sequence[Union[CpuAffinity, None, int, Sequence[int]]]] = None,
+        cpus: Optional[Sequence[CpuAffinity | None | int | Sequence[int]]] = None,
         name: Optional[str] = None,
         **kwargs,
     ):
@@ -790,7 +789,7 @@ class ThreadServlet(Servlet):
         self._started = False
 
     def start(
-        self, q_in: Union[FastQueue, SimpleQueue], q_out: Union[FastQueue, SimpleQueue]
+        self, q_in: FastQueue | SimpleQueue, q_out: FastQueue | SimpleQueue
     ):
         """
         Create the requested number of threads, in each starting an instance
@@ -1192,7 +1191,7 @@ class Server:
         self._started = False
 
     async def async_call(
-        self, x, /, *, timeout: Union[int, float] = 60, backpressure: bool = True
+        self, x, /, *, timeout: int | float = 60, backpressure: bool = True
     ):
         """
         When this is called, this server is usually backing a (http or other) service.
@@ -1229,7 +1228,7 @@ class Server:
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
 
-    def call(self, x, /, *, timeout: Union[int, float] = 60):
+    def call(self, x, /, *, timeout: int | float = 60):
         """
         This is called in "embedded" mode for sporadic uses.
         It is not designed to serve high load from multi-thread concurrent
@@ -1247,7 +1246,7 @@ class Server:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: Union[int, float] = 60,
+        timeout: int | float = 60,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
