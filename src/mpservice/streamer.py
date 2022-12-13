@@ -1,15 +1,18 @@
-"""Process a data stream through operations with concurrency.
+"""
+The module ``mpservice.streamer`` provides utilities for stream processing with threading or multiprocessing concurrencies.
 
 An input data stream goes through a series of operations.
-The target use case is that one or more operations are so heavy
+The output from one operation becomes the input to the next operation.
+One or more "primary" operations are so heavy
 that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
 These operations are called "transform"s.
 
 The other operations are typically light weight and supportive
-of the main (concurrent) transforms. These operations perform batching,
+of the primary transforms. These operations perform batching,
 unbatching, buffering, filtering, logging, etc.
 """
+
 
 # Iterable vs iterator
 #
@@ -43,7 +46,6 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import queue
-import random
 import threading
 import traceback
 from collections.abc import Iterable, Iterator
@@ -51,7 +53,6 @@ from multiprocessing.util import Finalize
 from typing import (
     Callable,
     TypeVar,
-    Union,
     Optional,
 )
 
@@ -81,8 +82,18 @@ def _default_peek_func(i, x):
     print(f"#{i}:  {x!r}")
 
 
-class Streamer(EnforceOverrides):
-    def __init__(self, instream: Union[Iterator, Iterable], /):
+class Streamer(EnforceOverrides, Iterator):
+    def __init__(self, instream: Iterator | Iterable, /):
+        """
+        Parameters
+        ----------
+        instream
+            The input stream of elements. This is an
+            `Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_
+            or
+            `Iterator <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator>`_,
+            which could be unlimited.
+        """
         self.streamlets: list[Stream] = [Stream(instream)]
         self._started = False
 
@@ -106,30 +117,34 @@ class Streamer(EnforceOverrides):
     def __next__(self):
         return self.streamlets[-1].__next__()
 
-    def drain(self) -> tuple[int, int]:
-        """Drain off the stream.
+    def drain(self) -> int:
+        """Drain off the stream and return the number of elements processed.
 
-        Return a tuple of the number of elements processed
-        as well as the number of exceptions (hopefully 0!).
+        This method is for the side effect: the entire stream has been processed
+        by all the operations and results have been taken care of, for example,
+        the final operation has saved results in a database.
 
-        The number of exceptions could be non-zero only if
-        upstream transformers have set ``return_exceptions`` to True.
-        Otherwise, any exception would have propagated and
-        prevented this method from completing.
+        If you need more info about the processing, such as inspecting exceptions
+        as they happen (if ``return_expections`` is ``True``),
+        then don't use this method. Instead, iterate the streamer yourself
+        and do whatever you need to do.
         """
         n = 0
-        nexc = 0
-        for v in self:
+        for _ in self:
             n += 1
-            if is_exception(v):
-                nexc += 1
-        return n, nexc
+        return n
 
     def drop_if(self, func: Callable[[int, T], bool], /):
         """
         ``func`` is a function that takes the data element index
         along with the element value, and returns ``True`` if the element
         should be skipped, that is, not included in the output stream.
+
+        For example, to implement "drop first n", call
+
+        ::
+
+            drop_if(lambda i, x: i < n)
         """
         self.streamlets.append(Dropper(self.streamlets[-1], func))
         return self
@@ -143,9 +158,9 @@ class Streamer(EnforceOverrides):
         """
         return self.drop_if(lambda i, x: is_exception(x))
 
-    def drop_first_n(self, n: int):
-        assert n >= 0
-        return self.drop_if(lambda i, x: i < n)
+    # def drop_first_n(self, n: int):
+    #     assert n >= 0
+    #     return self.drop_if(lambda i, x: i < n)
 
     def keep_if(self, func: Callable[[int, T], bool], /):
         """Keep an element in the stream only if a condition is met.
@@ -157,10 +172,11 @@ class Streamer(EnforceOverrides):
     def head(self, n: int):
         """
         Take the first ``n`` elements and ignore the rest.
+
+        This does not delegate to ``keep_if``, because ``keep_if``
+        would need to walk through the entire stream,
+        which is not needed for ``head``.
         """
-        # This does not delegate to `keep_if`, because `keep_if`
-        # would need to walk through the entire stream,
-        # which is not needed for `head`.
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
@@ -175,6 +191,18 @@ class Streamer(EnforceOverrides):
 
         User has flexibilities in ``func``, e.g. to not print anything
         under certain conditions.
+
+        Examples
+        --------
+
+        To randomly peek 5% of the items, we can define such a function to be used
+        as ``func``::
+
+            import random
+
+            def foo(i, x):
+                if random.random() < 0.3:
+                    print(i, x)
         """
         if func is None:
             func = _default_peek_func
@@ -212,18 +240,18 @@ class Streamer(EnforceOverrides):
 
         return self.peek(foo)
 
-    def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
-        assert 0 < frac <= 1
-        rand = random.random
+    # def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
+    #     assert 0 < frac <= 1
+    #     rand = random.random
 
-        if peek_func is None:
-            peek_func = _default_peek_func
+    #     if peek_func is None:
+    #         peek_func = _default_peek_func
 
-        def foo(i, x):
-            if rand() < frac:
-                peek_func(i, x)
+    #     def foo(i, x):
+    #         if rand() < frac:
+    #             peek_func(i, x)
 
-        return self.peek(foo)
+    #     return self.peek(foo)
 
     def peek_exceptions(
         self, *, with_trace: bool = True, print_func: Optional[Callable] = None
@@ -356,7 +384,7 @@ class Streamer(EnforceOverrides):
 
 
 class Stream(EnforceOverrides):
-    def __init__(self, instream: Union[Stream, Iterator, Iterable], /):
+    def __init__(self, instream: Stream | Iterator | Iterable, /):
         if hasattr(instream, "__next__"):
             self._instream = instream
         else:

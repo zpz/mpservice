@@ -7,11 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [unreleased]
 
+Removed
+-------
+
+- `mpservice.streamer.Streamer.{drop_first_n, peek_random}`.
+
+
 Changed
 -------
 
 - `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
 - `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
+- `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
 
 Added or enhanced
 -----------------

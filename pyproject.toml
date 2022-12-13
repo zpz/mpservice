@@ -71,15 +71,29 @@ show_missing = true
 skip_empty = true
 
 
+[tool.coverage.run]
+data_file = "/tmp/.coverage"
+
+
+[tool.flake8]
+ignore = ["E203", "E231", "E501", "W503"]
+
+
 [tool.pylint.messages_control]
 max-line-length = 88
 disable = [
+    "attribute-defined-outside-init",
     "consider-using-f-string",
     "missing-docstring",
     "invalid-name",
     "line-too-long",
     "fixme",
+    "no-else-return",
     "too-few-public-methods",
     "too-many-branches",
+    "too-many-instance-attributes",
+    "too-many-lines",
+    "too-many-locals",
     "too-many-return-statements",
+    "too-many-statements",
 ]

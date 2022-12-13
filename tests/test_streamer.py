@@ -4,7 +4,7 @@ from time import sleep
 
 import pytest
 
-from mpservice.streamer import Streamer, _default_peek_func
+from mpservice.streamer import Streamer, _default_peek_func, is_exception
 
 
 def test_stream():
@@ -54,7 +54,7 @@ def test_buffer():
 
 def test_buffer_batch():
     with Streamer(range(19)) as s:
-        n, _ = s.buffer(10).batch(5).unbatch().peek_every_nth(1).drain()
+        n = s.buffer(10).batch(5).unbatch().peek_every_nth(1).drain()
         assert n == 19
 
 
@@ -69,7 +69,7 @@ def test_drop():
         assert list(s) == [0, 1, 2, 4, 6, 7]
 
     with Streamer(data) as s:
-        assert list(s.drop_first_n(6)) == [6, 7]
+        assert list(s.drop_if(lambda i, x: i < 6)) == [6, 7]
 
     with Streamer((2, 3, 1, 5, 4, 7)) as s:
         assert list(s.drop_if(lambda i, x: x > i)) == [1, 4]
@@ -89,11 +89,11 @@ def test_keep():
 
     with Streamer(data) as s:
         s.head(4)
-        s.drop_first_n(3)
+        s.drop_if(lambda i, x: i < 3)
         assert list(s) == [3]
 
     with Streamer(data) as s:
-        assert list(s.drop_first_n(3).head(1)) == [3]
+        assert list(s.drop_if(lambda i, x: i < 3).head(1)) == [3]
 
 
 def test_peek():
@@ -102,11 +102,15 @@ def test_peek():
     data = list(range(10))
 
     with Streamer(data) as s:
-        n, _ = s.peek_every_nth(3).drain()
+        n = s.peek_every_nth(3).drain()
         assert n == 10
 
-    with Streamer(data).peek_random(0.5, lambda i, x: print(f'--{i}--  {x}')) as s:
-        n, _ = s.drain()
+    def foo(i, x):
+        if random.random() < 0.5:
+            print(f'--{i}-- {x}')
+
+    with Streamer(data).peek(foo) as s:
+        n = s.drain()
         assert n == 10
 
     def peek_func(i, x):
@@ -122,15 +126,22 @@ def test_peek():
 
 def test_drain():
     with Streamer(range(10)) as s:
-        z, _ = s.drain()
+        z = s.drain()
         assert z == 10
 
     with Streamer(range(10)).keep_if(lambda i, x: i % 3 == 0) as s:
-        z, _ = s.drain()
+        z = s.drain()
         assert z == 4  # indices 0, 3, 6, 9 are kept
 
     with Streamer((1, 2, ValueError(3), 5, RuntimeError, 9)) as s:
-        assert s.drain() == (6, 2)
+        n = 0
+        nexc = 0
+        for x in s:
+            n += 1
+            if is_exception(x):
+                nexc += 1
+        assert n == 6
+        assert nexc == 2
 
 
 def test_transform():
@@ -174,7 +185,7 @@ def test_transform():
     mysink = MySink()
     with Streamer(SYNC_INPUT) as ss:
         s = ss.transform(f1).transform(mysink)
-        n, _ = s.drain()
+        n = s.drain()
         assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -206,8 +217,14 @@ def test_transform_with_error():
 
     with Streamer(corrupt_data()) as s:
         s.transform(process, concurrency=2, return_exceptions=True)
-        zz = s.drain()
-        assert zz == (len(data), 1)
+        n = 0
+        nexc = 0
+        for x in s:
+            n += 1
+            if is_exception(x):
+                nexc += 1
+        assert n == len(data)
+        assert nexc == 1
 
 
 def test_chain():

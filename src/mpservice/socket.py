@@ -10,7 +10,7 @@ import time
 from collections.abc import Iterable, Sequence
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from time import perf_counter
-from typing import Union, Callable, Awaitable, Any, Optional
+from typing import Callable, Awaitable, Any, Optional
 
 from overrides import EnforceOverrides
 
@@ -213,7 +213,7 @@ class SocketApplication(EnforceOverrides):
     def add_route(
         self,
         path: str,
-        route: Union[Callable[[Any], Awaitable[Any]], Callable[[], Awaitable[Any]]],
+        route: Callable[[Any], Awaitable[Any]] | Callable[[], Awaitable[Any]],
     ):
         """
         ``route`` is an *async* function that takes a single positional arg,

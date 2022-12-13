@@ -1,4 +1,0 @@
-#!/bin/bash
-
-bash <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/make-release)
-
