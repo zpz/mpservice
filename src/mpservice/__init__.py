@@ -1,4 +1,4 @@
-'''
+"""
 The package ``mpservice`` provides utilities for Python concurrency, including
 
 - Serving with multiprocessing to make full use of multiple cores,
@@ -23,6 +23,6 @@ Utilities are provided in ``mpservice.http``, ``mpservice.socket``, and ``mpserv
 for the latter use case.
 
 The package also contains some other related utilities.
-'''
+"""
 
 __version__ = "0.11.8b1"

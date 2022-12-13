@@ -81,8 +81,8 @@ def make_server(
 
 
 def run_app(app, **kwargs):
-    '''
+    """
     ``app`` and all elements in ``**kwargs`` are passed on to ``make_server``.
-    '''
+    """
     server = make_server(app, **kwargs)
     return server.run()

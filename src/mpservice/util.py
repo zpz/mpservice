@@ -228,9 +228,9 @@ class Thread(threading.Thread):
         self._loud_exception_ = loud_exception
 
     def run(self):
-        '''
+        """
         This method represents the thread's activity.
-        '''
+        """
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
