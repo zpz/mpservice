@@ -788,9 +788,7 @@ class ThreadServlet(Servlet):
         self._workers = []
         self._started = False
 
-    def start(
-        self, q_in: FastQueue | SimpleQueue, q_out: FastQueue | SimpleQueue
-    ):
+    def start(self, q_in: FastQueue | SimpleQueue, q_out: FastQueue | SimpleQueue):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.

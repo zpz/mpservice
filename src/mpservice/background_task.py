@@ -199,7 +199,7 @@ class BackgroundTask(ABC):
         *args,
         _cancelled: threading.Event,
         _info: queue.Queue | multiprocessing.Queue,
-        **kwargs
+        **kwargs,
     ):
         """
         This method contains the operations of the user task.
