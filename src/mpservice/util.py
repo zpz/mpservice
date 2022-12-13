@@ -228,6 +228,9 @@ class Thread(threading.Thread):
         self._loud_exception_ = loud_exception
 
     def run(self):
+        '''
+        This method represents the thread's activity.
+        '''
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
@@ -240,7 +243,7 @@ class Thread(threading.Thread):
             # an argument that has a member that points to the thread.
             del self._target, self._args, self._kwargs
 
-    def done(self):
+    def done(self) -> bool:
         if self.is_alive():
             return False
         return self._started.is_set()
@@ -323,7 +326,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.send(None)
 
-    def done(self):
+    def done(self) -> bool:
         return self.exitcode is not None
 
     def result(self, timeout=None):

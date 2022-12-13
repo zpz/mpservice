@@ -9,16 +9,14 @@
 ``mpservice``
 =============
 
+*(This documentation is in early stage of construction.)*
+
 .. automodule:: mpservice
    :no-members:
    :no-undoc-members:
    :no-special-members:
 
-To install, do
-
-::
-
-   python3 -m pip install mpservice
+To install, do ``python3 -m pip install mpservice``.
 
 
 .. toctree::

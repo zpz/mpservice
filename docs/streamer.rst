@@ -103,20 +103,18 @@ Suppose we want the output of ``double`` to go through another operation, like t
 If the operation is CPU-intensive, we should set ``executor='process'``.
 Unfortunately we can not demo it in an interactive session because it uses "spawned processes".
 
-Helper operations
-=================
 
 The methods ``batch``, ``transform``, and ``unbatch`` (and some others)
-all modify the object ``stream`` "in-place" and return the original object,
+all modify the object ``data_stream`` "in-place" and return the original object,
 hence it's fine to add these operations one at a time,
 and it's not necessary to assign the intermediate results to new identifiers.
 The above is equivalent to the following::
 
-    with Streamer(range(100)) as stream:
-        stream.batch(10)
-        stream.transform(my_op_that_takes_a_batch, concurrency=4)
-        stream.unbatch()
-        pipeline = stream
+    with Streamer(range(100)) as data_stream:
+        data_stream.batch(10)
+        data_stream.transform(my_op_that_takes_a_batch, concurrency=4)
+        data_stream.unbatch()
+        pipeline = data_stream
 
 As the Streamer object undergoes the series of operations, it remains a "stream"
 of elements but the content of the elements is changing. At any moment,
@@ -126,12 +124,12 @@ where each element has gone through a series of operations, or, if
 ``batch`` and ``unbatch`` have been applied, the stream may consist more or less elements
 than the original input.
 
-After this setup, there are several ways to use the object ``stream`` (or ``pipeline``).
+After this setup, there are several ways to use the object ``data_stream`` (or ``pipeline``).
 
-1. Since ``stream`` is an Iterable and an Iterator, we can use it as such.
+-  Since ``data_stream`` is an Iterable and an Iterator, we can use it as such.
    Most naturally, iterate over it and process each element however we like.
 
-   We can of course also provide ``stream`` as a parameter where an iterable
+-  We can of course also provide ``data_stream`` as a parameter where an iterable
    or iterator is expected. For example, the ``mpservice.mpserver.Server``
    class has a method ``stream`` that expects an iterable, hence
    we can do things like
@@ -140,23 +138,23 @@ After this setup, there are several ways to use the object ``stream`` (or ``pipe
 
         server = Server(...)
         with server:
-            for y in server.stream(stream):
+            for y in server.stream(data_stream):
                 ...
 
    Note that ``server.stream(...)`` does not produce a ``Streamer`` object.
    If we want to put it in subsequent operations, simply turn it into a
    ``Streamer`` object::
 
-            pipeline = Streamer(server.stream(stream))
+            pipeline = Streamer(server.stream(data_stream))
             pipeline.transform(yet_another_io_op)
             ...
 
-   If the stream is not too long (not "big data"), we can pass it to ``list`` to
+-  If the stream is not too long (not "big data"), we can pass it to ``list`` to
    convert it to a list::
 
-        result = list(stream)
+        result = list(data_stream)
 
-Of all the methods on a Streamer object, two will start new threads, namely
+Of all the methods on a ``Streamer`` object, two will start new threads, namely
 ``.buffer()`` and ``.transform()``. (The latter may also start new processes.)
 
 Hooks
@@ -226,13 +224,16 @@ Bear in mind that the first mode, with ``return_exceptions=False`` (the default)
 is a totally legitimate and useful mode.
 
 
-End-user API
-============
+API reference
+=============
+
+The class ``Streamer`` is the "entry-point": user constructs a ``Streamer`` object
+by passing an `Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_ into it,
+then calls its methods to use it.
+The other classes implement the various ``Streamer`` methods;
+end-user does not instantiate those classes directly.
 
 .. autoclass:: mpservice.streamer.Streamer
-
-Individual operators
-====================
 
 .. autoclass:: mpservice.streamer.Stream
 
