@@ -5,6 +5,6 @@
     thisfile="${BASH_SOURCE[0]}"
     cd "$(dirname "${thisfile}")"
     cd ..
-    bash <(curl -s https://raw.githubusercontent.com/zpz/utilities.py/master/.githooks/pre-push)
+    bash <(curl -s https://raw.githubusercontent.com/zpz/docker-mini/master/tools/githooks/pre-push)
 )
 

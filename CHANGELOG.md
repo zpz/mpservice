@@ -10,8 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Removed
 -------
 
-- `mpservice.streamer.Streamer.{drop_first_n, peek_random}`.
-
+- `mpservice.streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
+  `Dropper`.
 
 Changed
 -------
@@ -24,7 +24,11 @@ Added or enhanced
 -----------------
 
 - Enhanced documentation. Started to host generated doc on Read the Docs.
-- New class ``mpservice.mpserver.CpuAffinity``.
+- New class `mpservice.mpserver.CpuAffinity`.
+- New method on `mpservice.streamer.Streamer` and corresponding classes:
+  `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`.
+- `Streamer.drop_exceptions` got a new parameter specifying the types of exceptions
+  to drop.
 
 
 ## [0.11.7.post1] - 2022-10-21
