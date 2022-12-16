@@ -138,7 +138,7 @@ class Streamer(EnforceOverrides, Iterator):
 
     def map(self, func: Callable[[int, T], Any], /):
         """Perform a simple transformation on each data element.
-        
+
         This operation happens "inline"--there is no other threads or processes
         used. For this reason, the method is for "light-weight" transforms.
 
@@ -147,7 +147,7 @@ class Streamer(EnforceOverrides, Iterator):
         but the index is provided to support special logics that depends on
         the position of the element in the stream. For example, we can print out
         every hundredth value for information::
-        
+
             def peek(idx, x):
                 if idx % 100 == 0:
                     print(x)
@@ -199,7 +199,10 @@ class Streamer(EnforceOverrides, Iterator):
     #     self.streamlets.append(Dropper(self.streamlets[-1], func))
     #     return self
 
-    def drop_exceptions(self, exc_types: Optional[type[BaseException] | Sequence[type[BaseException]]] = None):
+    def drop_exceptions(
+        self,
+        exc_types: Optional[type[BaseException] | Sequence[type[BaseException]]] = None,
+    ):
         """
         If a call to ``transform`` upstream has specified ``return_exceptions=True``,
         then the intermediate stream may contain ``Exception`` objects.
@@ -209,6 +212,7 @@ class Streamer(EnforceOverrides, Iterator):
         then the exception will be raised. If ``exc_types`` is not specified, then all exceptions
         are dropped; the remaining elements continue to flow forward.
         """
+
         def foo(idx, x):
             if is_exception(x):
                 if exc_types:
@@ -464,7 +468,7 @@ class Stream(EnforceOverrides):
         else:
             self._instream = iter(instream)
         self.index = 0
-        '''
+        """
         Index of the upcoming element; 0 based.
         Here, "element" refers to the element to be produced by
         ``self.__next__``, which does not need to have the same index
@@ -473,7 +477,7 @@ class Stream(EnforceOverrides):
         depending on the logic in this object, some of the input element
         could be dropped. On the other hand, ``self.index`` is the sequential
         index of the elements that are produced by this object.
-        '''
+        """
         self._stopped = threading.Event()
 
     def _stop(self):
