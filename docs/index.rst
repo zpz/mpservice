@@ -5,6 +5,10 @@
 
 :tocdepth: 3
 
+.. _Iterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable
+.. _Iterator: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator
+
+
 =============
 ``mpservice``
 =============
@@ -20,14 +24,14 @@ To install, do ``python3 -m pip install mpservice``.
 
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    mpserver
+   streamer
    server_process
    socket
    pipe
    http
-   streamer
    util
 
 

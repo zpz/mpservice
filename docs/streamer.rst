@@ -36,7 +36,7 @@ add the worker to it as a *transform*,
 then retrieve results out of it.
 
 >>> with data_stream:
-...     data_stream.transform(double, executor='thread', concurrency=8)
+...     data_stream.parmap(double, executor='thread', concurrency=8)
 
 For this particular transform, we requested the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -48,7 +48,7 @@ All of this must be done with the context manager.
 Let's complete the code block:
 
 >>> with data_stream:
-...     data_stream.transform(double, executor='thread', concurrency=8)
+...     data_stream.parmap(double, executor='thread', concurrency=8)
 ...     total = 0
 ...     for y in data_stream:
 ...         total += y
@@ -65,7 +65,7 @@ In other words, the output elements correspond to the input elements in order.
 Let's print out the output elements to verify:
 
 >>> with Streamer(range(100)) as data_stream:
-...     data_stream.transform(double, executor='thread', concurrency=8)
+...     data_stream.parmap(double, executor='thread', concurrency=8)
 ...     for k, y in enumerate(data_stream):
 ...         print(y, end='  ')
 ...         if (k + 1) % 10 == 0:
@@ -90,8 +90,8 @@ Suppose we want the output of ``double`` to go through another operation, like t
 ...     return x + amount
 >>>
 >>> with Streamer(range(20)) as data_stream:
-...     data_stream.transform(double, executor='thread', concurrency=8)
-...     data_stream.transform(shift, executor='thread', concurrency=3, amount=0.8)
+...     data_stream.parmap(double, executor='thread', concurrency=8)
+...     data_stream.parmap(shift, executor='thread', concurrency=3, amount=0.8)
 ...     for k, y in enumerate(data_stream):
 ...         print(y, end='  ')
 ...         if (k + 1) % 10 == 0:
@@ -104,7 +104,7 @@ If the operation is CPU-intensive, we should set ``executor='process'``.
 Unfortunately we can not demo it in an interactive session because it uses "spawned processes".
 
 
-The methods ``batch``, ``transform``, and ``unbatch`` (and some others)
+The methods ``batch``, ``parmap``, and ``unbatch`` (and some others)
 all modify the object ``data_stream`` "in-place" and return the original object,
 hence it's fine to add these operations one at a time,
 and it's not necessary to assign the intermediate results to new identifiers.
@@ -112,7 +112,7 @@ The above is equivalent to the following::
 
     with Streamer(range(100)) as data_stream:
         data_stream.batch(10)
-        data_stream.transform(my_op_that_takes_a_batch, concurrency=4)
+        data_stream.parmap(my_op_that_takes_a_batch, concurrency=4)
         data_stream.unbatch()
         pipeline = data_stream
 
@@ -146,7 +146,7 @@ After this setup, there are several ways to use the object ``data_stream`` (or `
    ``Streamer`` object::
 
             pipeline = Streamer(server.stream(data_stream))
-            pipeline.transform(yet_another_io_op)
+            pipeline.parmap(yet_another_io_op)
             ...
 
 -  If the stream is not too long (not "big data"), we can pass it to ``list`` to
@@ -155,7 +155,7 @@ After this setup, there are several ways to use the object ``data_stream`` (or `
         result = list(data_stream)
 
 Of all the methods on a ``Streamer`` object, two will start new threads, namely
-``.buffer()`` and ``.transform()``. (The latter may also start new processes.)
+``.buffer()`` and ``.parmap()``. (The latter may also start new processes.)
 
 Hooks
 =====
@@ -163,12 +163,11 @@ Hooks
 There are several "hooks" that allow user to pass in custom functions to
 perform operations tailored to their need. Check out the following functions:
 
-- ``drop_if``
-- ``keep_if``
-- ``peek``
-- ``transform``
+- ``map``
+- ``filter``
+- ``parmap``
 
-Both ``drop_if`` and ``keep_if`` accept a function that evaluates a data element
+``filter`` accept a function that evaluates a data element
 and return a boolean value. Depending on the return value, the element
 is dropped from or kept in the data stream.
 
@@ -181,7 +180,7 @@ This function is called for the side-effect;
 it does not affect the flow of the data stream. The user-provided operator
 should not modify the data element.
 
-``transform`` accepts a function that takes a data element, does something
+``parmap`` accepts a function that takes a data element, does something
 about it, and returns a value. For example, modify the element and return
 a new value, or call an external service with the data element as part of
 the payload. Each input element will produce a new element, becoming the
@@ -204,7 +203,7 @@ a printout of traceback. Any not-yet-processed data is discarded.
 
 In the second mode, exception object is passed on in the pipeline as if it is
 a regular data item. Subsequent data items are processed as usual.
-This mode is enabled by ``return_exceptions=True`` to the function ``transform``.
+This mode is enabled by ``return_exceptions=True`` to the function ``parmap``.
 However, to the next operation, the exception object that is coming along
 with regular data elements (i.e. regular output of the previous operation)
 is most likely a problem. One may want to call ``drop_exceptions`` to remove
@@ -214,10 +213,10 @@ the function ``log_exceptions`` can be used. Therefore, this is a useful pattern
 
     (
         data_stream
-        .transform(func1,..., return_exceptions=True)
+        .parmap(func1,..., return_exceptions=True)
         .log_exceptions()
         .drop_exceptions()
-        .transform(func2,..., return_exceptions=True)
+        .parmap(func2,..., return_exceptions=True)
     )
 
 Bear in mind that the first mode, with ``return_exceptions=False`` (the default),
@@ -227,29 +226,8 @@ is a totally legitimate and useful mode.
 API reference
 =============
 
-The class ``Streamer`` is the "entry-point": user constructs a ``Streamer`` object
-by passing an `Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_ into it,
-then calls its methods to use it.
-The other classes implement the various ``Streamer`` methods;
-end-user does not instantiate those classes directly.
 
 .. autoclass:: mpservice.streamer.Streamer
-
-.. autoclass:: mpservice.streamer.Stream
-
-.. autoclass:: mpservice.streamer.Batcher
-
-.. autoclass:: mpservice.streamer.Unbatcher
-
-.. autoclass:: mpservice.streamer.Dropper
-
-.. autoclass:: mpservice.streamer.Header
-
-.. autoclass:: mpservice.streamer.Peeker
-
-.. autoclass:: mpservice.streamer.Buffer
-
-.. autoclass:: mpservice.streamer.Transformer
 
 
 Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/

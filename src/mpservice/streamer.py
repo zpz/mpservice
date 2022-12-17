@@ -48,14 +48,18 @@ import os
 import queue
 import threading
 import traceback
-from collections.abc import Iterable, Iterator
+from collections import deque
+from collections.abc import Iterable, Iterator, Sequence
 from multiprocessing.util import Finalize
+from random import random
 from typing import (
     Callable,
     TypeVar,
     Optional,
+    Any,
 )
 
+from deprecation import deprecated
 from overrides import EnforceOverrides, overrides, final
 
 from .util import is_remote_exception, get_remote_traceback
@@ -72,26 +76,19 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-def _default_peek_func(i, x):
-    # print("")
-    # print("#", i)
-    # if is_exception(x):
-    #     print(repr(x))
-    # else:
-    #     print(x)
-    print(f"#{i}:  {x!r}")
-
-
 class Streamer(EnforceOverrides, Iterator):
+    """
+    The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
+    User constructs a ``Streamer`` object
+    by passing an `Iterable`_ to it, then calls its methods to use it.
+    """
+
     def __init__(self, instream: Iterator | Iterable, /):
         """
         Parameters
         ----------
         instream
-            The input stream of elements. This is an
-            `Iterable <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable>`_
-            or
-            `Iterator <https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator>`_,
+            The input stream of elements. This is an `Iterable`_ or an `Iterator`_,
             which could be unlimited.
         """
         self.streamlets: list[Stream] = [Stream(instream)]
@@ -122,10 +119,10 @@ class Streamer(EnforceOverrides, Iterator):
 
         This method is for the side effect: the entire stream has been processed
         by all the operations and results have been taken care of, for example,
-        the final operation has saved results in a database.
+        the final operation may have saved results in a database.
 
         If you need more info about the processing, such as inspecting exceptions
-        as they happen (if ``return_expections`` is ``True``),
+        as they happen (if ``return_expections`` to :meth:`parmap` is ``True``),
         then don't use this method. Instead, iterate the streamer yourself
         and do whatever you need to do.
         """
@@ -134,151 +131,278 @@ class Streamer(EnforceOverrides, Iterator):
             n += 1
         return n
 
-    def drop_if(self, func: Callable[[int, T], bool], /):
+    def map(self, func: Callable[[T], Any], /, *args, **kwargs):
+        """Perform a simple transformation on each data element.
+
+        This operation happens "inline"--there is no other threads or processes
+        used. For this reason, the method is for "light-weight" transforms.
+
+        This is a 1-to-1 transform from the input stream to the output stream.
+        This method can neither add nor skip elements in the stream.
+
+        If the logic needs to keep some state or history info, then define a class and implement
+        its ``__call__`` method.
+        For example, to print out every hundredth value for information::
+
+            class Peek:
+                def __init__(self):
+                    self._count = 0
+
+                def __call__(self, x):
+                    self._count += 1
+                    if self._count == 100:
+                        print(x)
+                        self._count = 0
+                    return x
+
+            obj.map(Peek())
+
+        (This functionality is already provided by :meth:`peek`.)
+
+        Parameters
+        ----------
+        func
+            A function that takes a data element and returns a new value; the new values
+            (which do not have to differ from the original) form the new stream going
+            forward.
+        *args
+            Additional position arguments to ``func``, after the first argument, which
+            is the data element.
+        **kwargs
+            Additional keyword arguments to ``func``.
         """
-        ``func`` is a function that takes the data element index
-        along with the element value, and returns ``True`` if the element
-        should be skipped, that is, not included in the output stream.
-
-        For example, to implement "drop first n", call
-
-        ::
-
-            drop_if(lambda i, x: i < n)
-        """
-        self.streamlets.append(Dropper(self.streamlets[-1], func))
+        self.streamlets.append(Mapper(self.streamlets[-1], func, *args, **kwargs))
         return self
 
-    def drop_exceptions(self):
-        """
-        Used to skip exception objects that are produced in an upstream
-        transform that has ``return_exceptions=True``. This way,
-        the previous op allows exceptions (i.e. do not crash), and
-        this op removes the exception objects from the output stream.
-        """
-        return self.drop_if(lambda i, x: is_exception(x))
+    def filter(self, func: Callable[[T], bool], /, *args, **kwargs):
+        """Select data elements to keep in the stream.
 
-    # def drop_first_n(self, n: int):
-    #     assert n >= 0
-    #     return self.drop_if(lambda i, x: i < n)
+        This method can be used to either "keep" or "drop" elements according to various conditions.
+        If the logic needs to keep some state or history info, then define a class and implement
+        its ``__call__`` method.
+        For example, to "drop the first 100 elements"::
 
-    def keep_if(self, func: Callable[[int, T], bool], /):
-        """Keep an element in the stream only if a condition is met.
+            class Drop:
+                def __init__(self, n):
+                    self._n = n
+                    self._count = 0
 
-        This is the opposite of ``drop_if``.
+                def __call__(self, x):
+                    self._count += 1
+                    if self._count <= self._n:
+                        return False
+                    return True
+
+            obj.filter(Drop(100))
+
+        Parameters
+        ----------
+        func
+            A function that takes a data element and returns ``True`` or ``False`` to indicate
+            the element should be kept in or dropped from the stream.
+
+            This function should not make changes to the input data element.
+        *args
+            Additional position arguments to ``func``, after the first argument, which
+            is the data element.
+        **kwargs
+            Additional keyword arguments to ``func``.
         """
-        return self.drop_if(lambda i, x: not func(i, x))
+        self.streamlets.append(Filter(self.streamlets[-1], func, *args, **kwargs))
+        return self
+
+    def filter_exceptions(
+        self,
+        keep_exc_types: Optional[
+            type[BaseException] | tuple[type[BaseException], ...]
+        ] = None,
+        drop_exc_types: Optional[
+            type[BaseException] | tuple[type[BaseException], ...]
+        ] = None,
+    ):
+        """
+        If a call to :meth:`transform` upstream has specified ``return_exceptions=True``,
+        then its output stream may contain ``Exception`` objects.
+
+        This method works on the output stream and determines which ``Exception`` objects
+        should be dropped, kept, or raised.
+
+        The default behavior (both ``keep_exc_types`` and ``drop_exc_types`` are ``None``)
+        is to drop all exception objects from the stream.
+
+        Parameters
+        ----------
+        keep_exc_types
+            These types of exceptions are kept in the stream.
+
+            If ``None`` (the default), no exception object is kept in the stream.
+        drop_exc_types
+            These types of exceptions are dropped from the stream.
+
+            If ``None`` (the default), then all exceptions except those specified by
+            ``keep_exc_types`` are dropped.
+            If you want to drop only subclasses of ``Exception`` , then provide ``Exception``.
+
+            If you want no exception object to be dropped (then the only choice is between "kept" and "raised"),
+            then provide ``()``.
+
+            The members in ``keep_exc_types`` and ``drop_exc_types`` should be distinct.
+            If there is any common member, then the one in ``keep_exc_types`` takes effect.
+
+            An exception object that is neither dropped nor kept will be raised.
+        """
+
+        def foo(x):
+            if is_exception(x):
+                if keep_exc_types is not None and isinstance(x, keep_exc_types):
+                    return True
+                if drop_exc_types is None:
+                    return False
+                if isinstance(x, drop_exc_types):
+                    return False
+                raise x
+            return True
+
+        return self.filter(foo)
+
+    def peek(
+        self,
+        *,
+        print_func: Optional[Callable[[str], None]] = None,
+        interval: int | float = 1000,
+        exc_types: Optional[Sequence[type[BaseException]]] = None,
+        with_exc_tb: bool = True,
+    ):
+        """Take a peek at the data element *before* it continues in the stream.
+
+        This implements several info printouts. If this can not do what you need, just create your own
+        function to pass to :meth:`map`.
+
+        Parameters
+        ----------
+        print_func
+            A function that will be used to print messages.
+            This should take a str and return nothing.
+
+            The default is the built-in ``print``. It's often useful
+            to pass in logging function such as ``logger.info``.
+        interval
+            Print out the data element at this interval. The default is 1000,
+            that is, print every 1000th elment.
+
+            If it is a float, then it must be between 0 and 1 open-open.
+            This will be take as the (target) fraction of elements that are printed.
+
+            To print out every element, pass in ``1``.
+
+            To turn off the printouts by this condition, pass in ``None``.
+        exc_types
+            If the element is an exception object of these types, print it out.
+
+            If ``None`` (the default), all exception objects are printed.
+            This is regardless of the ``interval`` value.
+
+            To turn off the printouts by this condition, pass in ``()``.
+            In that case, the value will still be printed according to the ``interval``
+            condition, but the printout will not be tailored to the fact that
+            it is an exception object; in other words, there will be no printing
+            of the traceback.
+        with_exc_tb
+            When an exception object is printed, should the traceback be printed
+            as well, if available? Default is ``True``.
+        """
+        if interval is not None:
+            if isinstance(interval, float):
+                assert 0 < interval < 1
+            else:
+                assert isinstance(interval, int)
+                assert interval >= 1
+
+        class Peeker:
+            def __init__(self):
+                self._idx = 0
+                self._print_func = print if print_func is None else print_func
+                self._interval = interval
+                self._exc_types = exc_types
+                self._with_trace = with_exc_tb
+
+            def __call__(self, x):
+                self._idx += 1
+                if is_exception(x):
+                    if self._exc_types is None or isinstance(x, self._exc_types):
+                        trace = ""
+                        if self._with_trace:
+                            if is_remote_exception(x):
+                                trace = get_remote_traceback(x)
+                            else:
+                                try:
+                                    trace = "".join(
+                                        traceback.format_tb(x.__traceback__)
+                                    )
+                                except AttributeError:
+                                    pass
+                        if trace:
+                            self._print_func("#%d:  %r\n%s" % (self._idx, x, trace))
+                        else:
+                            self._print_func("#%d:  %r" % (self._idx, x))
+                        return x
+                if self._interval is not None:
+                    if self._interval >= 1:
+                        if self._idx % self._interval == 0:
+                            self._print_func(f"#{self._idx}:  {x!r}")
+                    else:
+                        if random() < self._interval:
+                            self._print_func(f"#{self._idx}:  {x!r}")
+                return x
+
+        return self.map(Peeker())
+
+    @deprecated(
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``peek`` instead."
+    )
+    def peek_every_nth(self, n: int):
+        return self.peek(interval=n)
 
     def head(self, n: int):
         """
         Take the first ``n`` elements and ignore the rest.
 
-        This does not delegate to ``keep_if``, because ``keep_if``
+        This does not delegate to ``filter``, because ``filter``
         would need to walk through the entire stream,
         which is not needed for ``head``.
         """
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
-    def peek(self, func: Optional[Callable[[int, T], None]] = None, /):
-        """Take a peek at the data element *before* it is sent
-        on for processing.
-
-        The function ``func`` takes the data element index and value.
-        Typical actions include print out
-        info or save the data for later inspection. Usually this
-        function should not modify the data element in the stream.
-
-        User has flexibilities in ``func``, e.g. to not print anything
-        under certain conditions.
-
-        Examples
-        --------
-
-        To randomly peek 5% of the items, we can define such a function to be used
-        as ``func``::
-
-            import random
-
-            def foo(i, x):
-                if random.random() < 0.3:
-                    print(i, x)
+    def tail(self, n: int):
         """
-        if func is None:
-            func = _default_peek_func
-        self.streamlets.append(Peeker(self.streamlets[-1], func))
+        Keep the last ``n`` elements and ignores all the previous ones.
+        If there are less than ``n`` data elements in total, then keep all of them.
+
+        .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
+            not be "too large" for the typical size of the data elements.
+        """
+        self.streamlets.append(Tailor(self.streamlets[-1], n))
         return self
 
-    def peek_every_nth(
-        self,
-        n: int,
-        peek_func: Optional[Callable[[int, T], None]] = None,
-        /,
-        *,
-        base: int = 0,
-        first: int = 0,
-        last: Optional[int] = None,
-    ):
+    def groupby(self, func: Callable[[T], Any], /, *args, **kwargs):
         """
-        ``base``: if 0, peek at indices 0, n, 2*n, 3*n, ... (0-based);
-        if 1, peek at indices n, 2*n, 3*n, ... (1-based).
+        ``func`` takes a data element and outputs a value.
+        **Consecutive** elements that have the same value of this output
+        will be grouped into a list.
+
+        Following this operator, every element in the stream is a list of length 1 or more.
+
+        The output of ``func`` is usually a str or int or a tuple of a few strings or ints.
+
+        ``*args`` and ``**kwargs`` are additional arguments to ``func``.
+
+        A group will be kept in memory until it is concluded (i.e. the next element
+        starts a new group). For this reason, the groups should not be too large
+        for the typical size of the data element.
         """
-        assert n > 0
-        assert base in (0, 1)
-
-        if peek_func is None:
-            peek_func = _default_peek_func
-
-        def foo(i, x):
-            k = i + base
-            if k < first:
-                return
-            if last and k > last:
-                return
-            if k % n == 0:
-                peek_func(k, x)
-
-        return self.peek(foo)
-
-    # def peek_random(self, frac: float, peek_func: Callable[[int, T], None] = None, /):
-    #     assert 0 < frac <= 1
-    #     rand = random.random
-
-    #     if peek_func is None:
-    #         peek_func = _default_peek_func
-
-    #     def foo(i, x):
-    #         if rand() < frac:
-    #             peek_func(i, x)
-
-    #     return self.peek(foo)
-
-    def peek_exceptions(
-        self, *, with_trace: bool = True, print_func: Optional[Callable] = None
-    ):
-        """
-        User may want to pass in `logger.error` as `print_func`.
-        """
-        if print_func is None:
-            print_func = print
-
-        def func(i, x):
-            if is_exception(x):
-                trace = ""
-                if with_trace:
-                    if is_remote_exception(x):
-                        trace = get_remote_traceback(x)
-                    else:
-                        try:
-                            trace = "".join(traceback.format_tb(x.__traceback__))
-                        except AttributeError:
-                            pass
-                if trace:
-                    print_func("#%d:  %r\n%s" % (i, x, trace))
-                else:
-                    print_func("#%d:  %r" % (i, x))
-
-        return self.peek(func)
+        self.streamlets.append(Groupby(self.streamlets[-1], func, *args, **kwargs))
+        return self
 
     def batch(self, batch_size: int):
         """Bundle elements into batches, i.e. lists.
@@ -322,9 +446,16 @@ class Streamer(EnforceOverrides, Iterator):
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
 
-    def transform(
+    @deprecated(
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``parmap`` instead"
+    )
+    def transform(self, *args, **kwargs):
+        return self.parmap(*args, **kwargs)
+
+    def parmap(
         self,
         func: Callable[[T], TT],
+        /,
         *,
         executor: str = "thread",
         concurrency: Optional[int] = None,
@@ -370,7 +501,7 @@ class Streamer(EnforceOverrides, Iterator):
         esp if the ``func`` operations are slow.
         """
         self.streamlets.append(
-            Transformer(
+            Parmapper(
                 self.streamlets[-1],
                 func,
                 executor=executor,
@@ -389,11 +520,6 @@ class Stream(EnforceOverrides):
             self._instream = instream
         else:
             self._instream = iter(instream)
-        self.index = 0
-        # Index of the upcoming element; 0 based.
-        # Here, "element" refers to the element to be produced by
-        # `self.__next__`, which does not need to have the same index
-        # as the element to be produced by `next(self._instream)`.
         self._stopped = threading.Event()
 
     def _stop(self):
@@ -414,8 +540,6 @@ class Stream(EnforceOverrides):
         In other words, subclass typically needs to override this method.
         Subclass should take care to handle exceptions in this method.
         """
-        # This method should not increment `self.index` for the element
-        # that is returned by this method. That is done by `__next__`.
         if self._stopped.is_set():
             raise StopIteration
         z = next(self._instream)
@@ -424,10 +548,129 @@ class Stream(EnforceOverrides):
     @final
     def __next__(self):
         z = self._get_next()
-        self.index += 1
         return z
 
 
+class Mapper(Stream):
+    def __init__(self, instream: Stream, func: Callable[[T], Any], *args, **kwargs):
+        super().__init__(instream)
+        self.func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    @overrides
+    def _get_next(self):
+        if self._stopped.is_set():
+            raise StopIteration
+        return self.func(next(self._instream), *self._args, **self._kwargs)
+
+
+class Filter(Stream):
+    def __init__(self, instream: Stream, func: Callable[[T], bool], /, *args, **kwargs):
+        super().__init__(instream)
+        self.func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    @overrides
+    def _get_next(self):
+        if self._stopped.is_set():
+            raise StopIteration
+        while True:
+            z = next(self._instream)
+            if not self.func(z, *self._args, **self._kwargs):
+                continue
+            return z
+
+
+class Header(Stream):
+    def __init__(self, instream: Stream, /, n: int):
+        """
+        Keeps the first ``n`` elements and ignores all the rest.
+        """
+        assert n > 0
+        super().__init__(instream)
+        self.n = n
+        self._n = 0
+
+    @overrides
+    def _get_next(self):
+        if self._stopped.is_set():
+            raise StopIteration
+        if self._n >= self.n:
+            raise StopIteration
+        self._n += 1
+        return next(self._instream)
+
+
+class Tailor(Stream):
+    def __init__(self, instream: Stream, /, n: int):
+        """
+        Keeps the last ``n`` elements and ignores all the previous ones.
+        If there are less than ``n`` data elements in total, then keep all of them.
+
+        .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
+            not be "too large" for the typical size of the data elements.
+        """
+        super().__init__(instream)
+        assert n > 0
+        self.n = n
+        self._data = deque(maxlen=n)
+        self._data_collected = False
+
+    @overrides
+    def _get_next(self):
+        if self._stopped.is_set():
+            raise StopIteration
+        if not self._data_collected:
+            data = self._data
+            for v in self._instream:
+                data.append(v)
+            self._data_collected = True
+        try:
+            return self._data.popleft()
+        except IndexError:
+            # No more data.
+            raise StopIteration
+
+
+class Groupby(Stream):
+    def __init__(self, instream: Stream, /, func: Callable[[T], Any], *args, **kwargs):
+        super().__init__(instream)
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+        self._z = object()
+        self._group = None
+
+    @overrides
+    def _get_next(self):
+        if self._stopped.is_set():
+            raise StopIteration
+
+        while True:
+            try:
+                x = next(self._instream)
+                z = self._func(x, *self._args, **self._kwargs)
+                if z == self._z:
+                    self._group.append(x)
+                else:
+                    if self._group is None:
+                        self._group = [x]
+                    else:
+                        batch = self._group
+                        self._group = [x]
+                        self._z = z
+                        return batch
+            except StopIteration:
+                self._stop()
+                break
+        if self._group:
+            return self._group
+        raise StopIteration
+
+
+# Alternatively, this can be implemented by ``groupby``.
 class Batcher(Stream):
     def __init__(self, instream: Stream, /, batch_size: int):
         """
@@ -481,79 +724,6 @@ class Unbatcher(Stream):
         if self._stopped.is_set():
             raise StopIteration
         return self._batch.pop(0)
-
-
-class Dropper(Stream):
-    def __init__(self, instream: Stream, func: Callable[[int, T], bool], /):
-        """
-        ``func``: takes element index and the element value; if returns True,
-        the element is dropped (i.e. not produced; proceed to check the next
-        elements until one returns False and gets produced); if returns
-        False, the element is not drop (i.e., it is produced, hence the
-        Dropper object becomes a simple pass-through for that element).
-
-        ``self.index`` of this object has different meaning from other Stream
-        classes. It is the index of the next element of the instream,
-        not the index of the element to be produced (not-dropped) by the current
-        object. This is because that, when the user designed the predicate function
-        ``func``, if the logic depends on the first argument, this is the
-        interpretation of the "index" that's more natural and useful.
-        """
-        super().__init__(instream)
-        self.func = func
-
-    @overrides
-    def _get_next(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        while True:
-            z = next(self._instream)
-            if self.func(self.index, z):
-                self.index += 1
-                continue
-            return z
-
-
-class Header(Stream):
-    def __init__(self, instream: Stream, /, n: int):
-        """
-        Keeps the first ``n`` elements and ignores all the rest.
-        """
-        super().__init__(instream)
-        assert n > 0
-        self.n = n
-
-    @overrides
-    def _get_next(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        if self.index >= self.n:
-            raise StopIteration
-        return next(self._instream)
-
-
-class Peeker(Stream):
-    def __init__(self, instream: Stream, func: Callable[[int, T], None], /):
-        """
-        This class provides a mechanism to log or print some info for elements
-        that meet certain conditions.
-
-        ``func``: takes element index and value, does whatever as long as the action
-        does not modify the element (if it is of a mutable type).
-        Usually, the action is to log or print about the element
-        if the element (its index and/or value) meets certain conditions;
-        do nothing if the element does not meet the conditions.
-        """
-        super().__init__(instream)
-        self.func = func
-
-    @overrides
-    def _get_next(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        z = next(self._instream)
-        self.func(self.index, z)
-        return z
 
 
 class Buffer(Stream):
@@ -625,7 +795,7 @@ class Buffer(Stream):
         return z
 
 
-class Transformer(Stream):
+class Parmapper(Stream):
     def __init__(
         self,
         instream: Stream,
