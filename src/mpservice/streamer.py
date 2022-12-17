@@ -77,11 +77,11 @@ TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
 class Streamer(EnforceOverrides, Iterator):
-    '''
+    """
     The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Streamer`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
-    '''
+    """
 
     def __init__(self, instream: Iterator | Iterable, /):
         """
@@ -215,8 +215,12 @@ class Streamer(EnforceOverrides, Iterator):
 
     def filter_exceptions(
         self,
-        keep_exc_types: Optional[type[BaseException] | tuple[type[BaseException], ...]] = None,
-        drop_exc_types: Optional[type[BaseException] | tuple[type[BaseException], ...]] = None,
+        keep_exc_types: Optional[
+            type[BaseException] | tuple[type[BaseException], ...]
+        ] = None,
+        drop_exc_types: Optional[
+            type[BaseException] | tuple[type[BaseException], ...]
+        ] = None,
     ):
         """
         If a call to :meth:`transform` upstream has specified ``return_exceptions=True``,
@@ -263,7 +267,14 @@ class Streamer(EnforceOverrides, Iterator):
 
         return self.filter(foo)
 
-    def peek(self, *, print_func: Optional[Callable[[str], None]] = None, interval: int | float = 1000, exc_types: Optional[Sequence[type[BaseException]]] = None, with_exc_tb: bool = True):
+    def peek(
+        self,
+        *,
+        print_func: Optional[Callable[[str], None]] = None,
+        interval: int | float = 1000,
+        exc_types: Optional[Sequence[type[BaseException]]] = None,
+        with_exc_tb: bool = True,
+    ):
         """Take a peek at the data element *before* it continues in the stream.
 
         This implements several info printouts. If this can not do what you need, just create your own
@@ -327,7 +338,9 @@ class Streamer(EnforceOverrides, Iterator):
                                 trace = get_remote_traceback(x)
                             else:
                                 try:
-                                    trace = "".join(traceback.format_tb(x.__traceback__))
+                                    trace = "".join(
+                                        traceback.format_tb(x.__traceback__)
+                                    )
                                 except AttributeError:
                                     pass
                         if trace:
@@ -346,7 +359,9 @@ class Streamer(EnforceOverrides, Iterator):
 
         return self.map(Peeker())
 
-    @deprecated(deprecated_in='0.11.8', removed_in='0.12.0', details="Use `peek` instead.")
+    @deprecated(
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use `peek` instead."
+    )
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
 
@@ -373,7 +388,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
     def groupby(self, func: Callable[[T], Any], /, *args, **kwargs):
-        '''
+        """
         ``func`` takes a data element and outputs a value.
         **Consecutive** elements that have the same value of this output
         will be grouped into a list.
@@ -387,7 +402,7 @@ class Streamer(EnforceOverrides, Iterator):
         A group will be kept in memory until it is concluded (i.e. the next element
         starts a new group). For this reason, the groups should not be too large
         for the typical size of the data element.
-        '''
+        """
         self.streamlets.append(Groupby(self.streamlets[-1], func, *args, **kwargs))
         return self
 
@@ -433,7 +448,9 @@ class Streamer(EnforceOverrides, Iterator):
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
 
-    @deprecated(deprecated_in='0.11.8', removed_in='0.12.0', details="Use `parmap` instead")
+    @deprecated(
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use `parmap` instead"
+    )
     def transform(self, *args, **kwargs):
         return self.parmap(*args, **kwargs)
 
