@@ -12,6 +12,7 @@ Removed
 
 - `mpservice.streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
   `Dropper`.
+- `mpservice.streamer.Streamer.drop_exceptions`.
 
 Changed
 -------
@@ -19,6 +20,7 @@ Changed
 - `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
 - `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
 - `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
+- `mpservice.streamer.Streamer.peek` was refactored.
 
 Added or enhanced
 -----------------
@@ -26,9 +28,8 @@ Added or enhanced
 - Enhanced documentation. Started to host generated doc on Read the Docs.
 - New class `mpservice.mpserver.CpuAffinity`.
 - New method on `mpservice.streamer.Streamer` and corresponding classes:
-  `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`.
-- `Streamer.drop_exceptions` got a new parameter specifying the types of exceptions
-  to drop.
+  `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`, `groupby` and `Groupby`.
+- New method `mpservice.streamer.Streamer.filter_exceptions`.
 
 
 ## [0.11.7.post1] - 2022-10-21

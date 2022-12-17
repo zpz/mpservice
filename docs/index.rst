@@ -5,6 +5,10 @@
 
 :tocdepth: 3
 
+.. _Iterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable
+.. _Iterator: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator
+
+
 =============
 ``mpservice``
 =============

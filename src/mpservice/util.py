@@ -80,6 +80,10 @@ def get_docker_host_ip():
 
 
 def is_exception(e):
+    # TODO: test showed the raised objects are always instances, not classes, even
+    # if we do
+    #   raise ValueError
+    # the captured object is a ValueError instance, not the class.
     return isinstance(e, BaseException) or (
         (type(e) is type) and issubclass(e, BaseException)
     )
