@@ -530,10 +530,9 @@ class Stream(EnforceOverrides):
     def __iter__(self):
         return self
 
-    def _get_next(self):
+    def __next__(self):
         """Produce the next element in the stream.
 
-        Subclasses refine this method rather than ``__next__``.
         In a subclass, almost always it will not get the next element
         from ``self._instream``, but rather from some object that holds
         results of transformations on ``self._instream``.
@@ -545,11 +544,6 @@ class Stream(EnforceOverrides):
         z = next(self._instream)
         return z
 
-    @final
-    def __next__(self):
-        z = self._get_next()
-        return z
-
 
 class Mapper(Stream):
     def __init__(self, instream: Stream, func: Callable[[T], Any], *args, **kwargs):
@@ -559,7 +553,7 @@ class Mapper(Stream):
         self._kwargs = kwargs
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         return self.func(next(self._instream), *self._args, **self._kwargs)
@@ -573,7 +567,7 @@ class Filter(Stream):
         self._kwargs = kwargs
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         while True:
@@ -594,7 +588,7 @@ class Header(Stream):
         self._n = 0
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if self._n >= self.n:
@@ -619,7 +613,7 @@ class Tailor(Stream):
         self._data_collected = False
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if not self._data_collected:
@@ -644,7 +638,7 @@ class Groupby(Stream):
         self._group = None
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
 
@@ -682,7 +676,7 @@ class Batcher(Stream):
         self.batch_size = batch_size
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         batch = []
@@ -712,15 +706,19 @@ class Unbatcher(Stream):
         self._batch = None
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if self._batch:
             return self._batch.pop(0)
-        z = next(self._instream)
-        if is_exception(z):
-            return z
-        self._batch = z
+        while True:
+            z = next(self._instream)
+            if is_exception(z):
+                return z
+            if len(z) == 0:
+                continue
+            self._batch = z
+            break
         if self._stopped.is_set():
             raise StopIteration
         return self._batch.pop(0)
@@ -771,7 +769,7 @@ class Buffer(Stream):
         worker.join()
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         while True:
@@ -869,7 +867,7 @@ class Parmapper(Stream):
         executor.shutdown()
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         z = self._tasks.get()
