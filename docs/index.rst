@@ -24,14 +24,14 @@ To install, do ``python3 -m pip install mpservice``.
 
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    mpserver
+   streamer
    server_process
    socket
    pipe
    http
-   streamer
    util
 
 

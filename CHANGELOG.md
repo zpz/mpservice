@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [unreleased]
 
+The two largest efforts of this release are documentation and "streamer" refactor.
+
 Removed
 -------
 
@@ -21,6 +23,7 @@ Changed
 - `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
 - `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
 - `mpservice.streamer.Streamer.peek` was refactored.
+- `mpservice.streamer.Streamer.transform` was renamed to `parmap`.
 
 Added or enhanced
 -----------------

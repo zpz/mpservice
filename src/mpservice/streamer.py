@@ -182,8 +182,6 @@ class Streamer(EnforceOverrides, Iterator):
         its ``__call__`` method.
         For example, to "drop the first 100 elements"::
 
-        ::
-
             class Drop:
                 def __init__(self, n):
                     self._n = n
@@ -360,7 +358,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self.map(Peeker())
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.0", details="Use `peek` instead."
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``peek`` instead."
     )
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
@@ -449,7 +447,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.0", details="Use `parmap` instead"
+        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``parmap`` instead"
     )
     def transform(self, *args, **kwargs):
         return self.parmap(*args, **kwargs)
@@ -457,6 +455,7 @@ class Streamer(EnforceOverrides, Iterator):
     def parmap(
         self,
         func: Callable[[T], TT],
+        /,
         *,
         executor: str = "thread",
         concurrency: Optional[int] = None,
