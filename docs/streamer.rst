@@ -147,9 +147,10 @@ There are several ways to consume the stream:
 
 
 Finally, :class:`~Streamer` is a context manager.
-If you may break out of the iteration prematurely, or errors may occur and you have added a concurrent operator,
+If you have added a concurrent operator,
+and you may break out of the iteration prematurely or errors may occur,
 then you should consume the stream with context management, like this::
-    
+
     stream = Streamer(...).map(...)...parmap(...)...
     with stream:
         for x in stream:
