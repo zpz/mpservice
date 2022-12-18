@@ -25,4 +25,4 @@ for the latter use case.
 The package also contains some other related utilities.
 """
 
-__version__ = "0.11.8b2"
+__version__ = "0.11.8b3"
