@@ -23,51 +23,38 @@ def test_stream():
             for x in [1, 2, 3]:
                 yield x
 
-    with Streamer(range(4)) as s:
-        assert list(s) == [0, 1, 2, 3]
-    with Streamer(C()) as s:
-        assert list(s) == [1, 2, 3, 4, 5]
-    with Streamer(D()) as s:
-        assert list(s) == [1, 2, 3]
-    with Streamer(['a', 'b', 'c']) as s:
-        assert list(s) == ['a', 'b', 'c']
+    assert Streamer(range(4)).collect() == [0, 1, 2, 3]
+    assert list(Streamer(C())) == [1, 2, 3, 4, 5]
+    assert list(Streamer(D())) == [1, 2, 3]
+    assert list(Streamer(['a', 'b', 'c'])) == ['a', 'b', 'c']
 
 
 def test_drain():
-    with Streamer(range(8)) as s:
-        assert s.drain() == 8
+    assert Streamer(range(8)).drain() == 8
 
 
 def test_collect():
-    with Streamer(range(3)) as s:
-        assert s.collect() == [0, 1, 2]
+    assert Streamer(range(3)).collect() == [0, 1, 2]
 
 
 def test_map():
     def inc(x, shift=1):
         return x + shift
 
-    with Streamer(range(5)) as s:
-        s.map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
-
-    with Streamer(range(5)) as s:
-        s.map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
+    assert Streamer(range(5)).map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
+    assert Streamer(range(5)).map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
 
 
 def test_filter():
-    with Streamer(range(7)) as s:
-        s.filter(lambda n: (n % 2) == 0) == [0, 2, 4, 6]
+    assert Streamer(range(7)).filter(lambda n: (n % 2) == 0).collect() == [0, 2, 4, 6]
 
     def odd_or_even(x, even=True):
         if even:
             return (x % 2) == 0
         return (x % 2) != 0
 
-    with Streamer(range(7)) as s:
-        s.filter(odd_or_even) == [0, 2, 4, 6]
-
-    with Streamer(range(7)) as s:
-        s.filter(odd_or_even, even=False) == [1, 3, 5]
+    assert Streamer(range(7)).filter(odd_or_even).collect() == [0, 2, 4, 6]
+    assert Streamer(range(7)).filter(odd_or_even, even=False).collect() == [1, 3, 5]
 
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
 
@@ -80,8 +67,7 @@ def test_filter():
             self._idx += 1
             return z
 
-    with Streamer(data) as s:
-        assert list(s.filter(Tail(6))) == [6, 7]
+    assert Streamer(data).filter(Tail(6)).collect() == [6, 7]
 
     class Head:
         def __init__(self):
@@ -91,33 +77,28 @@ def test_filter():
             self._idx += 1
             return z
 
-    with Streamer((2, 3, 1, 5, 4, 7)) as s:
-        assert list(s.filter(Head())) == [1, 4]
+    assert list(Streamer((2, 3, 1, 5, 4, 7)).filter(Head())) == [1, 4]
 
 
 def test_filter_exceptions():
     exc = [1, ValueError(3), 2, IndexError(4), FileNotFoundError(), 3, KeyboardInterrupt(), 4]
 
-    with Streamer(exc) as ss:
-        assert ss.filter_exceptions().collect() == [1, 2, 3, 4]
+    assert Streamer(exc).filter_exceptions().collect() == [1, 2, 3, 4]
 
-    with Streamer(exc) as ss:
-        assert ss.filter_exceptions(Exception).collect() == exc[:-2] + [exc[-1]]
+    assert Streamer(exc).filter_exceptions(Exception).collect() == exc[:-2] + [exc[-1]]
 
-    with Streamer(exc) as ss:
-        with pytest.raises(IndexError):
-            assert ss.filter_exceptions(None, ValueError).collect() == exc
+    with pytest.raises(IndexError):
+        assert Streamer(exc).filter_exceptions(None, ValueError).collect() == exc
 
-    with Streamer(exc) as ss:
-        with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError):
+        with Streamer(exc) as ss:
             assert ss.filter_exceptions(None, (ValueError, IndexError)).collect() == exc
 
     with Streamer(exc) as ss:
         with pytest.raises(KeyboardInterrupt):
             assert ss.filter_exceptions(FileNotFoundError, Exception).collect() == exc
 
-    with Streamer(exc) as ss:
-        assert ss.filter_exceptions(FileNotFoundError, BaseException).collect() == [1, 2, exc[4], 3, 4]
+    assert Streamer(exc).filter_exceptions(FileNotFoundError, BaseException).collect() == [1, 2, exc[4], 3, 4]
 
 
 def test_peek():
@@ -132,90 +113,71 @@ def test_peek():
     def foo(x):
         print(x)
 
-    with Streamer(data).peek(print_func=foo, interval=0.6) as s:
-        n = s.drain()
-        assert n == 10
+    assert Streamer(data).peek(print_func=foo, interval=0.6).drain() == 10
 
-    with Streamer(data).peek_every_nth(4) as s:
-        s.drain()
+    Streamer(data).peek_every_nth(4).drain()
 
     exc = [0, 1, 2, ValueError(100), 4]
-    with Streamer(exc) as s:  # `peek` does not drop exceptions
-        assert s.peek().drain() == len(exc)
+    # `peek` does not drop exceptions
+    assert Streamer(exc).peek().drain() == len(exc)
 
 
 def test_head():
     data = [0, 1, 2, 3, 'a', 5]
-
-    with Streamer(data) as s:
-        assert list(s.head(3)) == data[:3]
-
-    with Streamer(data) as s:
-        assert list(s.head(30)) == data
+    assert list(Streamer(data).head(3)) == data[:3]
+    assert list(Streamer(data).head(30)) == data
 
 
 def test_tail():
     data = [0, 1, 2, 3, 'a', 5]
 
-    with Streamer(data) as s:
-        assert s.tail(2).collect() == ['a', 5]
-
-    with Streamer(data) as s:
-        assert list(s.tail(10)) == data
+    assert Streamer(data).tail(2).collect() == ['a', 5]
+    assert list(Streamer(data).tail(10)) == data
 
 
 def test_groupby():
     data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-    with Streamer(data) as ss:
-        assert ss.groupby(lambda x: x[0]).collect() == [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
+    assert Streamer(data).groupby(lambda x: x[0]).collect() == [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
 
 
 def test_batch():
-    with Streamer(range(11)) as s:
-        assert list(s.batch(3)) == [
-            [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
+    s = Streamer(range(11))
+    assert list(s.batch(3)) == [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
-        assert list(s) == []
+    assert list(s) == []
 
-    with Streamer(list(range(11))) as s:
-        assert list(s.batch(3).unbatch()) == list(range(11))
-        assert list(s) == []
+    s = Streamer(list(range(11)))
+    assert list(s.batch(3).unbatch()) == list(range(11))
+    assert list(s) == []
 
 
 def test_unbatch():
     data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
-    with Streamer(data) as ss:
-        assert ss.unbatch().collect() == list(range(8))
+    assert Streamer(data).unbatch().collect() == list(range(8))
 
 
 def test_accumulate():
     data = list(range(6))
-    with Streamer(data) as ss:
-        assert ss.accumulate(lambda x, y: x + y).collect() == [0, 1, 3, 6, 10, 15]
-
-    with Streamer(data) as ss:
-        assert ss.accumulate(lambda x, y: x + y, 3).collect() == [3, 4, 6, 9, 13, 18]
+    assert Streamer(data).accumulate(lambda x, y: x + y).collect() == [0, 1, 3, 6, 10, 15]
+    assert Streamer(data).accumulate(lambda x, y: x + y, 3).collect() == [3, 4, 6, 9, 13, 18]
 
     def add(x, y):
         if y % 2 == 0:
             return x + y
         return x - y
 
-    with Streamer(data) as ss:
-        assert ss.accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
+    assert Streamer(data).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
 
 
 def test_buffer():
-    with Streamer(range(11)) as s:
-        assert list(s.buffer(5)) == list(range(11))
-    with Streamer(range(11)) as s:
-        assert list(s.buffer(20)) == list(range(11))
+    assert list(Streamer(range(11)).buffer(5)) == list(range(11))
+    assert list(Streamer(range(11)).buffer(20)) == list(range(11))
 
 
 def test_buffer_batch():
-    with Streamer(range(19)) as s:
-        n = s.buffer(10).batch(5).unbatch().peek(interval=1).drain()
-        assert n == 19
+    n = Streamer(range(19)).buffer(10).batch(5).unbatch().peek(interval=1).drain()
+    assert n == 19
 
 
 def test_parmap():
@@ -231,22 +193,14 @@ def test_parmap():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-    with Streamer(SYNC_INPUT) as s:
-        s.transform(f1, concurrency=1)
-        got = [v for v in s]
-        assert got == expected
+    assert Streamer(SYNC_INPUT).transform(f1, concurrency=1, executor='thread').collect() == expected
 
-    with Streamer(SYNC_INPUT) as s:
-        assert list(s.parmap(f1, concurrency=10)) == expected
+    assert list(Streamer(SYNC_INPUT).parmap(f1, concurrency=10, executor='thread')) == expected
 
-    with Streamer(SYNC_INPUT) as ss:
-        s = list(ss.parmap(f1, concurrency=20))
-        assert s == expected
+    assert list(Streamer(SYNC_INPUT).parmap(f1, concurrency=20, executor='thread')) == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    with Streamer(SYNC_INPUT) as ss:
-        s = ss.parmap(f1).parmap(f2)
-        assert list(s) == expected
+    assert list(Streamer(SYNC_INPUT).parmap(f1, executor='thread').parmap(f2, executor='thread')) == expected
 
     class MySink:
         def __init__(self):
@@ -257,10 +211,8 @@ def test_parmap():
             self.result += x * 3
 
     mysink = MySink()
-    with Streamer(SYNC_INPUT) as ss:
-        s = ss.parmap(f1).parmap(mysink)
-        n = s.drain()
-        assert n == len(SYNC_INPUT)
+    n = Streamer(SYNC_INPUT).parmap(f1, executor='thread').parmap(mysink, executor='thread').drain()
+    assert n == len(SYNC_INPUT)
 
     got = mysink.result
     expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
@@ -279,18 +231,16 @@ def test_parmap_with_error():
 
     with pytest.raises(TypeError):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process, concurrency=2)
+            s.parmap(process, executor='thread', concurrency=2)
             zz = list(s)
             print(zz)
 
-    with Streamer(corrupt_data()) as s:
-        s.parmap(process, concurrency=2, return_exceptions=True)
-        zz = list(s)
-        print(zz)
-        assert isinstance(zz[5], TypeError)
+    zz = list(Streamer(corrupt_data()).parmap(process, executor='thread', concurrency=2, return_exceptions=True))
+    print(zz)
+    assert isinstance(zz[5], TypeError)
 
     with Streamer(corrupt_data()) as s:
-        s.parmap(process, concurrency=2, return_exceptions=True)
+        s.parmap(process, executor='thread', concurrency=2, return_exceptions=True)
         n = 0
         nexc = 0
         for x in s:
@@ -318,63 +268,62 @@ def test_chain():
 
     with pytest.raises(TypeError):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process1, concurrency=2)
+            s.parmap(process1, executor='thread', concurrency=2)
             s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process2, concurrency=3)
+            s.parmap(process2, executor='thread', concurrency=3)
             s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process1, concurrency=2, return_exceptions=True)
-            s.parmap(process2, concurrency=4)
+            s.parmap(process1, executor='thread', concurrency=2, return_exceptions=True)
+            s.parmap(process2, executor='thread', concurrency=4)
             s.drain()
 
     with pytest.raises(TypeError):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process1, concurrency=2)
-            s.parmap(process2, concurrency=4, return_exceptions=True)
+            s.parmap(process1, executor='thread', concurrency=2)
+            s.parmap(process2, executor='thread', concurrency=4, return_exceptions=True)
             s.drain()
 
     with Streamer(corrupt_data()) as s:
-        s.parmap(process1, concurrency=2, return_exceptions=True)
-        s.parmap(process2, concurrency=4, return_exceptions=True)
+        s.parmap(process1, executor='thread', concurrency=2, return_exceptions=True)
+        s.parmap(process2, executor='thread', concurrency=4, return_exceptions=True)
         s.drain()
 
     with pytest.raises((TypeError, ValueError)):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process1, concurrency=1) #2)
+            s.parmap(process1, executor='thread', concurrency=1) #2)
             s.buffer(3)
-            s.parmap(process2, concurrency=1) #3)
+            s.parmap(process2, executor='thread', concurrency=1) #3)
             s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         with Streamer(corrupt_data()) as s:
-            s.parmap(process1, concurrency=2, return_exceptions=True)
+            s.parmap(process1, executor='thread', concurrency=2, return_exceptions=True)
             s.buffer(2)
-            s.parmap(process2, concurrency=3)
+            s.parmap(process2, executor='thread', concurrency=3)
             s.drain()
 
-    with Streamer(corrupt_data()) as s:
-        z = (s
-             .parmap(process1, concurrency=2, return_exceptions=True)
+    zz = list(Streamer(corrupt_data())
+             .parmap(process1, executor='thread', concurrency=2, return_exceptions=True)
              .buffer(3)
-             .parmap(process2, concurrency=3, return_exceptions=True)
-             .peek_every_nth(1))
-        zz = list(z)
-        print('')
-        print(zz)
+             .parmap(process2, executor='thread', concurrency=3, return_exceptions=True)
+             .peek_every_nth(1)
+             )
+    print('')
+    print(zz)
 
-    with Streamer(corrupt_data()) as s:
-        s.parmap(process1, concurrency=2, return_exceptions=True)
-        s.filter_exceptions()
-        s.buffer(3)
-        s.parmap(process2, concurrency=3, return_exceptions=True)
-        s.peek()
-        s.filter_exceptions()
-        assert list(s) == [1, 2, 3, 4, 5, 6]
+    s = Streamer(corrupt_data())
+    s.parmap(process1, executor='thread', concurrency=2, return_exceptions=True)
+    s.filter_exceptions()
+    s.buffer(3)
+    s.parmap(process2, executor='thread', concurrency=3, return_exceptions=True)
+    s.peek()
+    s.filter_exceptions()
+    assert list(s) == [1, 2, 3, 4, 5, 6]
 
 
 def test_early_stop():
@@ -383,7 +332,7 @@ def test_early_stop():
         return x * 2
 
     with Streamer(range(300000)) as s:
-        z = s.parmap(double, concurrency=3)
+        z = s.parmap(double, executor='thread', concurrency=3)
         n = 0
         for x in z:
             # print(x)
@@ -399,7 +348,5 @@ def double(x):
 
 def test_parmap_mp():
     SYNC_INPUT = list(range(278))
-    with Streamer(SYNC_INPUT) as s:
-        s.parmap(double, executor='process', concurrency=4)
-        got = [v for v in s]
-        assert got == [v * 2 for v in SYNC_INPUT]
+    got = Streamer(SYNC_INPUT).parmap(double, executor='process', concurrency=4).collect()
+    assert got == [v * 2 for v in SYNC_INPUT]

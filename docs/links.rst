@@ -1,0 +1,7 @@
+.. https://stackoverflow.com/questions/18398548/common-link-targets-in-sphinx
+.. https://stackoverflow.com/questions/61688403/can-i-keep-all-my-external-links-in-a-separate-file-with-sphinx/61694897#61694897
+
+
+.. _Iterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable
+.. _Iterator: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator
+

@@ -6,11 +6,8 @@ The output from one operation becomes the input to the next operation.
 One or more "primary" operations are so heavy
 that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
-These operations are called "transform"s.
-
-The other operations are typically light weight and supportive
-of the primary transforms. These operations perform batching,
-unbatching, buffering, filtering, logging, etc.
+The other operations are typically light weight, although important in their own right.
+These operations perform batching, unbatching, buffering, mapping, filtering, grouping, logging, etc.
 """
 
 
@@ -94,22 +91,36 @@ class Streamer(EnforceOverrides, Iterator):
             which could be unlimited.
         """
         self.streamlets: list[Stream] = [Stream(instream)]
-        self._started = False
 
-    def __enter__(self):
-        self._started = True
-        return self
+    def stop(self):
+        """
+        Stop all the operators that are working on the stream.
 
-    def __exit__(self, *args, **kwargs):
+        Usually you do not need to call this method unless you break out of
+        iteration prematurely or exception happens. But when those situations are possible,
+        it's advised to consume this stream within a context manager, which calls
+        ``stop`` upon exit.
+        """
         for s in self.streamlets:
             s._stop()
 
+    def __enter__(self):
+        """
+        If you break out of iteration before it finishes, or error happens, then it's important
+        to use this object within the context manager.
+        If these two situations do not arise, then it's not necessary to use context manager.
+
+        Calls to the "operation setup" methods do not need to be within context manager.
+        Only the "consuming" methods (:meth:`__iter__`, :meth:`__next__`, and :meth:`drain`)
+        need to be within context manager.
+        """
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.stop()
+
     @final
     def __iter__(self):
-        if not self._started:
-            raise RuntimeError(
-                "iteration must be started within context manager, i.e. within a 'with ...:' block"
-            )
         return self
 
     @final
@@ -229,11 +240,11 @@ class Streamer(EnforceOverrides, Iterator):
         If a call to :meth:`parmap` upstream has specified ``return_exceptions=True``,
         then its output stream may contain ``Exception`` objects.
 
-        This method works on the output stream and determines which ``Exception`` objects
-        should be dropped, kept, or raised.
-        While ``return_exceptions=True`` allows :meth:`parmap` to continue despite exceptions,
-        a subsequent :meth:`filter_exceptions` drops the exception objects from the stream
-        so that the next operator does not worry about ``Exception`` objects in the input stream.
+        A useful pattern is to call :meth:`filter_exceptions` right after such a :meth:`parmap` call.
+        This method determines which ``Exception`` objects should be dropped, kept, or raised.
+        While ``return_exceptions=True`` allows ``parmap`` to continue despite exceptions,
+        a subsequent ``filter_exceptions`` drops the exception objects from the stream
+        so that the next operator does not receive ``Exception`` objects in the input stream.
 
         The default behavior (both ``keep_exc_types`` and ``drop_exc_types`` are ``None``)
         is to drop all exception objects from the stream.
@@ -437,8 +448,8 @@ class Streamer(EnforceOverrides, Iterator):
 
         Examples
         --------
-        >>> with Streamer(range(10)) as ss:
-        ...     print(ss.batch(3).collect())
+        >>> ss = Streamer(range(10)).batch(3)
+        >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
 
@@ -472,8 +483,8 @@ class Streamer(EnforceOverrides, Iterator):
         ...     if isinstance(x, int) and x > 0:
         ...         return [x] * x
         ...     return []
-        >>> with Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]) as ss:
-        ...     print(ss.map(explode).unbatch().collect())
+        >>> ss = Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
+        >>> print(ss.collect())
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
         """
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
@@ -515,8 +526,8 @@ class Streamer(EnforceOverrides, Iterator):
 
         Examples
         --------
-        >>> with Streamer(range(7)) as ss:
-        ...     print(ss.accumulate(lambda x, y: x + y, 3).collect())
+        >>> ss = Streamer(range(7))
+        >>> print(ss.accumulate(lambda x, y: x + y, 3).collect())
         [3, 4, 6, 9, 13, 18, 24]
         """
 
@@ -563,14 +574,19 @@ class Streamer(EnforceOverrides, Iterator):
         func: Callable[[T], TT],
         /,
         *,
-        executor: Literal["thread", "process"] = "thread",
+        executor: Literal["thread", "process"] = "process",
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         **kwargs,
     ):
-        """Apply function ``func`` on each element of the data stream to produce a new value,
-        which forms the output stream. New threads or processes are created to execute ``func``.
+        """Parallel, or concurrent, counterpart of :meth:`map`.
+
+        New threads or processes are created to execute ``func``.
+        The function is applied on each element of the data stream and produces a new value,
+        which forms the output stream.
+        The entire input stream is *collectively* transformed by the multiple
+        copies of ``func``.
 
         Elements in the output stream are in the order of the input elements.
         In other words, the order of data elements is preserved.
@@ -611,8 +627,10 @@ class Streamer(EnforceOverrides, Iterator):
         return_exceptions
             If ``True``, exceptions raised by ``func`` will be
             in the output stream as if they were regular results; if ``False``,
-            they will propagate. Note that this does not absorb exceptions
-            raised by previous operators in the pipeline; it is concerned about
+            they will halt the operation and propagate.
+
+            Note that a ``True`` value does not absorb exceptions
+            raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
         """
         self.streamlets.append(
@@ -885,7 +903,7 @@ class Parmapper(Stream):
         instream: Stream,
         func: Callable[[T], TT],
         *,
-        executor: str = "thread",  # or 'process'
+        executor: Literal["thread", "process"] = "process",
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,

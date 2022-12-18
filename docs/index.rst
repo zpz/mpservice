@@ -5,15 +5,12 @@
 
 :tocdepth: 3
 
-.. _Iterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable
-.. _Iterator: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator
-
 
 =============
 ``mpservice``
 =============
 
-*(This documentation is in early stage of construction.)*
+*(This documentation is work in progress.)*
 
 .. automodule:: mpservice
    :no-members:

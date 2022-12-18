@@ -24,6 +24,8 @@ Changed
 - `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
 - `mpservice.streamer.Streamer.peek` was refactored.
 - `mpservice.streamer.Streamer.transform` was renamed to `parmap`.
+- Relaxed the requirement for using context manager with `Streamer`.
+- `Streamer.parmap` uses processes by default, instead of threads.
 
 Added or enhanced
 -----------------

@@ -38,7 +38,7 @@ autodoc_class_signature = 'separated'
 autodoc_typehints = 'signature'
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'links.rst']
 
 
 
@@ -59,3 +59,10 @@ html_theme = 'pydata_sphinx_theme'
 
 
 html_static_path = ['_static']
+
+
+# make rst_epilog a variable, so you can add other epilog parts to it
+rst_epilog = ""
+# Read all link targets from file
+with open('links.rst') as f:
+     rst_epilog += f.read()
