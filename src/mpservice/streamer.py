@@ -134,10 +134,10 @@ class Streamer(EnforceOverrides, Iterator):
         return n
 
     def collect(self) -> list:
-        '''Return all the elements in a list.
-        
+        """Return all the elements in a list.
+
         .. warning:: Do not call this method on "big data".
-        '''
+        """
         return list(self)
 
     def map(self, func: Callable[[T], Any], /, **kwargs):
@@ -441,6 +441,7 @@ class Streamer(EnforceOverrides, Iterator):
         ...     print(ss.batch(3).collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
+
         class Batcher:
             def __init__(self):
                 self._n = 0
@@ -478,8 +479,10 @@ class Streamer(EnforceOverrides, Iterator):
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
         return self
 
-    def accumulate(self, func: Callable[[Any, T], Any], initializer: Any = NOTSET, **kwargs):
-        '''
+    def accumulate(
+        self, func: Callable[[Any, T], Any], initializer: Any = NOTSET, **kwargs
+    ):
+        """
         This method is like "cumulative sum", but the operation is specified by ``func``, hence
         does not need to be "sum". If the last element in the output stream is ``x``
         and the upcoming element in the input stream is ``y``, then the next element in the output
@@ -515,7 +518,8 @@ class Streamer(EnforceOverrides, Iterator):
         >>> with Streamer(range(7)) as ss:
         ...     print(ss.accumulate(lambda x, y: x + y, 3).collect())
         [3, 4, 6, 9, 13, 18, 24]
-        '''
+        """
+
         class Accumulator:
             def __init__(self):
                 self._func = func
@@ -559,7 +563,7 @@ class Streamer(EnforceOverrides, Iterator):
         func: Callable[[T], TT],
         /,
         *,
-        executor: Literal['thread', 'process'] = "thread",
+        executor: Literal["thread", "process"] = "thread",
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
