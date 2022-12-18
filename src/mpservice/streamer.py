@@ -57,6 +57,7 @@ from typing import (
     TypeVar,
     Optional,
     Any,
+    Literal,
 )
 
 from deprecation import deprecated
@@ -70,6 +71,7 @@ from ._queues import SingleLane
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
 CRASHED = "57cf8a88-434e-4772-9bca-01086f6c45e9"
+NOTSET = object()
 
 
 T = TypeVar("T")  # indicates input data element
@@ -131,7 +133,14 @@ class Streamer(EnforceOverrides, Iterator):
             n += 1
         return n
 
-    def map(self, func: Callable[[T], Any], /, *args, **kwargs):
+    def collect(self) -> list:
+        """Return all the elements in a list.
+
+        .. warning:: Do not call this method on "big data".
+        """
+        return list(self)
+
+    def map(self, func: Callable[[T], Any], /, **kwargs):
         """Perform a simple transformation on each data element.
 
         This operation happens "inline"--there is no other threads or processes
@@ -165,17 +174,15 @@ class Streamer(EnforceOverrides, Iterator):
             A function that takes a data element and returns a new value; the new values
             (which do not have to differ from the original) form the new stream going
             forward.
-        *args
-            Additional position arguments to ``func``, after the first argument, which
+        *kwargs
+            Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
-        **kwargs
-            Additional keyword arguments to ``func``.
         """
-        self.streamlets.append(Mapper(self.streamlets[-1], func, *args, **kwargs))
+        self.streamlets.append(Mapper(self.streamlets[-1], func, **kwargs))
         return self
 
-    def filter(self, func: Callable[[T], bool], /, *args, **kwargs):
-        """Select data elements to keep in the stream.
+    def filter(self, func: Callable[[T], bool], /, **kwargs):
+        """Select data elements to keep in the stream according to the predicate ``func``.
 
         This method can be used to either "keep" or "drop" elements according to various conditions.
         If the logic needs to keep some state or history info, then define a class and implement
@@ -202,13 +209,11 @@ class Streamer(EnforceOverrides, Iterator):
             the element should be kept in or dropped from the stream.
 
             This function should not make changes to the input data element.
-        *args
-            Additional position arguments to ``func``, after the first argument, which
+        *kwargs
+            Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
-        **kwargs
-            Additional keyword arguments to ``func``.
         """
-        self.streamlets.append(Filter(self.streamlets[-1], func, *args, **kwargs))
+        self.streamlets.append(Filter(self.streamlets[-1], func, **kwargs))
         return self
 
     def filter_exceptions(
@@ -221,11 +226,14 @@ class Streamer(EnforceOverrides, Iterator):
         ] = None,
     ):
         """
-        If a call to :meth:`transform` upstream has specified ``return_exceptions=True``,
+        If a call to :meth:`parmap` upstream has specified ``return_exceptions=True``,
         then its output stream may contain ``Exception`` objects.
 
         This method works on the output stream and determines which ``Exception`` objects
         should be dropped, kept, or raised.
+        While ``return_exceptions=True`` allows :meth:`parmap` to continue despite exceptions,
+        a subsequent :meth:`filter_exceptions` drops the exception objects from the stream
+        so that the next operator does not worry about ``Exception`` objects in the input stream.
 
         The default behavior (both ``keep_exc_types`` and ``drop_exc_types`` are ``None``)
         is to drop all exception objects from the stream.
@@ -275,7 +283,9 @@ class Streamer(EnforceOverrides, Iterator):
     ):
         """Take a peek at the data element *before* it continues in the stream.
 
-        This implements several info printouts. If this can not do what you need, just create your own
+        This is implemented by :meth:`map`, where the mapper function returns
+        the input value as is, but prints some info before returning.
+        If this does not do what you need, just create your own
         function to pass to :meth:`map`.
 
         Parameters
@@ -366,6 +376,7 @@ class Streamer(EnforceOverrides, Iterator):
     def head(self, n: int):
         """
         Take the first ``n`` elements and ignore the rest.
+        If the entire stream has less than ``n`` elements, just take all of them.
 
         This does not delegate to ``filter``, because ``filter``
         would need to walk through the entire stream,
@@ -376,8 +387,8 @@ class Streamer(EnforceOverrides, Iterator):
 
     def tail(self, n: int):
         """
-        Keep the last ``n`` elements and ignores all the previous ones.
-        If there are less than ``n`` data elements in total, then keep all of them.
+        Take the last ``n`` elements and ignore all the previous ones.
+        If the entire stream has less than ``n`` elements, just take all of them.
 
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
@@ -385,7 +396,7 @@ class Streamer(EnforceOverrides, Iterator):
         self.streamlets.append(Tailor(self.streamlets[-1], n))
         return self
 
-    def groupby(self, func: Callable[[T], Any], /, *args, **kwargs):
+    def groupby(self, func: Callable[[T], Any], /, **kwargs):
         """
         ``func`` takes a data element and outputs a value.
         **Consecutive** elements that have the same value of this output
@@ -395,21 +406,27 @@ class Streamer(EnforceOverrides, Iterator):
 
         The output of ``func`` is usually a str or int or a tuple of a few strings or ints.
 
-        ``*args`` and ``**kwargs`` are additional arguments to ``func``.
+        ``**kwargs`` are additional keyword arguments to ``func``.
 
-        A group will be kept in memory until it is concluded (i.e. the next element
-        starts a new group). For this reason, the groups should not be too large
-        for the typical size of the data element.
+        .. note:: A group will be kept in memory until it is concluded (i.e. the next element
+            starts a new group). For this reason, the groups should not be too large
+            for the typical size of the data element.
+
+        Examples
+        --------
+        >>> data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
+        >>> with Streamer(data) as ss:
+        ...     print(ss.groupby(lambda x: x[0]).collect())
+        [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
-        self.streamlets.append(Groupby(self.streamlets[-1], func, *args, **kwargs))
+        self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
         return self
 
     def batch(self, batch_size: int):
-        """Bundle elements into batches, i.e. lists.
-
-        Take elements from an input stream,
+        """
+        Take elements from an input stream
         and bundle them up into batches up to a size limit,
-        and produce the batches.
+        and produce the batches as lists.
 
         The output batches are all of the specified size,
         except possibly the final batch.
@@ -417,31 +434,120 @@ class Streamer(EnforceOverrides, Iterator):
         For efficiency, this requires the input stream to have a steady supply.
         If that is a concern, having a ``buffer`` on the input stream
         prior to ``batch`` may help.
+
+        Examples
+        --------
+        >>> with Streamer(range(10)) as ss:
+        ...     print(ss.batch(3).collect())
+        [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
-        self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
-        return self
+
+        class Batcher:
+            def __init__(self):
+                self._n = 0
+                self._z = 0
+
+            def __call__(self, x, batch_size):
+                if self._n == batch_size:
+                    self._z = 1 - self._z
+                    self._n = 0
+                self._n += 1
+                return self._z
+
+        return self.groupby(Batcher(), batch_size=batch_size)
 
     def unbatch(self):
-        """Reverse of ``batch``.
-
+        """
         Turn a stream of lists into a stream of individual elements.
 
-        This is usually used to correspond with a previous
-        ``.batch()``, but that is not required. The only requirement
+        This is sometimes used to correspond with a previous
+        ``.batch()``, but that is by no means a requirement. The only requirement
         is that the input elements are lists.
+
+        Examples
+        --------
+        ``unbatch`` can be combined with ``map`` to implement "expanding" a stream, like this:
+
+        >>> def explode(x):
+        ...     if isinstance(x, int) and x > 0:
+        ...         return [x] * x
+        ...     return []
+        >>> with Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]) as ss:
+        ...     print(ss.map(explode).unbatch().collect())
+        [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
         """
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
         return self
 
+    def accumulate(
+        self, func: Callable[[Any, T], Any], initializer: Any = NOTSET, **kwargs
+    ):
+        """
+        This method is like "cumulative sum", but the operation is specified by ``func``, hence
+        does not need to be "sum". If the last element in the output stream is ``x``
+        and the upcoming element in the input stream is ``y``, then the next element in the output
+        stream is
+
+        ::
+
+            func(x, y, **kwargs)
+
+        If ``initializer`` is not provided, then the first element is output as is, and "accumulation" begins
+        with the second element. Suppose the input stream is ``x0``, ``x1``, ``x2``, ..., then the output
+        stream is
+
+        ::
+
+            x0, func(x0, x1, **kwargs), func(func(x0, x1, **kwargs), x2), ...
+
+        If ``initializer`` is provided (any user-provided value, including ``None``), then the first element
+        of the output stream is
+
+        ::
+
+            func(initializer, x0, **kwargs)
+
+        hence "accumulation" begins with the first element.
+
+        .. note:: In some other languages or libraries, ``accumulate`` takes a stream or sequence and returns
+            a single value as the result. This method, in contrast, returns a value for each element in the stream.
+            In fact, the implementation is a simple application of :meth:`map`.
+
+        Examples
+        --------
+        >>> with Streamer(range(7)) as ss:
+        ...     print(ss.accumulate(lambda x, y: x + y, 3).collect())
+        [3, 4, 6, 9, 13, 18, 24]
+        """
+
+        class Accumulator:
+            def __init__(self):
+                self._func = func
+                self._initializer = initializer
+                self._kwargs = kwargs
+
+            def __call__(self, x):
+                z = self._initializer
+                if z is NOTSET:
+                    z = x
+                else:
+                    z = self._func(z, x, **self._kwargs)
+                self._initializer = z
+                return z
+
+        return self.map(Accumulator())
+
     def buffer(self, maxsize: int):
         """Buffer is used to stabilize and improve the speed of data flow.
 
-        A buffer is useful after any operation that can not guarantee
+        A buffer is useful following any operation that can not guarantee
         (almost) instant availability of output. A buffer allows its
-        output to "pile up" when the downstream consumer is slow,
+        input to "pile up" when its downstream consumer is slow,
         so that data *is* available when the downstream does come to request
         data. The buffer evens out irregularities in the speeds of upstream
         production and downstream consumption.
+
+        ``maxsize`` is the size of the internal buffer.
         """
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
@@ -457,48 +563,57 @@ class Streamer(EnforceOverrides, Iterator):
         func: Callable[[T], TT],
         /,
         *,
-        executor: str = "thread",
+        executor: Literal["thread", "process"] = "thread",
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        **func_args,
+        **kwargs,
     ):
-        """Apply a transformation on each element of the data stream,
-        producing a stream of corresponding results.
+        """Apply function ``func`` on each element of the data stream to produce a new value,
+        which forms the output stream. New threads or processes are created to execute ``func``.
 
-        ``func``: a sync function that takes a single input item
-        as the first positional argument and produces a result.
-        Additional keyword args can be passed in via ``func_args``.
-        Async can be supported, but it's a little more involved than the sync case.
-        Since the need seems to be low, it's not supported for now.
+        Elements in the output stream are in the order of the input elements.
+        In other words, the order of data elements is preserved.
 
-        The outputs are in the order of the input elements.
+        The main difference between :meth:`parmap` and :meth:`map` is that the former
+        creates a specified number of thread or processes to execute the function,
+        whereas the latter executes a (simple) function in-line.
 
-        The main point of ``func`` does not have to be the output.
-        It could rather be some side effect. For example,
-        saving data in a database. In that case, the output may be
-        ``None``. Regardless, the output is yielded to be consumed by the next
-        operator in the pipeline. A stream of ``None``\\s could be used
-        in counting, for example. The output stream may also contain
-        Exception objects (if ``return_exceptions`` is ``True``), which may be
-        counted, logged, or handled in other ways.
+        Parameters
+        ----------
+        func
+            A sync function that takes a single input item
+            as the first positional argument and produces a result.
+            Additional keyword args can be passed in via ``**kwargs``.
 
-        ``executor``: either 'thread' or 'process'.
+            The main point of ``func`` does not have to be its output.
+            It could rather be some side effect. For example,
+            saving data in a database. In that case, the output may be
+            ``None``. Regardless, the output is yielded to be consumed by the next
+            operator in the pipeline. A stream of ``None``\\s could be used
+            in counting, for example.
+        executor
+            Either 'thread' or 'process'.
+        concurrency
+            Max number of threads (if ``executor='thread'``) or processes
+            (if ``executor='process'``) created to run ``func``.
+            This is also the max number of concurrent calls to ``func``
+            that can be ongoing at any time.
 
-        ``concurrency``: max number of concurrent calls to ``func``.
-        If ``None``, a default value is used.
-
-        ``return_x``: if True, output stream will contain tuples ``(x, y)``;
-        if ``False``, output stream will contain ``y`` only.
-
-        ``return_exceptions``: if True, exceptions raised by ``func`` will be
-        in the output stream as if they were regular results; if False,
-        they will propagate. Note that this does not absorb exceptions
-        raised by previous components in the pipeline; it is concerned about
-        exceptions raised by ``func`` only.
-
-        User may want to add a ``buffer`` to the output of this method,
-        esp if the ``func`` operations are slow.
+            If ``None``, a default value is used depending on the value of ``executor``.
+            If ``executor`` is ``'thread'``, as many as
+            ``min(32, (os.cpu_count() or 1) + 4)`` threads are created.
+            If ``executor`` is ``'process'``, as many as
+            ``concurrency = os.cpu_count() or 1`` processes are created.
+        return_x
+            If ``True``, output stream will contain tuples ``(x, y)``;
+            if ``False``, output stream will contain ``y`` only.
+        return_exceptions
+            If ``True``, exceptions raised by ``func`` will be
+            in the output stream as if they were regular results; if ``False``,
+            they will propagate. Note that this does not absorb exceptions
+            raised by previous operators in the pipeline; it is concerned about
+            exceptions raised by ``func`` only.
         """
         self.streamlets.append(
             Parmapper(
@@ -508,7 +623,7 @@ class Streamer(EnforceOverrides, Iterator):
                 concurrency=concurrency,
                 return_x=return_x,
                 return_exceptions=return_exceptions,
-                **func_args,
+                **kwargs,
             )
         )
         return self
@@ -530,10 +645,9 @@ class Stream(EnforceOverrides):
     def __iter__(self):
         return self
 
-    def _get_next(self):
+    def __next__(self):
         """Produce the next element in the stream.
 
-        Subclasses refine this method rather than ``__next__``.
         In a subclass, almost always it will not get the next element
         from ``self._instream``, but rather from some object that holds
         results of transformations on ``self._instream``.
@@ -545,40 +659,33 @@ class Stream(EnforceOverrides):
         z = next(self._instream)
         return z
 
-    @final
-    def __next__(self):
-        z = self._get_next()
-        return z
-
 
 class Mapper(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], Any], *args, **kwargs):
+    def __init__(self, instream: Stream, func: Callable[[T], Any], **kwargs):
         super().__init__(instream)
         self.func = func
-        self._args = args
         self._kwargs = kwargs
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
-        return self.func(next(self._instream), *self._args, **self._kwargs)
+        return self.func(next(self._instream), **self._kwargs)
 
 
 class Filter(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], bool], /, *args, **kwargs):
+    def __init__(self, instream: Stream, func: Callable[[T], bool], **kwargs):
         super().__init__(instream)
         self.func = func
-        self._args = args
         self._kwargs = kwargs
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         while True:
             z = next(self._instream)
-            if not self.func(z, *self._args, **self._kwargs):
+            if not self.func(z, **self._kwargs):
                 continue
             return z
 
@@ -594,7 +701,7 @@ class Header(Stream):
         self._n = 0
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if self._n >= self.n:
@@ -619,7 +726,7 @@ class Tailor(Stream):
         self._data_collected = False
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if not self._data_collected:
@@ -634,66 +741,39 @@ class Tailor(Stream):
             raise StopIteration
 
 
-class Groupby(Stream):
-    def __init__(self, instream: Stream, /, func: Callable[[T], Any], *args, **kwargs):
+class Grouper(Stream):
+    def __init__(self, instream: Stream, /, func: Callable[[T], Any], **kwargs):
         super().__init__(instream)
         self._func = func
-        self._args = args
         self._kwargs = kwargs
         self._z = object()
         self._group = None
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
 
         while True:
             try:
                 x = next(self._instream)
-                z = self._func(x, *self._args, **self._kwargs)
-                if z == self._z:
-                    self._group.append(x)
-                else:
-                    if self._group is None:
-                        self._group = [x]
-                    else:
-                        batch = self._group
-                        self._group = [x]
-                        self._z = z
-                        return batch
             except StopIteration:
                 self._stop()
                 break
+            z = self._func(x, **self._kwargs)
+            if z == self._z:
+                self._group.append(x)
+            else:
+                self._z = z
+                if self._group is None:
+                    self._group = [x]
+                    continue
+                batch = self._group
+                self._group = [x]
+                return batch
+
         if self._group:
             return self._group
-        raise StopIteration
-
-
-# Alternatively, this can be implemented by ``groupby``.
-class Batcher(Stream):
-    def __init__(self, instream: Stream, /, batch_size: int):
-        """
-        Aggregate the stream into batches (lists) of the specified size.
-        The last batch may have less elements.
-        """
-        super().__init__(instream)
-        assert 1 <= batch_size <= 10_000
-        self.batch_size = batch_size
-
-    @overrides
-    def _get_next(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        batch = []
-        for _ in range(self.batch_size):
-            try:
-                batch.append(next(self._instream))
-            except StopIteration:
-                self._stop()
-                break
-        if batch:
-            return batch
         raise StopIteration
 
 
@@ -712,15 +792,19 @@ class Unbatcher(Stream):
         self._batch = None
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         if self._batch:
             return self._batch.pop(0)
-        z = next(self._instream)
-        if is_exception(z):
-            return z
-        self._batch = z
+        while True:
+            z = next(self._instream)
+            if is_exception(z):
+                return z
+            if len(z) == 0:
+                continue
+            self._batch = z
+            break
         if self._stopped.is_set():
             raise StopIteration
         return self._batch.pop(0)
@@ -771,7 +855,7 @@ class Buffer(Stream):
         worker.join()
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         while True:
@@ -805,7 +889,7 @@ class Parmapper(Stream):
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        **func_args,
+        **kwargs,
     ):
         super().__init__(instream)
 
@@ -828,7 +912,7 @@ class Parmapper(Stream):
             )
         self._tasks = SingleLane(concurrency)
         self._worker = Thread(
-            target=self._start, args=(func,), kwargs=func_args, loud_exception=False
+            target=self._start, args=(func,), kwargs=kwargs, loud_exception=False
         )
         self._worker.start()
         self._finalize_func = Finalize(
@@ -869,7 +953,7 @@ class Parmapper(Stream):
         executor.shutdown()
 
     @overrides
-    def _get_next(self):
+    def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
         z = self._tasks.get()

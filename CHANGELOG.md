@@ -31,8 +31,8 @@ Added or enhanced
 - Enhanced documentation. Started to host generated doc on Read the Docs.
 - New class `mpservice.mpserver.CpuAffinity`.
 - New method on `mpservice.streamer.Streamer` and corresponding classes:
-  `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`, `groupby` and `Groupby`.
-- New method `mpservice.streamer.Streamer.filter_exceptions`.
+  `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`, `groupby` and `Grouper`.
+- New method `mpservice.streamer.Streamer.filter_exceptions`, `mpservice.streamer.Streamer.accumulate`.
 
 
 ## [0.11.7.post1] - 2022-10-21
