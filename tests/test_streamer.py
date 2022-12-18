@@ -33,40 +33,43 @@ def test_stream():
         assert list(s) == ['a', 'b', 'c']
 
 
-def test_batch():
-    with Streamer(range(11)) as s:
-        assert list(s.batch(3)) == [
-            [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
-
-        assert list(s) == []
-
-    with Streamer(list(range(11))) as s:
-        assert list(s.batch(3).unbatch()) == list(range(11))
-        assert list(s) == []
+def test_drain():
+    with Streamer(range(8)) as s:
+        assert s.drain() == 8
 
 
-def test_buffer():
-    with Streamer(range(11)) as s:
-        assert list(s.buffer(5)) == list(range(11))
-    with Streamer(range(11)) as s:
-        assert list(s.buffer(20)) == list(range(11))
+def test_collect():
+    with Streamer(range(3)) as s:
+        assert s.collect() == [0, 1, 2]
 
 
-def test_buffer_batch():
-    with Streamer(range(19)) as s:
-        n = s.buffer(10).batch(5).unbatch().peek(interval=1).drain()
-        assert n == 19
+def test_map():
+    def inc(x, shift=1):
+        return x + shift
+
+    with Streamer(range(5)) as s:
+        s.map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
+
+    with Streamer(range(5)) as s:
+        s.map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
 
 
 def test_filter():
+    with Streamer(range(7)) as s:
+        s.filter(lambda n: (n % 2) == 0) == [0, 2, 4, 6]
+
+    def odd_or_even(x, even=True):
+        if even:
+            return (x % 2) == 0
+        return (x % 2) != 0
+
+    with Streamer(range(7)) as s:
+        s.filter(odd_or_even) == [0, 2, 4, 6]
+
+    with Streamer(range(7)) as s:
+        s.filter(odd_or_even, even=False) == [1, 3, 5]
+
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
-
-    with Streamer(data).filter_exceptions() as s:
-        assert list(s) == [0, 1, 2, 'a', 4, 6, 7]
-
-    s = Streamer(data).filter_exceptions().filter(lambda x: not isinstance(x, str))
-    with s:
-        assert list(s) == [0, 1, 2, 4, 6, 7]
 
     class Tail:
         def __init__(self, n):
@@ -92,24 +95,29 @@ def test_filter():
         assert list(s.filter(Head())) == [1, 4]
 
 
-def test_head():
-    data = [0, 1, 2, 3, 'a', 5]
+def test_filter_exceptions():
+    exc = [1, ValueError(3), 2, IndexError(4), FileNotFoundError(), 3, KeyboardInterrupt(), 4]
 
-    with Streamer(data) as s:
-        assert list(s.filter(lambda x: isinstance(x, int)).head(2)) == [0, 1]
+    with Streamer(exc) as ss:
+        assert ss.filter_exceptions().collect() == [1, 2, 3, 4]
 
-    with Streamer(data) as s:
-        assert list(s.head(3)) == [0, 1, 2]
+    with Streamer(exc) as ss:
+        assert ss.filter_exceptions(Exception).collect() == exc[:-2] + [exc[-1]]
 
+    with Streamer(exc) as ss:
+        with pytest.raises(IndexError):
+            assert ss.filter_exceptions(None, ValueError).collect() == exc
 
-def test_tail():
-    data = [0, 1, 2, 3, 'a', 5]
+    with Streamer(exc) as ss:
+        with pytest.raises(FileNotFoundError):
+            assert ss.filter_exceptions(None, (ValueError, IndexError)).collect() == exc
 
-    with Streamer(data) as s:
-        assert list(s.tail(2)) == ['a', 5]
+    with Streamer(exc) as ss:
+        with pytest.raises(KeyboardInterrupt):
+            assert ss.filter_exceptions(FileNotFoundError, Exception).collect() == exc
 
-    with Streamer(data) as s:
-        assert list(s.tail(10)) == data
+    with Streamer(exc) as ss:
+        assert ss.filter_exceptions(FileNotFoundError, BaseException).collect() == [1, 2, exc[4], 3, 4]
 
 
 def test_peek():
@@ -124,40 +132,90 @@ def test_peek():
     def foo(x):
         print(x)
 
-    with Streamer(data).peek(print_func=foo, interval=0.5) as s:
+    with Streamer(data).peek(print_func=foo, interval=0.6) as s:
         n = s.drain()
         assert n == 10
 
-    with Streamer(data).peek(interval=4) as s:
+    with Streamer(data).peek_every_nth(4) as s:
         s.drain()
 
+    exc = [0, 1, 2, ValueError(100), 4]
+    with Streamer(exc) as s:  # `peek` does not drop exceptions
+        assert s.peek().drain() == len(exc)
 
-def test_drain():
-    with Streamer(range(10)) as s:
-        z = s.drain()
-        assert z == 10
 
-    class Head:
-        def __init__(self):
-            self._idx = 0
-        def __call__(self, x):
-            z = self._idx %3 == 0
-            self._idx += 1
-            return z
+def test_head():
+    data = [0, 1, 2, 3, 'a', 5]
 
-    with Streamer(range(10)).filter(Head()) as s:
-        z = s.drain()
-        assert z == 4  # indices 0, 3, 6, 9 are kept
+    with Streamer(data) as s:
+        assert list(s.head(3)) == data[:3]
 
-    with Streamer((1, 2, ValueError(3), 5, RuntimeError, 9)) as s:
-        n = 0
-        nexc = 0
-        for x in s:
-            n += 1
-            if is_exception(x):
-                nexc += 1
-        assert n == 6
-        assert nexc == 2
+    with Streamer(data) as s:
+        assert list(s.head(30)) == data
+
+
+def test_tail():
+    data = [0, 1, 2, 3, 'a', 5]
+
+    with Streamer(data) as s:
+        assert s.tail(2).collect() == ['a', 5]
+
+    with Streamer(data) as s:
+        assert list(s.tail(10)) == data
+
+
+def test_groupby():
+    data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
+    with Streamer(data) as ss:
+        assert ss.groupby(lambda x: x[0]).collect() == [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
+
+
+def test_batch():
+    with Streamer(range(11)) as s:
+        assert list(s.batch(3)) == [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
+
+        assert list(s) == []
+
+    with Streamer(list(range(11))) as s:
+        assert list(s.batch(3).unbatch()) == list(range(11))
+        assert list(s) == []
+
+
+def test_unbatch():
+    data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
+    with Streamer(data) as ss:
+        assert ss.unbatch().collect() == list(range(8))
+
+
+def test_accumulate():
+    data = list(range(6))
+    with Streamer(data) as ss:
+        assert ss.accumulate(lambda x, y: x + y).collect() == [0, 1, 3, 6, 10, 15]
+
+    with Streamer(data) as ss:
+        assert ss.accumulate(lambda x, y: x + y, 3).collect() == [3, 4, 6, 9, 13, 18]
+
+    def add(x, y):
+        if y % 2 == 0:
+            return x + y
+        return x - y
+
+    with Streamer(data) as ss:
+        assert ss.accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
+
+
+def test_buffer():
+    with Streamer(range(11)) as s:
+        assert list(s.buffer(5)) == list(range(11))
+    with Streamer(range(11)) as s:
+        assert list(s.buffer(20)) == list(range(11))
+
+
+def test_buffer_batch():
+    with Streamer(range(19)) as s:
+        n = s.buffer(10).batch(5).unbatch().peek(interval=1).drain()
+        assert n == 19
 
 
 def test_parmap():
@@ -333,7 +391,6 @@ def test_early_stop():
             if n == 10:
                 break
         assert n == 10
-
 
 
 def double(x):

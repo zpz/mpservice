@@ -157,42 +157,6 @@ After this setup, there are several ways to use the object ``data_stream`` (or `
 Of all the methods on a ``Streamer`` object, two will start new threads, namely
 ``.buffer()`` and ``.parmap()``. (The latter may also start new processes.)
 
-Hooks
-=====
-
-There are several "hooks" that allow user to pass in custom functions to
-perform operations tailored to their need. Check out the following functions:
-
-- ``map``
-- ``filter``
-- ``parmap``
-
-``filter`` accept a function that evaluates a data element
-and return a boolean value. Depending on the return value, the element
-is dropped from or kept in the data stream.
-
-``peek`` accepts a function that takes a data element and usually does
-informational printing or logging (including persisting info to files).
-This function may check conditions on the data element to decide whether
-to do the printing or do nothing. (Usually we don't want to print for
-every element; that would be overwhelming.)
-This function is called for the side-effect;
-it does not affect the flow of the data stream. The user-provided operator
-should not modify the data element.
-
-``parmap`` accepts a function that takes a data element, does something
-about it, and returns a value. For example, modify the element and return
-a new value, or call an external service with the data element as part of
-the payload. Each input element will produce a new element, becoming the
-resultant stream. This method can not "drop" a data element (i.e do not
-produce a result corresponding to an input element), neither can it produce
-multiple results for a single input element (if it produces a list, say,
-that list would be the result for the single input.)
-If the operation is mainly for the side effect, e.g.
-saving data in files or a database, hence there isn't much useful result,
-then the result could be ``None``, which is perfectly valid. Regardless,
-the returned ``None``\s will still become the resultant stream.
-
 
 Handling of exceptions
 ======================
