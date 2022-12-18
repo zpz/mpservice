@@ -93,27 +93,27 @@ class Streamer(EnforceOverrides, Iterator):
         self.streamlets: list[Stream] = [Stream(instream)]
 
     def stop(self):
-        '''
+        """
         Stop all the operators that are working on the stream.
 
         Usually you do not need to call this method unless you break out of
         iteration prematurely or exception happens. But when those situations are possible,
         it's advised to consume this stream within a context manager, which calls
         ``stop`` upon exit.
-        '''
+        """
         for s in self.streamlets:
             s._stop()
 
     def __enter__(self):
-        '''
+        """
         If you break out of iteration before it finishes, or error happens, then it's important
         to use this object within the context manager.
         If these two situations do not arise, then it's not necessary to use context manager.
 
         Calls to the "operation setup" methods do not need to be within context manager.
         Only the "consuming" methods (:meth:`__iter__`, :meth:`__next__`, and :meth:`drain`)
-        need to be within context manager. 
-        '''
+        need to be within context manager.
+        """
         return self
 
     def __exit__(self, *args, **kwargs):
@@ -581,7 +581,7 @@ class Streamer(EnforceOverrides, Iterator):
         **kwargs,
     ):
         """Parallel, or concurrent, counterpart of :meth:`map`.
-        
+
         New threads or processes are created to execute ``func``.
         The function is applied on each element of the data stream and produces a new value,
         which forms the output stream.
@@ -628,7 +628,7 @@ class Streamer(EnforceOverrides, Iterator):
             If ``True``, exceptions raised by ``func`` will be
             in the output stream as if they were regular results; if ``False``,
             they will halt the operation and propagate.
-            
+
             Note that a ``True`` value does not absorb exceptions
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
@@ -903,7 +903,7 @@ class Parmapper(Stream):
         instream: Stream,
         func: Callable[[T], TT],
         *,
-        executor: Literal['thread', 'process'] = "process",
+        executor: Literal["thread", "process"] = "process",
         concurrency: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
