@@ -1,5 +1,5 @@
 """
-The package ``mpservice`` provides utilities for Python concurrency, including
+The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities for Python concurrency, including
 
 - Serving with multiprocessing to make full use of multiple cores,
   and batching to take advantage of vectorized computation if some
