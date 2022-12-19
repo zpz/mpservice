@@ -1,4 +1,4 @@
-'''
+"""
 The module ``mpservice.http`` provides simple utilities for serving :class:`mpservice.mpserver.Server` over HTTP
 using `uvicorn <https://www.uvicorn.org/>`_ and `starlette <https://www.starlette.io/>`_.
 
@@ -51,7 +51,7 @@ Here is one way to structure it::
 
     if __name__ == '__main__':
         main()
-'''
+"""
 from __future__ import annotations
 
 import logging
@@ -115,7 +115,7 @@ def make_server(
         The default should be adequate. Don't make this large unless you know what you're doing.
 
         `uvicorn.Server.startup <https://github.com/encode/uvicorn/blob/master/uvicorn/server.py>`_
-        passes this to AsyncIO ``loop.create_server`` (in 
+        passes this to AsyncIO ``loop.create_server`` (in
         `asyncio.base_events <https://github.com/python/cpython/blob/main/Lib/asyncio/base_events.py>`_,
         where default is 100), and in turn to
         `socket.socket.listen <https://docs.python.org/3/library/socket.html#socket.socket.listen>`_.
