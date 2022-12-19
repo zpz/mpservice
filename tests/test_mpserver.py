@@ -135,7 +135,7 @@ def test_sequential_stream():
         assert list(ss) == [v*v for v in data]
 
         with Streamer(data) as s:
-            s.transform(service.call, concurrency=10)
+            s.parmap(service.call, executor='thread', num_workers=10)
             assert list(s) == [v*v for v in data]
 
 
@@ -235,7 +235,7 @@ def test_ensemble_stream():
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
         with Streamer(data) as s:
-            s.transform(service.call, concurrency=10)
+            s.parmap(service.call, executor='thread', num_workers=10)
             assert list(s) == [[v + 1, v + 7] for v in data]
 
 

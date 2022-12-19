@@ -1,6 +1,6 @@
-========
-streamer
-========
+====================================
+Stream processing using ``streamer``
+====================================
 
 .. automodule:: mpservice.streamer
     :no-members:
@@ -32,7 +32,7 @@ Since ``double`` is an I/O-bound operation, let's use multiple threads to speed 
 the processing of the input stream.
 For this purpose, we add a :meth:`~Streamer.parmap` (or "parallel map") operator to the stream:
 
->>> data_stream.parmap(double, executor='thread', concurrency=8)
+>>> data_stream.parmap(double, executor='thread', num_workers=8)
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -56,7 +56,7 @@ Despite the concurrency in the operation, the order of the input elements is pre
 In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
->>> data_stream = Streamer(range(100)).parmap(double, executor='thread', concurrency=8)
+>>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)
 >>> for k, y in enumerate(data_stream):
 ...     print(y, end='  ')
 ...     if (k + 1) % 10 == 0:
@@ -86,7 +86,7 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 >>> data_stream = Streamer(range(20))
->>> data_stream.parmap(double, executor='thread', concurrency=8)
+>>> data_stream.parmap(double, executor='thread', num_workers=8)
 >>> data_stream.map(shift, amount=0.8)
 >>> for k, y in enumerate(data_stream):
 ...     print(y, end='  ')
@@ -98,7 +98,7 @@ This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 The first three lines are equivalent to this one line:
 
->>> data_stream = Streamer(range(20)).parmap(double, executor='thread', concurrency=8).map(shift, amount=0.8)
+>>> data_stream = Streamer(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
 
 :class:`Streamer` has many other "operators". They can be characterised in a few ways:
 
@@ -147,9 +147,10 @@ There are several ways to consume the stream:
 
 
 Finally, :class:`~Streamer` is a context manager.
-If you may break out of the iteration prematurely, or errors may occur and you have added a concurrent operator,
+If you have added a concurrent operator,
+and you may break out of the iteration prematurely or errors may occur,
 then you should consume the stream with context management, like this::
-    
+
     stream = Streamer(...).map(...)...parmap(...)...
     with stream:
         for x in stream:

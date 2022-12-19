@@ -1,5 +1,0 @@
-====
-pipe
-====
-
-.. automodule:: mpservice.pipe

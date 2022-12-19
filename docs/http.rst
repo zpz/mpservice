@@ -1,5 +1,0 @@
-====
-http
-====
-
-.. automodule:: mpservice.http

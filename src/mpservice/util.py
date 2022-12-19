@@ -18,16 +18,15 @@ from typing import Optional
 
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
-# This default is suitable for I/O bound operations.
-# This value is what is used by `concurrent.futures.ThreadPoolExecutor`.
-# For others, user may want to specify a smaller value.
+"""
+This default is suitable for I/O bound operations.
+This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
+For others, user may want to specify a smaller value.
+"""
 
 
-TimeoutError = TimeoutError  # make local alias for the standard exception
-# `concurrent.futures._base` does this.
-# I guess the point is to ask user to import this class to check, instead of checking
-# against the builtin class directly. This prepares for possible customization
-# later, although currently it just re-uses the builtin one.
+class TimeoutError(Exception):
+    pass
 
 
 class _SpawnContext:
