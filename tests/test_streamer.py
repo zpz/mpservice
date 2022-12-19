@@ -83,22 +83,22 @@ def test_filter():
 def test_filter_exceptions():
     exc = [1, ValueError(3), 2, IndexError(4), FileNotFoundError(), 3, KeyboardInterrupt(), 4]
 
-    assert Streamer(exc).filter_exceptions().collect() == [1, 2, 3, 4]
+    assert Streamer(exc).filter_exceptions(BaseException).collect() == [1, 2, 3, 4]
 
-    assert Streamer(exc).filter_exceptions(Exception).collect() == exc[:-2] + [exc[-1]]
+    assert Streamer(exc).filter_exceptions(BaseException, Exception).collect() == exc[:-2] + [exc[-1]]
 
     with pytest.raises(IndexError):
-        assert Streamer(exc).filter_exceptions(None, ValueError).collect() == exc
+        assert Streamer(exc).filter_exceptions(ValueError).collect() == exc
 
     with pytest.raises(FileNotFoundError):
         with Streamer(exc) as ss:
-            assert ss.filter_exceptions(None, (ValueError, IndexError)).collect() == exc
+            assert ss.filter_exceptions((ValueError, IndexError)).collect() == exc
 
     with Streamer(exc) as ss:
         with pytest.raises(KeyboardInterrupt):
-            assert ss.filter_exceptions(FileNotFoundError, Exception).collect() == exc
+            assert ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
 
-    assert Streamer(exc).filter_exceptions(FileNotFoundError, BaseException).collect() == [1, 2, exc[4], 3, 4]
+    assert Streamer(exc).filter_exceptions(BaseException, FileNotFoundError).collect() == [1, 2, exc[4], 3, 4]
 
 
 def test_peek():
@@ -311,18 +311,18 @@ def test_chain():
              .parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
              .buffer(3)
              .parmap(process2, executor='thread', num_workers=3, return_exceptions=True)
-             .peek_every_nth(1)
+             .peek(interval=1)
              )
     print('')
     print(zz)
 
     s = Streamer(corrupt_data())
     s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
-    s.filter_exceptions()
+    s.filter_exceptions(BaseException)
     s.buffer(3)
     s.parmap(process2, executor='thread', num_workers=3, return_exceptions=True)
     s.peek()
-    s.filter_exceptions()
+    s.filter_exceptions(BaseException)
     assert list(s) == [1, 2, 3, 4, 5, 6]
 
 

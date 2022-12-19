@@ -229,10 +229,10 @@ class Streamer(EnforceOverrides, Iterator):
 
     def filter_exceptions(
         self,
-        keep_exc_types: Optional[
+        drop_exc_types: Optional[
             type[BaseException] | tuple[type[BaseException], ...]
         ] = None,
-        drop_exc_types: Optional[
+        keep_exc_types: Optional[
             type[BaseException] | tuple[type[BaseException], ...]
         ] = None,
     ):
@@ -243,41 +243,46 @@ class Streamer(EnforceOverrides, Iterator):
         A useful pattern is to call :meth:`filter_exceptions` right after such a :meth:`parmap` call.
         This method determines which ``Exception`` objects should be dropped, kept, or raised.
         While ``return_exceptions=True`` allows ``parmap`` to continue despite exceptions,
-        a subsequent ``filter_exceptions`` drops the exception objects from the stream
+        a subsequent ``filter_exceptions`` drops known types of exception objects from the stream
         so that the next operator does not receive ``Exception`` objects in the input stream.
 
-        The default behavior (both ``keep_exc_types`` and ``drop_exc_types`` are ``None``)
-        is to drop all exception objects from the stream.
+        The default behavior (both ``drop_exc_types`` and ``keep_exc_types`` are ``None``)
+        is to raise any Exception object that is encountered.
+
+        A typical use is to specify one or a few known exception types to drop (i.e. ignore),
+        and crash on any other unexpected exception.
 
         Parameters
         ----------
+        drop_exc_types
+            These types of exceptions are dropped from the stream.
+            These should be types of known exceptions that could happen,
+            and you decide to ignore them.
+
+            If ``None`` (the default), no exception object is dropped.
+            
+            This can be a particular Exception class, or a tuple of classes.
+            
+            To drop all exceptions, use ``Exception`` (or even ``BaseException``).
         keep_exc_types
             These types of exceptions are kept in the stream.
 
-            If ``None`` (the default), no exception object is kept in the stream.
-        drop_exc_types
-            These types of exceptions are dropped from the stream.
-
-            If ``None`` (the default), then all exceptions except those specified by
-            ``keep_exc_types`` are dropped.
-            If you want to drop only subclasses of ``Exception`` , then provide ``Exception``.
-
-            If you want no exception object to be dropped (then the only choice is between "kept" and "raised"),
-            then provide ``()``.
-
+            If ``None`` (the default), then no exception object is kept.
+            
             The members in ``keep_exc_types`` and ``drop_exc_types`` should be distinct.
-            If there is any common member, then the one in ``keep_exc_types`` takes effect.
+            If there is any common member, then it is kept because the ``keep_exc_types``
+            condition is checked first.
 
-            An exception object that is neither dropped nor kept will be raised.
+            To keep all exceptions, use ``Exception`` (or even ``BaseException``).
+
+            An exception object that is neither kept nor dropped will be raised.
         """
 
         def foo(x):
             if is_exception(x):
                 if keep_exc_types is not None and isinstance(x, keep_exc_types):
                     return True
-                if drop_exc_types is None:
-                    return False
-                if isinstance(x, drop_exc_types):
+                if drop_exc_types is not None and isinstance(x, drop_exc_types):
                     return False
                 raise x
             return True
@@ -379,7 +384,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self.map(Peeker())
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``peek`` instead."
+        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``peek`` instead."
     )
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
