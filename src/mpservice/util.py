@@ -192,101 +192,101 @@ def rebuild_exception(exc: BaseException, tb: str):
 
 
 class RemoteException:
-    """  # fmt: off
-This class is a pickle helper for Exception objects to preserve some traceback info.
-This is needed because directly calling ``pickle.dumps`` on an Exception object will lose
-its ``__traceback__`` and ``__cause__`` attributes.
+    """# fmt: off
+    This class is a pickle helper for Exception objects to preserve some traceback info.
+    This is needed because directly calling ``pickle.dumps`` on an Exception object will lose
+    its ``__traceback__`` and ``__cause__`` attributes.
 
-This is designed to be used to send an exception object to another process.
-It can also be used to pickle-persist an Exception object for some time.
+    This is designed to be used to send an exception object to another process.
+    It can also be used to pickle-persist an Exception object for some time.
 
-This class preserves some traceback info simply by keeping it as a formatted string during pickling.
-Once unpickled, the object obtained, say ``obj``,
-is **not** an instance of ``RemoteException``, but rather of the original Exception type.
-``obj`` does not have the ``__traceback__`` attribute, which is impossible to reconstruct,
-but rather has the ``__cause__`` attribute, which is a custom Exception
-object (:class:`RemoteTraceback`) that contains the string-form traceback info, with proper line breaks.
-Most (if not all) methods and attributes of ``obj`` behave the same
-as the original Exception object, except that
-``__traceback__`` is gone but ``__cause__`` is added.
+    This class preserves some traceback info simply by keeping it as a formatted string during pickling.
+    Once unpickled, the object obtained, say ``obj``,
+    is **not** an instance of ``RemoteException``, but rather of the original Exception type.
+    ``obj`` does not have the ``__traceback__`` attribute, which is impossible to reconstruct,
+    but rather has the ``__cause__`` attribute, which is a custom Exception
+    object (:class:`RemoteTraceback`) that contains the string-form traceback info, with proper line breaks.
+    Most (if not all) methods and attributes of ``obj`` behave the same
+    as the original Exception object, except that
+    ``__traceback__`` is gone but ``__cause__`` is added.
 
-Because ``obj`` is not an instance of this class,
-we cannot define methods on this class to help using ``obj``.
+    Because ``obj`` is not an instance of this class,
+    we cannot define methods on this class to help using ``obj``.
 
-Note that ``RemoteException`` does not subclass ``BaseException``, hence you can't "raise" an instance of this class.
+    Note that ``RemoteException`` does not subclass ``BaseException``, hence you can't "raise" an instance of this class.
 
-.. seealso:: :func:`is_remote_exception`, :func:`get_remote_traceback`.
+    .. seealso:: :func:`is_remote_exception`, :func:`get_remote_traceback`.
 
-Examples
---------
->>> from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
->>> import pickle
->>>
->>>
->>> def foo():
-...     raise ValueError(38)
->>>
->>>
->>> def gee():
-...     foo()
->>>
->>>
->>> gee()
-Traceback (most recent call last):
-    File "<stdin>", line 1, in <module>
-    File "<stdin>", line 2, in gee
-    File "<stdin>", line 2, in foo
-ValueError: 38
-.
-38
->>>
->>> err = None
->>> try:
-...     gee()
-... except Exception as e:
-...     err = e
->>>
->>> err
-ValueError(38)
->>> err.__traceback__
-<traceback object at 0x7fad69dff8c0>
->>> err.__cause__ is None
-True
->>>
->>> e_remote = RemoteException(err)
->>> e_remote
-<mpservice.util.RemoteException object at 0x7fad702cd280>
->>> e_pickled = pickle.dumps(e_remote)
->>> e_unpickled = pickle.loads(e_pickled)
->>>
->>> e_unpickled
-ValueError(38)
->>> type(e_unpickled)
-<class 'ValueError'>
->>> e_unpickled.__traceback__ is None
-True
->>> e_unpickled.__cause__
-RemoteTraceback('Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n')
->>>
->>> is_remote_exception(e_unpickled)
-True
->>> get_remote_traceback(e_unpickled)
-'Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n'
->>> print(get_remote_traceback(e_unpickled))
-Traceback (most recent call last):
-    File "<stdin>", line 2, in <module>
-    File "<stdin>", line 2, in gee
-    File "<stdin>", line 2, in foo
-ValueError: 38
->>>
->>>
->>> raise e_unpickled
-Traceback (most recent call last):
-    File "<stdin>", line 1, in <module>
-ValueError: 38
-.
-38
->>>
+    Examples
+    --------
+    >>> from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
+    >>> import pickle
+    >>>
+    >>>
+    >>> def foo():
+    ...     raise ValueError(38)
+    >>>
+    >>>
+    >>> def gee():
+    ...     foo()
+    >>>
+    >>>
+    >>> gee()
+    Traceback (most recent call last):
+        File "<stdin>", line 1, in <module>
+        File "<stdin>", line 2, in gee
+        File "<stdin>", line 2, in foo
+    ValueError: 38
+    .
+    38
+    >>>
+    >>> err = None
+    >>> try:
+    ...     gee()
+    ... except Exception as e:
+    ...     err = e
+    >>>
+    >>> err
+    ValueError(38)
+    >>> err.__traceback__
+    <traceback object at 0x7fad69dff8c0>
+    >>> err.__cause__ is None
+    True
+    >>>
+    >>> e_remote = RemoteException(err)
+    >>> e_remote
+    <mpservice.util.RemoteException object at 0x7fad702cd280>
+    >>> e_pickled = pickle.dumps(e_remote)
+    >>> e_unpickled = pickle.loads(e_pickled)
+    >>>
+    >>> e_unpickled
+    ValueError(38)
+    >>> type(e_unpickled)
+    <class 'ValueError'>
+    >>> e_unpickled.__traceback__ is None
+    True
+    >>> e_unpickled.__cause__
+    RemoteTraceback('Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n')
+    >>>
+    >>> is_remote_exception(e_unpickled)
+    True
+    >>> get_remote_traceback(e_unpickled)
+    'Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n'
+    >>> print(get_remote_traceback(e_unpickled))
+    Traceback (most recent call last):
+        File "<stdin>", line 2, in <module>
+        File "<stdin>", line 2, in gee
+        File "<stdin>", line 2, in foo
+    ValueError: 38
+    >>>
+    >>>
+    >>> raise e_unpickled
+    Traceback (most recent call last):
+        File "<stdin>", line 1, in <module>
+    ValueError: 38
+    .
+    38
+    >>>
     """  # fmt: on
 
     # fmt: off
