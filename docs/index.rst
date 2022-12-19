@@ -10,8 +10,6 @@
 ``mpservice``
 =============
 
-*(This documentation is work in progress.)*
-
 .. automodule:: mpservice
    :no-members:
    :no-undoc-members:

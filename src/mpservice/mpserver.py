@@ -80,7 +80,8 @@ class _RemoteException_:
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
     """
-    This class reduces some overhead in a particular use-case in this module,
+    A customization of ``multiprocessing.queue.SimpleQueue``,
+    this class reduces some overhead in a particular use-case in this module,
     where one consumer of the queue greedily grabs elements out of the queue
     towards a batch-size limit.
 
@@ -108,7 +109,8 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
 class SimpleQueue(queue.SimpleQueue):
     """
-    Analogous to `FastQueue` but designed to be used between two threads.
+    A customization of ``queue.SimpleQueue``,
+    this class is analogous to `FastQueue` but is designed to be used between two threads.
     """
 
     def __init__(self):

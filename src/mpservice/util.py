@@ -21,7 +21,7 @@ MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
 This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
-For others, user may want to specify a smaller value.
+For others, you may want to specify a smaller value.
 """
 
 
@@ -55,8 +55,56 @@ class _SpawnContext:
 
 MP_SPAWN_CTX = _SpawnContext()
 """
-Use this as the ``mp_context`` or ``ctx`` arguments to various multiprocessing
-functions.
+`multiprocessing`_ has a "context", which has to do with how a process is created and started.
+Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
+the same context in order to work together. For example, if you send a ``Queue`` created out of
+the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
+
+Python's default "process start method" **on Linux** is "fork".
+If you do
+
+::
+
+    import multiprocessing
+    q = multiprocessing.Queue()
+
+this is equivalent to
+
+::
+
+    q = multiprocessing.get_context().Queue()
+
+`multiprocessing.get_context <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.get_context>`_ takes the sole parameter ``method``,
+which on Linux defaults to ``'fork'``.
+
+However, it is advised to not use this default; rather, **always** use the "spawn" context.
+There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
+and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
+
+So, you should write multiprocessing code this way::
+
+    import multiprocessing
+    ctx = multiprocessing.get_context('spawn')
+    q = ctx.Queue(...)
+    e = ctx.Event(...)
+    p = ctx.Process(..., args=(q, e))
+    ...
+
+The constant ``MP_SPAWN_CTX`` is a replacement of the standard spawn context.
+Instead of the above, you are advised to write this::
+
+    from mpservice.util import MP_SPAWN_CTX as ctx
+    q = ctx.Queue(...)
+    e = ctx.Event(...)
+    p = ctx.Process(..., args=(q, e))
+    ...
+
+The difference between ``MP_SPAWN_CTX`` and the standard spawn context
+is that the former uses the custom :class:`SpawnProcess` class in places of the standard
+`Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
+
+If you only need to start a process and don't need to create other objects
+(like queue or event) from a context, then you can use :class:`SpawnProcess` directly.
 """
 
 
@@ -78,7 +126,7 @@ def get_docker_host_ip():
     return z[: z.find(" ")]
 
 
-def is_exception(e):
+def is_exception(e) -> bool:
     # TODO: test showed the raised objects are always instances, not classes, even
     # if we do
     #   raise ValueError
@@ -108,15 +156,28 @@ def full_class_name(cls):
 
 
 def is_remote_exception(e) -> bool:
+    """Return ``True`` if the exception ``e`` was created by :class:`RemoteException`, and ``False`` otherwise."""
     return isinstance(e, BaseException) and isinstance(e.__cause__, RemoteTraceback)
 
 
 def get_remote_traceback(e) -> str:
-    # Assuming `e` has passed the check of `is_remote_exception`.
+    """
+    ``e`` must have checked ``True`` by :func:`is_remote_exception`.
+    Suppose an Exception object is wrapped by :class:`RemoteException` and sent to another process
+    through a queue.
+    Taken out of the queue in the other process, the object will check ``True``
+    by :func:`is_remote_exception`. Then this function applied on the object
+    will return the traceback info as a string.
+    """
     return e.__cause__.tb
 
 
 class RemoteTraceback(Exception):
+    """
+    This class is used by :class:`RemoteException`.
+    End-user does not use this class directly.
+    """
+
     def __init__(self, tb: str):
         self.tb = tb
 
@@ -136,26 +197,96 @@ class RemoteException:
     This is needed because directly calling ``pickle.dumps`` on an Exception object will lose
     its ``__traceback__`` and ``__cause__`` attributes.
 
-    One typical use case is to send an exception object across process boundaries,
-    hence undergoing pickling/unpickling.
+    This is designed to be used to send an exception object to another process.
+    It can also be used to pickle-persist an Exception object for some time.
 
-    This class preserves some traceback info simply by keeping it as a formatted string.
-    Once unpickled (e.g. in another process), the object obtained, say ``obj``,
-    is not an instance of ``RemoteException``, but rather of the original exception type.
-    The object does not have ``__traceback__`` attribute, which is impossible to reconstruct,
-    but rather has ``__cause__`` attribute, which is a custom Exception
-    object (``RemoteTraceback``) that contains the string-form traceback info.
-    The traceback string is ``obj.__cause__.traceback``. This string contains proper linebreaks.
+    This class preserves some traceback info simply by keeping it as a formatted string during pickling.
+    Once unpickled, the object obtained, say ``obj``,
+    is **not** an instance of ``RemoteException``, but rather of the original Exception type.
+    ``obj`` does not have the ``__traceback__`` attribute, which is impossible to reconstruct,
+    but rather has the ``__cause__`` attribute, which is a custom Exception
+    object (:class:`RemoteTraceback`) that contains the string-form traceback info, with proper line breaks.
+    Most (if not all) methods and attributes of ``obj`` behave the same
+    as the original Exception object, except that
+    ``__traceback__`` is gone but ``__cause__`` is added.
 
-    Most (probably all) methods and attributes of the unpickled exception object behave the same
-    as the original, exception for ``__traceback__`` and ``__cause__``.
+    Because ``obj`` is not an instance of this class,
+    we cannot define methods on this class to help using ``obj``.
 
-    Again, the unpickled object, say ``obj``, is not an instance of this class, hence
-    we can't define methods on this class to help using `obj`.
+    Note that ``RemoteException`` does not subclass ``BaseException``, hence you can't "raise" an instance of this class.
 
-    Note that ``RemoteException`` does not subclass ``BaseException``, so you can't "raise" this object.
+    .. seealso:: :func:`is_remote_exception`, :func:`get_remote_traceback`.
 
-    See also: ``is_remote_exception``, ``get_remote_traceback``.
+    Examples
+    --------
+    >>> from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
+    >>> import pickle
+    >>>
+    >>>
+    >>> def foo():
+    ...     raise ValueError(38)
+    >>>
+    >>>
+    >>> def gee():
+    ...     foo()
+    >>>
+    >>>
+    >>> gee()
+    Traceback (most recent call last):
+      File "<stdin>", line 1, in <module>
+      File "<stdin>", line 2, in gee
+      File "<stdin>", line 2, in foo
+    ValueError: 38
+    .
+    38
+    >>>
+    >>> err = None
+    >>> try:
+    ...     gee()
+    ... except Exception as e:
+    ...     err = e
+    >>>
+    >>> err
+    ValueError(38)
+    >>> err.__traceback__
+    <traceback object at 0x7fad69dff8c0>
+    >>> err.__cause__ is None
+    True
+    >>>
+    >>> e_remote = RemoteException(err)
+    >>> e_remote
+    <mpservice.util.RemoteException object at 0x7fad702cd280>
+    >>> e_pickled = pickle.dumps(e_remote)
+    >>> e_unpickled = pickle.loads(e_pickled)
+    >>>
+    >>> e_unpickled
+    ValueError(38)
+    >>> type(e_unpickled)
+    <class 'ValueError'>
+    >>> e_unpickled.__traceback__ is None
+    True
+    >>> e_unpickled.__cause__
+    RemoteTraceback('Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n')
+    >>>
+    >>> is_remote_exception(e_unpickled)
+    True
+    >>> get_remote_traceback(e_unpickled)
+    'Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n'
+    >>> print(get_remote_traceback(e_unpickled))
+    Traceback (most recent call last):
+      File "<stdin>", line 2, in <module>
+      File "<stdin>", line 2, in gee
+      File "<stdin>", line 2, in foo
+    ValueError: 38
+    >>>
+    >>>
+    >>> raise e_unpickled
+    Traceback (most recent call last):
+      File "<stdin>", line 1, in <module>
+    ValueError: 38
+    .
+    38
+    >>>
     """
 
     # This takes the idea of `concurrent.futures.process._ExceptionWithTraceback`
@@ -173,6 +304,14 @@ class RemoteException:
     # Also check out `sys.excepthook`.
 
     def __init__(self, exc: Exception, tb: Optional[TracebackType | str] = None):
+        """
+        Parameters
+        ----------
+        exc
+            An Exception object.
+        tb
+            Optional traceback info, if not already carried by ``exc``.
+        """
         if isinstance(tb, str):
             pass
         elif isinstance(tb, TracebackType):
@@ -215,7 +354,8 @@ class RemoteException:
 
 class Thread(threading.Thread):
     """
-    This class makes the result or exception produced in a thread
+    A subclass of the standard ``threading.Thread``,
+    this class makes the result or exception produced in a thread
     accessible from the thread object itself. This makes the ``Thread``
     object's behavior somewhat similar to the ``Future`` object returned
     by ``concurrent.futures.ThreadPoolExecutor.submit``.
@@ -270,17 +410,31 @@ class Thread(threading.Thread):
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
     """
-    This customization adds two things to the standard class:
+    A subclass of the standard ``multiprocessing.context.SpawnProcess``,
+    this customization adds two things:
 
-    - make result and exception available as attributes of the
-      process object, similar to ``concurrent.futures.Future``.
-    - make logs in the subprocess handled in the main process.
+    1. Make result and exception available as attributes of the
+       process object, hence letting you use a ``SpawnProcess`` object
+       similarly to how you use the ``Future`` object returned by
+       ``concurrent.futures.ProcessPoolExecutor.submit``.
+    2. Make logs in the worker process handled in the main process.
+
+    The logging enhancement makes use of :class:`ProcessLogger`.
     """
 
     def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
         """
-        ``loud_exception``: if True, it's the standard ``Process`` behavior;
-        if False, it's the ``concurrent.futures`` behavior.
+        Parameters
+        ----------
+        *args
+            Positional arguments passed on to the standard ``Process``.
+        kwargs
+            Passed on to the standard ``Process``.
+        loud_exception
+            If ``True``, behave like the standard multiprocessing ``Process`` in the case of exceptions;
+            if ``False``, behave like ``concurrent.futures`` in the case of exceptions.
+        **moreargs
+            Additional keyword arguments passed on to the standard ``Process``.
         """
         if kwargs is None:
             kwargs = {}
@@ -398,11 +552,11 @@ class ProcessLogger:
 
             pl.start()
 
-    Calling ``stop`` in either the main or the child process is optional.
+    Calling :meth:`stop` in either the main or the child process is optional.
     The call will immediately stop processing logs in the respective process.
 
-    Although user can use this class in their code, they are encouraged to
-    use ``SpawnProcess``, which already handles logging via this class.
+    .. note:: Although user can use this class in their code, they are encouraged to
+        use ``SpawnProcess``, which already handles logging via this class.
     """
 
     def __init__(self, *, ctx: Optional[multiprocessing.context.BaseContext] = None):
