@@ -1205,18 +1205,18 @@ class Server:
         x
             Input data element.
         timeout
-            In seconds. If result is not ready after this time, :class:`TimeoutError` is raised.
+            In seconds. If result is not ready after this time, :class:`~mpservice.util.TimeoutError` is raised.
 
             There are two situations where timeout happens.
             At first, ``x`` is placed in an input queue for processing.
             This step is called "enqueue".
             If the queue is full for the moment, the code will wait.
             If a spot does not become available during the ``timeout`` period,
-            the :class:`TimeoutError` message will be "... seconds enqueue".
+            the :class:`~mpservice.util.TimeoutError` message will be "... seconds enqueue".
 
             Once ``x`` is placed in the input queue, code will wait for the result at the end
             of an output queue. If result is not yet ready when the ``timeout`` period
-            is over, the :class:`TimeoutError` message will be ".. seconds total".
+            is over, the :class:`~mpservice.util.TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request.
         backpressure
