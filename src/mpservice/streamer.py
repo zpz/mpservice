@@ -564,18 +564,19 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.0", details="Use ``parmap`` instead"
+        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``parmap`` instead"
     )
-    def transform(self, *args, **kwargs):
-        return self.parmap(*args, **kwargs)
+    def transform(self, func, *, executor='thread', concurrency=None, return_x=False, return_exceptions=False, **func_args):
+        return self.parmap(func, executor=executor, num_workers=concurrency, return_x=return_x,
+            return_exceptions=return_exceptions, **func_args)
 
     def parmap(
         self,
         func: Callable[[T], TT],
         /,
+        executor: Literal["thread", "process"],
         *,
-        executor: Literal["thread", "process"] = "process",
-        concurrency: Optional[int] = None,
+        num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         **kwargs,
@@ -610,7 +611,7 @@ class Streamer(EnforceOverrides, Iterator):
             in counting, for example.
         executor
             Either 'thread' or 'process'.
-        concurrency
+        num_workers
             Max number of threads (if ``executor='thread'``) or processes
             (if ``executor='process'``) created to run ``func``.
             This is also the max number of concurrent calls to ``func``
@@ -638,7 +639,7 @@ class Streamer(EnforceOverrides, Iterator):
                 self.streamlets[-1],
                 func,
                 executor=executor,
-                concurrency=concurrency,
+                num_workers=num_workers,
                 return_x=return_x,
                 return_exceptions=return_exceptions,
                 **kwargs,
@@ -904,31 +905,31 @@ class Parmapper(Stream):
         func: Callable[[T], TT],
         *,
         executor: Literal["thread", "process"] = "process",
-        concurrency: Optional[int] = None,
+        num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         **kwargs,
     ):
         super().__init__(instream)
 
-        if concurrency is None:
+        if num_workers is None:
             if executor == "thread":
-                concurrency = min(32, (os.cpu_count() or 1) + 4)
+                num_workers = min(32, (os.cpu_count() or 1) + 4)
             else:
-                concurrency = os.cpu_count() or 1
+                num_workers = os.cpu_count() or 1
         else:
-            assert concurrency > 0
+            assert num_workers > 0
         self._return_x = return_x
         self._return_exceptions = return_exceptions
         if executor == "thread":
-            self._executor = concurrent.futures.ThreadPoolExecutor(concurrency)
+            self._executor = concurrent.futures.ThreadPoolExecutor(num_workers)
         else:
             assert executor == "process"
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
-                concurrency, mp_context=MP_SPAWN_CTX
+                num_workers, mp_context=MP_SPAWN_CTX
             )
-        self._tasks = SingleLane(concurrency)
+        self._tasks = SingleLane(num_workers)
         self._worker = Thread(
             target=self._start, args=(func,), kwargs=kwargs, loud_exception=False
         )

@@ -1,22 +1,22 @@
 """
-``mpservice.mpserver`` provides classes that use ``multiprocessing`` to perform CPU-bound operations
+``mpservice.mpserver`` provides classes that use `multiprocessing`_ to perform CPU-bound operations
 taking advantage of all the CPUs (i.e. cores) on the machine.
 
-Using threads to perform IO-bound operations is also supported, although that is not the initial focus.
+Using `threading`_ to perform IO-bound operations is also supported, although that is not the initial focus.
 
 There are three levels of constructs.
 
-1. On the lowest level is ``Worker``. This defines operations on a single input item
+1. On the lowest level is :class:`Worker`. This defines operations on a single input item
    or a batch of items in usual sync code. This is supposed to run in its own process (thread)
    and use that single process (thread) only.
 
-2. On the middle level is ``Servlet``. A basic form of ``Servlet`` arranges to execute a ``Worker`` in multiple
-   processes (threads). A more "advanced" form of ``Servlet`` arranges to executive multiple
-   ``Servlet``\\s as a sequence or an ensemble.
+2. On the middle level is :class:`Servlet`. A basic form of Servlet arranges to execute a :class:`Worker` in multiple
+   processes (threads). A more "advanced" form of Servlet arranges to executive multiple
+   Servlets as a sequence or an ensemble.
 
-3. On the top level is ``Server``. A ``Server``
+3. On the top level is :class:`Server`. A Server
    handles interfacing with the outside world, while passing the "real work" to
-   a ``Servlet`` and relays the latter's result to the requester.
+   a :class:`Servlet` and relays the latter's result to the requester.
 """
 
 from __future__ import annotations
@@ -90,9 +90,12 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
     This queue is meant to be used between two processes or between a process
     and a thread.
 
-    The main use case of this class is in ``ProcessWorker._build_input_batches``.
+    The main use case of this class is in :meth:`ProcessWorker._build_input_batches`.
 
-    Check out ``os.read``, ``os.write``, ``os.close`` with file-descriptor args.
+    Check out
+    `os.read <https://docs.python.org/3/library/os.html#os.read>`_, 
+    `os.write <https://docs.python.org/3/library/os.html#os.write>`_, and
+    `os.close <https://docs.python.org/3/library/os.html#os.close>`_ with file-descriptor args.
     """
 
     def __init__(self, *, ctx=None):
@@ -119,7 +122,7 @@ class Worker(ABC):
     in usual synchronous code. This is supposed to run in its own process
     and use that single process only.
 
-    Typically a subclass needs to enhance ``__init__`` and implement ``call``,
+    Typically a subclass needs to enhance :meth:`__init__` and implement :meth:`call`,
     and leave the other methods intact.
     """
 
@@ -132,11 +135,11 @@ class Worker(ABC):
         **init_kwargs,
     ):
         """
-        A ``Servlet`` object will arrange to start a ``Worker`` object
+        A :class:`Servlet` object will arrange to start a :class:`Worker` object
         in a thread or process. This classmethod will be the ``target`` argument
-        to ``Thread`` or ``Process``.
+        to `Thread`_ or `Process`_.
 
-        This method creates a ``Worker`` object and calls its ``start`` method
+        This method creates a :class:`Worker` object and calls its :meth:`~Worker.start` method
         to kick off the work.
 
         Parameters
@@ -144,18 +147,18 @@ class Worker(ABC):
         q_in
             A queue that carries input elements to be processed.
 
-            In the subclass ``ProcessWorker``, ``q_in`` is a ``FastQueue``.
-            In the subclass ``ThreadWorker``, ``q_in`` is either a ``FastQueue`` or a ``SimpleQueue``.
+            In the subclass :class:`ProcessWorker`, ``q_in`` is a :class:`FastQueue`.
+            In the subclass :class:`ThreadWorker`, ``q_in`` is either a :class:`FastQueue` or a :class:`SimpleQueue`.
         q_out
             A queue that carries output values.
 
-            In the subclass ``ProcessWorker``, ``q_out`` is a ``FastQueue``.
-            In the subclass ``ThreadWorker``, ``q_out`` is either a ``FastQueue`` or a ``SimpleQueue``.
+            In the subclass :class:`ProcessWorker`, ``q_out`` is a :class:`FastQueue`.
+            In the subclass :class:`ThreadWorker`, ``q_out`` is either a :class:`FastQueue` or a :class:`SimpleQueue`.
 
             The elements in ``q_out`` correspond to those in ``q_in``.
             This is the case regardless of the settings for batching.
         **init_kwargs
-            Passed on to ``__init__``.
+            Passed on to :meth:`__init__`.
         """
         obj = cls(**init_kwargs)
         q_out.put(obj.name)
@@ -180,17 +183,17 @@ class Worker(ABC):
         ``super().__init__`` accordingly.
 
         The ``__init__`` of a subclass may define additional input parameters;
-        they can be passed in through ``run``.
+        they can be passed in through :meth:`run`.
 
         Parameters
         ----------
         batch_size
-            Max batch size; see ``call``.
+            Max batch size; see :meth:`call`.
 
             Remember to pass in ``batch_size`` in accordance with the implementation
-            of ``call``. In other words, if ``batch_size > 0``, then ``call``
-            must handle a ``list`` input that contains a batch of elements.
-            On the other hand, if ``batch_size`` is 0, then the input to ``call``
+            of :meth:`call`. In other words, if ``batch_size > 0``, then :meth:`call`
+            must handle a list input that contains a batch of elements.
+            On the other hand, if ``batch_size`` is 0, then the input to :meth:`call`
             is a single element.
 
             If ``None``, then 0 is used, meaning no batching.
@@ -233,7 +236,7 @@ class Worker(ABC):
             If ``batch_size`` is 0 or 1, then ``batch_wait_time`` should be left unspecified,
             otherwise the only valid value is 0.
 
-            If ``batch_size > 1`, then ``batch_wait_time`` is 0.01 by default.
+            If ``batch_size > 1``, then ``batch_wait_time`` is 0.01 by default.
         batch_size_log_cadence
             Log batch size statistics every this many batches. If ``None``, this log is turned off.
 
@@ -265,15 +268,15 @@ class Worker(ABC):
     def call(self, x):
         """
         Private methods wait on the input queue to gather "work orders",
-        send them to ``call`` for processing,
-        collect the outputs of ``call``,  and put them in the output queue.
+        send them to :meth:`call` for processing,
+        collect the outputs of :meth:`call`,  and put them in the output queue.
 
         If ``self.batch_size == 0``, then ``x`` is a single
         element, and this method returns result for ``x``.
 
         If ``self.batch_size > 0`` (including 1), then
-        ``x`` is a ``list`` of input data elements, and this
-        method returns a ``list`` (or ``Sequence``) of results corresponding
+        ``x`` is a list of input data elements, and this
+        method returns a list (or `Sequence`_) of results corresponding
         to the elements in ``x``.
         However, this output, when received by private methods of this class,
         will be split and individually put in the output queue,
@@ -283,14 +286,14 @@ class Worker(ABC):
 
         When batching is enabled (i.e. when ``self.batch_size > 0``), the number of
         elements in ``x`` varies between calls depending on the supply
-        in the input queue. The ``list`` ``x`` does not have a fixed length.
+        in the input queue. The list ``x`` does not have a fixed length.
 
         Be sure to distinguish batching from the non-batching case where a single
-        input is naturally a ``list``. In that case, the output of
+        input is naturally a list. In that case, the output of
         the this method is the result corresponding to the single input ``x``.
-        The result could be anything---it may or may not be a ``list``.
+        The result could be anything---it may or may not be a list.
 
-        If a subclass fixes `batch_size` in its ``__init__`` to be
+        If a subclass fixes ``batch_size`` in its ``__init__`` to be
         0 or nonzero, make sure this method is implemented accordingly.
 
         If ``__init__`` does not fix the value of ``batch_size``,
@@ -305,7 +308,7 @@ class Worker(ABC):
 
     def start(self, *, q_in, q_out):
         """
-        This is called by ``run`` to kick off the processing loop.
+        This is called by :meth:`run` to kick off the processing loop.
         """
         try:
             if self.batch_size > 1:
@@ -528,7 +531,7 @@ class CpuAffinity:
             If ``None``, no pinning is done. This object is used only to query the current affinity.
             (I believe all process starts in an un-pinned status.)
 
-            If an ``int``, it is the zero-based index of the CPU. Valid values are 0, 1,...,
+            If an int, it is the zero-based index of the CPU. Valid values are 0, 1,...,
             the number of CPUs minus 1. If a list, the elements are CPU indices.
             Duplicate values will be removed. Invalid values will raise ``ValueError``.
 
@@ -550,7 +553,7 @@ class CpuAffinity:
 
     def set(self) -> None:
         """
-        Set CPU affinity to the value passed into ``__init__``.
+        Set CPU affinity to the value passed into :meth:`__init__`.
         If that value was ``None``, do nothing.
         """
         if self.target is not None:
@@ -568,11 +571,11 @@ class ProcessWorker(Worker):
         This classmethod runs in the worker process to construct
         the worker object and start its processing loop.
 
-        This function is the parameter ``target`` to ``SpawnProcess``.
-        As such, elements in ``kwargs`` go through pickling,
+        This function is the parameter ``target`` to :class:`~mpservice.util.SpawnProcess`.
+        As such, elements in ``**kwargs`` go through pickling,
         hence they should consist
-        mainly of small, Python builtin types such as string, number, small ``dict``\\s, etc.
-        Be careful about passing custom class objects in ``kwargs``.
+        mainly of small, Python builtin types such as string, number, small dict's, etc.
+        Be careful about passing custom class objects in ``**kwargs``.
 
         Parameters
         ----------
@@ -594,7 +597,7 @@ class ThreadWorker(Worker):
 
 def make_threadworker(func: Callable[[Any], Any]) -> type[ThreadWorker]:
     """
-    This function defines and returns a simple ``ThreadWorker`` subclass
+    This function defines and returns a simple :class:`ThreadWorker` subclass
     for quick, "on-the-fly" use.
     This can be useful when we want to introduce simple servlets
     for pre-processing and post-processing.
@@ -602,7 +605,7 @@ def make_threadworker(func: Callable[[Any], Any]) -> type[ThreadWorker]:
     Parameters
     ----------
     func
-        This function is what happens in the method ``call``.
+        This function is what happens in the method :meth:`~Worker.call`.
     """
 
     class MyThreadWorker(ThreadWorker):
@@ -662,16 +665,16 @@ class ProcessServlet(Servlet):
         Parameters
         ----------
         worker_cls
-            A subclass of ``ProcessWorker``.
+            A subclass of :class:`ProcessWorker`.
         cpus
             Specifies how many processes to create and how they are pinned
             to specific CPUs.
 
             The default is ``None``, indicating a single unpinned process.
 
-            Otherwise, a list of ``CpuAffinity`` objects.
+            Otherwise, a list of :class:`CpuAffinity` objects.
             For convenience, values of primitive types are also accepted;
-            they will be used to construct ``CpuAffinity`` objects.
+            they will be used to construct `CpuAffinity` objects.
             The number of processes created is the number of elements in ``cpus``.
             The CPU spec is very flexible. For example,
 
@@ -770,7 +773,7 @@ class ThreadServlet(Servlet):
         Parameters
         ----------
         worker_cls
-            A subclass of ``ThreadWorker``
+            A subclass of :class:`ThreadWorker`
         num_threads
             The number of threads to create. Each thread will host and run
             an instance of ``worker_cls``.
@@ -801,11 +804,11 @@ class ThreadServlet(Servlet):
         q_out
             A queue for results.
 
-            ``q_in`` and ``q_out` are either ``FastQueue``\\s (for processes)
-            or ``SimpleQueue``\\s (for threads). Because this servlet may be connected to
-            either ``ProcessServlet``\\s or ``ThreadServlet``\\s, either type of queues may
-            be appropriate. In contrast, for ``ProcessServlet``, the input and output
-            queues are both ``FastQueue``\\s.
+            ``q_in`` and ``q_out`` are either :class:`FastQueue`\\s (for processes)
+            or :class:`SimpleQueue`\\s (for threads). Because this servlet may be connected to
+            either :class:`ProcessServlet`\\s or :class:`ThreadServlet`\\s, either type of queues may
+            be appropriate. In contrast, for :class:`ProcessServlet`, the input and output
+            queues are both :class:`FastQueue`\\s.
         """
         assert not self._started
         for ithread in range(self._num_threads):
@@ -844,8 +847,8 @@ class SequentialServlet(Servlet):
     one operations's output becoming the next operation's input.
 
     Each operation is performed by a "servlet", that is,
-    a ``ProcessServlet`` or ``ThreadServlet`` or ``SequentialServlet``
-    or ``EnsembleServlet``.
+    a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
+    or :class:`EnsembleServlet`.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -869,7 +872,7 @@ class SequentialServlet(Servlet):
 
         The types of ``q_in`` and ``q_out`` are decided by the caller.
         The types of intermediate queues are decided within this function.
-        As a rule, use ``SimpleQueue`` between two threads; use ``FastQueue``
+        As a rule, use :class:`SimpleQueue` between two threads; use :class:`FastQueue`
         between two processes or between a process and a thread.
         """
         assert not self._started
@@ -914,8 +917,8 @@ class EnsembleServlet(Servlet):
     is returned as the result.
 
     Each operation is performed by a "servlet", that is,
-    a ``ProcessServlet`` or ``ThreadServlet`` or ``SequentialServlet``
-    or ``EnsembleServlet``.
+    a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
+    or :class:`EnsembleServlet`.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -938,8 +941,8 @@ class EnsembleServlet(Servlet):
         A main concern is to wire up the parallel execution of all the servlets
         on each input item.
 
-        ``q_in`` and ``q_out` contain inputs from and outputs to
-        the "outside world". Their types, either ``FastQueue`` or ``SimpleQueue``,
+        ``q_in`` and ``q_out`` contain inputs from and outputs to
+        the "outside world". Their types, either :class:`FastQueue` or :class:`SimpleQueue`,
         are decided by the caller.
         """
         assert not self._started
@@ -1049,19 +1052,19 @@ class EnsembleServlet(Servlet):
 
 
 Sequential = SequentialServlet
-"""An alias to ``SequentialServlet`` for backward compatibility.
+"""An alias to :class:`SequentialServlet` for backward compatibility.
 
 .. deprecated:: 0.11.8
-    Will be removed in 0.12.0.
+    Will be removed in 0.13.0.
     Use ``SequentialSevlet`` instead.
 """
 
 
 Ensemble = EnsembleServlet
-"""An alias to ``EnsembleServlet`` for backward compatibility.
+"""An alias to :class:`EnsembleServlet` for backward compatibility.
 
 .. deprecated:: 0.11.8
-    Will be removed in 0.12.0.
+    Will be removed in 0.13.0.
     Use ``EnsembleSevlet`` instead.
 """
 
@@ -1194,7 +1197,7 @@ class Server:
         """
         When this is called, this server is usually backing a (http or other) service.
         Concurrent async calls to this object may happen.
-        In such use cases, ``call`` and ``stream`` should not be called to this object
+        In such use cases, :meth:`call` and :meth:`stream` should not be called to this object
         at the same time.
 
         Parameters
@@ -1202,26 +1205,26 @@ class Server:
         x
             Input data element.
         timeout
-            In seconds. If result is not ready after this time, ``TimeoutError`` is raised.
+            In seconds. If result is not ready after this time, :class:`TimeoutError` is raised.
 
             There are two situations where timeout happens.
             At first, ``x`` is placed in an input queue for processing.
             This step is called "enqueue".
             If the queue is full for the moment, the code will wait.
             If a spot does not become available during the ``timeout`` period,
-            the ``TimeoutError`` message will be "... seconds enqueue".
+            the :class:`TimeoutError` message will be "... seconds enqueue".
 
             Once ``x`` is placed in the input queue, code will wait for the result at the end
             of an output queue. If result is not yet ready when the ``timeout`` period
-            is over, the ``TimeoutError`` message will be ".. seconds total".
+            is over, the :class:`TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request.
         backpressure
-            If ``True``, and the input queue is full, do not wait; raise ``PipelineFull``
+            If ``True``, and the input queue is full, do not wait; raise :class:`PipelineFull`
             exception right away. If ``False``, wait on the input queue for as long as
             ``timeout`` seconds. Effectively, the input queue is considered full if
             there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
-            in the server, where ``backlog`` is the parameter to ``__init__`.
+            in the server, where ``backlog`` is the parameter to :meth:`__init__`.
         """
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
@@ -1230,9 +1233,9 @@ class Server:
         """
         This is called in "embedded" mode for sporadic uses.
         It is not designed to serve high load from multi-thread concurrent
-        calls. To process large amounts in embedded model, use ``stream``.
+        calls. To process large amounts in embedded model, use :meth:`stream`.
 
-        The parameters ``x`` and ``timeout`` have the same meanings as in ``async_call``.
+        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`async_call`.
         """
         fut = self._enqueue(x, timeout)
         return self._wait_for_result(fut)
@@ -1268,7 +1271,7 @@ class Server:
             in place of the would-be regular result.
             If ``False``, exceptions will be propagated right away, crashing the program.
         timeout
-            Interpreted the same as in ``call`` and ``async_call``.
+            Interpreted the same as in :meth:`call` and :meth:`async_call`.
 
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value.

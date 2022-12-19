@@ -1,6 +1,6 @@
-========
-mpserver
-========
+===================================
+Flexible service using ``mpserver``
+===================================
 
 .. automodule:: mpservice.mpserver
     :no-members:
@@ -12,7 +12,7 @@ Example
 =======
 
 Let's make up an interesting problem that involves several expensive steps that demand a lot of computing power.
-We decided to use ``multiprocessing`` to speed thing up.
+We decided to use `multiprocessing`_ to speed thing up.
 First, define the few operations that will take place in separate processes::
 
     from time import sleep
@@ -67,14 +67,14 @@ In other words, define a flow that any input value will go through.
 In words, given input ``x``, it goes through such a flow of operations:
 
 1. On the high level, the flow is a "sequence" of three components.
-   The first is an ``EnsembleServlet``, the second is a ``ThreadServlet``,
-   and the third is a ``ProcessServlet``.
+   The first is an :class:`EnsembleServlet`, the second is a :class:`ThreadServlet`,
+   and the third is a :class:`ProcessServlet`.
 
-   The input ``x`` enters the ``EnsembleServlet``, the output of which
-   enters the ``ThreadServlet``, the output of which enters the ``ProcessServlet``,
+   The input ``x`` enters the EnsembleServlet, the output of which
+   enters the ThreadServlet, the output of which enters the ProcessServlet,
    the output of which is the final result.
    
-2. The ``EnsembleServlet`` arranges ``GetHead``, ``GetTail``, and ``GetLen``
+2. The :class:`EnsembleServlet` arranges ``GetHead``, ``GetTail``, and ``GetLen``
    to run in separate processes because they are compute-intensive.
 
    For precise control, we have specified which CPUs each component should run on.
@@ -86,31 +86,31 @@ In words, given input ``x``, it goes through such a flow of operations:
    Being an *ensemble* servlet, each of its components ``GetHead``, ``GetTail``, and ``GetLen``
    will get the input ``x`` and produce its output.
    The three outputs will form a list (respecting the order of the operators), which
-   is the output of the ``EnsembleServlet``.
+   is the output of the :class:`EnsembleServlet`.
    In other words, the output is the list ``[first_elem, last_elem, len]``.
 
-3. On the output of the ``EnsembleServlet``, we apply a simple function, which adds up
+3. On the output of the EnsembleServlet, we apply a simple function, which adds up
    the first two elements and multiply the sum by the third element.
    This is a light-weight operation, so we do it in a thread instead of a process.
 
-   We could have defined a subclass of ``ThreadWorker`` (similar to the ``ProcessWorker``
-   subclasses ``GetHead`` etc) and then wrap it in a ``ThreadServlet``.
-   For demonstration, we chose to use ``make_threadworker`` to dynamically define and return such
+   We could have defined a subclass of :class:`ThreadWorker` (similar to the :class:`ProcessWorker`
+   subclasses ``GetHead`` etc) and then wrap it in a :class:`ThreadServlet`.
+   For demonstration, we chose to use :func:`make_threadworker` to dynamically define and return such
    a class.
 
-4. The output of the ``ThreadServlet`` becomes the input to ``Solute``.
+4. The output of the ThreadServlet becomes the input to ``Solute``.
    This is again a heavy computation, hence we run it in another process.
    This process can use any CPU because we did not provide the ``cpus`` argument.
 
-   The output of ``Solute`` is the final result of the ``SequentialServlet``.
+   The output of ``Solute`` is the final result of the :class:`SequentialServlet`.
 
-All the ``ProcessWorker``, ``ThreadWorker``, ``ProcessServlet``, ``ThreadServlet``, ``EnsembleServlet``,
-and ``SequentialServlet`` are just "spec" of the flow. They do not run by themselves.
+All the :class:`ProcessWorker`, :class:`ThreadWorker`, :class:`ProcessServlet`, :class:`ThreadServlet`, :class:`EnsembleServlet`,
+and :class:`SequentialServlet` are just "spec" of the flow. They do not run by themselves.
 There needs to be a "driver" that starts them, connects them to the "outside world", 
 passes input to them, and collects output from them.
-That's the work of a ``Server``.
-To correct, a ``Server`` does not interact with all of "them";
-it has direct interactions with the ``SequentialServlet`` only::
+That's the work of a :class:`Server`.
+To correct, a Server does not interact with all of "them";
+it has direct interactions with the :class:`SequentialServlet` only::
 
 
     from mpservice.mpserver import Server
@@ -160,21 +160,21 @@ Workers
 Servlets
 ========
 
-A ``Servlet`` manages the execution of a ``Worker`` or ``Worker``\s.
-We make a distinction between "simple" servlets, including ``ProcessServlet`` and ``ThreadServlet``,
-and "compound" servlets, including ``SequentialServlet`` and ``EnsembleServlet``.
+A :class:`Servlet` manages the execution of a :class:`Worker` or Workers.
+We make a distinction between "simple" servlets, including :class:`ProcessServlet` and :class:`ThreadServlet`,
+and "compound" servlets, including :class:`SequentialServlet` and :class:`EnsembleServlet`.
 
-A simple servlet arranges to execute one ``Worker`` in requested number of processes (threads).
+A simple servlet arranges to execute one :class:`Worker` in requested number of processes (threads).
 Optionally, it can specify exactly which CPU(s) each worker process uses.
 Each input item is passed to and processed by exactly one worker process (thread).
 
-A compound servlet arranges to execute multiple ``Servlet``\s as a sequence or an ensemble.
+A compound servlet arranges to execute multiple :class:`Servlet`\s as a sequence or an ensemble.
 There's a flavor of recursion in this definition in that a member servlet can very well be
 a compound servlet.
 
 Great power comes from this recursive definition.
-In principle, we can freely compose and nest the ``Servlet`` types.
-For example, suppose `W1`, `W2`,..., are `Worker` subclasses,
+In principle, we can freely compose and nest the :class:`Servlet` types.
+For example, suppose `W1`, `W2`,..., are :class:`Worker` subclasses,
 then we may design such a workflow,
 
 ::
@@ -191,6 +191,7 @@ then we may design such a workflow,
                 ),
         )
 
+.. autoclass:: mpservice.mpserver.Servlet
 
 .. autoclass:: mpservice.mpserver.CpuAffinity
 
@@ -211,15 +212,15 @@ Server
 ======
 
 
-The "interface" and "scheduling" code of `Server` runs in the "main process".
+The "interface" and "scheduling" code of :class:`Server` runs in the "main process".
 Two usage patterns are supported, namely making (concurrent) individual
 calls to the service to get individual results, or flowing
 a potentially unlimited stream of data through the service
 to get a stream of results. The first usage supports a sync API and an async API.
 
 
-On the top level is `Server`. Pass a `Servlet`, or `SequentialServlet` or `EnsembleServlet`
-into a `Server`, which handles scheduling as well as interfacing with the outside
+On the top level is :class:`Server`. Pass a :class:`Servlet`, or :class:`SequentialServlet` or :class:`EnsembleServlet`
+into a Server, which handles scheduling as well as interfacing with the outside
 world::
 
     server = Server(s)
@@ -240,6 +241,10 @@ with useful traceback info.
 The user's main work is implementing the operations in the "workers".
 Another task (of some trial and error) by the user is experimenting with
 CPU allocations among workers to achieve best performance.
+
+.. autoexception:: mpservice.mpserver.TimeoutError
+
+.. autoexception:: mpservice.mpserver.PipelineFull
 
 .. autoclass:: mpservice.mpserver.Server
 
