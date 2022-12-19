@@ -93,7 +93,7 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
     The main use case of this class is in :meth:`ProcessWorker._build_input_batches`.
 
     Check out
-    `os.read <https://docs.python.org/3/library/os.html#os.read>`_, 
+    `os.read <https://docs.python.org/3/library/os.html#os.read>`_,
     `os.write <https://docs.python.org/3/library/os.html#os.write>`_, and
     `os.close <https://docs.python.org/3/library/os.html#os.close>`_ with file-descriptor args.
     """

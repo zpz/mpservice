@@ -566,9 +566,24 @@ class Streamer(EnforceOverrides, Iterator):
     @deprecated(
         deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``parmap`` instead"
     )
-    def transform(self, func, *, executor='thread', concurrency=None, return_x=False, return_exceptions=False, **func_args):
-        return self.parmap(func, executor=executor, num_workers=concurrency, return_x=return_x,
-            return_exceptions=return_exceptions, **func_args)
+    def transform(
+        self,
+        func,
+        *,
+        executor="thread",
+        concurrency=None,
+        return_x=False,
+        return_exceptions=False,
+        **func_args,
+    ):
+        return self.parmap(
+            func,
+            executor=executor,
+            num_workers=concurrency,
+            return_x=return_x,
+            return_exceptions=return_exceptions,
+            **func_args,
+        )
 
     def parmap(
         self,
