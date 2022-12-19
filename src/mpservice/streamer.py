@@ -260,15 +260,15 @@ class Streamer(EnforceOverrides, Iterator):
             and you decide to ignore them.
 
             If ``None`` (the default), no exception object is dropped.
-            
+
             This can be a particular Exception class, or a tuple of classes.
-            
+
             To drop all exceptions, use ``Exception`` (or even ``BaseException``).
         keep_exc_types
             These types of exceptions are kept in the stream.
 
             If ``None`` (the default), then no exception object is kept.
-            
+
             The members in ``keep_exc_types`` and ``drop_exc_types`` should be distinct.
             If there is any common member, then it is kept because the ``keep_exc_types``
             condition is checked first.
