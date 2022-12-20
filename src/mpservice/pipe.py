@@ -49,10 +49,10 @@ def _mkfifo(path: str):
 
 
 class _Pipe:
-    '''
+    """
     See `multiprocessing.connection.Connection <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.connection.Connection>`_ for documentation on the
     methods :meth:`send`, :meth:`recv`, :meth:`send_bytes`, :meth:`recv_bytes`, :meth:`recv_bytes_into`.
-    '''
+    """
 
     def __init__(self, rpath: str, wpath: str):
         self._rpath = os.path.abspath(rpath)

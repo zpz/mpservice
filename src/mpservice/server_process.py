@@ -103,7 +103,6 @@ from .util import MP_SPAWN_CTX
 
 
 class Manager(multiprocessing.managers.SyncManager):
-
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
 
