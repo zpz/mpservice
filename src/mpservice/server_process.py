@@ -1,8 +1,91 @@
 """A "server process" provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
-This module corresponds to the standard ``multiprocessing.managers`` module
-with simplified APIs for targeted use cases.
+This module corresponds to the standard 
+`multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_ module
+with simplified APIs for targeted use cases. The basic workflow  is as follows.
+
+1. Register one or more classes with the :class:`Manager` class::
+
+        class Doubler:
+            def __init__(self, ...):
+                ...
+
+            def double(self, x):
+                return x * 2
+
+        class Tripler:
+            def __init__(self, ...):
+                ...
+
+            def triple(self, x):
+                return x * 3
+
+        Manager.register(Doubler)
+        Manager.register(Tripler)
+
+2. Create a manager object and start it::
+
+        manager = Manager()
+        manager.start()
+
+   You can also use a context manager::
+
+        with Manager() as manager:
+            ...
+
+3. Create one or more proxies::
+
+        doubler = manager.Doubler(...)
+        tripler = manager.Tripler(...)
+
+   A manager object has a "server process".
+   The above causes corresponding class objects to be created
+   in the server process; the returned objects are "proxies"
+   for the real objects. These proxies can be passed to any other
+   processes and used there.
+
+   The arguments in the above calls are passed to the server process
+   and used in the ``__init__`` methods of the corresponding classes.
+   For this reason, the parameters to ``__init__`` of a registered class
+   must all be pickle-able.
+
+   Calling one registered class multiple times, like
+
+   ::
+
+        prox1 = manager.Doubler(...)
+        prox2 = manager.Doubler(...)
+
+   will create independent objects in the server process.
+
+   Multiple manager objects will run their corresponding
+   server processes independently.
+
+4. Pass the proxy objects to any process and use them there.
+
+   Public methods (minus "properties") defined by the registered classes
+   can be invoked on a proxy with the same parameters and get the expected
+   result. For example,
+
+   ::
+
+        prox1.double(3)
+
+   will return 6. Inputs and output of the public method
+   should all be pickle-able.
+
+In each new thread or process, a proxy object will create a new
+connection to the server process (see 
+``multiprocessing.managers.Server.accepter``,
+...,
+``Server.accept_connection``,
+and 
+``BaseProxy._connect``;
+all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
+the server process then creates a new thread
+to handle requests from this connection (see ``Server.serve_client``
+also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
 """
 from __future__ import annotations
 
@@ -20,85 +103,6 @@ from .util import MP_SPAWN_CTX
 
 
 class Manager(multiprocessing.managers.SyncManager):
-    """
-    Usage:
-
-    1. Register one or more classes with the Manager class::
-
-            class Doubler:
-                def __init__(self, ...):
-                    ...
-
-                def double(self, x):
-                    return x * 2
-
-            class Tripler:
-                def __init__(self, ...):
-                    ...
-
-                def triple(self, x):
-                    return x * 3
-
-            Manager.register(Doubler)
-            Manager.register(Tripler)
-
-    2. Create a manager object and start it::
-
-            manager = Manager()
-            manager.start()
-
-       You can also use a context manager::
-
-            with Manager() as manager:
-                ...
-
-    3. Create one or more proxies::
-
-            doubler = manager.Doubler(...)
-            tripler = manager.Tripler(...)
-
-       A manager object has a "server process".
-       The above causes corresponding class objects to be created
-       in the server process; the returned objects are "proxies"
-       for the real objects. These proxies can be passed to any other
-       processes and used there.
-
-       The arguments in the above calls are passed to the server process
-       and used in the ``__init__`` methods of the corresponding classes.
-       For this reason, the parameters to ``__init__`` of a registered class
-       must all be pickle-able.
-
-       Calling one registered class multiple times, like
-
-       ::
-
-            prox1 = manager.Doubler(...)
-            prox2 = manager.Doubler(...)
-
-       will create independent objects in the server process.
-
-       Multiple manager objects will run their corresponding
-       server processes independently.
-
-    4. Pass the proxy objects to any process and use them there.
-
-       Public methods (minus "properties") defined by the registered classes
-       can be invoked on a proxy with the same parameters and get the expected
-       result. For example,
-
-       ::
-
-            prox1.double(3)
-
-       will return 6. Inputs and output of the public method
-       should all be pickle-able.
-
-    In each new thread or process, a proxy object will create a new
-    connection to the server process (see ``multiprocessing.managers.Server.accepter``,
-    ..., ``Server.accept_connection``, and ``BaseProxy._connect``);
-    the server process then creates a new thread
-    to handle requests from this connection (see ``Server.serve_client``).
-    """
 
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
@@ -108,16 +112,8 @@ class Manager(multiprocessing.managers.SyncManager):
     @classmethod
     def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
         """
-        ``typeid_or_callable`` is a usually class object. Suppose this is actually the class ``MyClass``,
-        then on a started object ``manager`` of ``Manager``,
-
-        ::
-
-            prox = manager.MyClass(...)
-
-        will create an object of ``MyClass`` in the server process and return a proxy.
-
-        This method should be called before a manager object is "started".
+        ``typeid_or_callable`` is usually a class object.
+        This method should be called before a :class:`Manager` object is "started".
         """
         if isinstance(typeid_or_callable, str):
             # This form allows the full API of the base class.

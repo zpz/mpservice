@@ -431,8 +431,7 @@ class Streamer(EnforceOverrides, Iterator):
         Examples
         --------
         >>> data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-        >>> with Streamer(data) as ss:
-        ...     print(ss.groupby(lambda x: x[0]).collect())
+        >>> print(Streamer(data).groupby(lambda x: x[0]).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
         self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
@@ -480,8 +479,6 @@ class Streamer(EnforceOverrides, Iterator):
         ``.batch()``, but that is by no means a requirement. The only requirement
         is that the input elements are lists.
 
-        Examples
-        --------
         ``unbatch`` can be combined with ``map`` to implement "expanding" a stream, like this:
 
         >>> def explode(x):
@@ -491,6 +488,17 @@ class Streamer(EnforceOverrides, Iterator):
         >>> ss = Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
         >>> print(ss.collect())
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
+
+        In fact, elements of the input stream do not have to be ``list``\s.
+        They can be any `Iterable`_\s. For example:
+
+        >>> def expand(n):
+        ...     for _ in range(n):
+        ...         yield n
+        >>>
+        >>> stream = Streamer((1, 2, 4, 3, 0, 5)).map(expand).unbatch().collect()
+        >>> print(stream)
+        [1, 2, 2, 4, 4, 4, 4, 3, 3, 3, 5, 5, 5, 5, 5]
         """
         self.streamlets.append(Unbatcher(self.streamlets[-1]))
         return self
@@ -828,25 +836,20 @@ class Unbatcher(Stream):
         but that is by no means a requirement.
         """
         super().__init__(instream)
-        self._batch = None
+        self._batch = iter([])
 
     @overrides
     def __next__(self):
         if self._stopped.is_set():
             raise StopIteration
-        if self._batch:
-            return self._batch.pop(0)
-        while True:
-            z = next(self._instream)
-            if is_exception(z):
-                return z
-            if len(z) == 0:
-                continue
-            self._batch = z
-            break
-        if self._stopped.is_set():
-            raise StopIteration
-        return self._batch.pop(0)
+        try:
+            z = next(self._batch)
+        except StopIteration:
+            y = next(self._instream)
+            self._batch = iter(y)
+            return self.__next__()
+        else:
+            return z
 
 
 class Buffer(Stream):

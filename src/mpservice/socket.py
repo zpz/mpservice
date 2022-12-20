@@ -182,9 +182,9 @@ async def open_unix_connection(path: str, *, timeout=None):
 
 class SocketApplication(EnforceOverrides):
     """
-    SocketApplication is designed to to used similar to the "application" in a
+    ``SocketApplication`` is designed to to used similar to the "application" in a
     HTTP framework. The main API is to register "endpoint" functions by the method
-    ``add_route``. This allows to back the socket service by multiple functions
+    :meth:`add_route`. This allows to back the socket service by multiple functions
     for different purposes. Usually there is only one main function, which involves
     transmitting substantial amount of data between the server and the client.
     For simplicity, one may use ``'/'`` for the ``path`` of this route.
@@ -220,9 +220,9 @@ class SocketApplication(EnforceOverrides):
         and returns a response (which could be ``None`` if so desired).
         The response should be serializable by the encoder.
         To be safe, return a object of Python native types.
-        If exception is raised in this method, appropriate ``RemoteException``
+        If exception is raised in this method, appropriate :class:`~mpservice.util.RemoteException`
         object will be sent in the response.
-        The method could also proactively return a ``RemoteException`` object.
+        The method could also proactively return a :class:`~mpservice.util.RemoteException` object.
 
         ``path`` is any string. The route is identified by this string. For familiarity,
         it may be a good idea to start the string with ``'/'``, although this is in no
@@ -257,7 +257,7 @@ class SocketServer(EnforceOverrides):
         ``backlog`` is the max concurrent in-progress requests per connection.
         (Note, the client may open many connections.)
         This "concurrency" is in terms of concurrent calls to
-        ``handle_request``.
+        :meth:`SocketApplication.handle_request`.
 
         The type of the service, between 'tcp' and 'unix', is determined
         by the parameters ``path``, ``host``, and ``port``. See code for details.
@@ -447,7 +447,7 @@ class SocketClient(EnforceOverrides):
             This is meant for waiting for server to be ready, rather than for
             the action of "connecting" itself (which should be fast).
         backlog
-            Size of queue for in-progress requests.
+            Size of the queue for in-progress requests.
         """
         # Experiments showed `max_connections` can be up to 200.
         # This needs to be improved.
