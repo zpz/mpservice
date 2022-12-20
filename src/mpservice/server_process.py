@@ -79,7 +79,7 @@ In each new thread or process, a proxy object will create a new
 connection to the server process (see``multiprocessing.managers.Server.accepter``,
 ...,
 ``Server.accept_connection``,
-and 
+and
 ``BaseProxy._connect``;
 all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
 the server process then creates a new thread
