@@ -2,8 +2,8 @@
 Serving ``mpserver``
 ====================
 
-Serving over http
------------------
+Serving using http
+------------------
 
 .. automodule:: mpservice.http
 
@@ -12,9 +12,28 @@ Serving using named pipes
 -------------------------
 
 .. automodule:: mpservice.pipe
+    :no-members:
+    :no-special-members:
+    :no-undoc-members:
+
+.. autoclass:: mpservice.pipe._Pipe
+
+.. autoclass:: mpservice.pipe.Server
+
+.. autoclass:: mpservice.pipe.Client
+
 
 
 Serving using sockets
 ---------------------
 
-.. automodule:: mpservice.socket
+.. autoclass:: mpservice.socket.SocketApplication
+
+.. autoclass:: mpservice.socket.SocketServer
+
+.. autofunction:: mpservice.socket.make_server
+
+.. autofunction:: mpservice.socket.run_app
+
+.. autoclass:: mpservice.socket.SocketClient
+

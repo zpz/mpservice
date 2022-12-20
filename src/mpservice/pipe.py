@@ -1,29 +1,29 @@
-"""This module provides tools to use a "named pipe" to communicate between
+"""The module ``mpservice.pipe`` provides tools to use a "named pipe" to communicate between
 two Python processes on the same machine.
 
 Usually the two Python processes are two separately started programs.
-If they are two processes created by ``multiprocessing`` in a single program,
-then one would directly use ``multiprocessing.Pipe`` instead of this module.
+If they are two processes created by `multiprocessing`_ in a single program,
+then you would directly use `multiprocessing.Pipe <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Pipe>`_ instead of this module.
 
-One creates a ``Server`` object in one process and a ``Client`` object in
+To start, create a :class:`Server` object in one process and a :class:`Client` object in
 the other process, providing the same ``path`` argument.
 The two objects can be created in any order, and their roles are symmetric.
-The different names simply remind the application to create one of each
+The different names simply remind the user to create one of each
 in the two processes.
 
-Two uni-directional pipes are created between the two processes.
-In each process, one "sends" (or writes) to one pipe and "receives" (or reads)
-from the other pipe. The roles of the two pipes in the two processes are flipped.
-
-The ``send`` and ``recv`` functions take and return pickle-able Python objects.
+Two uni-directional pipes are created between the two processes, represented
+by the files named ``f"{path}.1"`` and ``f"{path}.2"``.
+In each process, you :meth:`~_Pipe.send` to one pipe and :meth:`~_Pipe.recv` from the other pipe.
+The ``send`` and ``recv`` functions take and return picklable Python objects.
 While ``send`` does not block as long as system buffer has space,
 ``recv`` blocks until one data item is read.
 
-It's up to the application to design conventions understood by both sides
-to use special values to signal start, finish, and the like.
+It's up to the application to design handshaking values understood by both sides.
 
-See ``multiprocessing.connection.Connection`` for documentation on the
-``send`` and ``recv`` methods.
+The roles of the two pipes in the two processes are flipped;
+this role assignment is take care of internally.
+To prevent glitches, make sure the two files are non-existent before server and client
+are created.
 """
 
 import os
@@ -49,6 +49,11 @@ def _mkfifo(path: str):
 
 
 class _Pipe:
+    """
+    See `multiprocessing.connection.Connection <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.connection.Connection>`_ for documentation on the
+    methods :meth:`send`, :meth:`recv`, :meth:`send_bytes`, :meth:`recv_bytes`, :meth:`recv_bytes_into`.
+    """
+
     def __init__(self, rpath: str, wpath: str):
         self._rpath = os.path.abspath(rpath)
         self._wpath = os.path.abspath(wpath)

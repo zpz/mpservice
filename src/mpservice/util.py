@@ -100,7 +100,7 @@ Instead of the above, you are advised to write this::
     ...
 
 The difference between ``MP_SPAWN_CTX`` and the standard spawn context
-is that the former uses the custom :class:`SpawnProcess` class in places of the standard
+is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of the standard
 `Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
 
 If you only need to start a process and don't need to create other objects

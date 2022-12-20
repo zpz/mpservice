@@ -86,14 +86,14 @@ def make_server(
     **kwargs,
 ) -> uvicorn.Server:
     """
-    This function is specifically for use with ``mpservice.mpserver``.
+    This function is specifically for use with :mod:`mpservice.mpserver`.
 
     This function is adapted from ``uvicorn.main.run``.
 
     Parameters
     ----------
     app
-        A ``Starlette`` instance or the import string for such
+        A `starlette <https://www.starlette.io/>`_ instance or the import string for such
         an instance, like ``'mymodule:app'``.
     host
         The default ``'0.0.0.0'`` is suitable if the code runs with a Docker container.
