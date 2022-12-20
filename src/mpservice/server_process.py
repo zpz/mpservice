@@ -1,7 +1,7 @@
 """A "server process" provides a server running in one process,
 to be called from other processes for shared data or functionalities.
 
-This module corresponds to the standard 
+This module corresponds to the standard
 `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_ module
 with simplified APIs for targeted use cases. The basic workflow  is as follows.
 
@@ -76,8 +76,7 @@ with simplified APIs for targeted use cases. The basic workflow  is as follows.
    should all be pickle-able.
 
 In each new thread or process, a proxy object will create a new
-connection to the server process (see 
-``multiprocessing.managers.Server.accepter``,
+connection to the server process (see``multiprocessing.managers.Server.accepter``,
 ...,
 ``Server.accept_connection``,
 and 
