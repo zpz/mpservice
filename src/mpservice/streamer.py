@@ -489,8 +489,8 @@ class Streamer(EnforceOverrides, Iterator):
         >>> print(ss.collect())
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
 
-        In fact, elements of the input stream do not have to be ``list``\s.
-        They can be any `Iterable`_\s. For example:
+        In fact, elements of the input stream do not have to be ``list``\\s.
+        They can be any `Iterable`_\\s. For example:
 
         >>> def expand(n):
         ...     for _ in range(n):
