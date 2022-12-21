@@ -246,13 +246,13 @@ class Streamer(EnforceOverrides, Iterator):
         should be dropped, kept, or raised.
 
         While :meth:`parmap` and other operators can choose to continue processing the stream
-        by returning rather than raising exceptions, 
+        by returning rather than raising exceptions,
         a subsequent ``filter_exceptions`` drops known types of exception objects
         so that the next operator does not receive ``Exception`` objects as inputs.
-        
+
         The default behavior (both ``drop_exc_types`` and ``keep_exc_types`` are ``None``)
         is to raise any Exception object that is encountered.
-        
+
         A useful pattern is to specify one or a few known exception types to drop,
         and crash on any other unexpected exception.
 
@@ -346,7 +346,7 @@ class Streamer(EnforceOverrides, Iterator):
         if exc_types is None:
             exc_types = ()
         elif type(exc_types) is type:  # a class
-            exc_types = (exc_types, )
+            exc_types = (exc_types,)
 
         class Peeker:
             def __init__(self):
@@ -365,7 +365,12 @@ class Streamer(EnforceOverrides, Iterator):
                             should_print = True
                     else:
                         should_print = random() < self._interval
-                if not should_print and self._exc_types and is_exception(x) and isinstance(x, self._exc_types):
+                if (
+                    not should_print
+                    and self._exc_types
+                    and is_exception(x)
+                    and isinstance(x, self._exc_types)
+                ):
                     should_print = True
                 if not should_print:
                     return x
@@ -378,9 +383,7 @@ class Streamer(EnforceOverrides, Iterator):
                         trace = get_remote_traceback(x)
                     else:
                         try:
-                            trace = "".join(
-                                traceback.format_tb(x.__traceback__)
-                            )
+                            trace = "".join(traceback.format_tb(x.__traceback__))
                         except AttributeError:
                             pass
                 if trace:

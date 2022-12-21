@@ -1,4 +1,4 @@
-'''
+"""
 `multiprocessing`_ code can be tricky.
 ``mpservice`` provides help to address several common trikeries.
 
@@ -21,7 +21,7 @@ to the main process via a queue. :class:`~mpservice.util.SpawnProcess` has this 
 Last but not least, if exception happens in a child process and we don't want the program to crash right there,
 instead we send it to the main or another process to be investigated when/where we are ready to,
 the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteException` helps on this.
-'''
+"""
 
 from __future__ import annotations
 import errno
@@ -760,11 +760,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.__worker_logger__ = worker_logger
 
     def run(self):
-        '''
+        """
         Overrides the standard ``Process.run`.
 
         ``start`` arranges for this to be run in a child process.
-        '''
+        """
         worker_logger = self._kwargs.pop("__worker_logger__")
         worker_logger.start()
         result_and_error = self._kwargs.pop("__result_and_error__")
@@ -787,14 +787,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
 
     def done(self) -> bool:
-        '''
+        """
         Return ``True`` if the target function has successfully finished
         or crashed in the child process.
-        '''
+        """
         return self.exitcode is not None
 
     def result(self, timeout: Optional[float | int] = None):
-        '''
+        """
         Return the value returned by the target function.
         If the call hasn't yet completed, then this method will wait up to
         ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
@@ -802,7 +802,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         there is no limit to the wait time.
 
         If the call raised an exception, the method will raise the same exception.
-        '''
+        """
         self.join(timeout)
         if not self.done():
             raise TimeoutError
@@ -822,7 +822,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__result__
 
     def exception(self, timeout: Optional[float | int] = None):
-        '''
+        """
         Return the exception raised by the target function.
         If the call hasn't yet completed then this method will wait up to
         ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
@@ -830,7 +830,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         If ``timeout`` is ``None``, there is no limit to the wait time.
 
         If the target function completed without raising, ``None`` is returned.
-        '''
+        """
         self.join(timeout)
         if not self.done():
             raise TimeoutError

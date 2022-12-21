@@ -1519,5 +1519,5 @@ class Server:
                         ts0 = datetime.utcnow()
         finally:
             # if log_cadence and logcounter:
-                # _log_sys_info()
+            # _log_sys_info()
             pass
