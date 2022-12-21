@@ -102,19 +102,21 @@ The first three lines are equivalent to this one line:
 
 :class:`Streamer` has many other "operators". They can be characterised in a few ways:
 
-One-to-one:
+One-to-one (will not change the elements' count or order):
     - :meth:`~Streamer.map`
     - :meth:`~Streamer.accumulate`
     - :meth:`~Streamer.peek`
-
-One-to-many (may expand the stream):
-    - :meth:`~Streamer.unbatch`
+    - :meth:`~Streamer.parmap`
+    - :meth:`~Streamer.buffer`
 
 Many-to-one (may shrink the stream):
     - :meth:`~Streamer.groupby`
     - :meth:`~Streamer.batch`
 
-Selection or filtering (may shrink the stream):
+One-to-many (may expand the stream):
+    - :meth:`~Streamer.unbatch`
+
+Selection or filtering (may drop elements):
     - :meth:`~Streamer.filter`
     - :meth:`~Streamer.filter_exceptions`
     - :meth:`~Streamer.head`
@@ -124,12 +126,12 @@ Concurrent (will create other threads or processes):
     - :meth:`~Streamer.parmap`
     - :meth:`~Streamer.buffer`
 
-Read-only (do not change the stream):
+Read-only (will not change the elements):
     - :meth:`~Streamer.buffer`
     - :meth:`~Streamer.peek`
 
-All these methods "set up", or "add", operators to the streamer.
-They can be called either as a statement, or as a function, often in a "chained" fashion.
+These methods can be called either as a statement, or as a function, often in a "chained" fashion.
+They "set up", or "add", operators to the streamer.
 However, they do not *start* the operators.
 
 The operators that have been added to a streamer will start once we start to "consume" the stream,
@@ -146,9 +148,12 @@ There are several ways to consume the stream:
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
 
+The latter two methods are trivial wrappers of the first.
+
 Finally, :class:`~Streamer` is a context manager.
 If you have added a concurrent operator,
-and you may break out of the iteration prematurely or errors may occur,
+and the cunsumption may end prematurely (you break out of the iteration) or abnormally due to exception
+raised in any component,
 then you should consume the stream with context management, like this::
 
     stream = Streamer(...).map(...)...parmap(...)...

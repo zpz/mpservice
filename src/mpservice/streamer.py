@@ -239,43 +239,45 @@ class Streamer(EnforceOverrides, Iterator):
         """
         If a call to :meth:`parmap` upstream has specified ``return_exceptions=True``,
         then its output stream may contain ``Exception`` objects.
+        Other methods such as :meth:`map` may also deliberately capture and return
+        Exception objects.
 
-        A useful pattern is to call :meth:`filter_exceptions` right after such a :meth:`parmap` call.
-        This method determines which ``Exception`` objects should be dropped, kept, or raised.
-        While ``return_exceptions=True`` allows ``parmap`` to continue despite exceptions,
-        a subsequent ``filter_exceptions`` drops known types of exception objects from the stream
-        so that the next operator does not receive ``Exception`` objects in the input stream.
+        ``filter_exceptions`` determines which ``Exception`` objects in the stream
+        should be dropped, kept, or raised.
 
+        While :meth:`parmap` and other operators can choose to continue processing the stream
+        by returning rather than raising exceptions, 
+        a subsequent ``filter_exceptions`` drops known types of exception objects
+        so that the next operator does not receive ``Exception`` objects as inputs.
+        
         The default behavior (both ``drop_exc_types`` and ``keep_exc_types`` are ``None``)
         is to raise any Exception object that is encountered.
-
-        A typical use is to specify one or a few known exception types to drop (i.e. ignore),
+        
+        A useful pattern is to specify one or a few known exception types to drop,
         and crash on any other unexpected exception.
 
         Parameters
         ----------
         drop_exc_types
             These types of exceptions are dropped from the stream.
-            These should be types of known exceptions that could happen,
-            and you decide to ignore them.
+            These should be one or a few carefully identified exception types that
+            you know can be safely ignored.
 
-            If ``None`` (the default), no exception object is dropped.
+            If ``None`` (the default) or ``()`` or ``[]``, no exception object is dropped.
 
-            This can be a particular Exception class, or a tuple of classes.
-
-            To drop all exceptions, use ``Exception`` (or even ``BaseException``).
+            To drop all exceptions, use ``Exception`` or even ``BaseException``.
         keep_exc_types
             These types of exceptions are kept in the stream.
 
-            If ``None`` (the default), then no exception object is kept.
+            If ``None`` (the default), no exception object is kept.
 
-            The members in ``keep_exc_types`` and ``drop_exc_types`` should be distinct.
-            If there is any common member, then it is kept because the ``keep_exc_types``
-            condition is checked first.
-
-            To keep all exceptions, use ``Exception`` (or even ``BaseException``).
+            To keep all exceptions, use ``Exception`` or even ``BaseException``.
 
             An exception object that is neither kept nor dropped will be raised.
+
+            .. note:: The members in ``keep_exc_types`` and ``drop_exc_types`` should be distinct.
+                If there is any common member, then it is kept because the ``keep_exc_types``
+                condition is checked first.
         """
 
         def foo(x):
@@ -294,13 +296,13 @@ class Streamer(EnforceOverrides, Iterator):
         *,
         print_func: Optional[Callable[[str], None]] = None,
         interval: int | float = 1000,
-        exc_types: Optional[Sequence[type[BaseException]]] = None,
+        exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
     ):
         """Take a peek at the data element *before* it continues in the stream.
 
-        This is implemented by :meth:`map`, where the mapper function returns
-        the input value as is, but prints some info before returning.
+        This is implemented by :meth:`map`, where the mapper function prints
+        some info under certain conditions before returning the input value unchanged.
         If this does not do what you need, just create your own
         function to pass to :meth:`map`.
 
@@ -324,18 +326,16 @@ class Streamer(EnforceOverrides, Iterator):
             To turn off the printouts by this condition, pass in ``None``.
         exc_types
             If the element is an exception object of these types, print it out.
-
-            If ``None`` (the default), all exception objects are printed.
             This is regardless of the ``interval`` value.
 
-            To turn off the printouts by this condition, pass in ``()``.
-            In that case, the value will still be printed according to the ``interval``
-            condition, but the printout will not be tailored to the fact that
-            it is an exception object; in other words, there will be no printing
-            of the traceback.
+            If ``BaseException`` (the default), all exception objects are printed.
+
+            To turn off the printouts by this condition, pass in ``None`` or ``()`` or ``[]``.
+            In this case, ``interval`` is the only creterion for determining whether an element
+            should be printed, the element being an ``Exception`` or not.
         with_exc_tb
-            When an exception object is printed, should the traceback be printed
-            as well, if available? Default is ``True``.
+            If ``True``, traceback, if available, will be printed when an ``Exception`` object is printed,
+            the printing being determined by either ``interval`` or ``exc_types``.
         """
         if interval is not None:
             if isinstance(interval, float):
@@ -343,6 +343,10 @@ class Streamer(EnforceOverrides, Iterator):
             else:
                 assert isinstance(interval, int)
                 assert interval >= 1
+        if exc_types is None:
+            exc_types = ()
+        elif type(exc_types) is type:  # a class
+            exc_types = (exc_types, )
 
         class Peeker:
             def __init__(self):
@@ -354,31 +358,35 @@ class Streamer(EnforceOverrides, Iterator):
 
             def __call__(self, x):
                 self._idx += 1
-                if is_exception(x):
-                    if self._exc_types is None or isinstance(x, self._exc_types):
-                        trace = ""
-                        if self._with_trace:
-                            if is_remote_exception(x):
-                                trace = get_remote_traceback(x)
-                            else:
-                                try:
-                                    trace = "".join(
-                                        traceback.format_tb(x.__traceback__)
-                                    )
-                                except AttributeError:
-                                    pass
-                        if trace:
-                            self._print_func("#%d:  %r\n%s" % (self._idx, x, trace))
-                        else:
-                            self._print_func("#%d:  %r" % (self._idx, x))
-                        return x
+                should_print = False
                 if self._interval is not None:
                     if self._interval >= 1:
                         if self._idx % self._interval == 0:
-                            self._print_func(f"#{self._idx}:  {x!r}")
+                            should_print = True
                     else:
-                        if random() < self._interval:
-                            self._print_func(f"#{self._idx}:  {x!r}")
+                        should_print = random() < self._interval
+                if not should_print and self._exc_types and is_exception(x) and isinstance(x, self._exc_types):
+                    should_print = True
+                if not should_print:
+                    return x
+                if not is_exception(x):
+                    self._print_func("#%d:  %r" % (self._idx, x))
+                    return x
+                trace = ""
+                if self._with_trace:
+                    if is_remote_exception(x):
+                        trace = get_remote_traceback(x)
+                    else:
+                        try:
+                            trace = "".join(
+                                traceback.format_tb(x.__traceback__)
+                            )
+                        except AttributeError:
+                            pass
+                if trace:
+                    self._print_func("#%d:  %r\n%s" % (self._idx, x, trace))
+                else:
+                    self._print_func(f"#{self._idx}:  {x!r}")
                 return x
 
         return self.map(Peeker())
@@ -418,7 +426,7 @@ class Streamer(EnforceOverrides, Iterator):
         **Consecutive** elements that have the same value of this output
         will be grouped into a list.
 
-        Following this operator, every element in the stream is a list of length 1 or more.
+        Following this operator, every element in the output stream is a list of length 1 or more.
 
         The output of ``func`` is usually a str or int or a tuple of a few strings or ints.
 
@@ -447,8 +455,8 @@ class Streamer(EnforceOverrides, Iterator):
         except possibly the final batch.
         There is no 'timeout' logic to proceed eagerly with a partial batch.
         For efficiency, this requires the input stream to have a steady supply.
-        If that is a concern, having a ``buffer`` on the input stream
-        prior to ``batch`` may help.
+        If that is a concern, having a :meth:`buffer` on the input stream
+        prior to :meth:`batch` may help.
 
         Examples
         --------
@@ -476,10 +484,10 @@ class Streamer(EnforceOverrides, Iterator):
         Turn a stream of lists into a stream of individual elements.
 
         This is sometimes used to correspond with a previous
-        ``.batch()``, but that is by no means a requirement. The only requirement
+        :meth:`batch`, but that is by no means a requirement. The only requirement
         is that the input elements are lists.
 
-        ``unbatch`` can be combined with ``map`` to implement "expanding" a stream, like this:
+        ``unbatch`` can be combined with :meth:`map` to implement "expanding" a stream, like this:
 
         >>> def explode(x):
         ...     if isinstance(x, int) and x > 0:
@@ -490,7 +498,7 @@ class Streamer(EnforceOverrides, Iterator):
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
 
         In fact, elements of the input stream do not have to be ``list``\\s.
-        They can be any `Iterable`_\\s. For example:
+        They can be any `Iterable`_. For example:
 
         >>> def expand(n):
         ...     for _ in range(n):
