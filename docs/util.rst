@@ -2,6 +2,11 @@
 Utilities
 =========
 
+.. automodule:: mpservice.util
+    :no-members:
+    :no-special-members:
+    :no-undoc-members:
+
 .. autoexception:: mpservice.util.TimeoutError
 
 .. autoclass:: mpservice.util.RemoteException

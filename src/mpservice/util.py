@@ -1,3 +1,28 @@
+"""
+`multiprocessing`_ code can be tricky.
+``mpservice`` provides help to address several common trikeries.
+
+First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
+:data:`~mpservice.util.MP_SPAWN_CTX` is provided to make this easier.
+
+Second, in well structured code, a **spawned** process will not get the logging configurations that have been set
+in the main process. On the other hand, we should definitely not separately configure logging in
+non-main processes. The class :class:`~mpservice.util.SpawnProcess` addresses this issue. In fact,
+``MP_SPAWN_CTX.Process`` is a reference to ``SpawnProcess``. Therefore, when you use ``MP_SPAWN_CTX``,
+logging in the non-main processes are covered---log messages are sent to the main process to be handled,
+all transparently.
+
+Third, one convenience of `concurrent.futures`_ compared to `multiprocessing`_ is that the former
+makes it easy to get the results or exceptions of the child process via the object returned from job submission.
+With `multiprocessing`_, in contrast, we have to pass the results or explicitly captured exceptions
+to the main process via a queue. :class:`~mpservice.util.SpawnProcess` has this covered as well. It can be used in the
+``concurrent.futures`` way.
+
+Last but not least, if exception happens in a child process and we don't want the program to crash right there,
+instead we send it to the main or another process to be investigated when/where we are ready to,
+the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteException` helps on this.
+"""
+
 from __future__ import annotations
 import errno
 import functools
@@ -81,7 +106,7 @@ However, it is advised to not use this default; rather, **always** use the "spaw
 There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
 and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
 
-So, you should write multiprocessing code this way::
+So, multiprocessing code is often written this way::
 
     import multiprocessing
     ctx = multiprocessing.get_context('spawn')
@@ -105,6 +130,12 @@ is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of
 
 If you only need to start a process and don't need to create other objects
 (like queue or event) from a context, then you can use :class:`SpawnProcess` directly.
+
+All multiprocessing code in ``mpservice`` uses either ``MP_SPAWN_CTX``, or ``SpawnProcess`` directly.
+
+`concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_
+takes a parameter ``mp_context``.
+You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
 
 
@@ -211,15 +242,20 @@ Most (if not all) methods and attributes of ``obj`` behave the same
 as the original Exception object, except that
 ``__traceback__`` is gone but ``__cause__`` is added.
 
-Because ``obj`` is not an instance of this class,
-we cannot define methods on this class to help using ``obj``.
+.. note:: ``type(pickle.loads(pickle.dumps(RemoteException(e))))`` is not ``RemoteException``, but rather ``type(e)``.
 
-Note that ``RemoteException`` does not subclass ``BaseException``, hence you can't "raise" an instance of this class.
+This design is a compromise.
+Since the object out of unpickling is not an instance of ``RemoteException``,
+we "lose control of it", in the sense that we can't add methods in ``RemoteException`` to help on the use of that object.
+A clear benefit, though, is that we can detect the type of the exception by ``isinstanceof`` or by the type list in
+``try ... except <type_list>``, *without even knowing about* ``RemoteException``.
+
+.. note:: ``RemoteException`` does not subclass ``BaseException``, hence you can't *raise* an instance of this class.
 
 .. seealso:: :func:`is_remote_exception`, :func:`get_remote_traceback`.
 
-Examples
---------
+The session below shows the basic behaviors of a ``RemoteException``.
+
 >>> from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
 >>> import pickle
 >>>
@@ -287,7 +323,198 @@ Traceback (most recent call last):
 ValueError: 38
 .
 38
->>>
+
+Examples
+--------
+Let's use an example to demonstrate the use of ``RemoteException``.
+First, create a script with the following content:
+
+.. code-block:: python
+    :linenos:
+
+    # error.py
+    from mpservice.util import MP_SPAWN_CTX, RemoteException
+
+    def increment(qin, qout):
+        while True:
+            x = qin.get()
+            if x is None:
+                qout.put(None)
+                return
+            try:
+                qout.put((x, x + 1))
+            except Exception as e:
+                qout.put((x, e))
+
+    def main():
+        qin = MP_SPAWN_CTX.Queue()
+        qout = MP_SPAWN_CTX.Queue()
+        p = MP_SPAWN_CTX.Process(target=increment, args=(qin, qout))
+        p.start()
+        qin.put(1)
+        qin.put(3)
+        qin.put('a')
+        qin.put(5)
+        qin.put(None)
+        p.join()
+        while True:
+            y = qout.get()
+            if y is None:
+                break
+            print(y)
+
+    if __name__ == '__main__':
+        main()
+
+Run it::
+
+    $ python error.py
+    (1, 2)
+    (3, 4)
+    ('a', TypeError('can only concatenate str (not "int") to str'))
+    (5, 6)
+
+Everything is as expected. Now, instead, we want to stop the program upon errors, so we change
+line 30 to
+
+::
+
+        if isinstance(y[1], BaseException):
+            raise y[1]
+        print(y)
+
+Note the line numbers at the bottom increase a bit. Now ``raise y[1]`` is on line 32, while the ``main()`` call is line 37.
+Run it again::
+
+    $ python error.py
+    (1, 2)
+    (3, 4)
+    Traceback (most recent call last):
+    File "error.py", line 35, in <module>
+        main()
+    File "error.py", line 31, in main
+        raise y[1]
+    TypeError: can only concatenate str (not "int") to str
+
+Looks good?
+
+Not really. The traceback says the exception happened on line 32 with ``raise y[1]``.
+That's not very useful. We get no info about where it **actually** happened.
+
+What's the problem?
+Well, on line 13, the ``TypeError`` object ``e`` gets put in a multiprocessing queue, pickled;
+on line 27, the object gets taken out of the queue, unpickled. In the process,
+``pickle.dumps(e)`` strips off the
+attribute ``e.__traceback__`` because traceback is not picklable!
+
+One solution is to change line 13 to ``qout.put((x, RemoteException(e)))``.
+Now run it again,
+
+::
+
+    $ python error.py
+    (1, 2)
+    (3, 4)
+    mpservice.util.RemoteTraceback: Traceback (most recent call last):
+    File "/home/docker-user/mpservice/tests/experiments/error.py", line 11, in increment
+        qout.put((x, x + 1))
+    TypeError: can only concatenate str (not "int") to str
+
+
+    The above exception was the direct cause of the following exception:
+
+    Traceback (most recent call last):
+    File "error.py", line 35, in <module>
+        main()
+    File "error.py", line 31, in main
+        raise y[1]
+    TypeError: can only concatenate str (not "int") to str
+
+This time, we get the exact line number where the error actually happened in the child process.
+
+If we need to pass an Exception object through multiple processes, we need to remember that
+an ``RemoteException`` object pickled and then unpickled gives rise to an object of the original
+``Exception`` class, *not* of ``RemoteException``.
+For any Exception object, follow this rule:
+
+.. note:: Before putting any ``Exception`` object in a multiprocessing Queue, wrap it by ``RemoteException``.
+
+The script is revised to show this idea:
+
+.. code-block:: python
+    :linenos:
+
+    # error.py
+    from mpservice.util import MP_SPAWN_CTX, RemoteException
+
+    def increment(qin, qout):
+        while True:
+            x = qin.get()
+            if x is None:
+                qout.put(None)
+                return
+            try:
+                qout.put((x, x + 1))
+            except Exception as e:
+                qout.put((x, RemoteException(e)))
+
+    def worker(qin, qout):
+        q = MP_SPAWN_CTX.Queue()
+        p = MP_SPAWN_CTX.Process(target=increment, args=(qin, q))
+        p.start()
+        while True:
+            y = q.get()
+            if y is None:
+                qout.put(y)
+                break
+            # ... do other things ...
+            if isinstance(y[1], BaseException):
+                qout.put((y[0], RemoteException(y[1])))
+            else:
+                qout.put(y)
+        p.join()
+
+    def main():
+        qin = MP_SPAWN_CTX.Queue()
+        qout = MP_SPAWN_CTX.Queue()
+        p = MP_SPAWN_CTX.Process(target=worker, args=(qin, qout))
+        p.start()
+        qin.put(1)
+        qin.put(3)
+        qin.put('a')
+        qin.put(5)
+        qin.put(None)
+        p.join()
+        while True:
+            y = qout.get()
+            if y is None:
+                break
+            if isinstance(y[1], BaseException):
+                raise y[1]
+            print(y)
+
+    if __name__ == '__main__':
+        main()
+
+Run it::
+
+    $ python error.py
+    (1, 2)
+    (3, 4)
+    mpservice.util.RemoteTraceback: Traceback (most recent call last):
+    File "/home/docker-user/mpservice/tests/experiments/error.py", line 11, in increment
+        qout.put((x, x + 1))
+    TypeError: can only concatenate str (not "int") to str
+
+
+    The above exception was the direct cause of the following exception:
+
+    Traceback (most recent call last):
+    File "error.py", line 51, in <module>
+        main()
+    File "error.py", line 47, in main
+        raise y[1]
+    TypeError: can only concatenate str (not "int") to str
     """
     # fmt: on
 
@@ -359,8 +586,10 @@ class Thread(threading.Thread):
     A subclass of the standard ``threading.Thread``,
     this class makes the result or exception produced in a thread
     accessible from the thread object itself. This makes the ``Thread``
-    object's behavior somewhat similar to the ``Future`` object returned
+    object's behavior similar to the ``Future`` object returned
     by ``concurrent.futures.ThreadPoolExecutor.submit``.
+
+    .. seealso:: :class:`SpawnProcess`
     """
 
     def __init__(self, *args, loud_exception: bool = True, **kwargs):
@@ -418,10 +647,75 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     1. Make result and exception available as attributes of the
        process object, hence letting you use a ``SpawnProcess`` object
        similarly to how you use the ``Future`` object returned by
-       ``concurrent.futures.ProcessPoolExecutor.submit``.
+       `concurrent.futures.ProcessPoolExecutor.submit <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit>`_.
     2. Make logs in the worker process handled in the main process.
 
-    The logging enhancement makes use of :class:`ProcessLogger`.
+    Examples
+    --------
+    Let's use an example to show the logging behavior.
+    First, use a spawn-context from the standard `multiprocessing`_:
+
+    .. code-block:: python
+        :linenos:
+
+        # log.py
+        import logging
+        import multiprocessing as mp
+        from mpservice.util import SpawnProcess
+
+
+        def worker():
+            logging.getLogger('worker.error').error('worker error')
+            logging.getLogger('worker.warn').warning('worker warning')
+            logging.getLogger('worker.info').info('worker info')
+            logging.getLogger('worker.debug').debug('worker debug')
+
+
+        def main():
+            logging.getLogger('main.error').error('main error')
+            logging.getLogger('main.info').info('main info')
+            p = mp.get_context('spawn').Process(target=worker)
+            p.start()
+            p.join()
+            logging.getLogger('main.warn').warning('main warning')
+            logging.getLogger('main.debug').debug('main debug')
+
+
+        if __name__ == '__main__':
+            logging.basicConfig(
+                format='[%(asctime)s.%(msecs)02d; %(levelname)s; %(name)s; %(funcName)s, %(lineno)d] [%(processName)s]  %(message)s',
+                level=logging.DEBUG,
+            )
+            main()
+
+    Run it::
+
+        $ python log.py
+        [2022-12-20 17:29:54,386.386; ERROR; main.error; main, 15] [MainProcess]  main error
+        [2022-12-20 17:29:54,386.386; INFO; main.info; main, 16] [MainProcess]  main info
+        worker error
+        worker warning
+        [2022-12-20 17:29:54,422.422; WARNING; main.warn; main, 20] [MainProcess]  main warning
+        [2022-12-20 17:29:54,423.423; DEBUG; main.debug; main, 21] [MainProcess]  main debug
+
+    Clearly, the child process exhibits the default behavior---print the warning-and-above-level log messages to the console---unaware of the logging configuration set in the main process.
+    **This is a show stopper.**
+
+    In line 15, replace ``mp.get_context('spawn')`` by ``SpawnProcess``.
+    Run it again::
+
+        $ python log.py
+        [2022-12-20 17:39:31,284.284; ERROR; main.error; main, 15] [MainProcess]  main error
+        [2022-12-20 17:39:31,284.284; INFO; main.info; main, 16] [MainProcess]  main info
+        [2022-12-20 17:39:31,321.321; ERROR; worker.error; worker, 8] [SpawnProcess-1]  worker error
+        [2022-12-20 17:39:31,321.321; WARNING; worker.warn; worker, 9] [SpawnProcess-1]  worker warning
+        [2022-12-20 17:39:31,321.321; INFO; worker.info; worker, 10] [SpawnProcess-1]  worker info
+        [2022-12-20 17:39:31,322.322; DEBUG; worker.debug; worker, 11] [SpawnProcess-1]  worker debug
+        [2022-12-20 17:39:31,327.327; WARNING; main.warn; main, 20] [MainProcess]  main warning
+        [2022-12-20 17:39:31,327.327; DEBUG; main.debug; main, 21] [MainProcess]  main debug
+
+    This time, logs in the child process respect the level and format configurations set in the main process
+    (because they are sent to and handled in the main process).
     """
 
     def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
@@ -433,8 +727,10 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         kwargs
             Passed on to the standard ``Process``.
         loud_exception
-            If ``True``, behave like the standard multiprocessing ``Process`` in the case of exceptions;
-            if ``False``, behave like ``concurrent.futures`` in the case of exceptions.
+            If ``True``, behave like the standard multiprocessing ``Process`` in the case of exceptions, that is,
+            some error info is printed to the console.
+            If ``False``, behave like ``concurrent.futures`` in the case of exceptions, that is,
+            no error info is printed to the console.
         **moreargs
             Additional keyword arguments passed on to the standard ``Process``.
         """
@@ -464,7 +760,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.__worker_logger__ = worker_logger
 
     def run(self):
-        # This runs in a child process.
+        """
+        Overrides the standard ``Process.run`.
+
+        ``start`` arranges for this to be run in a child process.
+        """
         worker_logger = self._kwargs.pop("__worker_logger__")
         worker_logger.start()
         result_and_error = self._kwargs.pop("__result_and_error__")
@@ -487,9 +787,22 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
 
     def done(self) -> bool:
+        """
+        Return ``True`` if the target function has successfully finished
+        or crashed in the child process.
+        """
         return self.exitcode is not None
 
-    def result(self, timeout=None):
+    def result(self, timeout: Optional[float | int] = None):
+        """
+        Return the value returned by the target function.
+        If the call hasn't yet completed, then this method will wait up to
+        ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
+        then a ``TimeoutError`` will be raised. If ``timeout`` is ``None`` (the default),
+        there is no limit to the wait time.
+
+        If the call raised an exception, the method will raise the same exception.
+        """
         self.join(timeout)
         if not self.done():
             raise TimeoutError
@@ -508,7 +821,16 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise self.__error__
         return self.__result__
 
-    def exception(self, timeout=None):
+    def exception(self, timeout: Optional[float | int] = None):
+        """
+        Return the exception raised by the target function.
+        If the call hasn't yet completed then this method will wait up to
+        ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
+        then a ``TimeoutError`` will be raised.
+        If ``timeout`` is ``None``, there is no limit to the wait time.
+
+        If the target function completed without raising, ``None`` is returned.
+        """
         self.join(timeout)
         if not self.done():
             raise TimeoutError
@@ -545,7 +867,7 @@ class ProcessLogger:
 
             pl = ProcessLogger().start()
 
-    2. Pass this object to other processes. (Yes, this object is pickle-able.)
+    2. Pass this object to other processes. (Yes, this object is picklable.)
 
     3. In the other process, start it. Suppose the object is also called ``pl``,
        then do
