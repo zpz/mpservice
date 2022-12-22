@@ -27,7 +27,6 @@ import multiprocessing
 import multiprocessing.queues
 import queue
 import threading
-import traceback
 from abc import abstractmethod, ABC
 from collections.abc import Sequence, Iterable, Iterator
 from datetime import datetime
