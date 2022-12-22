@@ -64,10 +64,10 @@ class ServerBacklogFull(RuntimeError):
 
 
 PipelineFull = ServerBacklogFull
-'''
+"""
 Alias to :class:`ServerBacklogFull` for backward compatibility.
 Will be removed in 0.13.0.
-'''
+"""
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):

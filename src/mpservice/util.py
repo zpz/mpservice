@@ -575,12 +575,12 @@ Run it::
                     # In this case, don't use RemoteException. Pickle the exc object directly.
 
         self.exc = exc
-        '''
+        """
         This is still the original Exception object with traceback and everything.
         When you get a RemoteException object, it must have not gone through pickling
         (because a RemoteException object would not survive pickling!), hence you can
         use its ``exc`` attribute directly.
-        '''
+        """
         self.tb = tb
 
     def __reduce__(self):
