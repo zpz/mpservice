@@ -242,7 +242,9 @@ The user's main work is implementing the operations in the "workers".
 Another task (of some trial and error) by the user is experimenting with
 CPU allocations among workers to achieve best performance.
 
-.. autoexception:: mpservice.mpserver.PipelineFull
+.. autoexception:: mpservice.mpserver.ServerBacklogFull
+
+.. autodata:: mpservice.mpserver.PipelineFull
 
 .. autoclass:: mpservice.mpserver.Server
 
