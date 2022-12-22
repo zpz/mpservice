@@ -42,7 +42,7 @@ from .util import (
     MP_SPAWN_CTX,
     SpawnProcess,
     Thread,
-    rebuild_exception,
+    RemoteException,
     TimeoutError,
 )
 from ._queues import SingleLane
@@ -59,28 +59,20 @@ logger = logging.getLogger(__name__)
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 
 
-class PipelineFull(RuntimeError):
+class ServerBacklogFull(RuntimeError):
     pass
 
 
-class _RemoteException_:
-    """
-    This is a helper class to preserve the traceback info of an Exception object
-    during pickling/unpickling. A useful Exception object of the original type
-    will be re-constructed and raised in the "API function", i.e. the touchpoint
-    with the end-user, such as `Server.call` and `Server.async_call`.
-    """
-
-    def __init__(self, exc: BaseException):
-        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        exc.__traceback__ = None
-        self.exc = exc
-        self.tb = tb
+PipelineFull = ServerBacklogFull
+'''
+Alias to :class:`ServerBacklogFull` for backward compatibility.
+Will be removed in 0.13.0.
+'''
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
     """
-    A customization of ``multiprocessing.queue.SimpleQueue``,
+    A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
     this class reduces some overhead in a particular use-case in this module,
     where one consumer of the queue greedily grabs elements out of the queue
     towards a batch-size limit.
@@ -109,8 +101,8 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
 class SimpleQueue(queue.SimpleQueue):
     """
-    A customization of ``queue.SimpleQueue``,
-    this class is analogous to `FastQueue` but is designed to be used between two threads.
+    A customization of `queue.SimpleQueue <https://docs.python.org/3/library/queue.html#queue.SimpleQueue>_`,
+    this class is analogous to :class:`FastQueue` but is designed to be used between two threads.
     """
 
     def __init__(self):
@@ -334,7 +326,11 @@ class Worker(ABC):
 
             uid, x = z
             # Element in the input queue is always a 2-tuple, that is, (ID, value).
-            if isinstance(x, (BaseException, _RemoteException_)):
+
+            # If it's an exception, short-circuit to output.
+            if isinstance(x, BaseException):
+                x = RemoteException(x)
+            if isinstance(x, RemoteException):
                 q_out.put((uid, x))
                 continue
 
@@ -346,7 +342,7 @@ class Worker(ABC):
             except Exception as e:
                 # There are opportunities to print traceback
                 # and details later. Be brief on the logging here.
-                y = _RemoteException_(e)
+                y = RemoteException(e)
 
             q_out.put((uid, y))
             # Element in the output queue is always a 2-tuple, that is, (ID, value).
@@ -389,7 +385,7 @@ class Worker(ABC):
                 try:
                     results = self.call(batch)
                 except Exception as e:
-                    err = _RemoteException_(e)
+                    err = RemoteException(e)
                     for uid in uids:
                         q_out.put((uid, err))
                 else:
@@ -437,7 +433,9 @@ class Worker(ABC):
                             buffer.put(z)
                             return
                         # Now `z` is a tuple like (uid, x).
-                        if isinstance(z[1], (BaseException, _RemoteException_)):
+                        if isinstance(z[1], BaseException):
+                            q_out.put((z[0], RemoteException(z[1])))
+                        elif isinstance(z[1], RemoteException):
                             q_out.put(z)
                         else:
                             buffer.put(z)
@@ -985,7 +983,9 @@ class EnsembleServlet(Servlet):
                 break
 
             uid, x = v
-            if isinstance(x, (BaseException, _RemoteException_)):
+            if isinstance(x, BaseException):
+                x = RemoteException(x)
+            if isinstance(x, RemoteException):
                 # short circuit exception to the output queue
                 qout.put((uid, x))
                 continue
@@ -1222,11 +1222,11 @@ class Server:
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request.
         backpressure
-            If ``True``, and the input queue is full, do not wait; raise :class:`PipelineFull`
-            exception right away. If ``False``, wait on the input queue for as long as
+            If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
+            right away. If ``False``, wait on the input queue for as long as
             ``timeout`` seconds. Effectively, the input queue is considered full if
             there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
-            in the server, where ``backlog`` is the parameter to :meth:`__init__`.
+            in the server, where ``backlog`` is a parameter to :meth:`__init__`.
         """
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
@@ -1333,7 +1333,7 @@ class Server:
             else:
                 try:
                     y = _wait(fut)
-                    # May raise TimeoutError or an exception out of _RemoteException_.
+                    # May raise TimeoutError or an exception out of RemoteException.
                 except Exception as e:
                     if return_exceptions:
                         if return_x:
@@ -1355,7 +1355,7 @@ class Server:
 
         while len(self._uid_to_futures) >= self._backlog:
             if backpressure:
-                raise PipelineFull(len(self._uid_to_futures))
+                raise ServerBacklogFull(len(self._uid_to_futures))
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline:
@@ -1382,7 +1382,7 @@ class Server:
                 raise TimeoutError(f"{timenow - t0:.3f} seconds total")
             await asyncio.sleep(min(0.01, t2 - timenow))
         return fut.result()
-        # This could raise an exception originating from _RemoteException_.
+        # This could raise an exception originating from RemoteException.
 
         # TODO: I don't understand why the following (along with
         # corresponding change in `_async_enqueue`) seems to work but
@@ -1421,7 +1421,7 @@ class Server:
         t2 = t0 + fut.data["timeout"]
         try:
             return fut.result(timeout=max(0, t2 - perf_counter()))
-            # this may raise an exception originating from _RemoteException_
+            # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
             raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total") from e
@@ -1493,8 +1493,8 @@ class Server:
                             "A non-remote exception has occurred, likely a bug: %r", y
                         )
                         fut.set_exception(y)
-                    elif isinstance(y, _RemoteException_):
-                        fut.set_exception(rebuild_exception(y.exc, y.tb))
+                    elif isinstance(y, RemoteException):
+                        fut.set_exception(y.exc)
                     else:
                         fut.set_result(y)
                     fut.data["t1"] = perf_counter()

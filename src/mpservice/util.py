@@ -532,12 +532,12 @@ Run it::
     #
     # Also check out `sys.excepthook`.
 
-    def __init__(self, exc: Exception, tb: Optional[TracebackType | str] = None):
+    def __init__(self, exc: BaseException, tb: Optional[TracebackType | str] = None):
         """
         Parameters
         ----------
         exc
-            An Exception object.
+            A BaseException object.
         tb
             Optional traceback info, if not already carried by ``exc``.
         """
@@ -565,7 +565,7 @@ Run it::
                     traceback.format_exception(type(exc), exc, exc.__traceback__)
                 )
             else:
-                # This use case is not in an "except" block. Somehow there's an
+                # This use case is not in an "except" block, rather somehow there's an
                 # exception object and we need to pickle it, so we put it in a
                 # `RemoteException`.
                 if is_remote_exception(exc):
@@ -575,6 +575,12 @@ Run it::
                     # In this case, don't use RemoteException. Pickle the exc object directly.
 
         self.exc = exc
+        '''
+        This is still the original Exception object with traceback and everything.
+        When you get a RemoteException object, it must have not gone through pickling
+        (because a RemoteException object would not survive pickling!), hence you can
+        use its ``exc`` attribute directly.
+        '''
         self.tb = tb
 
     def __reduce__(self):
@@ -701,7 +707,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     Clearly, the child process exhibits the default behavior---print the warning-and-above-level log messages to the console---unaware of the logging configuration set in the main process.
     **This is a show stopper.**
 
-    In line 15, replace ``mp.get_context('spawn')`` by ``SpawnProcess``.
+    On line 15, replace ``mp.get_context('spawn').Process`` by ``SpawnProcess``.
     Run it again::
 
         $ python log.py
