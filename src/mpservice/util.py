@@ -1,6 +1,6 @@
 """
-`multiprocessing`_ code can be tricky.
-``mpservice`` provides help to address several common trikeries.
+`multiprocessing`_ can be tricky.
+``mpservice`` provides help to address several common difficulties.
 
 First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
 :data:`~mpservice.util.MP_SPAWN_CTX` is provided to make this easier.

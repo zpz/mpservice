@@ -103,7 +103,7 @@ async def test_mp():
     mp = multiprocessing.get_context('spawn')
     process = mp.Process(target=_run_app)
     process.start()
-    await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     # Below, using a sync client wouldn't work.
     # Don't know why.
@@ -111,6 +111,8 @@ async def test_mp():
     url = LOCALHOST
     async with httpx.AsyncClient() as client:
         response = await client.get(url + '/simple1')
+        # Occasionally, this fails during release test.
+
         assert response.status_code == 201
         assert response.text == '1'
         response = await client.get(url + '/simple2')
