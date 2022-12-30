@@ -9,15 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 The two largest efforts of this release are documentation and "streamer" refactor.
 
-Removed
--------
+### Removed
 
 - `mpservice.streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
   `Dropper`.
 - `mpservice.streamer.Streamer.drop_exceptions`.
 
-Changed
--------
+### Changed
 
 - `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
 - `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
@@ -27,8 +25,7 @@ Changed
 - Relaxed the requirement for using context manager with `Streamer`.
 - `Streamer.parmap` uses processes by default, instead of threads.
 
-Added or enhanced
------------------
+### Added or enhanced
 
 - Enhanced documentation. Started to host generated doc on Read the Docs.
 - New class `mpservice.mpserver.CpuAffinity`.

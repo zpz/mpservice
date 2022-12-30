@@ -3,6 +3,7 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import mpservice
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -10,6 +11,9 @@
 project = 'mpservice'
 copyright = '2020-, Zepu Zhang'
 author = 'Zepu Zhang'
+version = str(mpservice.__version__)
+
+today_fmt = '%b %d %Y'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -56,6 +60,10 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'links.rst']
 #  no toc panel
 #   scrolls  (good for very small, single-page doc)
 html_theme = 'pydata_sphinx_theme'
+
+html_theme_options = [
+    'github_url': 'https://github.com/zpz/mpservice',
+]
 
 
 html_static_path = ['_static']
