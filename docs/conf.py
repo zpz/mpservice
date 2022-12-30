@@ -13,7 +13,7 @@ copyright = '2020-, Zepu Zhang'
 author = 'Zepu Zhang'
 version = str(mpservice.__version__)
 
-today_fmt = '%b %d %Y'
+today_fmt = '%b %d, %Y'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
