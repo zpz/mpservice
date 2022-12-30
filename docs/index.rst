@@ -6,9 +6,11 @@
 :tocdepth: 3
 
 
-=============
-``mpservice``
-=============
+=========
+mpservice
+=========
+
+(Generated on |today| for mpservice version |version|.)
 
 .. automodule:: mpservice
    :no-members:
