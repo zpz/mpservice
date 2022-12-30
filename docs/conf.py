@@ -61,9 +61,9 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'links.rst']
 #   scrolls  (good for very small, single-page doc)
 html_theme = 'pydata_sphinx_theme'
 
-html_theme_options = [
+html_theme_options = {
     'github_url': 'https://github.com/zpz/mpservice',
-]
+}
 
 
 html_static_path = ['_static']
