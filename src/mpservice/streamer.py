@@ -39,7 +39,6 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
-
 import concurrent.futures
 import os
 import queue
@@ -50,20 +49,24 @@ from collections.abc import Iterable, Iterator, Sequence
 from multiprocessing.util import Finalize
 from random import random
 from typing import (
-    Callable,
-    TypeVar,
-    Optional,
     Any,
+    Callable,
     Literal,
+    Optional,
+    TypeVar,
 )
 
 from deprecation import deprecated
-from overrides import EnforceOverrides, overrides, final
+from overrides import EnforceOverrides, final, overrides
 
-from .util import is_remote_exception, get_remote_traceback
-from .util import is_exception, Thread, MP_SPAWN_CTX
 from ._queues import SingleLane
-
+from .util import (
+    MP_SPAWN_CTX,
+    Thread,
+    get_remote_traceback,
+    is_exception,
+    is_remote_exception,
+)
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
@@ -959,15 +962,18 @@ class Parmapper(Stream):
         self._return_exceptions = return_exceptions
         if executor == "thread":
             self._executor = concurrent.futures.ThreadPoolExecutor(
-                num_workers, initializer=executor_initializer,
+                num_workers,
+                initializer=executor_initializer,
                 initargs=executor_init_args,
-                )
+            )
         else:
             assert executor == "process"
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
-                num_workers, mp_context=MP_SPAWN_CTX,
-                initializer=executor_initializer, initargs=executor_init_args,
+                num_workers,
+                mp_context=MP_SPAWN_CTX,
+                initializer=executor_initializer,
+                initargs=executor_init_args,
             )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(

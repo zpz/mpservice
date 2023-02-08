@@ -24,6 +24,7 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 """
 
 from __future__ import annotations
+
 import errno
 import functools
 import inspect
@@ -31,8 +32,8 @@ import logging
 import logging.handlers
 import multiprocessing
 import multiprocessing.connection
-import multiprocessing.queues
 import multiprocessing.context
+import multiprocessing.queues
 import os
 import subprocess
 import threading
@@ -40,7 +41,6 @@ import traceback
 from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
-
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """

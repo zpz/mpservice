@@ -94,7 +94,6 @@ from typing import Callable
 
 from .util import MP_SPAWN_CTX
 
-
 # Overhead of Thread:
 # sequentially creating/running/joining
 # threads with a trivial worker function:

@@ -59,7 +59,6 @@ import logging
 import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 
-
 logger = logging.getLogger(__name__)
 
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import concurrent.futures
 import logging
@@ -8,15 +9,21 @@ import stat
 import threading
 import time
 from collections.abc import Iterable, Sequence
-from pickle import dumps as pickle_dumps, loads as pickle_loads
+from pickle import dumps as pickle_dumps
+from pickle import loads as pickle_loads
 from time import perf_counter
-from typing import Callable, Awaitable, Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from overrides import EnforceOverrides
 
-from .util import get_docker_host_ip, is_exception, is_async, MAX_THREADS
-from .util import RemoteException
 from ._queues import SingleLane
+from .util import (
+    MAX_THREADS,
+    RemoteException,
+    get_docker_host_ip,
+    is_async,
+    is_exception,
+)
 
 logger = logging.getLogger(__name__)
 
