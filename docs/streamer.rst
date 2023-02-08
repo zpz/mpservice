@@ -21,18 +21,19 @@ Let's make up an I/O-bound operation which takes an input and produces an output
 ...     return x * 2
 
 Suppose we have a long stream of input values we want to process.
-We feed this stream into a :class:`Streamer` object::
+We feed this stream into a :class:`Streamer` object:
 
 >>> from mpservice.streamer import Streamer
 >>> data_stream = Streamer(range(100))
-  
+
 The input stream is often a list, but more generally, it can be any
 `Iterable`_, possibly unlimited.
 Since ``double`` is an I/O-bound operation, let's use multiple threads to speed up
 the processing of the input stream.
 For this purpose, we add a :meth:`~Streamer.parmap` (or "parallel map") operator to the stream:
 
->>> data_stream.parmap(double, executor='thread', num_workers=8)
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -57,11 +58,11 @@ In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
 >>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)
->>> for k, y in enumerate(data_stream):
-...     print(y, end='  ')
-...     if (k + 1) % 10 == 0:
-...         print('')
-... print('')
+>>> for k, y in enumerate(data_stream):  # doctest: +SKIP
+...     print(y, end='  ')  # doctest: +SKIP
+...     if (k + 1) % 10 == 0:  # doctest: +SKIP
+...         print('')  # doctest: +SKIP
+... print('')  # doctest: +SKIP
 0  2  4  6  8  10  12  14  16  18
 20  22  24  26  28  30  32  34  36  38
 40  42  44  46  48  50  52  54  56  58
@@ -86,13 +87,15 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 >>> data_stream = Streamer(range(20))
->>> data_stream.parmap(double, executor='thread', num_workers=8)
->>> data_stream.map(shift, amount=0.8)
->>> for k, y in enumerate(data_stream):
-...     print(y, end='  ')
-...     if (k + 1) % 10 == 0:
-...         print('')
-... print('')
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
+>>> data_stream.map(shift, amount=0.8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
+>>> for k, y in enumerate(data_stream):  # doctest: +SKIP
+...     print(y, end='  ')  # doctest: +SKIP
+...     if (k + 1) % 10 == 0:  # doctest: +SKIP
+...         print('')  # doctest: +SKIP
+... print('')  # doctest: +SKIP
 0.8  2.8  4.8  6.8  8.8  10.8  12.8  14.8  16.8  18.8
 20.8  22.8  24.8  26.8  28.8  30.8  32.8  34.8  36.8  38.8
 

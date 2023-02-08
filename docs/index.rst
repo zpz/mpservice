@@ -6,6 +6,11 @@
 :tocdepth: 3
 
 
+.. testsetup:: *
+
+   import mpservice
+
+
 =========
 mpservice
 =========

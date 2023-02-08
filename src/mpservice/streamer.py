@@ -942,6 +942,8 @@ class Parmapper(Stream):
         num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        executor_initializer=None,
+        executor_init_args=(),
         **kwargs,
     ):
         super().__init__(instream)
@@ -956,12 +958,16 @@ class Parmapper(Stream):
         self._return_x = return_x
         self._return_exceptions = return_exceptions
         if executor == "thread":
-            self._executor = concurrent.futures.ThreadPoolExecutor(num_workers)
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                num_workers, initializer=executor_initializer,
+                initargs=executor_init_args,
+                )
         else:
             assert executor == "process"
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
-                num_workers, mp_context=MP_SPAWN_CTX
+                num_workers, mp_context=MP_SPAWN_CTX,
+                initializer=executor_initializer, initargs=executor_init_args,
             )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(
