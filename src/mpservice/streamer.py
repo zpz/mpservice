@@ -40,13 +40,13 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 import concurrent.futures
-import os
 import functools
+import os
 import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from multiprocessing.util import Finalize
 from random import random
 from typing import (
@@ -58,7 +58,6 @@ from typing import (
 )
 
 from deprecation import deprecated
-from overrides import EnforceOverrides, final, overrides
 
 from ._queues import SingleLane
 from .util import (
@@ -949,10 +948,14 @@ class Parmapper(Stream):
                             yield x, e
                         yield e
                     except GeneratorExit:
-                        self._finalize(self._stopped, self._tasks, self._worker, self._executor)
+                        self._finalize(
+                            self._stopped, self._tasks, self._worker, self._executor
+                        )
                         raise
                 else:
-                    self._finalize(self._stopped, self._tasks, self._worker, self._executor)
+                    self._finalize(
+                        self._stopped, self._tasks, self._worker, self._executor
+                    )
                     raise
             else:
                 try:
@@ -960,5 +963,7 @@ class Parmapper(Stream):
                         yield x, y
                     yield y
                 except GeneratorExit:
-                    self._finalize(self._stopped, self._tasks, self._worker, self._executor)
+                    self._finalize(
+                        self._stopped, self._tasks, self._worker, self._executor
+                    )
                     raise
