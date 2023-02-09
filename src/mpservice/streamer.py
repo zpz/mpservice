@@ -39,7 +39,6 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
-
 import concurrent.futures
 import functools
 import os
