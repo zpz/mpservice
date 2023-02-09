@@ -96,7 +96,7 @@ def _run_app():
     server.run()
 
 
-# This one failed in `./run-tests` and succeeded when run
+# This one failed in `./run-tests` but succeeded when run
 # interactively within a container.
 @pytest.mark.asyncio
 async def test_mp():
