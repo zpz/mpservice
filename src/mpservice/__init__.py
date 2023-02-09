@@ -17,4 +17,4 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
    hence can benefit from concurrency.
 """
 
-__version__ = "0.11.8"
+__version__ = "0.11.9b1"

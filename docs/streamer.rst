@@ -145,28 +145,13 @@ The "consuming" methods are "pulling" at the end of the final operator.
 
 There are several ways to consume the stream:
 
-- Iterate over the :class:`Streamer` object, because it implements :meth:`~Streamer.__iter__` and :meth:`~Streamer.__next__`.
+- Iterate over the :class:`Streamer` object, because it implements :meth:`~Streamer.__iter__`.
 - Call the method :meth:`~Streamer.collect` to get all the elements in a list---if you know there are not too many of them!
 - Call the method :meth:`~Streamer.drain` to "finish off" the operations. This does not return the elements of the stream, but rather
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
 
 The latter two methods are trivial wrappers of the first.
-
-Finally, :class:`~Streamer` is a context manager.
-If you have added a concurrent operator,
-and the cunsumption may end prematurely (you break out of the iteration) or abnormally due to exception
-raised in any component,
-then you should consume the stream with context management, like this::
-
-    stream = Streamer(...).map(...)...parmap(...)...
-    with stream:
-        for x in stream:
-            ...
-            if some_condition:
-                break
-
-If there are no such concerns, you can consume the stream without context management.
 
 
 API reference

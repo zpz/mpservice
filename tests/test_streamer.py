@@ -91,12 +91,12 @@ def test_filter_exceptions():
         assert Streamer(exc).filter_exceptions(ValueError).collect() == exc
 
     with pytest.raises(FileNotFoundError):
-        with Streamer(exc) as ss:
-            assert ss.filter_exceptions((ValueError, IndexError)).collect() == exc
+        ss = Streamer(exc)
+        assert ss.filter_exceptions((ValueError, IndexError)).collect() == exc
 
-    with Streamer(exc) as ss:
-        with pytest.raises(KeyboardInterrupt):
-            assert ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
+    ss = Streamer(exc)
+    with pytest.raises(KeyboardInterrupt):
+        assert ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
 
     assert Streamer(exc).filter_exceptions(BaseException, FileNotFoundError).collect() == [1, 2, exc[4], 3, 4]
 
@@ -106,9 +106,9 @@ def test_peek():
 
     data = list(range(10))
 
-    with Streamer(data) as s:
-        n = s.peek(interval=3).drain()
-        assert n == 10
+    s = Streamer(data)
+    n = s.peek(interval=3).drain()
+    assert n == 10
 
     def foo(x):
         print(x)
@@ -230,25 +230,25 @@ def test_parmap_with_error():
         return x + 2
 
     with pytest.raises(TypeError):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process, executor='thread', num_workers=2)
-            zz = list(s)
-            print(zz)
+        s = Streamer(corrupt_data())
+        s.parmap(process, executor='thread', num_workers=2)
+        zz = list(s)
+        print(zz)
 
     zz = list(Streamer(corrupt_data()).parmap(process, executor='thread', num_workers=2, return_exceptions=True))
     print(zz)
     assert isinstance(zz[5], TypeError)
 
-    with Streamer(corrupt_data()) as s:
-        s.parmap(process, executor='thread', num_workers=2, return_exceptions=True)
-        n = 0
-        nexc = 0
-        for x in s:
-            n += 1
-            if is_exception(x):
-                nexc += 1
-        assert n == len(data)
-        assert nexc == 1
+    s = Streamer(corrupt_data())
+    s.parmap(process, executor='thread', num_workers=2, return_exceptions=True)
+    n = 0
+    nexc = 0
+    for x in s:
+        n += 1
+        if is_exception(x):
+            nexc += 1
+    assert n == len(data)
+    assert nexc == 1
 
 
 def test_chain():
@@ -267,45 +267,45 @@ def test_chain():
         return x - 2
 
     with pytest.raises(TypeError):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process1, executor='thread', num_workers=2)
-            s.drain()
+        s = Streamer(corrupt_data())
+        s.parmap(process1, executor='thread', num_workers=2)
+        s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process2, executor='thread', num_workers=3)
-            s.drain()
+        s = Streamer(corrupt_data())
+        s.parmap(process2, executor='thread', num_workers=3)
+        s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
-            s.parmap(process2, executor='thread', num_workers=4)
-            s.drain()
+        s = Streamer(corrupt_data())
+        s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+        s.parmap(process2, executor='thread', num_workers=4)
+        s.drain()
 
     with pytest.raises(TypeError):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process1, executor='thread', num_workers=2)
-            s.parmap(process2, executor='thread', num_workers=4, return_exceptions=True)
-            s.drain()
-
-    with Streamer(corrupt_data()) as s:
-        s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+        s = Streamer(corrupt_data())
+        s.parmap(process1, executor='thread', num_workers=2)
         s.parmap(process2, executor='thread', num_workers=4, return_exceptions=True)
         s.drain()
 
+    s = Streamer(corrupt_data())
+    s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+    s.parmap(process2, executor='thread', num_workers=4, return_exceptions=True)
+    s.drain()
+
     with pytest.raises((TypeError, ValueError)):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process1, executor='thread', num_workers=1) #2)
-            s.buffer(3)
-            s.parmap(process2, executor='thread', num_workers=1) #3)
-            s.drain()
+        s = Streamer(corrupt_data())
+        s.parmap(process1, executor='thread', num_workers=1) #2)
+        s.buffer(3)
+        s.parmap(process2, executor='thread', num_workers=1) #3)
+        s.drain()
 
     with pytest.raises((ValueError, TypeError)):
-        with Streamer(corrupt_data()) as s:
-            s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
-            s.buffer(2)
-            s.parmap(process2, executor='thread', num_workers=3)
-            s.drain()
+        s = Streamer(corrupt_data())
+        s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+        s.buffer(2)
+        s.parmap(process2, executor='thread', num_workers=3)
+        s.drain()
 
     zz = list(Streamer(corrupt_data())
              .parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
@@ -331,15 +331,15 @@ def test_early_stop():
         sleep(0.5)
         return x * 2
 
-    with Streamer(range(300000)) as s:
-        z = s.parmap(double, executor='thread', num_workers=3)
-        n = 0
-        for x in z:
-            # print(x)
-            n += 1
-            if n == 10:
-                break
-        assert n == 10
+    s = Streamer(range(300000))
+    z = s.parmap(double, executor='thread', num_workers=3)
+    n = 0
+    for x in z:
+        # print(x)
+        n += 1
+        if n == 10:
+            break
+    assert n == 10
 
 
 def double(x):

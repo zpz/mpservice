@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.11.9] - not yet released
 
+### Removed
+
+- Deprecated context manager on `Streamer`. Instead, use the object directly.
+
 ### Added
 
 - `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`

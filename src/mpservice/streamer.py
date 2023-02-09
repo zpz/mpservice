@@ -78,7 +78,7 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-class Streamer(EnforceOverrides, Iterator):
+class Streamer(EnforceOverrides, Iterable):
     """
     The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Streamer`` object
@@ -95,40 +95,35 @@ class Streamer(EnforceOverrides, Iterator):
         """
         self.streamlets: list[Stream] = [Stream(instream)]
 
-    def stop(self):
-        """
-        Stop all the operators that are working on the stream.
-
-        Usually you do not need to call this method unless you break out of
-        iteration prematurely or exception happens. But when those situations are possible,
-        it's advised to consume this stream within a context manager, which calls
-        ``stop`` upon exit.
-        """
-        for s in self.streamlets:
-            s._stop()
-
+    @deprecated(deprecated_in='0.11.9', removed_in='0.12.2', details='Please use the object directly without context manager.')
     def __enter__(self):
-        """
-        If you break out of iteration before it finishes, or error happens, then it's important
-        to use this object within the context manager.
-        If these two situations do not arise, then it's not necessary to use context manager.
-
-        Calls to the "operation setup" methods do not need to be within context manager.
-        Only the "consuming" methods (:meth:`__iter__`, :meth:`__next__`, and :meth:`drain`)
-        need to be within context manager.
-        """
         return self
 
     def __exit__(self, *args, **kwargs):
-        self.stop()
+        pass
 
-    @final
     def __iter__(self):
-        return self
+        def stop():
+            for s in self.streamlets:
+                s._stop()
 
-    @final
-    def __next__(self):
-        return self.streamlets[-1].__next__()
+        while True:
+            try:
+                z = next(self.streamlets[-1])
+            except StopIteration:
+                stop()
+                return
+            except BaseException as e:
+                stop()
+                raise
+            try:
+                yield z
+            except GeneratorExit:
+                # Caller left before finishing the iteration,
+                # or crashed during iteration.
+                stop()
+                raise
+                # This terminates the iteration silently.
 
     def drain(self) -> int:
         """Drain off the stream and return the number of elements processed.
@@ -398,7 +393,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self.map(Peeker())
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``peek`` instead."
+        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``peek`` instead."
     )
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
@@ -591,7 +586,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``parmap`` instead"
+        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``parmap`` instead"
     )
     def transform(
         self,
@@ -675,6 +670,8 @@ class Streamer(EnforceOverrides, Iterator):
             Note that a ``True`` value does not absorb exceptions
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
+        **kwargs
+            Passed on to :class:`Parmapper`.
         """
         self.streamlets.append(
             Parmapper(
