@@ -8,23 +8,12 @@ from mpservice.streamer import Streamer, is_exception
 
 
 def test_stream():
-    class C:
-        def __init__(self):
-            self.k = 0
-
-        def __next__(self):
-            if self.k < 5:
-                self.k += 1
-                return self.k
-            raise StopIteration
-
     class D:
         def __iter__(self):
             for x in [1, 2, 3]:
                 yield x
 
     assert Streamer(range(4)).collect() == [0, 1, 2, 3]
-    assert list(Streamer(C())) == [1, 2, 3, 4, 5]
     assert list(Streamer(D())) == [1, 2, 3]
     assert list(Streamer(['a', 'b', 'c'])) == ['a', 'b', 'c']
 
@@ -145,11 +134,10 @@ def test_batch():
     assert list(s.batch(3)) == [
         [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
-    assert list(s) == []
+    assert list(s) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
     s = Streamer(list(range(11)))
     assert list(s.batch(3).unbatch()) == list(range(11))
-    assert list(s) == []
 
 
 def test_unbatch():
