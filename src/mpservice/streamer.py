@@ -95,7 +95,11 @@ class Streamer(EnforceOverrides, Iterable):
         """
         self.streamlets: list[Stream] = [Stream(instream)]
 
-    @deprecated(deprecated_in='0.11.9', removed_in='0.12.2', details='Please use the object directly without context manager.')
+    @deprecated(
+        deprecated_in="0.11.9",
+        removed_in="0.12.2",
+        details="Please use the object directly without context manager.",
+    )
     def __enter__(self):
         return self
 
@@ -113,7 +117,7 @@ class Streamer(EnforceOverrides, Iterable):
             except StopIteration:
                 stop()
                 return
-            except BaseException as e:
+            except BaseException:
                 stop()
                 raise
             try:
