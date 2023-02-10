@@ -13,9 +13,6 @@ from mpservice.http import make_server
 
 
 HOST = '0.0.0.0'
-PORT = 8000
-LOCALHOST = f'http://0.0.0.0:{PORT}'
-#LOCALHOST = f'http://{HOST}:{PORT}'
 SHUTDOWN_MSG = "server shutdown"
 
 
@@ -36,7 +33,7 @@ def make_app():
 @pytest.mark.asyncio
 async def test_shutdown():
     app = make_app()
-    server = make_server(app, host=HOST, port=PORT)
+    server = make_server(app, host=HOST, port=8001)
 
     async def shutdown(request):
         server.should_exit = True
@@ -47,7 +44,7 @@ async def test_shutdown():
     service = asyncio.create_task(server.serve())
     await asyncio.sleep(1)
 
-    url = LOCALHOST
+    url = 'http://0.0.0.0:8001'
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url + '/simple1')
@@ -84,9 +81,9 @@ def test_testclient():
         assert response.json() == {'result': 2}
 
 
-def _run_app():
+def _run_app(port):
     app = make_app()
-    server = make_server(app, host=HOST, port=PORT)
+    server = make_server(app, host=HOST, port=port)
 
     async def shutdown(request):
         server.should_exit = True
@@ -96,19 +93,20 @@ def _run_app():
     server.run()
 
 
-# This one failed in `./run-tests` and succeeded when run
+# This one failed in `./run-tests` but succeeded when run
 # interactively within a container.
 @pytest.mark.asyncio
 async def test_mp():
     mp = multiprocessing.get_context('spawn')
-    process = mp.Process(target=_run_app)
+    process = mp.Process(target=_run_app, args=(8002,))
     process.start()
     await asyncio.sleep(2)
 
     # Below, using a sync client wouldn't work.
     # Don't know why.
 
-    url = LOCALHOST
+    url = 'http://0.0.0.0:8002'
+
     async with httpx.AsyncClient() as client:
         response = await client.get(url + '/simple1')
         # Occasionally, this fails during release test.

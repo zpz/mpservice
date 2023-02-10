@@ -24,6 +24,7 @@ extensions = [
     "numpydoc",
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
+    'sphinx.ext.doctest',
     ]
 
 # Disable autosummary stuff, which is enabled by numpydoc by default.

@@ -39,31 +39,34 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
-
 import concurrent.futures
+import functools
 import os
 import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from multiprocessing.util import Finalize
 from random import random
 from typing import (
-    Callable,
-    TypeVar,
-    Optional,
     Any,
+    Callable,
     Literal,
+    Optional,
+    TypeVar,
 )
 
 from deprecation import deprecated
-from overrides import EnforceOverrides, overrides, final
 
-from .util import is_remote_exception, get_remote_traceback
-from .util import is_exception, Thread, MP_SPAWN_CTX
 from ._queues import SingleLane
-
+from .util import (
+    MP_SPAWN_CTX,
+    Thread,
+    get_remote_traceback,
+    is_exception,
+    is_remote_exception,
+)
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
@@ -75,14 +78,14 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-class Streamer(EnforceOverrides, Iterator):
+class Streamer(Iterable):
     """
     The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Streamer`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
     """
 
-    def __init__(self, instream: Iterator | Iterable, /):
+    def __init__(self, instream: Iterable, /):
         """
         Parameters
         ----------
@@ -92,40 +95,19 @@ class Streamer(EnforceOverrides, Iterator):
         """
         self.streamlets: list[Stream] = [Stream(instream)]
 
-    def stop(self):
-        """
-        Stop all the operators that are working on the stream.
-
-        Usually you do not need to call this method unless you break out of
-        iteration prematurely or exception happens. But when those situations are possible,
-        it's advised to consume this stream within a context manager, which calls
-        ``stop`` upon exit.
-        """
-        for s in self.streamlets:
-            s._stop()
-
+    @deprecated(
+        deprecated_in="0.11.9",
+        removed_in="0.12.2",
+        details="Please use the object directly without context manager.",
+    )
     def __enter__(self):
-        """
-        If you break out of iteration before it finishes, or error happens, then it's important
-        to use this object within the context manager.
-        If these two situations do not arise, then it's not necessary to use context manager.
-
-        Calls to the "operation setup" methods do not need to be within context manager.
-        Only the "consuming" methods (:meth:`__iter__`, :meth:`__next__`, and :meth:`drain`)
-        need to be within context manager.
-        """
         return self
 
     def __exit__(self, *args, **kwargs):
-        self.stop()
+        pass
 
-    @final
     def __iter__(self):
-        return self
-
-    @final
-    def __next__(self):
-        return self.streamlets[-1].__next__()
+        yield from self.streamlets[-1]
 
     def drain(self) -> int:
         """Drain off the stream and return the number of elements processed.
@@ -395,7 +377,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self.map(Peeker())
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``peek`` instead."
+        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``peek`` instead."
     )
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
@@ -467,20 +449,8 @@ class Streamer(EnforceOverrides, Iterator):
         >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
-
-        class Batcher:
-            def __init__(self):
-                self._n = 0
-                self._z = 0
-
-            def __call__(self, x, batch_size):
-                if self._n == batch_size:
-                    self._z = 1 - self._z
-                    self._n = 0
-                self._n += 1
-                return self._z
-
-        return self.groupby(Batcher(), batch_size=batch_size)
+        self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
+        return self
 
     def unbatch(self):
         """
@@ -588,7 +558,7 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
     @deprecated(
-        deprecated_in="0.11.8", removed_in="0.13.0", details="Use ``parmap`` instead"
+        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``parmap`` instead"
     )
     def transform(
         self,
@@ -672,6 +642,8 @@ class Streamer(EnforceOverrides, Iterator):
             Note that a ``True`` value does not absorb exceptions
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
+        **kwargs
+            Passed on to :class:`Parmapper`.
         """
         self.streamlets.append(
             Parmapper(
@@ -687,65 +659,35 @@ class Streamer(EnforceOverrides, Iterator):
         return self
 
 
-class Stream(EnforceOverrides):
-    def __init__(self, instream: Stream | Iterator | Iterable, /):
-        if hasattr(instream, "__next__"):
-            self._instream = instream
-        else:
-            self._instream = iter(instream)
-        self._stopped = threading.Event()
+class Stream(Iterable):
+    def __init__(self, instream: Iterable, /):
+        self._instream = instream
 
-    def _stop(self):
-        # Clean up and deal with early-stop situations.
-        self._stopped.set()
-
-    @final
     def __iter__(self):
-        return self
-
-    def __next__(self):
-        """Produce the next element in the stream.
-
-        In a subclass, almost always it will not get the next element
-        from ``self._instream``, but rather from some object that holds
-        results of transformations on ``self._instream``.
-        In other words, subclass typically needs to override this method.
-        Subclass should take care to handle exceptions in this method.
-        """
-        if self._stopped.is_set():
-            raise StopIteration
-        z = next(self._instream)
-        return z
+        yield from self._instream
 
 
 class Mapper(Stream):
     def __init__(self, instream: Stream, func: Callable[[T], Any], **kwargs):
         super().__init__(instream)
-        self.func = func
-        self._kwargs = kwargs
+        self.func = functools.partial(func, **kwargs) if kwargs else func
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        return self.func(next(self._instream), **self._kwargs)
+    def __iter__(self):
+        func = self.func
+        for v in self._instream:
+            yield func(v)
 
 
 class Filter(Stream):
     def __init__(self, instream: Stream, func: Callable[[T], bool], **kwargs):
         super().__init__(instream)
-        self.func = func
-        self._kwargs = kwargs
+        self.func = functools.partial(func, **kwargs) if kwargs else func
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        while True:
-            z = next(self._instream)
-            if not self.func(z, **self._kwargs):
-                continue
-            return z
+    def __iter__(self):
+        func = self.func
+        for v in self._instream:
+            if func(v):
+                yield v
 
 
 class Header(Stream):
@@ -756,16 +698,15 @@ class Header(Stream):
         assert n > 0
         super().__init__(instream)
         self.n = n
-        self._n = 0
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        if self._n >= self.n:
-            raise StopIteration
-        self._n += 1
-        return next(self._instream)
+    def __iter__(self):
+        n = 0
+        nn = self.n
+        for v in self._instream:
+            if n >= nn:
+                break
+            yield v
+            n += 1
 
 
 class Tailor(Stream):
@@ -774,65 +715,61 @@ class Tailor(Stream):
         Keeps the last ``n`` elements and ignores all the previous ones.
         If there are less than ``n`` data elements in total, then keep all of them.
 
+        This object needs to walk through the entire input stream before
+        starting to yield elements.
+
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
         super().__init__(instream)
         assert n > 0
         self.n = n
-        self._data = deque(maxlen=n)
-        self._data_collected = False
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        if not self._data_collected:
-            data = self._data
-            for v in self._instream:
-                data.append(v)
-            self._data_collected = True
-        try:
-            return self._data.popleft()
-        except IndexError:
-            # No more data.
-            raise StopIteration
+    def __iter__(self):
+        data = deque(maxlen=self.n)
+        for v in self._instream:
+            data.append(v)
+        yield from data
 
 
 class Grouper(Stream):
     def __init__(self, instream: Stream, /, func: Callable[[T], Any], **kwargs):
         super().__init__(instream)
-        self._func = func
-        self._kwargs = kwargs
-        self._z = object()
-        self._group = None
+        self.func = functools.partial(func, **kwargs) if kwargs else func
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-
-        while True:
-            try:
-                x = next(self._instream)
-            except StopIteration:
-                self._stop()
-                break
-            z = self._func(x, **self._kwargs)
-            if z == self._z:
-                self._group.append(x)
+    def __iter__(self):
+        _z = object()
+        group = None
+        func = self.func
+        for x in self._instream:
+            z = func(x)
+            if z == _z:
+                group.append(x)
             else:
-                self._z = z
-                if self._group is None:
-                    self._group = [x]
-                    continue
-                batch = self._group
-                self._group = [x]
-                return batch
+                if group is not None:
+                    yield group
+                group = [x]
+                _z = z
+        if group is not None:
+            yield group
 
-        if self._group:
-            return self._group
-        raise StopIteration
+
+class Batcher(Stream):
+    def __init__(self, instream: Stream, /, batch_size: int):
+        super().__init__(instream)
+        assert batch_size > 0
+        self._batch_size = batch_size
+
+    def __iter__(self):
+        batch_size = self._batch_size
+        batch = []
+        for x in self._instream:
+            batch.append(x)
+            if len(batch) == batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
 
 class Unbatcher(Stream):
@@ -847,20 +784,10 @@ class Unbatcher(Stream):
         but that is by no means a requirement.
         """
         super().__init__(instream)
-        self._batch = iter([])
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        try:
-            z = next(self._batch)
-        except StopIteration:
-            y = next(self._instream)
-            self._batch = iter(y)
-            return self.__next__()
-        else:
-            return z
+    def __iter__(self):
+        for x in self._instream:
+            yield from x
 
 
 class Buffer(Stream):
@@ -868,6 +795,7 @@ class Buffer(Stream):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
+        self._stopped = threading.Event()
         self._tasks = SingleLane(maxsize)
         self._worker = Thread(target=self._start, loud_exception=False)
         self._worker.start()
@@ -881,22 +809,16 @@ class Buffer(Stream):
     def _start(self):
         threading.current_thread().name = "BufferThread"
         q = self._tasks
-        while True:
-            try:
-                v = next(self._instream)
-            except StopIteration:
-                q.put(FINISHED)
-                break
-            except Exception:
-                q.put(STOPPED)
-                raise
-            if self._stopped.is_set():
-                break
-            q.put(v)  # if `q` is full, will wait here
-
-    @overrides
-    def _stop(self):
-        self._finalize_func()
+        try:
+            for x in self._instream:
+                if self._stopped.is_set():
+                    return
+                q.put(x)  # if `q` is full, will wait here
+        except Exception:
+            q.put(STOPPED)
+            raise
+        else:
+            q.put(FINISHED)
 
     @staticmethod
     def _finalize(stopped, tasks, worker):
@@ -907,29 +829,26 @@ class Buffer(Stream):
         # more element into the queue, which is safe.
         worker.join()
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
+    def __iter__(self):
         while True:
             try:
                 z = self._tasks.get(timeout=1)
-                break
             except queue.Empty as e:
                 if self._worker.is_alive():
                     continue
-                if self._stopped.is_set():
-                    raise StopIteration
                 if self._worker.exception():
                     raise self._worker.exception()
                 raise RuntimeError("unknown situation occurred") from e
-        if z == FINISHED:
-            self._stop()
-            raise StopIteration
-        if z == STOPPED:
-            self._stop()
-            raise self._worker.exception()
-        return z
+            else:
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    raise self._worker.exception()
+                try:
+                    yield z
+                except GeneratorExit:
+                    self._finalize(self._stopped, self._tasks, self._worker)
+                    raise
 
 
 class Parmapper(Stream):
@@ -942,6 +861,8 @@ class Parmapper(Stream):
         num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        executor_initializer=None,
+        executor_init_args=(),
         **kwargs,
     ):
         super().__init__(instream)
@@ -956,12 +877,20 @@ class Parmapper(Stream):
         self._return_x = return_x
         self._return_exceptions = return_exceptions
         if executor == "thread":
-            self._executor = concurrent.futures.ThreadPoolExecutor(num_workers)
+            self._stopped = threading.Event()
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                num_workers,
+                initializer=executor_initializer,
+                initargs=executor_init_args,
+            )
         else:
             assert executor == "process"
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
-                num_workers, mp_context=MP_SPAWN_CTX
+                num_workers,
+                mp_context=MP_SPAWN_CTX,
+                initializer=executor_initializer,
+                initargs=executor_init_args,
             )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(
@@ -977,25 +906,20 @@ class Parmapper(Stream):
 
     def _start(self, func, **kwargs):
         tasks = self._tasks
-        while True:
-            try:
-                x = next(self._instream)
-            except StopIteration:
-                tasks.put(FINISHED)
-                break
-            except Exception:
-                tasks.put(STOPPED)
-                raise
-            if self._stopped.is_set():
-                break
-            t = self._executor.submit(func, x, **kwargs)
-            # The size of the queue `tasks` regulates how many
-            # concurrent calls to `func` there can be.
-            tasks.put((x, t))
-
-    @overrides
-    def _stop(self):
-        self._finalize_func()
+        executor = self._executor
+        try:
+            for x in self._instream:
+                if self._stopped.is_set():
+                    return
+                t = executor.submit(func, x, **kwargs)
+                tasks.put((x, t))
+                # The size of the queue `tasks` regulates how many
+                # concurrent calls to `func` there can be.
+        except Exception:
+            tasks.put(STOPPED)
+            raise
+        else:
+            tasks.put(FINISHED)
 
     @staticmethod
     def _finalize(stopped, tasks, worker, executor):
@@ -1005,30 +929,41 @@ class Parmapper(Stream):
         worker.join()
         executor.shutdown()
 
-    @overrides
-    def __next__(self):
-        if self._stopped.is_set():
-            raise StopIteration
-        z = self._tasks.get()
-        if z == FINISHED:
-            self._stop()
-            raise StopIteration
-        if z == STOPPED:
-            self._stop()
-            raise self._worker.exception()
+    def __iter__(self):
+        while True:
+            z = self._tasks.get()
+            if z == FINISHED:
+                break
+            if z == STOPPED:
+                raise self._worker.exception()
 
-        x, fut = z
-        try:
-            y = fut.result()
-            if self._return_x:
-                return x, y
-            return y
-        except Exception as e:
-            if self._return_exceptions:
-                # TODO: think about when `e` is a "remote exception".
-                if self._return_x:
-                    return x, e
-                return e
+            x, fut = z
+            try:
+                y = fut.result()
+            except Exception as e:
+                if self._return_exceptions:
+                    # TODO: think about when `e` is a "remote exception".
+                    try:
+                        if self._return_x:
+                            yield x, e
+                        yield e
+                    except GeneratorExit:
+                        self._finalize(
+                            self._stopped, self._tasks, self._worker, self._executor
+                        )
+                        raise
+                else:
+                    self._finalize(
+                        self._stopped, self._tasks, self._worker, self._executor
+                    )
+                    raise
             else:
-                self._stop()
-                raise
+                try:
+                    if self._return_x:
+                        yield x, y
+                    yield y
+                except GeneratorExit:
+                    self._finalize(
+                        self._stopped, self._tasks, self._worker, self._executor
+                    )
+                    raise

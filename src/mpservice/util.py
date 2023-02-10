@@ -24,6 +24,7 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 """
 
 from __future__ import annotations
+
 import errno
 import functools
 import inspect
@@ -31,8 +32,8 @@ import logging
 import logging.handlers
 import multiprocessing
 import multiprocessing.connection
-import multiprocessing.queues
 import multiprocessing.context
+import multiprocessing.queues
 import os
 import subprocess
 import threading
@@ -40,7 +41,6 @@ import traceback
 from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
-
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
@@ -285,14 +285,14 @@ ValueError: 38
 >>>
 >>> err
 ValueError(38)
->>> err.__traceback__
-<traceback object at 0x7fad69dff8c0>
+>>> err.__traceback__  # doctest: +ELLIPSIS
+<traceback object at 0x7...>
 >>> err.__cause__ is None
 True
 >>>
 >>> e_remote = RemoteException(err)
->>> e_remote
-<mpservice.util.RemoteException object at 0x7fad702cd280>
+>>> e_remote  # doctest: +ELLIPSIS
+<mpservice.util.RemoteException object at 0x7...>
 >>> e_pickled = pickle.dumps(e_remote)
 >>> e_unpickled = pickle.loads(e_pickled)
 >>>
@@ -302,14 +302,24 @@ ValueError(38)
 <class 'ValueError'>
 >>> e_unpickled.__traceback__ is None
 True
->>> e_unpickled.__cause__
-RemoteTraceback('Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n')
+>>> e_unpickled.__cause__  # doctest: +SKIP
+RemoteTraceback('Traceback (most recent call last):
+  File "<stdin>", line 2, in <module>
+  File "<stdin>", line 2, in gee
+  File "<stdin>", line 2, in foo
+ValueError: 38
+')
 >>>
 >>> is_remote_exception(e_unpickled)
 True
->>> get_remote_traceback(e_unpickled)
-'Traceback (most recent call last):\n  File "<stdin>", line 2, in <module>\n  File "<stdin>", line 2, in gee\n  File "<stdin>", line 2, in foo\nValueError: 38\n'
->>> print(get_remote_traceback(e_unpickled))
+>>> get_remote_traceback(e_unpickled)  # doctest: +SKIP
+'Traceback (most recent call last):
+  File "<stdin>", line 2, in <module>
+  File "<stdin>", line 2, in gee
+  File "<stdin>", line 2, in foo
+  ValueError: 38
+'
+>>> print(get_remote_traceback(e_unpickled))  # doctest: +SKIP
 Traceback (most recent call last):
     File "<stdin>", line 2, in <module>
     File "<stdin>", line 2, in gee
@@ -767,7 +777,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
     def run(self):
         """
-        Overrides the standard ``Process.run`.
+        Overrides the standard ``Process.run``.
 
         ``start`` arranges for this to be run in a child process.
         """

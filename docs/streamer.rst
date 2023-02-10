@@ -21,18 +21,19 @@ Let's make up an I/O-bound operation which takes an input and produces an output
 ...     return x * 2
 
 Suppose we have a long stream of input values we want to process.
-We feed this stream into a :class:`Streamer` object::
+We feed this stream into a :class:`Streamer` object:
 
 >>> from mpservice.streamer import Streamer
 >>> data_stream = Streamer(range(100))
-  
+
 The input stream is often a list, but more generally, it can be any
 `Iterable`_, possibly unlimited.
 Since ``double`` is an I/O-bound operation, let's use multiple threads to speed up
 the processing of the input stream.
 For this purpose, we add a :meth:`~Streamer.parmap` (or "parallel map") operator to the stream:
 
->>> data_stream.parmap(double, executor='thread', num_workers=8)
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -57,11 +58,11 @@ In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
 >>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)
->>> for k, y in enumerate(data_stream):
-...     print(y, end='  ')
-...     if (k + 1) % 10 == 0:
-...         print('')
-... print('')
+>>> for k, y in enumerate(data_stream):  # doctest: +SKIP
+...     print(y, end='  ')  # doctest: +SKIP
+...     if (k + 1) % 10 == 0:  # doctest: +SKIP
+...         print('')  # doctest: +SKIP
+... print('')  # doctest: +SKIP
 0  2  4  6  8  10  12  14  16  18
 20  22  24  26  28  30  32  34  36  38
 40  42  44  46  48  50  52  54  56  58
@@ -86,13 +87,15 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 >>> data_stream = Streamer(range(20))
->>> data_stream.parmap(double, executor='thread', num_workers=8)
->>> data_stream.map(shift, amount=0.8)
->>> for k, y in enumerate(data_stream):
-...     print(y, end='  ')
-...     if (k + 1) % 10 == 0:
-...         print('')
-... print('')
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
+>>> data_stream.map(shift, amount=0.8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Streamer object at 0x7...>
+>>> for k, y in enumerate(data_stream):  # doctest: +SKIP
+...     print(y, end='  ')  # doctest: +SKIP
+...     if (k + 1) % 10 == 0:  # doctest: +SKIP
+...         print('')  # doctest: +SKIP
+... print('')  # doctest: +SKIP
 0.8  2.8  4.8  6.8  8.8  10.8  12.8  14.8  16.8  18.8
 20.8  22.8  24.8  26.8  28.8  30.8  32.8  34.8  36.8  38.8
 
@@ -142,28 +145,13 @@ The "consuming" methods are "pulling" at the end of the final operator.
 
 There are several ways to consume the stream:
 
-- Iterate over the :class:`Streamer` object, because it implements :meth:`~Streamer.__iter__` and :meth:`~Streamer.__next__`.
+- Iterate over the :class:`Streamer` object, because it implements :meth:`~Streamer.__iter__`.
 - Call the method :meth:`~Streamer.collect` to get all the elements in a list---if you know there are not too many of them!
 - Call the method :meth:`~Streamer.drain` to "finish off" the operations. This does not return the elements of the stream, but rather
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
 
 The latter two methods are trivial wrappers of the first.
-
-Finally, :class:`~Streamer` is a context manager.
-If you have added a concurrent operator,
-and the cunsumption may end prematurely (you break out of the iteration) or abnormally due to exception
-raised in any component,
-then you should consume the stream with context management, like this::
-
-    stream = Streamer(...).map(...)...parmap(...)...
-    with stream:
-        for x in stream:
-            ...
-            if some_condition:
-                break
-
-If there are no such concerns, you can consume the stream without context management.
 
 
 API reference

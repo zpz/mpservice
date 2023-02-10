@@ -20,6 +20,7 @@ There are three levels of constructs.
 """
 
 from __future__ import annotations
+
 import asyncio
 import concurrent.futures
 import logging
@@ -27,24 +28,24 @@ import multiprocessing
 import multiprocessing.queues
 import queue
 import threading
-from abc import abstractmethod, ABC
-from collections.abc import Sequence, Iterable, Iterator
+from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Callable, Any, Optional
+from typing import Any, Callable, Optional
 
 import psutil
 from overrides import final
 
+from ._queues import SingleLane
 from .util import (
     MP_SPAWN_CTX,
+    RemoteException,
     SpawnProcess,
     Thread,
-    RemoteException,
     TimeoutError,
 )
-from ._queues import SingleLane
 
 # This modules uses the 'spawn' method to create processes.
 
