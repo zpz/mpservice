@@ -41,13 +41,12 @@ test = [
     "coverage[toml]",
     "Faker",
     "httpx",
+    "mypy",
     "pytest",
     "pytest-asyncio",
     "requests",
     "starlette",
     "zpz",
-    'pytest-parallel',
-    'py',
     'ruff',
 ]
 
@@ -68,7 +67,7 @@ ignore = ["E501"]  # line length
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --workers=auto"
+addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short"
 
 
 [tool.coverage.report]

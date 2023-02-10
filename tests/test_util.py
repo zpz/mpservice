@@ -85,6 +85,8 @@ def gee(x):
     raise ValueError(x)
 
 
+# Note: the pytest plug-in 'pytest-parallel' would make this test fail.
+# I don't understand why it changes the behavior of pickling Exception objects.
 def test_remote_exception():
     print('')
     try:
@@ -92,6 +94,7 @@ def test_remote_exception():
     except Exception as e:
         sysinfo = sys.exc_info()
         print('sys.exc_info:', sysinfo)
+        print(e.__traceback__)
         assert e.__traceback__ is sysinfo[2]
         assert isinstance(e.__traceback__, TracebackType)
         ee = pickle.loads(pickle.dumps(e))
