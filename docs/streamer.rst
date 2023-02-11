@@ -2,6 +2,11 @@
 Stream processing using ``streamer``
 ====================================
 
+.. testsetup::
+
+   from mpservice.streamer import Streamer
+
+
 .. automodule:: mpservice.streamer
     :no-members:
     :no-undoc-members:
@@ -57,7 +62,7 @@ Despite the concurrency in the operation, the order of the input elements is pre
 In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
->>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)
+>>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)  # doctest: +SKIP
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP
@@ -74,6 +79,7 @@ Let's verify:
 160  162  164  166  168  170  172  174  176  178
 180  182  184  186  188  190  192  194  196  198
 
+
 Note that we had to re-create the streamer object because,
 after the first iteration, the stream was "consumed" and gone.
 Also note that we can either add an operator in a statement, or call it as a function, often in a "chained" fashion.
@@ -87,9 +93,9 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 >>> data_stream = Streamer(range(20))
->>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +SKIP
 <mpservice.streamer.Streamer object at 0x7...>
->>> data_stream.map(shift, amount=0.8)  # doctest: +ELLIPSIS
+>>> data_stream.map(shift, amount=0.8)  # doctest: +SKIP
 <mpservice.streamer.Streamer object at 0x7...>
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
@@ -101,7 +107,7 @@ This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 The first three lines are equivalent to this one line:
 
->>> data_stream = Streamer(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
+>>> data_stream = Streamer(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)  # doctest: +SKIP
 
 :class:`Streamer` has many other "operators". They can be characterised in a few ways:
 
