@@ -83,6 +83,12 @@ class Streamer(Iterable):
     The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Streamer`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
+
+    .. doctest::
+        :hide:
+
+        from mpservice.streamer import Streamer
+
     """
 
     def __init__(self, instream: Iterable, /):
