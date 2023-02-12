@@ -756,7 +756,7 @@ class Grouper(Stream):
                     yield group
                 group = [x]
                 _z = z
-        if group is not None:
+        if group:
             yield group
 
 
@@ -952,7 +952,8 @@ class Parmapper(Stream):
                     try:
                         if self._return_x:
                             yield x, e
-                        yield e
+                        else:
+                            yield e
                     except GeneratorExit:
                         self._finalize(
                             self._stopped, self._tasks, self._worker, self._executor
@@ -967,7 +968,8 @@ class Parmapper(Stream):
                 try:
                     if self._return_x:
                         yield x, y
-                    yield y
+                    else:
+                        yield y
                 except GeneratorExit:
                     self._finalize(
                         self._stopped, self._tasks, self._worker, self._executor
