@@ -807,7 +807,9 @@ class Buffer(Stream):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(target=self._run_worker, loud_exception=self._loud_exception)
+        self._worker = Thread(
+            target=self._run_worker, loud_exception=self._loud_exception
+        )
         self._worker.start()
         self._finalize_func = Finalize(
             self,
@@ -889,7 +891,7 @@ class Parmapper(Stream):
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        assert executor in ('thread', 'process')
+        assert executor in ("thread", "process")
         self._executor_ = executor
         if num_workers is not None:
             assert num_workers > 0
