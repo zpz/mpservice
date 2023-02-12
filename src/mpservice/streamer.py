@@ -283,7 +283,7 @@ class Streamer(Iterable):
         self,
         *,
         print_func: Optional[Callable[[str], None]] = None,
-        interval: int | float = 1000,
+        interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
     ):
@@ -801,18 +801,22 @@ class Buffer(Stream):
         super().__init__(instream)
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
+        self._finalizer_func = None
+        self._loud_exception = False
+
+    def _start(self):
         self._stopped = threading.Event()
-        self._tasks = SingleLane(maxsize)
-        self._worker = Thread(target=self._start, loud_exception=False)
+        self._tasks = SingleLane(self.maxsize)
+        self._worker = Thread(target=self._run_worker, loud_exception=self._loud_exception)
         self._worker.start()
         self._finalize_func = Finalize(
             self,
-            type(self)._finalize,
+            type(self)._finalizer,
             (self._stopped, self._tasks, self._worker),
             exitpriority=10,
         )
 
-    def _start(self):
+    def _run_worker(self):
         threading.current_thread().name = "BufferThread"
         q = self._tasks
         try:
@@ -827,7 +831,7 @@ class Buffer(Stream):
             q.put(FINISHED)
 
     @staticmethod
-    def _finalize(stopped, tasks, worker):
+    def _finalizer(stopped, tasks, worker):
         stopped.set()
         while not tasks.empty():
             _ = tasks.get()
@@ -835,7 +839,15 @@ class Buffer(Stream):
         # more element into the queue, which is safe.
         worker.join()
 
+    def _finalize(self):
+        fin = self._finalize_func
+        if fin:
+            self._finalize_func = None
+            fin()
+
     def __iter__(self):
+        self._start()
+
         while True:
             try:
                 z = self._tasks.get(timeout=1)
@@ -853,7 +865,7 @@ class Buffer(Stream):
                 try:
                     yield z
                 except GeneratorExit:
-                    self._finalize(self._stopped, self._tasks, self._worker)
+                    self._finalize()
                     raise
 
 
@@ -873,44 +885,59 @@ class Parmapper(Stream):
     ):
         super().__init__(instream)
 
-        if num_workers is None:
-            if executor == "thread":
-                num_workers = min(32, (os.cpu_count() or 1) + 4)
-            else:
-                num_workers = os.cpu_count() or 1
-        else:
-            assert num_workers > 0
+        self._func = func
+        self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        if executor == "thread":
+        assert executor in ('thread', 'process')
+        self._executor_ = executor
+        if num_workers is not None:
+            assert num_workers > 0
+        self._num_workers = num_workers
+        self._executor_initializer = executor_initializer
+        self._executor_init_args = executor_init_args
+        self._executor = None
+        self._finalize_func = None
+
+        self._loud_exception = False
+
+    def _start(self):
+        num_workers = self._num_workers
+        if self._executor_ == "thread":
+            if num_workers is None:
+                num_workers = min(32, (os.cpu_count() or 1) + 4)
             self._stopped = threading.Event()
             self._executor = concurrent.futures.ThreadPoolExecutor(
                 num_workers,
-                initializer=executor_initializer,
-                initargs=executor_init_args,
+                initializer=self._executor_initializer,
+                initargs=self._executor_init_args,
             )
         else:
-            assert executor == "process"
+            if num_workers is None:
+                num_workers = os.cpu_count() or 1
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
                 num_workers,
                 mp_context=MP_SPAWN_CTX,
-                initializer=executor_initializer,
-                initargs=executor_init_args,
+                initializer=self._executor_initializer,
+                initargs=self._executor_init_args,
             )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(
-            target=self._start, args=(func,), kwargs=kwargs, loud_exception=False
+            target=self._run_worker,
+            args=(self._func,),
+            kwargs=self._func_kwargs,
+            loud_exception=self._loud_exception,
         )
         self._worker.start()
         self._finalize_func = Finalize(
             self,
-            type(self)._finalize,
+            type(self)._finalizer,
             (self._stopped, self._tasks, self._worker, self._executor),
             exitpriority=10,
         )
 
-    def _start(self, func, **kwargs):
+    def _run_worker(self, func, **kwargs):
         tasks = self._tasks
         executor = self._executor
         try:
@@ -928,14 +955,22 @@ class Parmapper(Stream):
             tasks.put(FINISHED)
 
     @staticmethod
-    def _finalize(stopped, tasks, worker, executor):
+    def _finalizer(stopped, tasks, worker, executor):
         stopped.set()
         while not tasks.empty():
             _ = tasks.get()
         worker.join()
         executor.shutdown()
 
+    def _finalize(self):
+        fin = self._finalize_func
+        if fin:
+            self._finalize_func = None
+            fin()
+
     def __iter__(self):
+        self._start()
+
         while True:
             z = self._tasks.get()
             if z == FINISHED:
@@ -955,14 +990,10 @@ class Parmapper(Stream):
                         else:
                             yield e
                     except GeneratorExit:
-                        self._finalize(
-                            self._stopped, self._tasks, self._worker, self._executor
-                        )
+                        self._finalize()
                         raise
                 else:
-                    self._finalize(
-                        self._stopped, self._tasks, self._worker, self._executor
-                    )
+                    self._finalize()
                     raise
             else:
                 try:
@@ -971,7 +1002,5 @@ class Parmapper(Stream):
                     else:
                         yield y
                 except GeneratorExit:
-                    self._finalize(
-                        self._stopped, self._tasks, self._worker, self._executor
-                    )
+                    self._finalize()
                     raise

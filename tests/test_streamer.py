@@ -163,6 +163,12 @@ def test_buffer():
     assert list(Streamer(range(11)).buffer(20)) == list(range(11))
 
 
+def test_buffer_noop():
+    # No action if buffer is not used.
+    x = Streamer(range(1000)).buffer(20)
+    assert True
+
+
 def test_buffer_batch():
     n = Streamer(range(19)).buffer(10).batch(5).unbatch().peek(interval=1).drain()
     assert n == 19
@@ -181,6 +187,8 @@ def test_parmap():
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
+
+    # Test the deprecated `transform`.
     assert Streamer(SYNC_INPUT).transform(f1, concurrency=1, executor='thread').collect() == expected
 
     assert list(Streamer(SYNC_INPUT).parmap(f1, num_workers=10, executor='thread')) == expected
@@ -205,6 +213,15 @@ def test_parmap():
     got = mysink.result
     expected = sum((v + 3.8) * 3 for v in SYNC_INPUT)
     assert math.isclose(got, expected)
+
+
+def test_parmap_noop():
+    # No problem if no action.
+    def foo(n):
+        return range(n)
+ 
+    x = Streamer(range(1000)).parmap(foo, executor='thread')
+    assert True
 
 
 def test_parmap_with_error():

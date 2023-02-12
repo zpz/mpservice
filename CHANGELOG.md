@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Deprecated context manager on `Streamer`. Instead, use the object directly.
 
+### Changed
+
+- `Streamer.peek` parameter `interval`: default changed to 1 from 1000.
+
 ### Added or enhanced
 
 - `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
