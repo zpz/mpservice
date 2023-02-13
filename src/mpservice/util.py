@@ -25,7 +25,6 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 
 from __future__ import annotations
 
-
 import errno
 import functools
 import inspect
