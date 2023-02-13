@@ -107,7 +107,8 @@ def test_manager():
 
             assert doubler3.get_mp() == doubler2.get_mp()
 
-    Manager.register(Doubler)  # this will trigger a warning log.
+    with pytest.warns(UserWarning):
+        Manager.register(Doubler)  # this will trigger a warning log.
 
 
 def worker(sleeper, n):

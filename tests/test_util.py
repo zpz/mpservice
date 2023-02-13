@@ -3,7 +3,6 @@ import logging
 import multiprocessing
 import pickle
 import sys
-import traceback
 from time import sleep
 from types import TracebackType
 import pytest
@@ -51,6 +50,7 @@ def _test_thread_process(cls):
     t.join()
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
     _test_thread_process(Thread)
 

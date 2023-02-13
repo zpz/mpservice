@@ -134,9 +134,8 @@ def test_sequential_stream():
         ss = service.stream(data)
         assert list(ss) == [v*v for v in data]
 
-        with Stream(data) as s:
-            s.parmap(service.call, executor='thread', num_workers=10)
-            assert list(s) == [v*v for v in data]
+        s = Stream(data).parmap(service.call, executor='thread', num_workers=10)
+        assert list(s) == [v*v for v in data]
 
 
 class GetHead(ProcessWorker):
@@ -234,9 +233,8 @@ def test_ensemble_stream():
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
-        with Stream(data) as s:
-            s.parmap(service.call, executor='thread', num_workers=10)
-            assert list(s) == [[v + 1, v + 7] for v in data]
+        s = Stream(data).parmap(service.call, executor='thread', num_workers=10)
+        assert list(s) == [[v + 1, v + 7] for v in data]
 
 
 class AddOne(ThreadWorker):
