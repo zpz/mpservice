@@ -1,5 +1,5 @@
 import time
-from mpservice.streamer import Streamer
+from mpservice.streamer import Stream
 
 NX = 100
 
@@ -33,7 +33,7 @@ def plain():
 
 def streamed(workers):
     t0 = time.perf_counter()
-    s = Streamer(data()).transform(inc, workers=workers)
+    s = Stream(data()).transform(inc, workers=workers)
 
     result = s.collect()
     t1 = time.perf_counter()
@@ -45,7 +45,7 @@ def streamed(workers):
 def chained(workers):
     t0 = time.perf_counter()
     s = (
-        Streamer(data())
+        Stream(data())
         .transform(inc, workers=workers)
         .buffer(maxsize=30)
         .transform(dec, workers=workers)

@@ -64,7 +64,6 @@ from .util import (
     MP_SPAWN_CTX,
     Thread,
     get_remote_traceback,
-    is_exception,
     is_remote_exception,
 )
 
@@ -78,17 +77,11 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-class Streamer(Iterable):
+class Stream(Iterable):
     """
-    The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
-    User constructs a ``Streamer`` object
+    The class ``Stream`` is the "entry-point" for the "streamer" utilities.
+    User constructs a ``Stream`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
-
-    .. doctest::
-        :hide:
-
-        from mpservice.streamer import Streamer
-
     """
 
     def __init__(self, instream: Iterable, /):
@@ -96,10 +89,9 @@ class Streamer(Iterable):
         Parameters
         ----------
         instream
-            The input stream of elements. This is an `Iterable`_ or an `Iterator`_,
-            which could be unlimited.
+            The input stream of elements. This is a possibly unlimited  `Iterable`_.
         """
-        self.streamlets: list[Stream] = [Stream(instream)]
+        self.streamlets: list[Stream] = [instream]
 
     @deprecated(
         deprecated_in="0.11.9",
@@ -269,7 +261,7 @@ class Streamer(Iterable):
         """
 
         def foo(x):
-            if is_exception(x):
+            if isinstance(x, BaseException):
                 if keep_exc_types is not None and isinstance(x, keep_exc_types):
                     return True
                 if drop_exc_types is not None and isinstance(x, drop_exc_types):
@@ -283,7 +275,7 @@ class Streamer(Iterable):
         self,
         *,
         print_func: Optional[Callable[[str], None]] = None,
-        interval: int | float = 1000,
+        interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
     ):
@@ -356,13 +348,13 @@ class Streamer(Iterable):
                 if (
                     not should_print
                     and self._exc_types
-                    and is_exception(x)
+                    and isinstance(x, BaseException)
                     and isinstance(x, self._exc_types)
                 ):
                     should_print = True
                 if not should_print:
                     return x
-                if not is_exception(x):
+                if not isinstance(x, BaseException):
                     self._print_func("#%d:  %r" % (self._idx, x))
                     return x
                 trace = ""
@@ -430,7 +422,7 @@ class Streamer(Iterable):
         Examples
         --------
         >>> data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-        >>> print(Streamer(data).groupby(lambda x: x[0]).collect())
+        >>> print(Stream(data).groupby(lambda x: x[0]).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
         self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
@@ -451,7 +443,7 @@ class Streamer(Iterable):
 
         Examples
         --------
-        >>> ss = Streamer(range(10)).batch(3)
+        >>> ss = Stream(range(10)).batch(3)
         >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
@@ -472,7 +464,7 @@ class Streamer(Iterable):
         ...     if isinstance(x, int) and x > 0:
         ...         return [x] * x
         ...     return []
-        >>> ss = Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
+        >>> ss = Stream([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
         >>> print(ss.collect())
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
 
@@ -483,7 +475,7 @@ class Streamer(Iterable):
         ...     for _ in range(n):
         ...         yield n
         >>>
-        >>> stream = Streamer((1, 2, 4, 3, 0, 5)).map(expand).unbatch().collect()
+        >>> stream = Stream((1, 2, 4, 3, 0, 5)).map(expand).unbatch().collect()
         >>> print(stream)
         [1, 2, 2, 4, 4, 4, 4, 3, 3, 3, 5, 5, 5, 5, 5]
         """
@@ -526,7 +518,7 @@ class Streamer(Iterable):
 
         Examples
         --------
-        >>> ss = Streamer(range(7))
+        >>> ss = Stream(range(7))
         >>> print(ss.accumulate(lambda x, y: x + y, 3).collect())
         [3, 4, 6, 9, 13, 18, 24]
         """
@@ -665,17 +657,9 @@ class Streamer(Iterable):
         return self
 
 
-class Stream(Iterable):
-    def __init__(self, instream: Iterable, /):
+class Mapper(Iterable):
+    def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
         self._instream = instream
-
-    def __iter__(self):
-        yield from self._instream
-
-
-class Mapper(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], Any], **kwargs):
-        super().__init__(instream)
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -684,9 +668,9 @@ class Mapper(Stream):
             yield func(v)
 
 
-class Filter(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], bool], **kwargs):
-        super().__init__(instream)
+class Filter(Iterable):
+    def __init__(self, instream: Iterable, func: Callable[[T], bool], **kwargs):
+        self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -696,13 +680,13 @@ class Filter(Stream):
                 yield v
 
 
-class Header(Stream):
-    def __init__(self, instream: Stream, /, n: int):
+class Header(Iterable):
+    def __init__(self, instream: Iterable, /, n: int):
         """
         Keeps the first ``n`` elements and ignores all the rest.
         """
         assert n > 0
-        super().__init__(instream)
+        self._instream = instream
         self.n = n
 
     def __iter__(self):
@@ -715,8 +699,8 @@ class Header(Stream):
             n += 1
 
 
-class Tailor(Stream):
-    def __init__(self, instream: Stream, /, n: int):
+class Tailor(Iterable):
+    def __init__(self, instream: Iterable, /, n: int):
         """
         Keeps the last ``n`` elements and ignores all the previous ones.
         If there are less than ``n`` data elements in total, then keep all of them.
@@ -727,7 +711,7 @@ class Tailor(Stream):
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
-        super().__init__(instream)
+        self._instream = instream
         assert n > 0
         self.n = n
 
@@ -738,9 +722,9 @@ class Tailor(Stream):
         yield from data
 
 
-class Grouper(Stream):
-    def __init__(self, instream: Stream, /, func: Callable[[T], Any], **kwargs):
-        super().__init__(instream)
+class Grouper(Iterable):
+    def __init__(self, instream: Iterable, /, func: Callable[[T], Any], **kwargs):
+        self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -760,9 +744,9 @@ class Grouper(Stream):
             yield group
 
 
-class Batcher(Stream):
-    def __init__(self, instream: Stream, /, batch_size: int):
-        super().__init__(instream)
+class Batcher(Iterable):
+    def __init__(self, instream: Iterable, /, batch_size: int):
+        self._instream = instream
         assert batch_size > 0
         self._batch_size = batch_size
 
@@ -778,8 +762,8 @@ class Batcher(Stream):
             yield batch
 
 
-class Unbatcher(Stream):
-    def __init__(self, instream: Stream, /):
+class Unbatcher(Iterable):
+    def __init__(self, instream: Iterable, /):
         """
         The incoming stream consists of lists.
         This object "expands" or "flattens" the lists into a stream
@@ -789,30 +773,36 @@ class Unbatcher(Stream):
         This may correspond to a "Batcher" operator upstream,
         but that is by no means a requirement.
         """
-        super().__init__(instream)
+        self._instream = instream
 
     def __iter__(self):
         for x in self._instream:
             yield from x
 
 
-class Buffer(Stream):
-    def __init__(self, instream: Stream, /, maxsize: int):
-        super().__init__(instream)
+class Buffer(Iterable):
+    def __init__(self, instream: Iterable, /, maxsize: int):
+        self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
+        self._finalizer_func = None
+        self._loud_exception = False
+
+    def _start(self):
         self._stopped = threading.Event()
-        self._tasks = SingleLane(maxsize)
-        self._worker = Thread(target=self._start, loud_exception=False)
+        self._tasks = SingleLane(self.maxsize)
+        self._worker = Thread(
+            target=self._run_worker, loud_exception=self._loud_exception
+        )
         self._worker.start()
         self._finalize_func = Finalize(
             self,
-            type(self)._finalize,
+            type(self)._finalizer,
             (self._stopped, self._tasks, self._worker),
             exitpriority=10,
         )
 
-    def _start(self):
+    def _run_worker(self):
         threading.current_thread().name = "BufferThread"
         q = self._tasks
         try:
@@ -827,7 +817,7 @@ class Buffer(Stream):
             q.put(FINISHED)
 
     @staticmethod
-    def _finalize(stopped, tasks, worker):
+    def _finalizer(stopped, tasks, worker):
         stopped.set()
         while not tasks.empty():
             _ = tasks.get()
@@ -835,7 +825,15 @@ class Buffer(Stream):
         # more element into the queue, which is safe.
         worker.join()
 
+    def _finalize(self):
+        fin = self._finalize_func
+        if fin:
+            self._finalize_func = None
+            fin()
+
     def __iter__(self):
+        self._start()
+
         while True:
             try:
                 z = self._tasks.get(timeout=1)
@@ -853,14 +851,14 @@ class Buffer(Stream):
                 try:
                     yield z
                 except GeneratorExit:
-                    self._finalize(self._stopped, self._tasks, self._worker)
+                    self._finalize()
                     raise
 
 
-class Parmapper(Stream):
+class Parmapper(Iterable):
     def __init__(
         self,
-        instream: Stream,
+        instream: Iterable,
         func: Callable[[T], TT],
         *,
         executor: Literal["thread", "process"] = "process",
@@ -871,46 +869,60 @@ class Parmapper(Stream):
         executor_init_args=(),
         **kwargs,
     ):
-        super().__init__(instream)
-
-        if num_workers is None:
-            if executor == "thread":
-                num_workers = min(32, (os.cpu_count() or 1) + 4)
-            else:
-                num_workers = os.cpu_count() or 1
-        else:
-            assert num_workers > 0
+        self._instream = instream
+        self._func = func
+        self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        if executor == "thread":
+        assert executor in ("thread", "process")
+        self._executor_ = executor
+        if num_workers is not None:
+            assert num_workers > 0
+        self._num_workers = num_workers
+        self._executor_initializer = executor_initializer
+        self._executor_init_args = executor_init_args
+        self._executor = None
+        self._finalize_func = None
+
+        self._loud_exception = False
+
+    def _start(self):
+        num_workers = self._num_workers
+        if self._executor_ == "thread":
+            if num_workers is None:
+                num_workers = min(32, (os.cpu_count() or 1) + 4)
             self._stopped = threading.Event()
             self._executor = concurrent.futures.ThreadPoolExecutor(
                 num_workers,
-                initializer=executor_initializer,
-                initargs=executor_init_args,
+                initializer=self._executor_initializer,
+                initargs=self._executor_init_args,
             )
         else:
-            assert executor == "process"
+            if num_workers is None:
+                num_workers = os.cpu_count() or 1
             self._stopped = MP_SPAWN_CTX.Event()
             self._executor = concurrent.futures.ProcessPoolExecutor(
                 num_workers,
                 mp_context=MP_SPAWN_CTX,
-                initializer=executor_initializer,
-                initargs=executor_init_args,
+                initializer=self._executor_initializer,
+                initargs=self._executor_init_args,
             )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(
-            target=self._start, args=(func,), kwargs=kwargs, loud_exception=False
+            target=self._run_worker,
+            args=(self._func,),
+            kwargs=self._func_kwargs,
+            loud_exception=self._loud_exception,
         )
         self._worker.start()
         self._finalize_func = Finalize(
             self,
-            type(self)._finalize,
+            type(self)._finalizer,
             (self._stopped, self._tasks, self._worker, self._executor),
             exitpriority=10,
         )
 
-    def _start(self, func, **kwargs):
+    def _run_worker(self, func, **kwargs):
         tasks = self._tasks
         executor = self._executor
         try:
@@ -928,14 +940,22 @@ class Parmapper(Stream):
             tasks.put(FINISHED)
 
     @staticmethod
-    def _finalize(stopped, tasks, worker, executor):
+    def _finalizer(stopped, tasks, worker, executor):
         stopped.set()
         while not tasks.empty():
             _ = tasks.get()
         worker.join()
         executor.shutdown()
 
+    def _finalize(self):
+        fin = self._finalize_func
+        if fin:
+            self._finalize_func = None
+            fin()
+
     def __iter__(self):
+        self._start()
+
         while True:
             z = self._tasks.get()
             if z == FINISHED:
@@ -955,14 +975,10 @@ class Parmapper(Stream):
                         else:
                             yield e
                     except GeneratorExit:
-                        self._finalize(
-                            self._stopped, self._tasks, self._worker, self._executor
-                        )
+                        self._finalize()
                         raise
                 else:
-                    self._finalize(
-                        self._stopped, self._tasks, self._worker, self._executor
-                    )
+                    self._finalize()
                     raise
             else:
                 try:
@@ -971,7 +987,14 @@ class Parmapper(Stream):
                     else:
                         yield y
                 except GeneratorExit:
-                    self._finalize(
-                        self._stopped, self._tasks, self._worker, self._executor
-                    )
+                    self._finalize()
                     raise
+
+
+Streamer = Stream
+"""An alias to :class:`Stream` for backward compatibility.
+
+.. deprecated:: 0.11.9
+    Will be removed in 0.12.2.
+    Use ``Stream`` instead.
+"""

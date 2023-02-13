@@ -3,7 +3,6 @@ import logging
 import multiprocessing
 import pickle
 import sys
-import traceback
 from time import sleep
 from types import TracebackType
 import pytest
@@ -51,6 +50,7 @@ def _test_thread_process(cls):
     t.join()
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
     _test_thread_process(Thread)
 
@@ -153,7 +153,7 @@ def test_concurrent_futures_executor():
         format='[%(asctime)s.%(msecs)02d; %(levelname)s; %(name)s; %(funcName)s, %(lineno)d] [%(processName)s]  %(message)s',
         level=logging.DEBUG,
     )
-    # TODO: this setting my interfere with other test. How to do it better?
+    # TODO: this setting may interfere with other test. How to do it better?
     # TODO: the 'debug' level did not take effect due to pytext setting.
     # A separate script will be better to test this.
     logger.error('main error')

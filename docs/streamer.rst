@@ -4,7 +4,7 @@ Stream processing using ``streamer``
 
 .. testsetup::
 
-   from mpservice.streamer import Streamer
+   from mpservice.streamer import Stream
 
 
 .. automodule:: mpservice.streamer
@@ -26,25 +26,25 @@ Let's make up an I/O-bound operation which takes an input and produces an output
 ...     return x * 2
 
 Suppose we have a long stream of input values we want to process.
-We feed this stream into a :class:`Streamer` object:
+We feed this stream into a :class:`Stream` object:
 
->>> from mpservice.streamer import Streamer
->>> data_stream = Streamer(range(100))
+>>> from mpservice.streamer import Stream
+>>> data_stream = Stream(range(100))
 
 The input stream is often a list, but more generally, it can be any
 `Iterable`_, possibly unlimited.
 Since ``double`` is an I/O-bound operation, let's use multiple threads to speed up
 the processing of the input stream.
-For this purpose, we add a :meth:`~Streamer.parmap` (or "parallel map") operator to the stream:
+For this purpose, we add a :meth:`~Stream.parmap` (or "parallel map") operator to the stream:
 
 >>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
-<mpservice.streamer.Streamer object at 0x7...>
+<mpservice.streamer.Stream object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
 Adding the operator is just "setup"--nothing runs until we start to retrieve results.
 Later we'll see that we can add more than one operator, and there are other types of operators.
-Because a :class:`Streamer` is an `Iterator`_,
+Because a :class:`Stream` is an `Iterator`_,
 "retrieving the results" usually amounts to iterating over it:
 
 >>> total = 0
@@ -62,7 +62,7 @@ Despite the concurrency in the operation, the order of the input elements is pre
 In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
->>> data_stream = Streamer(range(100)).parmap(double, executor='thread', num_workers=8)  # doctest: +SKIP
+>>> data_stream = Stream(range(100)).parmap(double, executor='thread', num_workers=8)
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP
@@ -90,13 +90,13 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 >>> def shift(x, amount):
 ...     return x + amount
 
-This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
+This is quick and easy; we decide do it "in-line" by :meth:`~Stream.map`:
 
->>> data_stream = Streamer(range(20))
->>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +SKIP
-<mpservice.streamer.Streamer object at 0x7...>
+>>> data_stream = Stream(range(20))
+>>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+<mpservice.streamer.Stream object at 0x7...>
 >>> data_stream.map(shift, amount=0.8)  # doctest: +SKIP
-<mpservice.streamer.Streamer object at 0x7...>
+<mpservice.streamer.Stream object at 0x7...>
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP
@@ -107,37 +107,37 @@ This is quick and easy; we decide do it "in-line" by :meth:`~Streamer.map`:
 
 The first three lines are equivalent to this one line:
 
->>> data_stream = Streamer(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)  # doctest: +SKIP
+>>> data_stream = Stream(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
 
-:class:`Streamer` has many other "operators". They can be characterised in a few ways:
+:class:`Stream` has many other "operators". They can be characterised in a few ways:
 
 One-to-one (will not change the elements' count or order):
-    - :meth:`~Streamer.map`
-    - :meth:`~Streamer.accumulate`
-    - :meth:`~Streamer.peek`
-    - :meth:`~Streamer.parmap`
-    - :meth:`~Streamer.buffer`
+    - :meth:`~Stream.map`
+    - :meth:`~Stream.accumulate`
+    - :meth:`~Stream.peek`
+    - :meth:`~Stream.parmap`
+    - :meth:`~Stream.buffer`
 
 Many-to-one (may shrink the stream):
-    - :meth:`~Streamer.groupby`
-    - :meth:`~Streamer.batch`
+    - :meth:`~Stream.groupby`
+    - :meth:`~Stream.batch`
 
 One-to-many (may expand the stream):
-    - :meth:`~Streamer.unbatch`
+    - :meth:`~Stream.unbatch`
 
 Selection or filtering (may drop elements):
-    - :meth:`~Streamer.filter`
-    - :meth:`~Streamer.filter_exceptions`
-    - :meth:`~Streamer.head`
-    - :meth:`~Streamer.tail`
+    - :meth:`~Stream.filter`
+    - :meth:`~Stream.filter_exceptions`
+    - :meth:`~Stream.head`
+    - :meth:`~Stream.tail`
 
 Concurrent (will create other threads or processes):
-    - :meth:`~Streamer.parmap`
-    - :meth:`~Streamer.buffer`
+    - :meth:`~Stream.parmap`
+    - :meth:`~Stream.buffer`
 
 Read-only (will not change the elements):
-    - :meth:`~Streamer.buffer`
-    - :meth:`~Streamer.peek`
+    - :meth:`~Stream.buffer`
+    - :meth:`~Stream.peek`
 
 These methods can be called either as a statement, or as a function, often in a "chained" fashion.
 They "set up", or "add", operators to the streamer.
@@ -151,9 +151,9 @@ The "consuming" methods are "pulling" at the end of the final operator.
 
 There are several ways to consume the stream:
 
-- Iterate over the :class:`Streamer` object, because it implements :meth:`~Streamer.__iter__`.
-- Call the method :meth:`~Streamer.collect` to get all the elements in a list---if you know there are not too many of them!
-- Call the method :meth:`~Streamer.drain` to "finish off" the operations. This does not return the elements of the stream, but rather
+- Iterate over the :class:`Stream` object, because it implements :meth:`~Stream.__iter__`.
+- Call the method :meth:`~Stream.collect` to get all the elements in a list---if you know there are not too many of them!
+- Call the method :meth:`~Stream.drain` to "finish off" the operations. This does not return the elements of the stream, but rather
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
 
@@ -164,7 +164,7 @@ API reference
 =============
 
 
-.. autoclass:: mpservice.streamer.Streamer
+.. autoclass:: mpservice.streamer.Stream
 
 
 Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/

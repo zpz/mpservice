@@ -10,12 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 - Deprecated context manager on `Streamer`. Instead, use the object directly.
+- Deprecated function `mpservice.util.is_exception`.
+
+### Changed
+
+- `Streamer.peek` parameter `interval`: default changed to 1 from 1000.
+- Class `Streamer` is renamed `Stream`; the old class `Stream` was removed.
 
 ### Added or enhanced
 
 - `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
   and `executor_init_args`.
-- Simplifications to the implementation of `streamer.py`, making use of `GeneratorExit`.
+- Simplifications to the implementation of `streamer.py`, making use of `GeneratorExit` and removing class `Stream`.
 
 
 ## [0.11.8] - 2022-12-21
