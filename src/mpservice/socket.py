@@ -22,7 +22,6 @@ from .util import (
     RemoteException,
     get_docker_host_ip,
     is_async,
-    is_exception,
 )
 
 logger = logging.getLogger(__name__)
@@ -505,7 +504,7 @@ class SocketClient(EnforceOverrides):
             z = q.get()
             if z == "OK":
                 n += 1
-            if is_exception(z):
+            if isinstance(z, BaseException):
                 self._to_shutdown.set()
                 concurrent.futures.wait(self._tasks)
                 self._executor.shutdown()
@@ -571,7 +570,7 @@ class SocketClient(EnforceOverrides):
                 # Do not capture `asyncio.IncompleteReadError`;
                 # let it stop this function.
                 fut = active.pop(req_id)
-                if is_exception(data):
+                if isinstance(data, BaseException):
                     fut.set_exception(data)
                 else:
                     fut.set_result(data)

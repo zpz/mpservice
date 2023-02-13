@@ -42,6 +42,9 @@ from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
 
+from deprecation import deprecated
+
+
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
@@ -157,8 +160,9 @@ def get_docker_host_ip():
     return z[: z.find(" ")]
 
 
+@deprecated(deprecated_in='0.11.9', removed_in='0.12.2')
 def is_exception(e) -> bool:
-    # TODO: test showed the raised objects are always instances, not classes, even
+    # Test showed the raised objects are always instances, not classes, even
     # if we do
     #   raise ValueError
     # the captured object is a ValueError instance, not the class.

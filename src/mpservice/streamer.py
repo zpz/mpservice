@@ -64,7 +64,6 @@ from .util import (
     MP_SPAWN_CTX,
     Thread,
     get_remote_traceback,
-    is_exception,
     is_remote_exception,
 )
 
@@ -78,17 +77,11 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-class Streamer(Iterable):
+class Stream(Iterable):
     """
-    The class ``Streamer`` is the "entry-point" for the "streamer" utilities.
-    User constructs a ``Streamer`` object
+    The class ``Stream`` is the "entry-point" for the "streamer" utilities.
+    User constructs a ``Stream`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
-
-    .. doctest::
-        :hide:
-
-        from mpservice.streamer import Streamer
-
     """
 
     def __init__(self, instream: Iterable, /):
@@ -96,10 +89,9 @@ class Streamer(Iterable):
         Parameters
         ----------
         instream
-            The input stream of elements. This is an `Iterable`_ or an `Iterator`_,
-            which could be unlimited.
+            The input stream of elements. This is a possibly unlimited  `Iterable`_.
         """
-        self.streamlets: list[Stream] = [Stream(instream)]
+        self.streamlets: list[Stream] = [instream]
 
     @deprecated(
         deprecated_in="0.11.9",
@@ -269,7 +261,7 @@ class Streamer(Iterable):
         """
 
         def foo(x):
-            if is_exception(x):
+            if isinstance(x, BaseException):
                 if keep_exc_types is not None and isinstance(x, keep_exc_types):
                     return True
                 if drop_exc_types is not None and isinstance(x, drop_exc_types):
@@ -356,13 +348,13 @@ class Streamer(Iterable):
                 if (
                     not should_print
                     and self._exc_types
-                    and is_exception(x)
+                    and isinstance(x, BaseException)
                     and isinstance(x, self._exc_types)
                 ):
                     should_print = True
                 if not should_print:
                     return x
-                if not is_exception(x):
+                if not isinstance(x, BaseException):
                     self._print_func("#%d:  %r" % (self._idx, x))
                     return x
                 trace = ""
@@ -430,7 +422,7 @@ class Streamer(Iterable):
         Examples
         --------
         >>> data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-        >>> print(Streamer(data).groupby(lambda x: x[0]).collect())
+        >>> print(Stream(data).groupby(lambda x: x[0]).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
         self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
@@ -451,7 +443,7 @@ class Streamer(Iterable):
 
         Examples
         --------
-        >>> ss = Streamer(range(10)).batch(3)
+        >>> ss = Stream(range(10)).batch(3)
         >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
@@ -472,7 +464,7 @@ class Streamer(Iterable):
         ...     if isinstance(x, int) and x > 0:
         ...         return [x] * x
         ...     return []
-        >>> ss = Streamer([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
+        >>> ss = Stream([0, 1, 2, 'a', -1, 'b', 3, 4]).map(explode).unbatch()
         >>> print(ss.collect())
         [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
 
@@ -483,7 +475,7 @@ class Streamer(Iterable):
         ...     for _ in range(n):
         ...         yield n
         >>>
-        >>> stream = Streamer((1, 2, 4, 3, 0, 5)).map(expand).unbatch().collect()
+        >>> stream = Stream((1, 2, 4, 3, 0, 5)).map(expand).unbatch().collect()
         >>> print(stream)
         [1, 2, 2, 4, 4, 4, 4, 3, 3, 3, 5, 5, 5, 5, 5]
         """
@@ -526,7 +518,7 @@ class Streamer(Iterable):
 
         Examples
         --------
-        >>> ss = Streamer(range(7))
+        >>> ss = Stream(range(7))
         >>> print(ss.accumulate(lambda x, y: x + y, 3).collect())
         [3, 4, 6, 9, 13, 18, 24]
         """
@@ -665,17 +657,9 @@ class Streamer(Iterable):
         return self
 
 
-class Stream(Iterable):
-    def __init__(self, instream: Iterable, /):
+class Mapper(Iterable):
+    def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
         self._instream = instream
-
-    def __iter__(self):
-        yield from self._instream
-
-
-class Mapper(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], Any], **kwargs):
-        super().__init__(instream)
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -684,9 +668,9 @@ class Mapper(Stream):
             yield func(v)
 
 
-class Filter(Stream):
-    def __init__(self, instream: Stream, func: Callable[[T], bool], **kwargs):
-        super().__init__(instream)
+class Filter(Iterable):
+    def __init__(self, instream: Iterable, func: Callable[[T], bool], **kwargs):
+        self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -696,13 +680,13 @@ class Filter(Stream):
                 yield v
 
 
-class Header(Stream):
-    def __init__(self, instream: Stream, /, n: int):
+class Header(Iterable):
+    def __init__(self, instream: Iterable, /, n: int):
         """
         Keeps the first ``n`` elements and ignores all the rest.
         """
         assert n > 0
-        super().__init__(instream)
+        self._instream = instream
         self.n = n
 
     def __iter__(self):
@@ -715,8 +699,8 @@ class Header(Stream):
             n += 1
 
 
-class Tailor(Stream):
-    def __init__(self, instream: Stream, /, n: int):
+class Tailor(Iterable):
+    def __init__(self, instream: Iterable, /, n: int):
         """
         Keeps the last ``n`` elements and ignores all the previous ones.
         If there are less than ``n`` data elements in total, then keep all of them.
@@ -727,7 +711,7 @@ class Tailor(Stream):
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
-        super().__init__(instream)
+        self._instream = instream
         assert n > 0
         self.n = n
 
@@ -738,9 +722,9 @@ class Tailor(Stream):
         yield from data
 
 
-class Grouper(Stream):
-    def __init__(self, instream: Stream, /, func: Callable[[T], Any], **kwargs):
-        super().__init__(instream)
+class Grouper(Iterable):
+    def __init__(self, instream: Iterable, /, func: Callable[[T], Any], **kwargs):
+        self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     def __iter__(self):
@@ -760,9 +744,9 @@ class Grouper(Stream):
             yield group
 
 
-class Batcher(Stream):
-    def __init__(self, instream: Stream, /, batch_size: int):
-        super().__init__(instream)
+class Batcher(Iterable):
+    def __init__(self, instream: Iterable, /, batch_size: int):
+        self._instream = instream
         assert batch_size > 0
         self._batch_size = batch_size
 
@@ -778,8 +762,8 @@ class Batcher(Stream):
             yield batch
 
 
-class Unbatcher(Stream):
-    def __init__(self, instream: Stream, /):
+class Unbatcher(Iterable):
+    def __init__(self, instream: Iterable, /):
         """
         The incoming stream consists of lists.
         This object "expands" or "flattens" the lists into a stream
@@ -789,16 +773,16 @@ class Unbatcher(Stream):
         This may correspond to a "Batcher" operator upstream,
         but that is by no means a requirement.
         """
-        super().__init__(instream)
+        self._instream = instream
 
     def __iter__(self):
         for x in self._instream:
             yield from x
 
 
-class Buffer(Stream):
-    def __init__(self, instream: Stream, /, maxsize: int):
-        super().__init__(instream)
+class Buffer(Iterable):
+    def __init__(self, instream: Iterable, /, maxsize: int):
+        self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._finalizer_func = None
@@ -871,10 +855,10 @@ class Buffer(Stream):
                     raise
 
 
-class Parmapper(Stream):
+class Parmapper(Iterable):
     def __init__(
         self,
-        instream: Stream,
+        instream: Iterable,
         func: Callable[[T], TT],
         *,
         executor: Literal["thread", "process"] = "process",
@@ -885,8 +869,7 @@ class Parmapper(Stream):
         executor_init_args=(),
         **kwargs,
     ):
-        super().__init__(instream)
-
+        self._instream = instream
         self._func = func
         self._func_kwargs = kwargs
         self._return_x = return_x
@@ -1006,3 +989,12 @@ class Parmapper(Stream):
                 except GeneratorExit:
                     self._finalize()
                     raise
+
+
+Streamer = Stream
+"""An alias to :class:`Stream` for backward compatibility.
+
+.. deprecated:: 0.11.9
+    Will be removed in 0.12.2.
+    Use ``Stream`` instead.
+"""

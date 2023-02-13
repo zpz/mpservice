@@ -13,8 +13,6 @@ Utilities
 
 .. autoexception:: mpservice.util.RemoteTraceback
 
-.. autofunction:: mpservice.util.is_exception
-
 .. autofunction:: mpservice.util.is_remote_exception
 
 .. autofunction:: mpservice.util.get_remote_traceback

@@ -8,7 +8,7 @@ from mpservice.mpserver import (
     SequentialServlet, EnsembleServlet, Server, make_threadworker,
     TimeoutError
 )
-from mpservice.streamer import Streamer
+from mpservice.streamer import Stream
 from mpservice.util import is_remote_exception
 
 
@@ -134,7 +134,7 @@ def test_sequential_stream():
         ss = service.stream(data)
         assert list(ss) == [v*v for v in data]
 
-        with Streamer(data) as s:
+        with Stream(data) as s:
             s.parmap(service.call, executor='thread', num_workers=10)
             assert list(s) == [v*v for v in data]
 
@@ -234,7 +234,7 @@ def test_ensemble_stream():
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
-        with Streamer(data) as s:
+        with Stream(data) as s:
             s.parmap(service.call, executor='thread', num_workers=10)
             assert list(s) == [[v + 1, v + 7] for v in data]
 
