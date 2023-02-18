@@ -38,6 +38,8 @@ import os
 import subprocess
 import threading
 import traceback
+import weakref
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
@@ -998,3 +1000,55 @@ class ProcessLogger:
             logging.getLogger().removeHandler(self._qh)
             self._q.close()
             self._q = None
+
+
+_global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
+_global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
+
+
+def get_shared_thread_pool(
+    name: str = "default", max_workers: int = None
+) -> ThreadPoolExecutor:
+    # User should not call `shutdown` on the returned executor.
+    executor = _global_thread_pools_.get(name)
+    if executor is None:
+        if not max_workers:
+            max_workers = MAX_THREADS
+        else:
+            assert max_workers <= 100
+        executor = ThreadPoolExecutor(max_workers)
+        _global_thread_pools_[name] = executor
+    return executor
+
+
+def get_shared_process_pool(
+    name: str = "default", max_workers: int = None
+) -> ProcessPoolExecutor:
+    # User should not call `shutdown` on the returned executor.
+    executor = _global_process_pools_.get(name)
+    if executor is None:
+        if not max_workers:
+            max_workers = os.cpu_count() or 1
+        else:
+            max_workers <= (os.cpu_count() or 1) * 2
+        executor = ProcessPoolExecutor(max_workers, mp_context=MP_SPAWN_CTX)
+        _global_process_pools_[name] = executor
+    return executor
+
+
+try:
+    register_at_fork = os.register_at_fork  # not available on Windows
+except AttributeError:  # on Windows
+    pass
+else:
+
+    def _clear_global_thread_process_pools():
+        for box in (_global_thread_pools_, _global_process_pools_):
+            for name in list(box.keys()):
+                pool = box.get(name)
+                if pool is not None:
+                    # TODO: if `pool` has locks, are there problems?
+                    pool.shutdown(wait=False)
+                box.pop(name, None)
+
+    register_at_fork(after_in_child=_clear_global_thread_process_pools)
