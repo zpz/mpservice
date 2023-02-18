@@ -39,7 +39,7 @@ import subprocess
 import threading
 import traceback
 import weakref
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
@@ -1002,12 +1002,13 @@ class ProcessLogger:
             self._q = None
 
 
-
 _global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
 _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
 
 
-def get_shared_thread_pool(name: str = 'default', max_workers: int = None) -> ThreadPoolExecutor:
+def get_shared_thread_pool(
+    name: str = "default", max_workers: int = None
+) -> ThreadPoolExecutor:
     # User should not call `shutdown` on the returned executor.
     executor = _global_thread_pools_.get(name)
     if executor is None:
@@ -1020,7 +1021,9 @@ def get_shared_thread_pool(name: str = 'default', max_workers: int = None) -> Th
     return executor
 
 
-def get_shared_process_pool(name: str = 'default', max_workers: int = None) -> ProcessPoolExecutor:
+def get_shared_process_pool(
+    name: str = "default", max_workers: int = None
+) -> ProcessPoolExecutor:
     # User should not call `shutdown` on the returned executor.
     executor = _global_process_pools_.get(name)
     if executor is None:
@@ -1038,6 +1041,7 @@ try:
 except AttributeError:  # on Windows
     pass
 else:
+
     def _clear_global_thread_process_pools():
         for box in (_global_thread_pools_, _global_process_pools_):
             for name in list(box.keys()):
@@ -1048,4 +1052,3 @@ else:
                 box.pop(name, None)
 
     register_at_fork(after_in_child=_clear_global_thread_process_pools)
-
