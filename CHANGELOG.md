@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
   and `executor_init_args`.
 - Simplifications to the implementation of `streamer.py`, making use of `GeneratorExit` and removing class `Stream`.
+- New utility functions `mpservice.util.get_shared_thread_pool`, `mpservice.util.get_shared_process_pool`.
 
 
 ## [0.11.8] - 2022-12-21
