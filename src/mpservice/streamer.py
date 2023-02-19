@@ -61,13 +61,13 @@ from deprecation import deprecated
 
 from ._queues import SingleLane
 from .util import (
-    MP_SPAWN_CTX,
     MAX_THREADS,
+    MP_SPAWN_CTX,
     Thread,
     get_remote_traceback,
-    is_remote_exception,
-    get_shared_thread_pool,
     get_shared_process_pool,
+    get_shared_thread_pool,
+    is_remote_exception,
 )
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
@@ -931,7 +931,12 @@ class Parmapper(Iterable):
         self._finalize_func = Finalize(
             self,
             type(self)._finalizer,
-            (self._stopped, self._tasks, self._worker, self._executor if is_shared else None),
+            (
+                self._stopped,
+                self._tasks,
+                self._worker,
+                self._executor if is_shared else None,
+            ),
             exitpriority=10,
         )
 

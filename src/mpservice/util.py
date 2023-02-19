@@ -38,8 +38,8 @@ import os
 import subprocess
 import threading
 import traceback
-import weakref
 import warnings
+import weakref
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing.util import Finalize
 from types import TracebackType
@@ -1014,9 +1014,11 @@ def get_shared_thread_pool(
     executor = _global_thread_pools_.get(name)
     # If the named pool exists, it is returned; the input `max_workers` is ignored.
     if executor is None:
-        if name == 'default':
+        if name == "default":
             if max_workers is not None:
-                warnings.warn(f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored")
+                warnings.warn(
+                    f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored"
+                )
                 max_workers = None
         else:
             if max_workers is not None:
@@ -1033,14 +1035,18 @@ def get_shared_process_pool(
     executor = _global_process_pools_.get(name)
     # If the named pool exists, it is returned; the input `max_workers` is ignored.
     if executor is None:
-        if name == 'default':
+        if name == "default":
             if max_workers is not None:
-                warnings.warn(f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored")
+                warnings.warn(
+                    f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
+                )
                 max_workers = None
         else:
             if max_workers is not None:
                 assert 1 <= (os.cpu_count() or 1) * 2
-        executor = ProcessPoolExecutor(max_workers or (os.cpu_count() or 1), mp_context=MP_SPAWN_CTX)
+        executor = ProcessPoolExecutor(
+            max_workers or (os.cpu_count() or 1), mp_context=MP_SPAWN_CTX
+        )
         _global_process_pools_[name] = executor
     return executor
 
