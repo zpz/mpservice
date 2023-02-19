@@ -7,7 +7,7 @@ from time import sleep
 from types import TracebackType
 import pytest
 from mpservice.util import Thread, TimeoutError, SpawnProcess, MP_SPAWN_CTX
-from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
+from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback, get_shared_thread_pool, get_shared_process_pool
 
 
 
@@ -163,3 +163,32 @@ def test_concurrent_futures_executor():
         t.result()
     logger.warning('main warning')
     logger.debug('main debug')
+
+
+def mp_rmrf(p):
+    # Thread pool is not copied even in 'forked' process:
+    assert len(_upath._global_thread_pools_) == 0
+    p.rmrf()
+    assert len(_upath._global_thread_pools_) == 1
+    (p / 'c.txt').write_text('c')
+    sleep(1.1)
+
+
+def test_shared_pool():
+    p = test_path
+    p.rmrf()
+    print('')
+    for c in ('fork', 'spawn'):
+        (p / 'a.txt').write_text('a')
+        (p / 'b.txt').write_text('b')
+        print('context:', c)
+        with ProcessPoolExecutor(mp_context=mp.get_context(c)) as pool:
+            t = pool.submit(mp_rmrf, p=p)
+            t.result()
+
+        assert len(p.ls()) == 1
+        assert (p / 'c.txt').read_text() == 'c'
+        p.rmrf()
+        assert len(_upath._global_thread_pools_) == 1
+
+
