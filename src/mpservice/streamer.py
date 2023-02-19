@@ -894,6 +894,7 @@ class Parmapper(Iterable):
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_thread_pool()
                 is_shared = True
+                num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
                     num_workers = MAX_THREADS
@@ -909,6 +910,7 @@ class Parmapper(Iterable):
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool()
                 is_shared = True
+                num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
                     num_workers = os.cpu_count() or 1
