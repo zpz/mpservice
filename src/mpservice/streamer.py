@@ -61,9 +61,12 @@ from deprecation import deprecated
 
 from ._queues import SingleLane
 from .util import (
+    MAX_THREADS,
     MP_SPAWN_CTX,
     Thread,
     get_remote_traceback,
+    get_shared_process_pool,
+    get_shared_thread_pool,
     is_remote_exception,
 )
 
@@ -625,10 +628,8 @@ class Stream(Iterable):
             that can be ongoing at any time.
 
             If ``None``, a default value is used depending on the value of ``executor``.
-            If ``executor`` is ``'thread'``, as many as
-            ``min(32, (os.cpu_count() or 1) + 4)`` threads are created.
-            If ``executor`` is ``'process'``, as many as
-            ``concurrency = os.cpu_count() or 1`` processes are created.
+            Unless there are concrete reasons that you need to restrict the level of concurrency
+            or the use of resources, it is recommended to leave `num_workers` at `None`.
         return_x
             If ``True``, output stream will contain tuples ``(x, y)``;
             if ``False``, output stream will contain ``y`` only.
@@ -869,44 +870,58 @@ class Parmapper(Iterable):
         executor_init_args=(),
         **kwargs,
     ):
+        assert executor in ("thread", "process")
+        if executor_initializer is None:
+            assert not executor_init_args
         self._instream = instream
         self._func = func
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
-        assert executor in ("thread", "process")
         self._executor_ = executor
-        if num_workers is not None:
-            assert num_workers > 0
         self._num_workers = num_workers
         self._executor_initializer = executor_initializer
         self._executor_init_args = executor_init_args
         self._executor = None
         self._finalize_func = None
-
         self._loud_exception = False
 
     def _start(self):
         num_workers = self._num_workers
+        is_shared = False
         if self._executor_ == "thread":
-            if num_workers is None:
-                num_workers = min(32, (os.cpu_count() or 1) + 4)
             self._stopped = threading.Event()
-            self._executor = concurrent.futures.ThreadPoolExecutor(
-                num_workers,
-                initializer=self._executor_initializer,
-                initargs=self._executor_init_args,
-            )
+            if num_workers is None and self._executor_initializer is None:
+                self._executor = get_shared_thread_pool()
+                is_shared = True
+                num_workers = self._executor._max_workers
+            else:
+                if num_workers is None:
+                    num_workers = MAX_THREADS
+                else:
+                    assert 1 <= num_workers <= 100
+                self._executor = concurrent.futures.ThreadPoolExecutor(
+                    num_workers,
+                    initializer=self._executor_initializer,
+                    initargs=self._executor_init_args,
+                )
         else:
-            if num_workers is None:
-                num_workers = os.cpu_count() or 1
             self._stopped = MP_SPAWN_CTX.Event()
-            self._executor = concurrent.futures.ProcessPoolExecutor(
-                num_workers,
-                mp_context=MP_SPAWN_CTX,
-                initializer=self._executor_initializer,
-                initargs=self._executor_init_args,
-            )
+            if num_workers is None and self._executor_initializer is None:
+                self._executor = get_shared_process_pool()
+                is_shared = True
+                num_workers = self._executor._max_workers
+            else:
+                if num_workers is None:
+                    num_workers = os.cpu_count() or 1
+                else:
+                    assert 1 <= num_workers <= (os.cpu_count() or 1) * 2
+                self._executor = concurrent.futures.ProcessPoolExecutor(
+                    num_workers,
+                    mp_context=MP_SPAWN_CTX,
+                    initializer=self._executor_initializer,
+                    initargs=self._executor_init_args,
+                )
         self._tasks = SingleLane(num_workers)
         self._worker = Thread(
             target=self._run_worker,
@@ -918,7 +933,12 @@ class Parmapper(Iterable):
         self._finalize_func = Finalize(
             self,
             type(self)._finalizer,
-            (self._stopped, self._tasks, self._worker, self._executor),
+            (
+                self._stopped,
+                self._tasks,
+                self._worker,
+                self._executor if is_shared else None,
+            ),
             exitpriority=10,
         )
 
@@ -945,7 +965,8 @@ class Parmapper(Iterable):
         while not tasks.empty():
             _ = tasks.get()
         worker.join()
-        executor.shutdown()
+        if executor is not None:
+            executor.shutdown()
 
     def _finalize(self):
         fin = self._finalize_func

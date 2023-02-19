@@ -1,16 +1,30 @@
-def gen():
-    for x in range(20):
-        try:
-            yield x
-        except GeneratorExit:
-            print('generator exit captured')
-            raise
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+import weakref
+
+_global_pool = weakref.WeakValueDictionary()
+
+
+def prepare_pool():
+    pool = ProcessPoolExecutor()
+    _global_pool['default'] = pool
+    return pool
+
+
+def worker():
+    print(list(_global_pool.items()))
+
+
+def main():
+    print(list(_global_pool.items()))
+    pool = prepare_pool()
+    print(list(_global_pool.items()))
+
+    p = mp.get_context('spawn').Process(target=worker)
+    p.start()
+    p.join()
 
 
 if __name__ == '__main__':
-    for x in gen():
-        print(x)
-        # if x > 8:
-        #     break
-            # raise ValueError(x)
+    main()
 

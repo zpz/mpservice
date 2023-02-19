@@ -38,6 +38,7 @@ import os
 import subprocess
 import threading
 import traceback
+import warnings
 import weakref
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing.util import Finalize
@@ -1011,12 +1012,18 @@ def get_shared_thread_pool(
 ) -> ThreadPoolExecutor:
     # User should not call `shutdown` on the returned executor.
     executor = _global_thread_pools_.get(name)
+    # If the named pool exists, it is returned; the input `max_workers` is ignored.
     if executor is None:
-        if not max_workers:
-            max_workers = MAX_THREADS
+        if name == "default":
+            if max_workers is not None:
+                warnings.warn(
+                    f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored"
+                )
+                max_workers = None
         else:
-            assert max_workers <= 100
-        executor = ThreadPoolExecutor(max_workers)
+            if max_workers is not None:
+                assert 1 <= max_workers <= 64
+        executor = ThreadPoolExecutor(max_workers or MAX_THREADS)
         _global_thread_pools_[name] = executor
     return executor
 
@@ -1026,12 +1033,20 @@ def get_shared_process_pool(
 ) -> ProcessPoolExecutor:
     # User should not call `shutdown` on the returned executor.
     executor = _global_process_pools_.get(name)
+    # If the named pool exists, it is returned; the input `max_workers` is ignored.
     if executor is None:
-        if not max_workers:
-            max_workers = os.cpu_count() or 1
+        if name == "default":
+            if max_workers is not None:
+                warnings.warn(
+                    f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
+                )
+                max_workers = None
         else:
-            max_workers <= (os.cpu_count() or 1) * 2
-        executor = ProcessPoolExecutor(max_workers, mp_context=MP_SPAWN_CTX)
+            if max_workers is not None:
+                assert 1 <= (os.cpu_count() or 1) * 2
+        executor = ProcessPoolExecutor(
+            max_workers or (os.cpu_count() or 1), mp_context=MP_SPAWN_CTX
+        )
         _global_process_pools_[name] = executor
     return executor
 
