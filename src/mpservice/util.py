@@ -47,14 +47,12 @@ from typing import Optional
 
 from deprecation import deprecated
 
-
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
 This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 For others, you may want to specify a smaller value.
 """
-
 
 
 class TimeoutError(Exception):
@@ -1016,7 +1014,7 @@ _global_process_pools_lock: threading.Lock = threading.Lock()
 def get_shared_thread_pool(
     name: str = "default", max_workers: int = None
 ) -> ThreadPoolExecutor:
-    '''
+    """
     Get a globally shared "thread pool", that is,
     `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 
@@ -1044,7 +1042,7 @@ def get_shared_thread_pool(
 
     This function is thread-safe, meaning it can be called safely in multiple threads with different
     or the same ``name``.
-    '''
+    """
     with _global_thread_pools_lock:
         executor = _global_thread_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
@@ -1066,12 +1064,12 @@ def get_shared_thread_pool(
 def get_shared_process_pool(
     name: str = "default", max_workers: int = None
 ) -> ProcessPoolExecutor:
-    '''
+    """
     Get a globally shared "process pool", that is,
     `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
 
     Analogous to :func:`get_shared_thread_pool`.
-    '''
+    """
     with _global_process_pools_lock:
         executor = _global_process_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
@@ -1085,9 +1083,7 @@ def get_shared_process_pool(
             else:
                 if max_workers is not None:
                     assert 1 <= (os.cpu_count() or 1) * 2
-            executor = ProcessPoolExecutor(
-                max_workers, mp_context=MP_SPAWN_CTX
-            )
+            executor = ProcessPoolExecutor(max_workers, mp_context=MP_SPAWN_CTX)
             _global_process_pools_[name] = executor
     return executor
 
