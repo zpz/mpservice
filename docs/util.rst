@@ -23,5 +23,8 @@ Utilities
 
 .. autoclass:: mpservice.util.Thread
 
+.. autofunction:: mpservice.util.get_shared_thread_pool
+
+.. autofunction:: mpservice.util.get_shared_process_pool
 
 

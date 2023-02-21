@@ -47,12 +47,14 @@ from typing import Optional
 
 from deprecation import deprecated
 
+
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
 This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 For others, you may want to specify a smaller value.
 """
+
 
 
 class TimeoutError(Exception):
@@ -1014,7 +1016,35 @@ _global_process_pools_lock: threading.Lock = threading.Lock()
 def get_shared_thread_pool(
     name: str = "default", max_workers: int = None
 ) -> ThreadPoolExecutor:
-    # User should not call `shutdown` on the returned executor.
+    '''
+    Get a globally shared "thread pool", that is,
+    `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
+
+    This is often called with no argument, leaving both ``name`` and ``max_workers`` at their default.
+
+    The default value of ``name`` is "default".
+    Different values of ``name`` refer to independent executors.
+
+    The default value of ``max_workers`` is the default value of ThreadPoolExecutor.
+    (Since Python 3.8, it is ``min(32, (os.cpu_count() or 1) + 4)``.)
+    If an executor with the requested ``name`` does not exist, it will be created
+    with the specified ``max_workers`` argument (or using default if not specified).
+    However, if the name is "default", the internal default size is always used; user specified ``max_workers``,
+    if any, will be ignored.
+
+    If the named executor exists, it will be returned, and ``max_workers`` will be ignored.
+
+    User should assign the returned executor to a variable and keep the variable in scope
+    as long as the executor is needed.
+    Once all user references to a named executor (including the default one named "default")
+    have been garbage collected, the executor is gone. When it is requested again,
+    it will be created again.
+
+    User should not call ``shutdown`` on the returned executor.
+
+    This function is thread-safe, meaning it can be called safely in multiple threads with different
+    or the same ``name``.
+    '''
     with _global_thread_pools_lock:
         executor = _global_thread_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
@@ -1028,7 +1058,7 @@ def get_shared_thread_pool(
             else:
                 if max_workers is not None:
                     assert 1 <= max_workers <= 64
-            executor = ThreadPoolExecutor(max_workers or MAX_THREADS)
+            executor = ThreadPoolExecutor(max_workers)
             _global_thread_pools_[name] = executor
     return executor
 
@@ -1036,7 +1066,12 @@ def get_shared_thread_pool(
 def get_shared_process_pool(
     name: str = "default", max_workers: int = None
 ) -> ProcessPoolExecutor:
-    # User should not call `shutdown` on the returned executor.
+    '''
+    Get a globally shared "process pool", that is,
+    `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
+
+    Analogous to :func:`get_shared_thread_pool`.
+    '''
     with _global_process_pools_lock:
         executor = _global_process_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
@@ -1051,7 +1086,7 @@ def get_shared_process_pool(
                 if max_workers is not None:
                     assert 1 <= (os.cpu_count() or 1) * 2
             executor = ProcessPoolExecutor(
-                max_workers or (os.cpu_count() or 1), mp_context=MP_SPAWN_CTX
+                max_workers, mp_context=MP_SPAWN_CTX
             )
             _global_process_pools_[name] = executor
     return executor
