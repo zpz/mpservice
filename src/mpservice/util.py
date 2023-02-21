@@ -1003,6 +1003,8 @@ class ProcessLogger:
             self._q = None
 
 
+# References:
+#  https://thorstenball.com/blog/2014/10/13/why-threads-cant-fork/
 _global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
 _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
 _global_thread_pools_lock: threading.Lock = threading.Lock()
