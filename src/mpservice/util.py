@@ -1003,51 +1003,88 @@ class ProcessLogger:
             self._q = None
 
 
+# References:
+#  https://thorstenball.com/blog/2014/10/13/why-threads-cant-fork/
 _global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
 _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
+_global_thread_pools_lock: threading.Lock = threading.Lock()
+_global_process_pools_lock: threading.Lock = threading.Lock()
 
 
 def get_shared_thread_pool(
     name: str = "default", max_workers: int = None
 ) -> ThreadPoolExecutor:
-    # User should not call `shutdown` on the returned executor.
-    executor = _global_thread_pools_.get(name)
-    # If the named pool exists, it is returned; the input `max_workers` is ignored.
-    if executor is None:
-        if name == "default":
-            if max_workers is not None:
-                warnings.warn(
-                    f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored"
-                )
-                max_workers = None
-        else:
-            if max_workers is not None:
-                assert 1 <= max_workers <= 64
-        executor = ThreadPoolExecutor(max_workers or MAX_THREADS)
-        _global_thread_pools_[name] = executor
+    """
+    Get a globally shared "thread pool", that is,
+    `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
+
+    This is often called with no argument, leaving both ``name`` and ``max_workers`` at their default.
+
+    The default value of ``name`` is "default".
+    Different values of ``name`` refer to independent executors.
+
+    The default value of ``max_workers`` is the default value of ThreadPoolExecutor.
+    (Since Python 3.8, it is ``min(32, (os.cpu_count() or 1) + 4)``.)
+    If an executor with the requested ``name`` does not exist, it will be created
+    with the specified ``max_workers`` argument (or using default if not specified).
+    However, if the name is "default", the internal default size is always used; user specified ``max_workers``,
+    if any, will be ignored.
+
+    If the named executor exists, it will be returned, and ``max_workers`` will be ignored.
+
+    User should assign the returned executor to a variable and keep the variable in scope
+    as long as the executor is needed.
+    Once all user references to a named executor (including the default one named "default")
+    have been garbage collected, the executor is gone. When it is requested again,
+    it will be created again.
+
+    User should not call ``shutdown`` on the returned executor.
+
+    This function is thread-safe, meaning it can be called safely in multiple threads with different
+    or the same ``name``.
+    """
+    with _global_thread_pools_lock:
+        executor = _global_thread_pools_.get(name)
+        # If the named pool exists, it is returned; the input `max_workers` is ignored.
+        if executor is None:
+            if name == "default":
+                if max_workers is not None:
+                    warnings.warn(
+                        f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored"
+                    )
+                    max_workers = None
+            else:
+                if max_workers is not None:
+                    assert 1 <= max_workers <= 64
+            executor = ThreadPoolExecutor(max_workers)
+            _global_thread_pools_[name] = executor
     return executor
 
 
 def get_shared_process_pool(
     name: str = "default", max_workers: int = None
 ) -> ProcessPoolExecutor:
-    # User should not call `shutdown` on the returned executor.
-    executor = _global_process_pools_.get(name)
-    # If the named pool exists, it is returned; the input `max_workers` is ignored.
-    if executor is None:
-        if name == "default":
-            if max_workers is not None:
-                warnings.warn(
-                    f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
-                )
-                max_workers = None
-        else:
-            if max_workers is not None:
-                assert 1 <= (os.cpu_count() or 1) * 2
-        executor = ProcessPoolExecutor(
-            max_workers or (os.cpu_count() or 1), mp_context=MP_SPAWN_CTX
-        )
-        _global_process_pools_[name] = executor
+    """
+    Get a globally shared "process pool", that is,
+    `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
+
+    Analogous to :func:`get_shared_thread_pool`.
+    """
+    with _global_process_pools_lock:
+        executor = _global_process_pools_.get(name)
+        # If the named pool exists, it is returned; the input `max_workers` is ignored.
+        if executor is None:
+            if name == "default":
+                if max_workers is not None:
+                    warnings.warn(
+                        f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
+                    )
+                    max_workers = None
+            else:
+                if max_workers is not None:
+                    assert 1 <= (os.cpu_count() or 1) * 2
+            executor = ProcessPoolExecutor(max_workers, mp_context=MP_SPAWN_CTX)
+            _global_process_pools_[name] = executor
     return executor
 
 
@@ -1065,5 +1102,17 @@ else:
                     # TODO: if `pool` has locks, are there problems?
                     pool.shutdown(wait=False)
                 box.pop(name, None)
+        global _global_thread_pools_lock
+        try:
+            _global_thread_pools_lock.release()
+        except RuntimeError:  # 'release unlocked lock'
+            pass
+        _global_thread_pools_lock = threading.Lock()
+        global _global_process_pools_lock
+        try:
+            _global_process_pools_lock.release()
+        except RuntimeError:
+            pass
+        _global_process_pools_lock = threading.Lock()
 
     register_at_fork(after_in_child=_clear_global_thread_process_pools)

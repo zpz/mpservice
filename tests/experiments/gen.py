@@ -1,28 +1,20 @@
-from concurrent.futures import ProcessPoolExecutor
+from mpservice.util import get_shared_thread_pool
+from mpservice import util
 import multiprocessing as mp
-import weakref
-
-_global_pool = weakref.WeakValueDictionary()
-
-
-def prepare_pool():
-    pool = ProcessPoolExecutor()
-    _global_pool['default'] = pool
-    return pool
 
 
 def worker():
-    print(list(_global_pool.items()))
+    print('in child', mp.current_process().name, list(util._global_thread_pools_.items()))
 
 
 def main():
-    print(list(_global_pool.items()))
-    pool = prepare_pool()
-    print(list(_global_pool.items()))
-
-    p = mp.get_context('spawn').Process(target=worker)
-    p.start()
-    p.join()
+    pool = get_shared_thread_pool()
+    with util._global_thread_pools_lock:
+        p = mp.get_context('fork').Process(target=worker)
+        p.start()
+        p.join()
+    with util._global_thread_pools_lock:
+        print('lock acquired')
 
 
 if __name__ == '__main__':
