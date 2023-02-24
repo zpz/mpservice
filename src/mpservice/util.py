@@ -1046,7 +1046,8 @@ def get_shared_thread_pool(
     with _global_thread_pools_lock:
         executor = _global_thread_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
-        if executor is None:
+        if executor is None or executor._shutdown:
+            # `executor._shutdown` is True if user inadvertently called `shutdown` on the executor.
             if name == "default":
                 if max_workers is not None:
                     warnings.warn(
@@ -1073,7 +1074,8 @@ def get_shared_process_pool(
     with _global_process_pools_lock:
         executor = _global_process_pools_.get(name)
         # If the named pool exists, it is returned; the input `max_workers` is ignored.
-        if executor is None:
+        if executor is None or executor._processes is None:
+            # `executor._processes` is None if user inadvertently called `shutdown` on the executor.
             if name == "default":
                 if max_workers is not None:
                     warnings.warn(
