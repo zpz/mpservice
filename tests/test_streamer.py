@@ -93,20 +93,23 @@ def test_filter_exceptions():
 
 def test_peek():
     # The main point of this test is in checking the printout.
-
+    print('')
     data = list(range(10))
 
     s = Stream(data)
     n = s.peek(interval=3).drain()
     assert n == 10
+    print('')
 
     def foo(x):
         print(x)
 
     assert Stream(data).peek(print_func=foo, interval=0.6).drain() == 10
+    print('')
 
     with pytest.warns(DeprecatedWarning):
         Stream(data).peek_every_nth(4).drain()
+    print('')
 
     exc = [0, 1, 2, ValueError(100), 4]
     # `peek` does not drop exceptions

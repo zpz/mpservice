@@ -113,8 +113,8 @@ class SimpleQueue(queue.SimpleQueue):
 class Worker(ABC):
     """
     ``Worker`` defines operations on a single input item or a batch of items
-    in usual synchronous code. This is supposed to run in its own process
-    and use that single process only.
+    in usual synchronous code. This is supposed to run in its own process (or thread)
+    and use that single process (or thread) only.
 
     Typically a subclass needs to enhance :meth:`__init__` and implement :meth:`call`,
     and leave the other methods intact.
@@ -697,6 +697,11 @@ class ProcessServlet(Servlet):
             Each process is named after this value plus its CPU affinity info.
         **kwargs
             Passed to the ``__init__`` method of ``worker_cls``.
+
+        Note
+        ----
+        When the servlet has multiple processes, the output stream does not follow
+        the order of the elements in the input stream.
         """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
@@ -783,6 +788,11 @@ class ThreadServlet(Servlet):
             Each thread is named after this value plus a serial number.
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
+
+        Note
+        ----
+        When the servlet has multiple threads, the output stream does not follow
+        the order of the elements in the input stream.
         """
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
@@ -849,6 +859,9 @@ class SequentialServlet(Servlet):
     Each operation is performed by a "servlet", that is,
     a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
     or :class:`EnsembleServlet`.
+
+    If any member servlet has multiple workers (threads or processes),
+    the output stream does not follow the order of the elements in the input stream.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -919,6 +932,8 @@ class EnsembleServlet(Servlet):
     Each operation is performed by a "servlet", that is,
     a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
     or :class:`EnsembleServlet`.
+
+    The output stream does not follow the order of the elements in the input stream.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -1006,20 +1021,27 @@ class EnsembleServlet(Servlet):
         nn = len(qouts)
         n_nomore = 0
         while True:
-            n_nonempty = 0
+            all_empty = True
             for idx, q in enumerate(qouts):
-                if q.empty():
-                    continue
-                n_nonempty += 1
-                while True:
+                while not q.empty():
                     # Get all available results out of this queue.
                     # They are for different requests.
+                    # This is needed because the output elements in a member servlet
+                    # may not follow the order of the input elements.
+                    # If they did, we could just take the head of the output stream
+                    # of each member servlet, and assemble them as the output for one
+                    # input element.
+                    all_empty = False
                     v = q.get()
                     if v == NOMOREDATA:
-                        qout.put(v)
                         n_nomore += 1
                         if n_nomore == nn:
+                            # All member servlets have got the 'end' indicator.
+                            qout.put(v)
                             return
+
+                        # Not all member servlets have finished yet.
+                        # Continue to check the other member servlets.
                         break
                     uid, y = v
                     # `y` can be an exception object or a regular result.
@@ -1031,9 +1053,7 @@ class EnsembleServlet(Servlet):
                         catalog.pop(uid)
                         y = z["y"]
                         qout.put((uid, y))
-                    if q.empty():
-                        break
-            if n_nonempty == 0:
+            if all_empty:
                 sleep(0.01)  # TODO: what is a good duration?
 
     def stop(self):

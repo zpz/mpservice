@@ -33,7 +33,7 @@ Source = "https://github.com/zpz/mpservice"
 
 [project.optional-dependencies]
 doc = [
-    "sphinx < 6.0.0",
+    "sphinx",
     "numpydoc",
     "pydata-sphinx-theme",
 ]

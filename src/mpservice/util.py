@@ -1003,6 +1003,11 @@ class ProcessLogger:
             self._q = None
 
 
+class SpawnProcessPoolExecutor(ProcessPoolExecutor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, mp_context=MP_SPAWN_CTX, **kwargs)
+
+
 # References:
 #  https://thorstenball.com/blog/2014/10/13/why-threads-cant-fork/
 _global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
