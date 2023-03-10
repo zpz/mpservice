@@ -1039,7 +1039,7 @@ class EnsembleServlet(Servlet):
                             # All member servlets have got the 'end' indicator.
                             qout.put(v)
                             return
-                        
+
                         # Not all member servlets have finished yet.
                         # Continue to check the other member servlets.
                         break
