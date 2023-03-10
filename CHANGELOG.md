@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.0] - in progress
+
+### Bug fixes
+
+- Bug in `mpserver.EnsembleServlet`.
+
+
 ## [0.11.9] - 2022-02-25
 
 ### Removed

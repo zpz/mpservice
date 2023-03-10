@@ -6,7 +6,7 @@ import sys
 from time import sleep
 from types import TracebackType
 import pytest
-from mpservice.util import Thread, TimeoutError, SpawnProcess, MP_SPAWN_CTX
+from mpservice.util import Thread, TimeoutError, SpawnProcess, MP_SPAWN_CTX, SpawnProcessPoolExecutor
 from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
 
 
@@ -158,7 +158,7 @@ def test_concurrent_futures_executor():
     # A separate script will be better to test this.
     logger.error('main error')
     logger.info('main info')
-    with concurrent.futures.ProcessPoolExecutor(mp_context=MP_SPAWN_CTX) as pool:
+    with SpawnProcessPoolExecutor() as pool:
         t = pool.submit(cfworker)
         t.result()
     logger.warning('main warning')
