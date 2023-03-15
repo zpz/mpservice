@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.1] - in progress
+
+### Added
+
+- ``EnsembleServlet`` gets new parameter ``fail_fast`` to control behavior when ensemble members return exceptions.
+
+
 ## [0.12.0] - 2023-03-10
 
 ### Bug fixes

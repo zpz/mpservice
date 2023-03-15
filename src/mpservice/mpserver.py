@@ -70,6 +70,26 @@ Will be removed in 0.13.0.
 """
 
 
+class EnsembleError(RuntimeError):
+    def __init__(self, results: dict):
+        nerr = sum(
+            1 if isinstance(v, (BaseException, RemoteException)) else 0
+            for v in results['y']
+        )
+        errmsg = None
+        for v in results['y']:
+            if isinstance(v, (BaseException, RemoteException)):
+                errmsg = repr(v)
+                break
+        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
+        super().__init__(msg)
+        self.results = results['y']
+        self._n_finished = results['n']
+
+    def __reduce__(self):
+        return type(self), ({'y': self.results, 'n': self._n_finished},)
+
+
 class FastQueue(multiprocessing.queues.SimpleQueue):
     """
     A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
@@ -933,13 +953,22 @@ class EnsembleServlet(Servlet):
     a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
     or :class:`EnsembleServlet`.
 
-    The output stream does not follow the order of the elements in the input stream.
+    If ``fail_fast`` is ``True`` (the default), once one ensemble member raises an
+    Exception, an ``EnsembleError`` will be returned. The other ensemble members
+    that arrive after this will be ignored. This is not necessarily "fast"; the main point
+    is that the item in question results in an Exception rather than a list that contains
+    Exception(s). If ``fail_fast`` is ``False``, then Exception results, if any, are included
+    in the result list. If all entries in the list are Exceptions, then the result list
+    is replaced by an ``EnsembleError``.
+
+    The output stream does not need to follow the order of the elements in the input stream.
     """
 
-    def __init__(self, *servlets: Servlet):
+    def __init__(self, *servlets: Servlet, fail_fast: bool = True):
         assert len(servlets) > 1
         self._servlets = servlets
         self._started = False
+        self._fail_fast = fail_fast
 
     def _reset(self):
         self._qin = None
@@ -1018,6 +1047,7 @@ class EnsembleServlet(Servlet):
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
+        fail_fast = self._fail_fast
         nn = len(qouts)
         n_nomore = 0
         while True:
@@ -1045,13 +1075,34 @@ class EnsembleServlet(Servlet):
                         break
                     uid, y = v
                     # `y` can be an exception object or a regular result.
-                    z = catalog[uid]
+                    z = catalog.get(uid)
+                    if z is None:
+                        # The entry has been removed due to "fail fast"
+                        continue
+
+                    if isinstance(y, BaseException):
+                        y = RemoteException(y)
+
                     z["y"][idx] = y
                     z["n"] += 1
-                    if z["n"] == nn:
+
+                    if fail_fast and isinstance(y, RemoteException):
+                        # If fail fast, then the first exception causes
+                        # this to return an EnsembleError as result.
+                        catalog.pop('uid')
+                        y = EnsembleError(z)
+                        qout.put((uid, y))
+                    elif z['n'] == nn:
                         # All results for this request have been collected.
+                        # If the results contain any exception member, then
+                        # ``fail_fast`` must be ``False``. In this case,
+                        # the result list is replaced by an EnsembleError
+                        # only if all members are exceptions.
                         catalog.pop(uid)
-                        y = z["y"]
+                        if all(isinstance(v, RemoteException) for v in z['y']):
+                            y = EnsembleError(z)
+                        else:
+                            y = z["y"]
                         qout.put((uid, y))
             if all_empty:
                 sleep(0.01)  # TODO: what is a good duration?
