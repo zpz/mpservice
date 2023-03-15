@@ -599,6 +599,12 @@ Run it::
         """
         self.tb = tb
 
+    def __repr__(self):
+        return self.exc.__repr__()
+    
+    def __str__(self):
+        return self.exc.__str__()
+
     def __reduce__(self):
         return rebuild_exception, (self.exc, self.tb)
 

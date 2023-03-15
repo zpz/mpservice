@@ -1,15 +1,16 @@
 import asyncio
 import time
+import pickle
 
 import pytest
 
 from mpservice.mpserver import (
     ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
     SequentialServlet, EnsembleServlet, Server, make_threadworker,
-    TimeoutError
+    TimeoutError, EnsembleError,
 )
 from mpservice.streamer import Stream
-from mpservice.util import is_remote_exception
+from mpservice.util import is_remote_exception, RemoteException
 
 
 class Double(ProcessWorker):
@@ -347,3 +348,26 @@ def test_exceptions():
         with pytest.raises(Error5):
             server.call(5)
         assert server.call(6) == 6
+
+
+def test_ensemble_error():
+    err1 = None
+    try:
+        raise ValueError(20)
+    except Exception as e:
+        err1 = e
+
+    z = {
+        'y': [38, None, RemoteException(err1), None],
+        'n': 2,
+    }
+    e = EnsembleError(z)
+    print('')
+    print(e)
+    print(e.args)
+    print(e.results)
+    print('')
+    ep = pickle.loads(pickle.dumps(e))
+    print(ep)
+    print(e.args)
+    print(e.results)
