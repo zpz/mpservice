@@ -297,8 +297,8 @@ ValueError(38)
 True
 >>>
 >>> e_remote = RemoteException(err)
->>> e_remote  # doctest: +ELLIPSIS
-<mpservice.util.RemoteException object at 0x7...>
+>>> e_remote
+RemoteException(ValueError(38))
 >>> e_pickled = pickle.dumps(e_remote)
 >>> e_unpickled = pickle.loads(e_pickled)
 >>>
@@ -600,10 +600,10 @@ Run it::
         self.tb = tb
 
     def __repr__(self):
-        return self.exc.__repr__()
+        return f"{self.__class__.__name__}({self.exc.__repr__()})"
 
     def __str__(self):
-        return self.exc.__str__()
+        return f"{self.__class__.__name__}('{self.exc.__str__()}')"
 
     def __reduce__(self):
         return rebuild_exception, (self.exc, self.tb)
