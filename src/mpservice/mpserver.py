@@ -69,9 +69,13 @@ Alias to :class:`ServerBacklogFull` for backward compatibility.
 Will be removed in 0.13.0.
 """
 
+
 class EnsembleError(RuntimeError):
     def __init__(self, results: dict):
-        nerr = sum(1 if isinstance(v, (BaseException, RemoteException)) else 0 for v in results['y'])
+        nerr = sum(
+            1 if isinstance(v, (BaseException, RemoteException)) else 0
+            for v in results['y']
+        )
         errmsg = None
         for v in results['y']:
             if isinstance(v, (BaseException, RemoteException)):
@@ -83,7 +87,7 @@ class EnsembleError(RuntimeError):
         self._n_finished = results['n']
 
     def __reduce__(self):
-        return type(self), ({'y': self.results, 'n': self._n_finished}, )
+        return type(self), ({'y': self.results, 'n': self._n_finished},)
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):

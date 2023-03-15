@@ -601,7 +601,7 @@ Run it::
 
     def __repr__(self):
         return self.exc.__repr__()
-    
+
     def __str__(self):
         return self.exc.__str__()
 
