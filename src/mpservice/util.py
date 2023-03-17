@@ -556,6 +556,7 @@ class Thread(threading.Thread):
             self._exception_ = e
             if self._loud_exception_:
                 traceback.print_exception(*sys.exc_info())
+                raise
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -855,6 +856,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(RemoteException(e))
                 if loud_exception:
                     traceback.print_exception(*sys.exc_info())
+                    raise
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
