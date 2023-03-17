@@ -46,7 +46,6 @@ test = [
     "pytest-asyncio",
     "requests",
     "starlette",
-    "torch",
     "zpz",
     'ruff',
 ]

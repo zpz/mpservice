@@ -31,8 +31,8 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing.connection
-import multiprocessing.util
 import multiprocessing.queues
+import multiprocessing.util
 import os
 import subprocess
 import sys
@@ -41,28 +41,10 @@ import traceback
 import warnings
 import weakref
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from multiprocessing.context import SpawnContext as MpSpawnContext
+from multiprocessing.context import SpawnProcess as MpSpawnProcess
 from types import TracebackType
 from typing import Optional
-
-if MP_MODULE := os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE'):
-    # Setting the env var ``MPSERVICE_MULTIPROCESSING_MODULE`` before
-    # any part of ``mpservice`` is imported to use a drop-in replacement
-    # of the standard multiprocessing module.
-    # Currently the only candidate I know is ``torch.multiprocessing``.
-    # This setting only affects ``mpservice`` and utilities that user
-    # imports from ``mpservice``. It does not replace ``multiprocessing``
-    # imported in other parts of the code.
-    print(f"using multiprocessing module `{MP_MODULE}`")
-    import importlib
-    m = importlib.import_module(MP_MODULE)
-    MpSpawnProcess = m.SpawnProcess
-    MpSpawnContext = m.SpawnContext
-    MpSimpleQueue = m.SimpleQueue
-else:
-    MP_MODULE = 'multiprocessing'
-    from multiprocessing.context import SpawnContext as MpSpawnContext
-    from multiprocessing.context import SpawnProcess as MpSpawnProcess
-    from multiprocessing.queues import SimpleQueue as MpSimpleQueue  # noqa: F401
 
 from deprecation import deprecated  # noqa: E402
 

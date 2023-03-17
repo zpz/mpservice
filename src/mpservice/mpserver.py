@@ -25,6 +25,7 @@ import asyncio
 import concurrent.futures
 import logging
 import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 from abc import ABC, abstractmethod
@@ -40,7 +41,6 @@ from overrides import final
 from ._queues import SingleLane
 from .util import (
     MP_SPAWN_CTX,
-    MpSimpleQueue,
     RemoteException,
     SpawnProcess,
     Thread,
@@ -90,7 +90,7 @@ class EnsembleError(RuntimeError):
         return type(self), ({'y': self.results, 'n': self._n_finished},)
 
 
-class FastQueue(MpSimpleQueue):
+class FastQueue(multiprocessing.queues.SimpleQueue):
     """
     A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
     this class reduces some overhead in a particular use-case in this module,
