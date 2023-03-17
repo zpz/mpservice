@@ -55,6 +55,7 @@ from typing import (
     Optional,
     TypeVar,
 )
+import multiprocessing.util
 
 from deprecation import deprecated
 
@@ -67,7 +68,6 @@ from .util import (
     get_shared_process_pool,
     get_shared_thread_pool,
     is_remote_exception,
-    multiprocessing_util,
 )
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
@@ -796,7 +796,7 @@ class Buffer(Iterable):
             target=self._run_worker, loud_exception=self._loud_exception
         )
         self._worker.start()
-        self._finalize_func = multiprocessing_util.Finalize(
+        self._finalize_func = multiprocessing.util.Finalize(
             self,
             type(self)._finalizer,
             (self._stopped, self._tasks, self._worker),
@@ -930,7 +930,7 @@ class Parmapper(Iterable):
             loud_exception=self._loud_exception,
         )
         self._worker.start()
-        self._finalize_func = multiprocessing_util.Finalize(
+        self._finalize_func = multiprocessing.util.Finalize(
             self,
             type(self)._finalizer,
             (

@@ -30,6 +30,7 @@ import functools
 import inspect
 import logging
 import logging.handlers
+import multiprocessing.connection
 import os
 import subprocess
 import sys
@@ -41,20 +42,22 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from types import TracebackType
 from typing import Optional
 
-MP_MODULE = os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE')
-if MP_MODULE:
+if (MP_MODULE := os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE')):
     print(f"using multiprocessing module `{MP_MODULE}`")
+    import importlib  # noqa: E402
+    # multiprocessing = importlib.import_module(MP_MODULE)
+    multiprocessing_context = importlib.import_module(MP_MODULE + '.context')
+    multiprocessing_managers = importlib.import_module(MP_MODULE + '.managers')
+    multiprocessing_queues = importlib.import_module(MP_MODULE + '.queues')
+    multiprocessing_util = importlib.import_module(MP_MODULE + '.util')
 else:
     MP_MODULE = 'multiprocessing'
-import importlib
-multiprocessing = importlib.import_module(MP_MODULE)
-multiprocessing_connection = importlib.import_module(MP_MODULE + '.connection')
-multiprocessing_context = importlib.import_module(MP_MODULE + '.context')
-multiprocessing_managers = importlib.import_module(MP_MODULE + '.managers')
-multiprocessing_queues = importlib.import_module(MP_MODULE + '.queues')
-multiprocessing_util = importlib.import_module(MP_MODULE + '.util')
+    from multiprocessing.context import SpawnContext as MpSpawnContext
+    from multiprocessing.context import SpawnProcess as MpSpawnProcess
+    from multiprocessing.queues import SimpleQueue as MpSimpleQueue  # noqa: F401
 
-from deprecation import deprecated
+
+from deprecation import deprecated  # noqa: E402
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
@@ -66,91 +69,6 @@ For others, you may want to specify a smaller value.
 
 class TimeoutError(Exception):
     pass
-
-
-class SpawnContext:
-    # We want to use `SpawnProcess` as the process class when
-    # the creation method is 'spawn'.
-    # However, because `multiprocessing.get_context('spawn')`
-    # is a global var, we shouldn't directly change its
-    # `.Process` attribute like this:
-    #
-    #   ctx = multiprocessing.get_context('spawn')
-    #   ctx.Process = SpawnProcess
-    #
-    # It would change the behavior of the spawn context in code
-    # outside of our own.
-    # To achieve the goal in a controlled way, we designed this class.
-
-    def __init__(self):
-        self._ctx = multiprocessing.get_context("spawn")
-
-    def __getattr__(self, name):
-
-        if name == "Process":
-            return SpawnProcess
-        return getattr(self._ctx, name)
-
-
-MP_SPAWN_CTX = SpawnContext()
-"""
-`multiprocessing`_ has a "context", which has to do with how a process is created and started.
-Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
-the same context in order to work together. For example, if you send a ``Queue`` created out of
-the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
-
-Python's default "process start method" **on Linux** is "fork".
-If you do
-
-::
-
-    import multiprocessing
-    q = multiprocessing.Queue()
-
-this is equivalent to
-
-::
-
-    q = multiprocessing.get_context().Queue()
-
-`multiprocessing.get_context <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.get_context>`_ takes the sole parameter ``method``,
-which on Linux defaults to ``'fork'``.
-
-However, it is advised to not use this default; rather, **always** use the "spawn" context.
-There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
-and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
-
-So, multiprocessing code is often written this way::
-
-    import multiprocessing
-    ctx = multiprocessing.get_context('spawn')
-    q = ctx.Queue(...)
-    e = ctx.Event(...)
-    p = ctx.Process(..., args=(q, e))
-    ...
-
-The constant ``MP_SPAWN_CTX`` is a replacement of the standard spawn context.
-Instead of the above, you are advised to write this::
-
-    from mpservice.util import MP_SPAWN_CTX as ctx
-    q = ctx.Queue(...)
-    e = ctx.Event(...)
-    p = ctx.Process(..., args=(q, e))
-    ...
-
-The difference between ``MP_SPAWN_CTX`` and the standard spawn context
-is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of the standard
-`Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
-
-If you only need to start a process and don't need to create other objects
-(like queue or event) from a context, then you can use :class:`SpawnProcess` directly.
-
-All multiprocessing code in ``mpservice`` uses either ``MP_SPAWN_CTX``, or ``SpawnProcess`` directly.
-
-`concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_
-takes a parameter ``mp_context``.
-You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
-"""
 
 
 def get_docker_host_ip():
@@ -676,7 +594,140 @@ class Thread(threading.Thread):
         return self._exception_
 
 
-class SpawnProcess(multiprocessing_context.SpawnProcess):
+class ProcessLogger:
+    """
+    Logging messages produced in worker processes are tricky.
+    First, some settings should be concerned in the main process only,
+    including log formatting, log-level control, log handler (destination), etc.
+    Specifically, these should be settled in the "launching script", and definitely
+    should not be concerned in worker processes.
+    Second, the terminal printout of loggings in multiple processes tends to be
+    intermingled and mis-ordered.
+
+    This class uses a queue to transmit all logging messages that are produced
+    in a worker process to the main process/thread, to be handled there.
+
+    Usage:
+
+    1. In main process, create a ``ProcessLogger`` instance and start it::
+
+            pl = ProcessLogger().start()
+
+    2. Pass this object to other processes. (Yes, this object is picklable.)
+
+    3. In the other process, start it. Suppose the object is also called ``pl``,
+       then do
+
+       ::
+
+            pl.start()
+
+    Calling :meth:`stop` in either the main or the child process is optional.
+    The call will immediately stop processing logs in the respective process.
+
+    .. note:: Although user can use this class in their code, they are encouraged to
+        use ``SpawnProcess``, which already handles logging via this class.
+    """
+
+    def __init__(self, *, ctx: Optional[multiprocessing.context.BaseContext] = None):
+        self._ctx = ctx or MP_SPAWN_CTX
+        self._t = None
+
+    def __getstate__(self):
+        assert self._t is not None
+        return self._q
+
+    def __setstate__(self, state):
+        # In another process.
+        self._q = state
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.stop()
+
+    def start(self):
+        if hasattr(self, "_t"):
+            self._start_in_main_process()
+        else:
+            self._start_in_other_process()
+        return self
+
+    def stop(self):
+        if hasattr(self, "_t"):
+            self._stop_in_main_process()
+        else:
+            self._stop_in_other_process()
+
+    def _start_in_main_process(self):
+        assert self._t is None
+        self._q = self._ctx.Queue()
+
+        self._t = threading.Thread(
+            target=ProcessLogger._logger_thread,
+            args=(self._q,),
+            name="ProcessLoggerThread",
+            daemon=True,
+        )
+        self._t.start()
+        self._finalize = multiprocessing_util.Finalize(
+            self,
+            type(self)._finalize_logger_thread,
+            (self._t, self._q),
+            exitpriority=10,
+        )
+
+    @staticmethod
+    def _logger_thread(q: multiprocessing_queues.Queue):
+        while True:
+            record = q.get()
+            if record is None:
+                break
+            logger = logging.getLogger(record.name)
+            if record.levelno >= logger.getEffectiveLevel():
+                logger.handle(record)
+
+    @staticmethod
+    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing_queues.Queue):
+        q.put(None)
+        t.join()
+
+    def _stop_in_main_process(self):
+        # assert self._t is not None
+        # self._q.put(None)
+        # self._t.join()
+        # self._t = None
+        self._stopped = True
+        finalize = self._finalize
+        if finalize:
+            self._finalize = None
+            finalize()
+
+    def _start_in_other_process(self):
+        """
+        In a Process (created using the "spawn" method),
+        run this function at the beginning to set up putting all log messages
+        ever produced in that process into the queue that will be consumed
+        in the main process by ``self._logger_thread``.
+
+        During the execution of the process, logging should not be configured.
+        Logging config should happen in the main process/thread.
+        """
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        self._qh = logging.handlers.QueueHandler(self._q)
+        root.addHandler(self._qh)
+
+    def _stop_in_other_process(self):
+        if self._q is not None:
+            logging.getLogger().removeHandler(self._qh)
+            self._q.close()
+            self._q = None
+
+
+class SpawnProcess(MpSpawnProcess):
     """
     A subclass of the standard ``multiprocessing.context.SpawnProcess``,
     this customization adds two things:
@@ -777,7 +828,7 @@ class SpawnProcess(multiprocessing_context.SpawnProcess):
             kwargs = dict(kwargs)
 
         assert "__result_and_error__" not in kwargs
-        reader, writer = multiprocessing_connection.Pipe(duplex=False)
+        reader, writer = multiprocessing.connection.Pipe(duplex=False)
         kwargs["__result_and_error__"] = writer
 
         assert "__worker_logger__" not in kwargs
@@ -885,137 +936,82 @@ class SpawnProcess(multiprocessing_context.SpawnProcess):
         return self.__error__
 
 
-class ProcessLogger:
-    """
-    Logging messages produced in worker processes are tricky.
-    First, some settings should be concerned in the main process only,
-    including log formatting, log-level control, log handler (destination), etc.
-    Specifically, these should be settled in the "launching script", and definitely
-    should not be concerned in worker processes.
-    Second, the terminal printout of loggings in multiple processes tends to be
-    intermingled and mis-ordered.
+class SpawnContext(MpSpawnContext):
+    # We want to use `SpawnProcess` as the process class when
+    # the creation method is 'spawn'.
+    # However, because `multiprocessing.get_context('spawn')`
+    # is a global var, we shouldn't directly change its
+    # `.Process` attribute like this:
+    #
+    #   ctx = multiprocessing.get_context('spawn')
+    #   ctx.Process = SpawnProcess
+    #
+    # It would change the behavior of the spawn context in code
+    # outside of our own.
+    # To achieve the goal in a controlled way, we designed this class.
 
-    This class uses a queue to transmit all logging messages that are produced
-    in a worker process to the main process/thread, to be handled there.
+    Process = SpawnProcess
 
-    Usage:
 
-    1. In main process, create a ``ProcessLogger`` instance and start it::
+MP_SPAWN_CTX = SpawnContext()
+"""
+`multiprocessing`_ has a "context", which has to do with how a process is created and started.
+Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
+the same context in order to work together. For example, if you send a ``Queue`` created out of
+the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
 
-            pl = ProcessLogger().start()
+Python's default "process start method" **on Linux** is "fork".
+If you do
 
-    2. Pass this object to other processes. (Yes, this object is picklable.)
+::
 
-    3. In the other process, start it. Suppose the object is also called ``pl``,
-       then do
+    import multiprocessing
+    q = multiprocessing.Queue()
 
-       ::
+this is equivalent to
 
-            pl.start()
+::
 
-    Calling :meth:`stop` in either the main or the child process is optional.
-    The call will immediately stop processing logs in the respective process.
+    q = multiprocessing.get_context().Queue()
 
-    .. note:: Although user can use this class in their code, they are encouraged to
-        use ``SpawnProcess``, which already handles logging via this class.
-    """
+`multiprocessing.get_context <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.get_context>`_ takes the sole parameter ``method``,
+which on Linux defaults to ``'fork'``.
 
-    def __init__(self, *, ctx: Optional[multiprocessing_context.BaseContext] = None):
-        self._ctx = ctx or MP_SPAWN_CTX
-        self._t = None
+However, it is advised to not use this default; rather, **always** use the "spawn" context.
+There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
+and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
 
-    def __getstate__(self):
-        assert self._t is not None
-        return self._q
+So, multiprocessing code is often written this way::
 
-    def __setstate__(self, state):
-        # In another process.
-        self._q = state
+    import multiprocessing
+    ctx = multiprocessing.get_context('spawn')
+    q = ctx.Queue(...)
+    e = ctx.Event(...)
+    p = ctx.Process(..., args=(q, e))
+    ...
 
-    def __enter__(self):
-        self.start()
-        return self
+The constant ``MP_SPAWN_CTX`` is a replacement of the standard spawn context.
+Instead of the above, you are advised to write this::
 
-    def __exit__(self, *args, **kwargs):
-        self.stop()
+    from mpservice.util import MP_SPAWN_CTX as ctx
+    q = ctx.Queue(...)
+    e = ctx.Event(...)
+    p = ctx.Process(..., args=(q, e))
+    ...
 
-    def start(self):
-        if hasattr(self, "_t"):
-            self._start_in_main_process()
-        else:
-            self._start_in_other_process()
-        return self
+The difference between ``MP_SPAWN_CTX`` and the standard spawn context
+is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of the standard
+`Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
 
-    def stop(self):
-        if hasattr(self, "_t"):
-            self._stop_in_main_process()
-        else:
-            self._stop_in_other_process()
+If you only need to start a process and don't need to create other objects
+(like queue or event) from a context, then you can use :class:`SpawnProcess` directly.
 
-    def _start_in_main_process(self):
-        assert self._t is None
-        self._q = self._ctx.Queue()
+All multiprocessing code in ``mpservice`` uses either ``MP_SPAWN_CTX``, or ``SpawnProcess`` directly.
 
-        self._t = threading.Thread(
-            target=ProcessLogger._logger_thread,
-            args=(self._q,),
-            name="ProcessLoggerThread",
-            daemon=True,
-        )
-        self._t.start()
-        self._finalize = multiprocessing_util.Finalize(
-            self,
-            type(self)._finalize_logger_thread,
-            (self._t, self._q),
-            exitpriority=10,
-        )
-
-    @staticmethod
-    def _logger_thread(q: multiprocessing_queues.Queue):
-        while True:
-            record = q.get()
-            if record is None:
-                break
-            logger = logging.getLogger(record.name)
-            if record.levelno >= logger.getEffectiveLevel():
-                logger.handle(record)
-
-    @staticmethod
-    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing_queues.Queue):
-        q.put(None)
-        t.join()
-
-    def _stop_in_main_process(self):
-        # assert self._t is not None
-        # self._q.put(None)
-        # self._t.join()
-        # self._t = None
-        self._stopped = True
-        finalize = self._finalize
-        if finalize:
-            self._finalize = None
-            finalize()
-
-    def _start_in_other_process(self):
-        """
-        In a Process (created using the "spawn" method),
-        run this function at the beginning to set up putting all log messages
-        ever produced in that process into the queue that will be consumed
-        in the main process by ``self._logger_thread``.
-
-        During the execution of the process, logging should not be configured.
-        Logging config should happen in the main process/thread.
-        """
-        root = logging.getLogger()
-        root.setLevel(logging.DEBUG)
-        self._qh = logging.handlers.QueueHandler(self._q)
-        root.addHandler(self._qh)
-
-    def _stop_in_other_process(self):
-        if self._q is not None:
-            logging.getLogger().removeHandler(self._qh)
-            self._q.close()
-            self._q = None
+`concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_
+takes a parameter ``mp_context``.
+You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
+"""
 
 
 class SpawnProcessPoolExecutor(ProcessPoolExecutor):
