@@ -718,8 +718,8 @@ class ProcessServlet(Servlet):
         **kwargs
             Passed to the ``__init__`` method of ``worker_cls``.
 
-        Note
-        ----
+        Notes
+        -----
         When the servlet has multiple processes, the output stream does not follow
         the order of the elements in the input stream.
         """
@@ -809,8 +809,8 @@ class ThreadServlet(Servlet):
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
 
-        Note
-        ----
+        Notes
+        -----
         When the servlet has multiple threads, the output stream does not follow
         the order of the elements in the input stream.
         """

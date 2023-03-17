@@ -25,13 +25,6 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 
 from __future__ import annotations
 
-import multiprocessing
-import multiprocessing.connection as multiprocessing_connection
-import multiprocessing.context as multiprocessing_context
-import multiprocessing.managers as multiprocessing_managers  # noqa: F401
-import multiprocessing.queues as multiprocessing_queues
-import multiprocessing.util as multiprocessing_util
-
 import errno
 import functools
 import inspect
@@ -48,6 +41,19 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from types import TracebackType
 from typing import Optional
 
+MP_MODULE = os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE')
+if MP_MODULE:
+    print(f"using multiprocessing module `{MP_MODULE}`")
+else:
+    MP_MODULE = 'multiprocessing'
+import importlib
+multiprocessing = importlib.import_module(MP_MODULE)
+multiprocessing_connection = importlib.import_module(MP_MODULE + '.connection')
+multiprocessing_context = importlib.import_module(MP_MODULE + '.context')
+multiprocessing_managers = importlib.import_module(MP_MODULE + '.managers')
+multiprocessing_queues = importlib.import_module(MP_MODULE + '.queues')
+multiprocessing_util = importlib.import_module(MP_MODULE + '.util')
+
 from deprecation import deprecated
 
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
@@ -56,7 +62,6 @@ This default is suitable for I/O bound operations.
 This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 For others, you may want to specify a smaller value.
 """
-
 
 
 class TimeoutError(Exception):
