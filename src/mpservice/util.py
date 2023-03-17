@@ -31,6 +31,8 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing.connection
+import multiprocessing.util
+import multiprocessing.queues
 import os
 import subprocess
 import sys
@@ -43,20 +45,24 @@ from types import TracebackType
 from typing import Optional
 
 if MP_MODULE := os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE'):
+    # Setting the env var ``MPSERVICE_MULTIPROCESSING_MODULE`` before
+    # any part of ``mpservice`` is imported to use a drop-in replacement
+    # of the standard multiprocessing module.
+    # Currently the only candidate I know is ``torch.multiprocessing``.
+    # This setting only affects ``mpservice`` and utilities that user
+    # imports from ``mpservice``. It does not replace ``multiprocessing``
+    # imported in other parts of the code.
     print(f"using multiprocessing module `{MP_MODULE}`")
     import importlib
-
-    # multiprocessing = importlib.import_module(MP_MODULE)
-    multiprocessing_context = importlib.import_module(MP_MODULE + '.context')
-    multiprocessing_managers = importlib.import_module(MP_MODULE + '.managers')
-    multiprocessing_queues = importlib.import_module(MP_MODULE + '.queues')
-    multiprocessing_util = importlib.import_module(MP_MODULE + '.util')
+    m = importlib.import_module(MP_MODULE)
+    MpSpawnProcess = m.SpawnProcess
+    MpSpawnContext = m.SpawnContext
+    MpSimpleQueue = m.SimpleQueue
 else:
     MP_MODULE = 'multiprocessing'
     from multiprocessing.context import SpawnContext as MpSpawnContext
     from multiprocessing.context import SpawnProcess as MpSpawnProcess
     from multiprocessing.queues import SimpleQueue as MpSimpleQueue  # noqa: F401
-
 
 from deprecation import deprecated  # noqa: E402
 
@@ -673,7 +679,7 @@ class ProcessLogger:
             daemon=True,
         )
         self._t.start()
-        self._finalize = multiprocessing_util.Finalize(
+        self._finalize = multiprocessing.util.Finalize(
             self,
             type(self)._finalize_logger_thread,
             (self._t, self._q),
@@ -681,7 +687,7 @@ class ProcessLogger:
         )
 
     @staticmethod
-    def _logger_thread(q: multiprocessing_queues.Queue):
+    def _logger_thread(q: multiprocessing.queues.Queue):
         while True:
             record = q.get()
             if record is None:
@@ -691,7 +697,7 @@ class ProcessLogger:
                 logger.handle(record)
 
     @staticmethod
-    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing_queues.Queue):
+    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing.queues.Queue):
         q.put(None)
         t.join()
 

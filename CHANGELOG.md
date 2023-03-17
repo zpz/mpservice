@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - ``EnsembleServlet`` gets new parameter ``fail_fast`` to control behavior when ensemble members return exceptions.
+- Allow using alternative ``multiprocessing`` module (e.g. ``torch.multiprocessing``) by setting env var ``MPSERVICE_MULTIPROCESSING_MODULE``.
 
 
 ## [0.12.0] - 2023-03-10
