@@ -1089,7 +1089,7 @@ class EnsembleServlet(Servlet):
                     if fail_fast and isinstance(y, RemoteException):
                         # If fail fast, then the first exception causes
                         # this to return an EnsembleError as result.
-                        catalog.pop('uid')
+                        catalog.pop(uid)
                         y = EnsembleError(z)
                         qout.put((uid, y))
                     elif z['n'] == nn:

@@ -36,6 +36,7 @@ import multiprocessing.context
 import multiprocessing.queues
 import os
 import subprocess
+import sys
 import threading
 import traceback
 import warnings
@@ -59,7 +60,7 @@ class TimeoutError(Exception):
     pass
 
 
-class _SpawnContext:
+class SpawnContext:
     # We want to use `SpawnProcess` as the process class when
     # the creation method is 'spawn'.
     # However, because `multiprocessing.get_context('spawn')`
@@ -83,7 +84,7 @@ class _SpawnContext:
         return getattr(self._ctx, name)
 
 
-MP_SPAWN_CTX = _SpawnContext()
+MP_SPAWN_CTX = SpawnContext()
 """
 `multiprocessing`_ has a "context", which has to do with how a process is created and started.
 Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
@@ -640,7 +641,7 @@ class Thread(threading.Thread):
         except BaseException as e:
             self._exception_ = e
             if self._loud_exception_:
-                raise
+                traceback.print_exception(*sys.exc_info())
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -806,7 +807,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 if loud_exception:
-                    raise
+                    traceback.print_exception(*sys.exc_info())
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
