@@ -42,9 +42,10 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from types import TracebackType
 from typing import Optional
 
-if (MP_MODULE := os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE')):
+if MP_MODULE := os.environ.get('MPSERVICE_MULTIPROCESSING_MODULE'):
     print(f"using multiprocessing module `{MP_MODULE}`")
-    import importlib  # noqa: E402
+    import importlib
+
     # multiprocessing = importlib.import_module(MP_MODULE)
     multiprocessing_context = importlib.import_module(MP_MODULE + '.context')
     multiprocessing_managers = importlib.import_module(MP_MODULE + '.managers')

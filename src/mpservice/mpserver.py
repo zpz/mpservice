@@ -40,11 +40,11 @@ from overrides import final
 from ._queues import SingleLane
 from .util import (
     MP_SPAWN_CTX,
+    MpSimpleQueue,
     RemoteException,
     SpawnProcess,
     Thread,
     TimeoutError,
-    MpSimpleQueue,
 )
 
 # This modules uses the 'spawn' method to create processes.

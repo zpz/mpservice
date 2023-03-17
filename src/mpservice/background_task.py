@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
-import queue
 import multiprocessing.queues
+import queue
 import threading
 import weakref
 from abc import ABC, abstractmethod

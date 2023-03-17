@@ -41,6 +41,7 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 import concurrent.futures
 import functools
+import multiprocessing.util
 import os
 import queue
 import threading
@@ -55,7 +56,6 @@ from typing import (
     Optional,
     TypeVar,
 )
-import multiprocessing.util
 
 from deprecation import deprecated
 
