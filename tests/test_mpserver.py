@@ -371,3 +371,23 @@ def test_ensemble_error():
     print(ep)
     print(e.args)
     print(e.results)
+
+
+def test_ensemble_error2():
+    s = EnsembleServlet(
+                ProcessServlet(Double),
+                ThreadServlet(make_threadworker(lambda x: x + 1)),
+                ProcessServlet(Square, cpus=[1]),
+                )
+    with Server(s) as service:
+        y = service.call(3)
+        assert y == [6, 4, 9]
+
+        with pytest.raises(EnsembleError):
+            try:
+                y = service.call('a')
+            except EnsembleError as e:
+                print(repr(e))
+                print(e)
+                print(e.results)
+                raise

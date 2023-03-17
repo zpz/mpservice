@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
-import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 import weakref
@@ -198,7 +198,7 @@ class BackgroundTask(ABC):
         cls,
         *args,
         _cancelled: threading.Event,
-        _info: queue.Queue | multiprocessing.Queue,
+        _info: queue.Queue | multiprocessing.queues.Queue,
         **kwargs,
     ):
         """

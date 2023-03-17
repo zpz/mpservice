@@ -41,13 +41,13 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 import concurrent.futures
 import functools
+import multiprocessing.util
 import os
 import queue
 import threading
 import traceback
 from collections import deque
 from collections.abc import Iterable, Sequence
-from multiprocessing.util import Finalize
 from random import random
 from typing import (
     Any,
@@ -796,7 +796,7 @@ class Buffer(Iterable):
             target=self._run_worker, loud_exception=self._loud_exception
         )
         self._worker.start()
-        self._finalize_func = Finalize(
+        self._finalize_func = multiprocessing.util.Finalize(
             self,
             type(self)._finalizer,
             (self._stopped, self._tasks, self._worker),
@@ -930,7 +930,7 @@ class Parmapper(Iterable):
             loud_exception=self._loud_exception,
         )
         self._worker.start()
-        self._finalize_func = Finalize(
+        self._finalize_func = multiprocessing.util.Finalize(
             self,
             type(self)._finalizer,
             (

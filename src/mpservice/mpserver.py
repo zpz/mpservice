@@ -113,7 +113,7 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
     def __init__(self, *, ctx=None):
         if ctx is None:
-            ctx = multiprocessing.get_context("spawn")
+            ctx = MP_SPAWN_CTX
         super().__init__(ctx=ctx)
         # Replace Lock by RLock to facilitate batching via greedy `get_many`.
         self._rlock = ctx.RLock()
@@ -718,8 +718,8 @@ class ProcessServlet(Servlet):
         **kwargs
             Passed to the ``__init__`` method of ``worker_cls``.
 
-        Note
-        ----
+        Notes
+        -----
         When the servlet has multiple processes, the output stream does not follow
         the order of the elements in the input stream.
         """
@@ -809,8 +809,8 @@ class ThreadServlet(Servlet):
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
 
-        Note
-        ----
+        Notes
+        -----
         When the servlet has multiple threads, the output stream does not follow
         the order of the elements in the input stream.
         """
@@ -1089,7 +1089,7 @@ class EnsembleServlet(Servlet):
                     if fail_fast and isinstance(y, RemoteException):
                         # If fail fast, then the first exception causes
                         # this to return an EnsembleError as result.
-                        catalog.pop('uid')
+                        catalog.pop(uid)
                         y = EnsembleError(z)
                         qout.put((uid, y))
                     elif z['n'] == nn:

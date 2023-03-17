@@ -26,9 +26,9 @@ To prevent glitches, make sure the two files are non-existent before server and 
 are created.
 """
 
+import multiprocessing.connection
 import os
 import stat
-from multiprocessing.connection import Connection
 
 
 def _mkfifo(path: str):
@@ -61,7 +61,7 @@ class _Pipe:
         _mkfifo(self._wpath)
 
         hw = os.open(self._wpath, os.O_SYNC | os.O_CREAT | os.O_RDWR)
-        self._writer = Connection(hw, readable=False)
+        self._writer = multiprocessing.connection.Connection(hw, readable=False)
         self._reader = None
 
     def send_bytes(self, buf, offset=0, size=None):
@@ -77,7 +77,7 @@ class _Pipe:
             # That's why we don't open this in `__init__`.
             # In contrast, open for writing does not block.
             hr = os.open(self._rpath, os.O_RDONLY)
-            self._reader = Connection(hr, writable=False)
+            self._reader = multiprocessing.connection.Connection(hr, writable=False)
         return self._reader
 
     def recv_bytes(self, maxlength=None):
