@@ -30,8 +30,8 @@ import functools
 import inspect
 import logging
 import logging.handlers
-import multiprocessing.context
 import multiprocessing.connection
+import multiprocessing.context
 import multiprocessing.queues
 import multiprocessing.util
 import os
