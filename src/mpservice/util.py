@@ -30,6 +30,7 @@ import functools
 import inspect
 import logging
 import logging.handlers
+import multiprocessing.context
 import multiprocessing.connection
 import multiprocessing.queues
 import multiprocessing.util
@@ -41,8 +42,6 @@ import traceback
 import warnings
 import weakref
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from multiprocessing.context import SpawnContext as MpSpawnContext
-from multiprocessing.context import SpawnProcess as MpSpawnProcess
 from types import TracebackType
 from typing import Optional
 
@@ -716,7 +715,7 @@ class ProcessLogger:
             self._q = None
 
 
-class SpawnProcess(MpSpawnProcess):
+class SpawnProcess(multiprocessing.context.SpawnProcess):
     """
     A subclass of the standard ``multiprocessing.context.SpawnProcess``,
     this customization adds two things:
@@ -925,7 +924,7 @@ class SpawnProcess(MpSpawnProcess):
         return self.__error__
 
 
-class SpawnContext(MpSpawnContext):
+class SpawnContext(multiprocessing.context.SpawnContext):
     # We want to use `SpawnProcess` as the process class when
     # the creation method is 'spawn'.
     # However, because `multiprocessing.get_context('spawn')`
