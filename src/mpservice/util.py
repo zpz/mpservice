@@ -25,15 +25,18 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 
 from __future__ import annotations
 
+import multiprocessing
+import multiprocessing.connection as multiprocessing_connection
+import multiprocessing.context as multiprocessing_context
+import multiprocessing.managers as multiprocessing_managers  # noqa: F401
+import multiprocessing.queues as multiprocessing_queues
+import multiprocessing.util as multiprocessing_util
+
 import errno
 import functools
 import inspect
 import logging
 import logging.handlers
-import multiprocessing
-import multiprocessing.connection
-import multiprocessing.context
-import multiprocessing.queues
 import os
 import subprocess
 import sys
@@ -42,7 +45,6 @@ import traceback
 import warnings
 import weakref
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from multiprocessing.util import Finalize
 from types import TracebackType
 from typing import Optional
 
@@ -54,6 +56,7 @@ This default is suitable for I/O bound operations.
 This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 For others, you may want to specify a smaller value.
 """
+
 
 
 class TimeoutError(Exception):
@@ -668,7 +671,7 @@ class Thread(threading.Thread):
         return self._exception_
 
 
-class SpawnProcess(multiprocessing.context.SpawnProcess):
+class SpawnProcess(multiprocessing_context.SpawnProcess):
     """
     A subclass of the standard ``multiprocessing.context.SpawnProcess``,
     this customization adds two things:
@@ -769,7 +772,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             kwargs = dict(kwargs)
 
         assert "__result_and_error__" not in kwargs
-        reader, writer = multiprocessing.connection.Pipe(duplex=False)
+        reader, writer = multiprocessing_connection.Pipe(duplex=False)
         kwargs["__result_and_error__"] = writer
 
         assert "__worker_logger__" not in kwargs
@@ -912,7 +915,7 @@ class ProcessLogger:
         use ``SpawnProcess``, which already handles logging via this class.
     """
 
-    def __init__(self, *, ctx: Optional[multiprocessing.context.BaseContext] = None):
+    def __init__(self, *, ctx: Optional[multiprocessing_context.BaseContext] = None):
         self._ctx = ctx or MP_SPAWN_CTX
         self._t = None
 
@@ -955,7 +958,7 @@ class ProcessLogger:
             daemon=True,
         )
         self._t.start()
-        self._finalize = Finalize(
+        self._finalize = multiprocessing_util.Finalize(
             self,
             type(self)._finalize_logger_thread,
             (self._t, self._q),
@@ -963,7 +966,7 @@ class ProcessLogger:
         )
 
     @staticmethod
-    def _logger_thread(q: multiprocessing.queues.Queue):
+    def _logger_thread(q: multiprocessing_queues.Queue):
         while True:
             record = q.get()
             if record is None:
@@ -973,7 +976,7 @@ class ProcessLogger:
                 logger.handle(record)
 
     @staticmethod
-    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing.queues.Queue):
+    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing_queues.Queue):
         q.put(None)
         t.join()
 

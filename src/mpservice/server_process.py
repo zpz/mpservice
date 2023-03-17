@@ -88,11 +88,10 @@ also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob
 """
 from __future__ import annotations
 
-import multiprocessing.managers
 import warnings
 from typing import Callable
 
-from .util import MP_SPAWN_CTX
+from .util import MP_SPAWN_CTX, multiprocessing_managers
 
 # Overhead of Thread:
 # sequentially creating/running/joining
@@ -100,7 +99,7 @@ from .util import MP_SPAWN_CTX
 #   20000 took 1 sec.
 
 
-class Manager(multiprocessing.managers.SyncManager):
+class Manager(multiprocessing_managers.SyncManager):
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
 

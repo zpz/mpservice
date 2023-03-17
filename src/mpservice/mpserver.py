@@ -24,8 +24,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-import multiprocessing
-import multiprocessing.queues
 import queue
 import threading
 from abc import ABC, abstractmethod
@@ -45,6 +43,8 @@ from .util import (
     SpawnProcess,
     Thread,
     TimeoutError,
+    multiprocessing,
+    multiprocessing_queues,
 )
 
 # This modules uses the 'spawn' method to create processes.
@@ -90,7 +90,7 @@ class EnsembleError(RuntimeError):
         return type(self), ({'y': self.results, 'n': self._n_finished},)
 
 
-class FastQueue(multiprocessing.queues.SimpleQueue):
+class FastQueue(multiprocessing_queues.SimpleQueue):
     """
     A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
     this class reduces some overhead in a particular use-case in this module,
@@ -113,7 +113,7 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
 
     def __init__(self, *, ctx=None):
         if ctx is None:
-            ctx = multiprocessing.get_context("spawn")
+            ctx = MP_SPAWN_CTX
         super().__init__(ctx=ctx)
         # Replace Lock by RLock to facilitate batching via greedy `get_many`.
         self._rlock = ctx.RLock()

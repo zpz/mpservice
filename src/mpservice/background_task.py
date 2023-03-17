@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
-import multiprocessing
 import queue
 import threading
 import weakref
@@ -12,7 +11,7 @@ from collections.abc import Hashable
 from datetime import datetime
 from typing import Optional
 
-from .util import MAX_THREADS
+from .util import MAX_THREADS, multiprocessing, multiprocessing_queues
 
 
 class Task:
@@ -26,7 +25,7 @@ class Task:
         future: concurrent.futures.Future,
         callers: int,
         cancelled: threading.Event,
-        info: queue.Queue | multiprocessing.queues.Queue,
+        info: queue.Queue | multiprocessing_queues.Queue,
         task_catalog: dict,
     ):
         self.task_id = task_id
