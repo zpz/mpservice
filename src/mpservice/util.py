@@ -861,7 +861,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 if loud_exception:
-                    print(f"Exception in process {multiprocessing.current_process().name}:")
+                    print(
+                        f"Exception in process {multiprocessing.current_process().name}:"
+                    )
                     traceback.print_exception(*sys.exc_info())
                     # raise  # standard mp handles error printing as well if raised here
             else:
@@ -944,14 +946,15 @@ class SpawnContext(multiprocessing.context.SpawnContext):
     However, because the return of ``multiprocessing.get_context('spawn')``
     is a global var, we shouldn't directly change its
     ``.Process`` attribute like this::
-    
+
         ctx = multiprocessing.get_context('spawn')
         ctx.Process = SpawnProcess
-    
+
     It would change the behavior of the spawn context in code
     outside of our own.
     To achieve the goal in a controlled way, we designed this class.
     '''
+
     Process = SpawnProcess
 
 
@@ -1015,6 +1018,7 @@ takes a parameter ``mp_context``.
 You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
 
+
 def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
@@ -1049,6 +1053,7 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     returned from the method :meth:`submit`, the printing in the worker process
     is handy for debugging in cases where the user fails to check the Future object in a timely manner.
     '''
+
     def __init__(self, *args, loud_exception: bool = True, **kwargs):
         super().__init__(*args, mp_context=MP_SPAWN_CTX, **kwargs)
         self._loud_exception = loud_exception
@@ -1071,6 +1076,7 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     The default is ``True``, whereas ``False`` has the behavior of the standard library,
     which does not print exception info in the worker thread.
     '''
+
     def __init__(self, *args, loud_exception: bool = True, **kwargs):
         super().__init__(*args, **kwargs)
         self._loud_exception = loud_exception
@@ -1080,7 +1086,6 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             return super().submit(_loud_thread_function, fn, *args, **kwargs)
         else:
             return super().submit(fn, *args, **kwargs)
-
 
 
 # References:

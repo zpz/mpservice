@@ -63,13 +63,13 @@ from ._queues import SingleLane
 from .util import (
     MAX_THREADS,
     MP_SPAWN_CTX,
+    ProcessPoolExecutor,
     Thread,
+    ThreadPoolExecutor,
     get_remote_traceback,
     get_shared_process_pool,
     get_shared_thread_pool,
     is_remote_exception,
-    ThreadPoolExecutor,
-    ProcessPoolExecutor,
 )
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
@@ -297,7 +297,7 @@ class Stream(Iterable):
         interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
-    ) -> self:
+    ) -> Self:
         """Take a peek at the data element *before* it continues in the stream.
 
         This is implemented by :meth:`map`, where the mapper function prints

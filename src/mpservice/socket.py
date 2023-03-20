@@ -20,9 +20,9 @@ from ._queues import SingleLane
 from .util import (
     MAX_THREADS,
     RemoteException,
+    ThreadPoolExecutor,
     get_docker_host_ip,
     is_async,
-    ThreadPoolExecutor,
 )
 
 logger = logging.getLogger(__name__)
