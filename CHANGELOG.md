@@ -5,11 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.12.1] - in progress
+## [0.12.1] - 2023-03-20
 
 ### Added
 
 - ``EnsembleServlet`` gets new parameter ``fail_fast`` to control behavior when ensemble members return exceptions.
+- Added ``mpservice.util.Process``, which is an alias to ``mpservice.util.SpawnProcess``.
+- Refinements to ``mpservice.util.SpawnProcessPoolExecutor``.
+- Added ``mpservice.util.ProcessPoolExecutor``, which is an alias to ``mpservice.util.SpawnProcessPoolExecutor``.
+- New class ``mpservice.util.ThreadPoolExecutor``.
+
+### Fixed
+
+- ``mpservice.util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
+  discorable. This functionality was there previously but it was buggy.
 
 
 ## [0.12.0] - 2023-03-10

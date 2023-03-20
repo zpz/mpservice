@@ -7,7 +7,7 @@ One or more "primary" operations are so heavy
 that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
 The other operations are typically light weight, although important in their own right.
-These operations perform batching, unbatching, buffering, mapping, filtering, grouping, logging, etc.
+These operations perform batching, unbatching, buffering, mapping, filtering, grouping, etc.
 """
 
 
@@ -39,7 +39,6 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
-import concurrent.futures
 import functools
 import multiprocessing.util
 import os
@@ -58,6 +57,7 @@ from typing import (
 )
 
 from deprecation import deprecated
+from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
 from .util import (
@@ -68,6 +68,8 @@ from .util import (
     get_shared_process_pool,
     get_shared_thread_pool,
     is_remote_exception,
+    ThreadPoolExecutor,
+    ProcessPoolExecutor,
 )
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
@@ -85,6 +87,20 @@ class Stream(Iterable):
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
+    Most of the methods return the object itself, facilitating calls
+    in a "chained" fashion, like this::
+
+        s = Stream(...).map(...).filter(...).batch(...).parmap(...).ubatch(...)
+
+    However, these methods modify the object in-place, hence the above is equivalent
+    to calling the methods one by one::
+
+        s = Stream(...)
+        s.map(...)
+        s.filter(...)
+        s.batch(...)
+        s.parmap(...)
+        s.unbatch(...)
     """
 
     def __init__(self, instream: Iterable, /):
@@ -134,7 +150,7 @@ class Stream(Iterable):
         """
         return list(self)
 
-    def map(self, func: Callable[[T], Any], /, **kwargs):
+    def map(self, func: Callable[[T], Any], /, **kwargs) -> Self:
         """Perform a simple transformation on each data element.
 
         This operation happens "inline"--there is no other threads or processes
@@ -175,7 +191,7 @@ class Stream(Iterable):
         self.streamlets.append(Mapper(self.streamlets[-1], func, **kwargs))
         return self
 
-    def filter(self, func: Callable[[T], bool], /, **kwargs):
+    def filter(self, func: Callable[[T], bool], /, **kwargs) -> Self:
         """Select data elements to keep in the stream according to the predicate ``func``.
 
         This method can be used to either "keep" or "drop" elements according to various conditions.
@@ -218,7 +234,7 @@ class Stream(Iterable):
         keep_exc_types: Optional[
             type[BaseException] | tuple[type[BaseException], ...]
         ] = None,
-    ):
+    ) -> Self:
         """
         If a call to :meth:`parmap` upstream has specified ``return_exceptions=True``,
         then its output stream may contain ``Exception`` objects.
@@ -281,7 +297,7 @@ class Stream(Iterable):
         interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
-    ):
+    ) -> self:
         """Take a peek at the data element *before* it continues in the stream.
 
         This is implemented by :meth:`map`, where the mapper function prints
@@ -383,7 +399,7 @@ class Stream(Iterable):
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
 
-    def head(self, n: int):
+    def head(self, n: int) -> Self:
         """
         Take the first ``n`` elements and ignore the rest.
         If the entire stream has less than ``n`` elements, just take all of them.
@@ -395,7 +411,7 @@ class Stream(Iterable):
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
-    def tail(self, n: int):
+    def tail(self, n: int) -> Self:
         """
         Take the last ``n`` elements and ignore all the previous ones.
         If the entire stream has less than ``n`` elements, just take all of them.
@@ -406,7 +422,7 @@ class Stream(Iterable):
         self.streamlets.append(Tailor(self.streamlets[-1], n))
         return self
 
-    def groupby(self, func: Callable[[T], Any], /, **kwargs):
+    def groupby(self, func: Callable[[T], Any], /, **kwargs) -> Self:
         """
         ``func`` takes a data element and outputs a value.
         **Consecutive** elements that have the same value of this output
@@ -431,7 +447,7 @@ class Stream(Iterable):
         self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
         return self
 
-    def batch(self, batch_size: int):
+    def batch(self, batch_size: int) -> Self:
         """
         Take elements from an input stream
         and bundle them up into batches up to a size limit,
@@ -453,7 +469,7 @@ class Stream(Iterable):
         self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
         return self
 
-    def unbatch(self):
+    def unbatch(self) -> Self:
         """
         Turn a stream of lists into a stream of individual elements.
 
@@ -487,7 +503,7 @@ class Stream(Iterable):
 
     def accumulate(
         self, func: Callable[[Any, T], Any], initializer: Any = NOTSET, **kwargs
-    ):
+    ) -> Self:
         """
         This method is like "cumulative sum", but the operation is specified by ``func``, hence
         does not need to be "sum". If the last element in the output stream is ``x``
@@ -543,7 +559,7 @@ class Stream(Iterable):
 
         return self.map(Accumulator())
 
-    def buffer(self, maxsize: int):
+    def buffer(self, maxsize: int) -> Self:
         """Buffer is used to stabilize and improve the speed of data flow.
 
         A buffer is useful following any operation that can not guarantee
@@ -590,7 +606,7 @@ class Stream(Iterable):
         return_x: bool = False,
         return_exceptions: bool = False,
         **kwargs,
-    ):
+    ) -> Self:
         """Parallel, or concurrent, counterpart of :meth:`map`.
 
         New threads or processes are created to execute ``func``.
@@ -900,7 +916,7 @@ class Parmapper(Iterable):
                     num_workers = MAX_THREADS
                 else:
                     assert 1 <= num_workers <= 100
-                self._executor = concurrent.futures.ThreadPoolExecutor(
+                self._executor = ThreadPoolExecutor(
                     num_workers,
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
@@ -916,7 +932,7 @@ class Parmapper(Iterable):
                     num_workers = os.cpu_count() or 1
                 else:
                     assert 1 <= num_workers <= (os.cpu_count() or 1) * 2
-                self._executor = concurrent.futures.ProcessPoolExecutor(
+                self._executor = ProcessPoolExecutor(
                     num_workers,
                     mp_context=MP_SPAWN_CTX,
                     initializer=self._executor_initializer,

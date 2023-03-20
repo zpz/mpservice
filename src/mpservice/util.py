@@ -25,11 +25,13 @@ the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteExcep
 
 from __future__ import annotations
 
+import concurrent.futures
 import errno
 import functools
 import inspect
 import logging
 import logging.handlers
+import multiprocessing
 import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.queues
@@ -41,7 +43,6 @@ import threading
 import traceback
 import warnings
 import weakref
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from types import TracebackType
 from typing import Optional
 
@@ -555,8 +556,9 @@ class Thread(threading.Thread):
         except BaseException as e:
             self._exception_ = e
             if self._loud_exception_:
+                print(f"Exception in thread {threading.current_thread().name}:")
                 traceback.print_exception(*sys.exc_info())
-                raise
+                # raise  # Standard threading will print error info as well if raised here.
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -654,7 +656,7 @@ class ProcessLogger:
         assert self._t is None
         self._q = self._ctx.Queue()
 
-        self._t = threading.Thread(
+        self._t = Thread(
             target=ProcessLogger._logger_thread,
             args=(self._q,),
             name="ProcessLoggerThread",
@@ -811,6 +813,10 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         **moreargs
             Additional keyword arguments passed on to the standard ``Process``.
         """
+        # print('')
+        # print('process init', args, kwargs, loud_exception)
+        # print('')
+
         if kwargs is None:
             kwargs = {}
         else:
@@ -855,8 +861,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 if loud_exception:
+                    print(f"Exception in process {multiprocessing.current_process().name}:")
                     traceback.print_exception(*sys.exc_info())
-                    raise
+                    # raise  # standard mp handles error printing as well if raised here
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
@@ -926,20 +933,25 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__error__
 
 
-class SpawnContext(multiprocessing.context.SpawnContext):
-    # We want to use `SpawnProcess` as the process class when
-    # the creation method is 'spawn'.
-    # However, because `multiprocessing.get_context('spawn')`
-    # is a global var, we shouldn't directly change its
-    # `.Process` attribute like this:
-    #
-    #   ctx = multiprocessing.get_context('spawn')
-    #   ctx.Process = SpawnProcess
-    #
-    # It would change the behavior of the spawn context in code
-    # outside of our own.
-    # To achieve the goal in a controlled way, we designed this class.
+Process = SpawnProcess
+'''Alias to :class:`SpawnProcess`.'''
 
+
+class SpawnContext(multiprocessing.context.SpawnContext):
+    '''
+    We want to use :class:`SpawnProcess` as the process class when
+    the creation method is 'spawn'.
+    However, because the return of ``multiprocessing.get_context('spawn')``
+    is a global var, we shouldn't directly change its
+    ``.Process`` attribute like this::
+    
+        ctx = multiprocessing.get_context('spawn')
+        ctx.Process = SpawnProcess
+    
+    It would change the behavior of the spawn context in code
+    outside of our own.
+    To achieve the goal in a controlled way, we designed this class.
+    '''
     Process = SpawnProcess
 
 
@@ -1003,10 +1015,72 @@ takes a parameter ``mp_context``.
 You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
 
+def _loud_process_function(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except BaseException:
+        print(f"Exception in process {multiprocessing.current_process().name}:")
+        traceback.print_exception(*sys.exc_info())
+        raise
 
-class SpawnProcessPoolExecutor(ProcessPoolExecutor):
-    def __init__(self, *args, **kwargs):
+
+def _loud_thread_function(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except BaseException:
+        print(f"Exception in thread {threading.current_thread().name}:")
+        traceback.print_exception(*sys.exc_info())
+        raise
+
+
+class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
+    '''
+    This class is a drop-in replacement of the standard
+    `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
+    It uses a "spawn" context and the process class :class:`SpawnProcess`, hence getting
+    the benefits of SpawnProcess.
+
+    In addition, the parameter ``loud_exception`` controls whether to print out exception
+    info if the submitted worker task fails with an exception.
+    The default is ``True``, whereas ``False`` has the behavior of the standard library,
+    which does not print exception info in the worker process.
+    Although exception info can be obtained in the caller process via the
+    `Future <https://docs.python.org/3/library/concurrent.futures.html#future-objects>`_ object
+    returned from the method :meth:`submit`, the printing in the worker process
+    is handy for debugging in cases where the user fails to check the Future object in a timely manner.
+    '''
+    def __init__(self, *args, loud_exception: bool = True, **kwargs):
         super().__init__(*args, mp_context=MP_SPAWN_CTX, **kwargs)
+        self._loud_exception = loud_exception
+
+    def submit(self, fn, /, *args, **kwargs):
+        if self._loud_exception:
+            return super().submit(_loud_process_function, fn, *args, **kwargs)
+        return super().submit(fn, *args, **kwargs)
+
+
+ProcessPoolExecutor = SpawnProcessPoolExecutor
+
+
+class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
+    '''
+    This class is a drop-in replacement of the standard
+    `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
+    Tthe parameter ``loud_exception`` controls whether to print out exception
+    info if the submitted worker task fails with an exception.
+    The default is ``True``, whereas ``False`` has the behavior of the standard library,
+    which does not print exception info in the worker thread.
+    '''
+    def __init__(self, *args, loud_exception: bool = True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._loud_exception = loud_exception
+
+    def submit(self, fn, /, *args, **kwargs):
+        if self._loud_exception:
+            return super().submit(_loud_thread_function, fn, *args, **kwargs)
+        else:
+            return super().submit(fn, *args, **kwargs)
+
 
 
 # References:

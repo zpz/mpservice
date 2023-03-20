@@ -21,7 +21,13 @@ Utilities
 
 .. autoclass:: mpservice.util.SpawnProcess
 
+.. autoclass:: mpservice.util.Process
+
 .. autoclass:: mpservice.util.Thread
+
+.. autoclass:: mpservice.util.ProcessPoolExecutor
+
+.. autoclass:: mpservice.util.ThreadPoolExecutor
 
 .. autofunction:: mpservice.util.get_shared_thread_pool
 

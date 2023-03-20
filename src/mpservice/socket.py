@@ -22,6 +22,7 @@ from .util import (
     RemoteException,
     get_docker_host_ip,
     is_async,
+    ThreadPoolExecutor,
 )
 
 logger = logging.getLogger(__name__)
@@ -481,7 +482,7 @@ class SocketClient(EnforceOverrides):
         self._encoder = "pickle"  # encoder when sending requests.
         self._prepare_shutdown = threading.Event()
         self._to_shutdown = threading.Event()
-        self._executor = concurrent.futures.ThreadPoolExecutor()
+        self._executor = ThreadPoolExecutor()
         self._tasks = []
         self._pending_requests: Optional[queue.Queue] = None
         self._active_requests = {}
