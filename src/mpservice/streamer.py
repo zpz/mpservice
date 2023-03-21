@@ -42,7 +42,6 @@ from __future__ import annotations
 import functools
 import multiprocessing.util
 import os
-import pickle
 import queue
 import threading
 import traceback

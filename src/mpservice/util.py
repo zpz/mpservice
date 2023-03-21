@@ -28,7 +28,6 @@ from __future__ import annotations
 import concurrent.futures
 import errno
 import functools
-import gc
 import inspect
 import logging
 import logging.handlers
@@ -1023,7 +1022,7 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException as e:
+    except BaseException:
         print(f"Exception in process {multiprocessing.current_process().name}:")
         traceback.print_exception(*sys.exc_info())
         raise
@@ -1032,7 +1031,7 @@ def _loud_process_function(fn, *args, **kwargs):
 def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException as e:
+    except BaseException:
         print(f"Exception in thread {threading.current_thread().name}:")
         traceback.print_exception(*sys.exc_info())
         raise
@@ -1178,6 +1177,7 @@ def get_shared_process_pool(
 
 
 if hasattr(os, 'register_at_fork'):  # not available on Windows
+
     def _clear_global_state():
         for box in (_global_thread_pools_, _global_process_pools_):
             for name in list(box.keys()):
