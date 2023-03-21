@@ -18,7 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - ``mpservice.util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
-  discorable. This functionality was there previously but it was buggy.
+  discoverable. This functionality was there previously but it was buggy.
+- Fixed a deadlock situation during the shutdown of streamer ``parmap``.
 
 
 ## [0.12.0] - 2023-03-10

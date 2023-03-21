@@ -27,7 +27,7 @@ Utilities
 
 .. autoclass:: mpservice.util.ProcessPoolExecutor
 
-.. autoclass:: mpservice.util.ThreadPoolExecutor
+.. this causes warning in build autoclass:: mpservice.util.ThreadPoolExecutor
 
 .. autofunction:: mpservice.util.get_shared_thread_pool
 

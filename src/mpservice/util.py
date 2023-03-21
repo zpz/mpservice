@@ -1078,7 +1078,6 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     The default is ``True``, whereas ``False`` has the behavior of the standard library,
     which does not print exception info in the worker thread.
     '''
-
     def __init__(self, max_workers=None, *, loud_exception: bool = True, **kwargs):
         super().__init__(max_workers=max_workers, **kwargs)
         self._loud_exception = loud_exception
@@ -1087,6 +1086,8 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         if self._loud_exception:
             return super().submit(_loud_thread_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
+
+
 
 
 # References:
