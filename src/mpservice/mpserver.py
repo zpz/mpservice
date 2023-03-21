@@ -44,6 +44,7 @@ from .util import (
     RemoteException,
     SpawnProcess,
     Thread,
+    ThreadPoolExecutor,
     TimeoutError,
 )
 
@@ -1379,7 +1380,7 @@ class Server:
                 tasks.put(NOMOREDATA)
 
         tasks = queue.SimpleQueue()
-        executor = concurrent.futures.ThreadPoolExecutor(1)
+        executor = ThreadPoolExecutor(1)
         t = executor.submit(_enqueue, tasks, return_exceptions)
 
         _wait = self._wait_for_result

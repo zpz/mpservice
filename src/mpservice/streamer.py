@@ -7,7 +7,7 @@ One or more "primary" operations are so heavy
 that they can benefit from concurrency via threading
 (if they are I/O bound) or multiprocessing (if they are CPU bound).
 The other operations are typically light weight, although important in their own right.
-These operations perform batching, unbatching, buffering, mapping, filtering, grouping, logging, etc.
+These operations perform batching, unbatching, buffering, mapping, filtering, grouping, etc.
 """
 
 
@@ -39,7 +39,6 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
-import concurrent.futures
 import functools
 import multiprocessing.util
 import os
@@ -58,12 +57,15 @@ from typing import (
 )
 
 from deprecation import deprecated
+from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
 from .util import (
     MAX_THREADS,
     MP_SPAWN_CTX,
+    ProcessPoolExecutor,
     Thread,
+    ThreadPoolExecutor,
     get_remote_traceback,
     get_shared_process_pool,
     get_shared_thread_pool,
@@ -85,6 +87,20 @@ class Stream(Iterable):
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
     by passing an `Iterable`_ to it, then calls its methods to use it.
+    Most of the methods return the object itself, facilitating calls
+    in a "chained" fashion, like this::
+
+        s = Stream(...).map(...).filter(...).batch(...).parmap(...).ubatch(...)
+
+    However, these methods modify the object in-place, hence the above is equivalent
+    to calling the methods one by one::
+
+        s = Stream(...)
+        s.map(...)
+        s.filter(...)
+        s.batch(...)
+        s.parmap(...)
+        s.unbatch(...)
     """
 
     def __init__(self, instream: Iterable, /):
@@ -134,7 +150,7 @@ class Stream(Iterable):
         """
         return list(self)
 
-    def map(self, func: Callable[[T], Any], /, **kwargs):
+    def map(self, func: Callable[[T], Any], /, **kwargs) -> Self:
         """Perform a simple transformation on each data element.
 
         This operation happens "inline"--there is no other threads or processes
@@ -175,7 +191,7 @@ class Stream(Iterable):
         self.streamlets.append(Mapper(self.streamlets[-1], func, **kwargs))
         return self
 
-    def filter(self, func: Callable[[T], bool], /, **kwargs):
+    def filter(self, func: Callable[[T], bool], /, **kwargs) -> Self:
         """Select data elements to keep in the stream according to the predicate ``func``.
 
         This method can be used to either "keep" or "drop" elements according to various conditions.
@@ -218,7 +234,7 @@ class Stream(Iterable):
         keep_exc_types: Optional[
             type[BaseException] | tuple[type[BaseException], ...]
         ] = None,
-    ):
+    ) -> Self:
         """
         If a call to :meth:`parmap` upstream has specified ``return_exceptions=True``,
         then its output stream may contain ``Exception`` objects.
@@ -281,7 +297,7 @@ class Stream(Iterable):
         interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
-    ):
+    ) -> Self:
         """Take a peek at the data element *before* it continues in the stream.
 
         This is implemented by :meth:`map`, where the mapper function prints
@@ -383,7 +399,7 @@ class Stream(Iterable):
     def peek_every_nth(self, n: int):
         return self.peek(interval=n)
 
-    def head(self, n: int):
+    def head(self, n: int) -> Self:
         """
         Take the first ``n`` elements and ignore the rest.
         If the entire stream has less than ``n`` elements, just take all of them.
@@ -395,7 +411,7 @@ class Stream(Iterable):
         self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
-    def tail(self, n: int):
+    def tail(self, n: int) -> Self:
         """
         Take the last ``n`` elements and ignore all the previous ones.
         If the entire stream has less than ``n`` elements, just take all of them.
@@ -406,7 +422,7 @@ class Stream(Iterable):
         self.streamlets.append(Tailor(self.streamlets[-1], n))
         return self
 
-    def groupby(self, func: Callable[[T], Any], /, **kwargs):
+    def groupby(self, func: Callable[[T], Any], /, **kwargs) -> Self:
         """
         ``func`` takes a data element and outputs a value.
         **Consecutive** elements that have the same value of this output
@@ -431,7 +447,7 @@ class Stream(Iterable):
         self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
         return self
 
-    def batch(self, batch_size: int):
+    def batch(self, batch_size: int) -> Self:
         """
         Take elements from an input stream
         and bundle them up into batches up to a size limit,
@@ -453,7 +469,7 @@ class Stream(Iterable):
         self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
         return self
 
-    def unbatch(self):
+    def unbatch(self) -> Self:
         """
         Turn a stream of lists into a stream of individual elements.
 
@@ -487,7 +503,7 @@ class Stream(Iterable):
 
     def accumulate(
         self, func: Callable[[Any, T], Any], initializer: Any = NOTSET, **kwargs
-    ):
+    ) -> Self:
         """
         This method is like "cumulative sum", but the operation is specified by ``func``, hence
         does not need to be "sum". If the last element in the output stream is ``x``
@@ -543,7 +559,7 @@ class Stream(Iterable):
 
         return self.map(Accumulator())
 
-    def buffer(self, maxsize: int):
+    def buffer(self, maxsize: int) -> Self:
         """Buffer is used to stabilize and improve the speed of data flow.
 
         A buffer is useful following any operation that can not guarantee
@@ -589,8 +605,9 @@ class Stream(Iterable):
         num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        parmapper_name: str = 'parmapper',
         **kwargs,
-    ):
+    ) -> Self:
         """Parallel, or concurrent, counterpart of :meth:`map`.
 
         New threads or processes are created to execute ``func``.
@@ -619,6 +636,7 @@ class Stream(Iterable):
             ``None``. Regardless, the output is yielded to be consumed by the next
             operator in the pipeline. A stream of ``None``\\s could be used
             in counting, for example.
+
         executor
             Either 'thread' or 'process'.
         num_workers
@@ -643,6 +661,13 @@ class Stream(Iterable):
             exceptions raised by ``func`` only.
         **kwargs
             Passed on to :class:`Parmapper`.
+
+        Notes
+        -----
+        If ``executor`` is ``'process'``, then ``func`` must be pickle-able,
+        for example, it can't be a lambda or a function defined within
+        another function. The same caution applies to any parameter passed
+        to ``func`` in ``kwargs``.
         """
         self.streamlets.append(
             Parmapper(
@@ -652,6 +677,7 @@ class Stream(Iterable):
                 num_workers=num_workers,
                 return_x=return_x,
                 return_exceptions=return_exceptions,
+                parmapper_name=parmapper_name,
                 **kwargs,
             )
         )
@@ -868,6 +894,7 @@ class Parmapper(Iterable):
         return_exceptions: bool = False,
         executor_initializer=None,
         executor_init_args=(),
+        parmapper_name='parmapper',
         **kwargs,
     ):
         assert executor in ("thread", "process")
@@ -883,64 +910,61 @@ class Parmapper(Iterable):
         self._executor_initializer = executor_initializer
         self._executor_init_args = executor_init_args
         self._executor = None
+        self._executor_is_shared = None
         self._finalize_func = None
         self._loud_exception = False
+        self._name = parmapper_name
+        self._running = False
 
     def _start(self):
         num_workers = self._num_workers
-        is_shared = False
+        self._executor_is_shared = False
+
         if self._executor_ == "thread":
             self._stopped = threading.Event()
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_thread_pool()
-                is_shared = True
+                self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
                     num_workers = MAX_THREADS
                 else:
                     assert 1 <= num_workers <= 100
-                self._executor = concurrent.futures.ThreadPoolExecutor(
+                self._executor = ThreadPoolExecutor(
                     num_workers,
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
+                    thread_name_prefix=self._name + '-thread',
                 )
         else:
             self._stopped = MP_SPAWN_CTX.Event()
+
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool()
-                is_shared = True
+                self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
                     num_workers = os.cpu_count() or 1
                 else:
                     assert 1 <= num_workers <= (os.cpu_count() or 1) * 2
-                self._executor = concurrent.futures.ProcessPoolExecutor(
+                self._executor = ProcessPoolExecutor(
                     num_workers,
-                    mp_context=MP_SPAWN_CTX,
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
                 )
-        self._tasks = SingleLane(num_workers)
+
+        self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
             target=self._run_worker,
             args=(self._func,),
             kwargs=self._func_kwargs,
             loud_exception=self._loud_exception,
         )
+
         self._worker.start()
-        self._finalize_func = multiprocessing.util.Finalize(
-            self,
-            type(self)._finalizer,
-            (
-                self._stopped,
-                self._tasks,
-                self._worker,
-                self._executor if is_shared else None,
-            ),
-            exitpriority=10,
-        )
+        self._running = True
 
     def _run_worker(self, func, **kwargs):
         tasks = self._tasks
@@ -959,20 +983,28 @@ class Parmapper(Iterable):
         else:
             tasks.put(FINISHED)
 
-    @staticmethod
-    def _finalizer(stopped, tasks, worker, executor):
-        stopped.set()
-        while not tasks.empty():
-            _ = tasks.get()
-        worker.join()
-        if executor is not None:
-            executor.shutdown()
-
     def _finalize(self):
-        fin = self._finalize_func
-        if fin:
-            self._finalize_func = None
-            fin()
+        if not self._running:
+            return
+        self._stopped.set()
+
+        while True:
+            while not self._tasks.empty():
+                _ = self._tasks.get()
+
+            self._worker.join(timeout=0.002)
+            if not self._worker.is_alive():
+                break
+
+        if not self._executor_is_shared:
+            if self._executor is not None:
+                self._executor.shutdown()
+                self._executor = None
+
+        self._running = False
+
+    def __del__(self):
+        self._finalize()
 
     def __iter__(self):
         self._start()
@@ -985,6 +1017,7 @@ class Parmapper(Iterable):
                 raise self._worker.exception()
 
             x, fut = z
+
             try:
                 y = fut.result()
             except Exception as e:

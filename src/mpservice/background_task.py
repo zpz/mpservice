@@ -12,7 +12,7 @@ from collections.abc import Hashable
 from datetime import datetime
 from typing import Optional
 
-from .util import MAX_THREADS
+from .util import MAX_THREADS, ThreadPoolExecutor
 
 
 class Task:
@@ -180,7 +180,7 @@ class BackgroundTask(ABC):
         """
         self._own_executor = False
         if executor is None:
-            executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
+            executor = ThreadPoolExecutor(MAX_THREADS)
             self._own_executor = True
         self._executor = executor
         self._tasks: dict[Hashable, Task] = {}
