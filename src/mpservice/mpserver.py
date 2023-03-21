@@ -1543,12 +1543,13 @@ class Server:
                     info = pobj.as_dict(attrs)
                     for k in attrs:
                         v = info[k]
-                        if k == "memory_full_info":
-                            msg.append(
-                                f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB"
-                            )
-                        else:
-                            msg.append(f"        {k:<15} {v}")
+                        if v:
+                            if k == "memory_full_info":
+                                msg.append(
+                                    f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB"
+                                )
+                            else:
+                                msg.append(f"        {k:<15} {v}")
                 logger.info("worker process stats:\n%s", "\n".join(msg))
 
         try:

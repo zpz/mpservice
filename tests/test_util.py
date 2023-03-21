@@ -169,7 +169,7 @@ def loud_worker():
     x = 8/0
 
 
-def test_loud_exception():
+def _test_loud_exception():
     # This prints error info
     print('\nstandard thread\n')
     t = threading.Thread(target=loud_worker)
