@@ -42,6 +42,7 @@ from __future__ import annotations
 import functools
 import multiprocessing.util
 import os
+import pickle
 import queue
 import threading
 import traceback
@@ -605,6 +606,7 @@ class Stream(Iterable):
         num_workers: Optional[int] = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        parmapper_name: str = 'parmapper',
         **kwargs,
     ) -> Self:
         """Parallel, or concurrent, counterpart of :meth:`map`.
@@ -635,6 +637,7 @@ class Stream(Iterable):
             ``None``. Regardless, the output is yielded to be consumed by the next
             operator in the pipeline. A stream of ``None``\\s could be used
             in counting, for example.
+
         executor
             Either 'thread' or 'process'.
         num_workers
@@ -659,6 +662,13 @@ class Stream(Iterable):
             exceptions raised by ``func`` only.
         **kwargs
             Passed on to :class:`Parmapper`.
+
+        Notes
+        -----
+        If ``executor`` is ``'process'``, then ``func`` must be pickle-able,
+        for example, it can't be a lambda or a function defined within
+        another function. The same caution applies to any parameter passed
+        to ``func`` in ``kwargs``.
         """
         self.streamlets.append(
             Parmapper(
@@ -668,6 +678,7 @@ class Stream(Iterable):
                 num_workers=num_workers,
                 return_x=return_x,
                 return_exceptions=return_exceptions,
+                parmapper_name=parmapper_name,
                 **kwargs,
             )
         )
@@ -884,6 +895,7 @@ class Parmapper(Iterable):
         return_exceptions: bool = False,
         executor_initializer=None,
         executor_init_args=(),
+        parmapper_name='parmapper',
         **kwargs,
     ):
         assert executor in ("thread", "process")
@@ -899,17 +911,21 @@ class Parmapper(Iterable):
         self._executor_initializer = executor_initializer
         self._executor_init_args = executor_init_args
         self._executor = None
+        self._executor_is_shared = None
         self._finalize_func = None
         self._loud_exception = False
+        self._name = parmapper_name
+        self._running = False
 
     def _start(self):
         num_workers = self._num_workers
-        is_shared = False
+        self._executor_is_shared = False
+
         if self._executor_ == "thread":
             self._stopped = threading.Event()
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_thread_pool()
-                is_shared = True
+                self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
@@ -920,12 +936,14 @@ class Parmapper(Iterable):
                     num_workers,
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
+                    thread_name_prefix=self._name + '-thread',
                 )
         else:
             self._stopped = MP_SPAWN_CTX.Event()
+
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool()
-                is_shared = True
+                self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
                 if num_workers is None:
@@ -934,29 +952,20 @@ class Parmapper(Iterable):
                     assert 1 <= num_workers <= (os.cpu_count() or 1) * 2
                 self._executor = ProcessPoolExecutor(
                     num_workers,
-                    mp_context=MP_SPAWN_CTX,
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
                 )
-        self._tasks = SingleLane(num_workers)
+
+        self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
             target=self._run_worker,
             args=(self._func,),
             kwargs=self._func_kwargs,
             loud_exception=self._loud_exception,
         )
+
         self._worker.start()
-        self._finalize_func = multiprocessing.util.Finalize(
-            self,
-            type(self)._finalizer,
-            (
-                self._stopped,
-                self._tasks,
-                self._worker,
-                self._executor if is_shared else None,
-            ),
-            exitpriority=10,
-        )
+        self._running = True
 
     def _run_worker(self, func, **kwargs):
         tasks = self._tasks
@@ -975,20 +984,28 @@ class Parmapper(Iterable):
         else:
             tasks.put(FINISHED)
 
-    @staticmethod
-    def _finalizer(stopped, tasks, worker, executor):
-        stopped.set()
-        while not tasks.empty():
-            _ = tasks.get()
-        worker.join()
-        if executor is not None:
-            executor.shutdown()
-
     def _finalize(self):
-        fin = self._finalize_func
-        if fin:
-            self._finalize_func = None
-            fin()
+        if not self._running:
+            return
+        self._stopped.set()
+
+        while True:
+            while not self._tasks.empty():
+                _ = self._tasks.get()
+
+            self._worker.join(timeout=0.002)
+            if not self._worker.is_alive():
+                break
+
+        if not self._executor_is_shared:
+            if self._executor is not None:
+                self._executor.shutdown()
+                self._executor = None
+
+        self._running = False
+
+    def __del__(self):
+        self._finalize()
 
     def __iter__(self):
         self._start()
@@ -1001,6 +1018,7 @@ class Parmapper(Iterable):
                 raise self._worker.exception()
 
             x, fut = z
+
             try:
                 y = fut.result()
             except Exception as e:

@@ -28,6 +28,7 @@ from __future__ import annotations
 import concurrent.futures
 import errno
 import functools
+import gc
 import inspect
 import logging
 import logging.handlers
@@ -1022,7 +1023,7 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException:
+    except BaseException as e:
         print(f"Exception in process {multiprocessing.current_process().name}:")
         traceback.print_exception(*sys.exc_info())
         raise
@@ -1031,10 +1032,11 @@ def _loud_process_function(fn, *args, **kwargs):
 def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException:
+    except BaseException as e:
         print(f"Exception in thread {threading.current_thread().name}:")
         traceback.print_exception(*sys.exc_info())
         raise
+        # https://stackoverflow.com/a/54295910
 
 
 class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
@@ -1054,8 +1056,9 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     is handy for debugging in cases where the user fails to check the Future object in a timely manner.
     '''
 
-    def __init__(self, *args, loud_exception: bool = True, **kwargs):
-        super().__init__(*args, mp_context=MP_SPAWN_CTX, **kwargs)
+    def __init__(self, max_workers=None, *, loud_exception=True, **kwargs):
+        assert 'mp_context' not in kwargs
+        super().__init__(max_workers=max_workers, mp_context=MP_SPAWN_CTX, **kwargs)
         self._loud_exception = loud_exception
 
     def submit(self, fn, /, *args, **kwargs):
@@ -1077,15 +1080,14 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     which does not print exception info in the worker thread.
     '''
 
-    def __init__(self, *args, loud_exception: bool = True, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, max_workers=None, *, loud_exception: bool = True, **kwargs):
+        super().__init__(max_workers=max_workers, **kwargs)
         self._loud_exception = loud_exception
 
     def submit(self, fn, /, *args, **kwargs):
         if self._loud_exception:
             return super().submit(_loud_thread_function, fn, *args, **kwargs)
-        else:
-            return super().submit(fn, *args, **kwargs)
+        return super().submit(fn, *args, **kwargs)
 
 
 # References:
@@ -1170,18 +1172,13 @@ def get_shared_process_pool(
             else:
                 if max_workers is not None:
                     assert 1 <= (os.cpu_count() or 1) * 2
-            executor = ProcessPoolExecutor(max_workers, mp_context=MP_SPAWN_CTX)
+            executor = ProcessPoolExecutor(max_workers)
             _global_process_pools_[name] = executor
     return executor
 
 
-try:
-    register_at_fork = os.register_at_fork  # not available on Windows
-except AttributeError:  # on Windows
-    pass
-else:
-
-    def _clear_global_thread_process_pools():
+if hasattr(os, 'register_at_fork'):  # not available on Windows
+    def _clear_global_state():
         for box in (_global_thread_pools_, _global_process_pools_):
             for name in list(box.keys()):
                 pool = box.get(name)
@@ -1202,4 +1199,4 @@ else:
             pass
         _global_process_pools_lock = threading.Lock()
 
-    register_at_fork(after_in_child=_clear_global_thread_process_pools)
+    os.register_at_fork(after_in_child=_clear_global_state)

@@ -198,40 +198,47 @@ def test_buffer_break():
             pass
 
 
-def test_parmap():
+def parmap_f1(x):
+    sleep(random.random() * 0.002)
+    return x + 3.8
 
-    def f1(x):
-        sleep(random.random() * 0.002)
-        return x + 3.8
 
-    def f2(x):
-        sleep(random.random() * 0.003)
-        return x*2
+def parmap_f2(x):
+    sleep(random.random() * 0.003)
+    return x*2
+
+
+class MySink:
+    def __init__(self):
+        self.result = 0
+
+    def __call__(self, x):
+        sleep(random.random() * 0.01)
+        self.result += x * 3
+
+
+@pytest.mark.parametrize('executor', ['thread', 'process'])
+def test_parmap(executor):
+    f1 = parmap_f1
+    f2 = parmap_f2
 
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
 
     with pytest.warns(DeprecatedWarning):
-        assert Stream(SYNC_INPUT).transform(f1, concurrency=1, executor='thread').collect() == expected
+        assert Stream(SYNC_INPUT).transform(f1, concurrency=1, executor=executor).collect() == expected
 
-    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor='thread')) == expected
+    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor=executor)) == expected
 
-    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=20, executor='thread')) == expected
+    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=20, executor=executor)) == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    assert list(Stream(SYNC_INPUT).parmap(f1, executor='thread').parmap(f2, executor='thread')) == expected
-
-    class MySink:
-        def __init__(self):
-            self.result = 0
-
-        def __call__(self, x):
-            sleep(random.random() * 0.01)
-            self.result += x * 3
+    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor).parmap(f2, executor=executor)) == expected
 
     mysink = MySink()
-    n = Stream(SYNC_INPUT).parmap(f1, executor='thread').parmap(mysink, executor='thread').drain()
+    n = Stream(SYNC_INPUT).parmap(f1, executor=executor).parmap(mysink, executor='thread').drain()
+    # The second executor must be 'thread' here.
     assert n == len(SYNC_INPUT)
 
     got = mysink.result
@@ -239,37 +246,39 @@ def test_parmap():
     assert math.isclose(got, expected)
 
 
-def test_parmap_noop():
+def parmap_noop_foo(n):
+    return range(n)
+
+
+@pytest.mark.parametrize('executor', ['thread', 'process'])
+def test_parmap_noop(executor):
     # No problem if no action.
-    def foo(n):
-        return range(n)
- 
-    x = Stream(range(1000)).parmap(foo, executor='thread')
+    x = Stream(range(1000)).parmap(parmap_noop_foo, executor=executor)
     assert True
 
 
-def test_parmap_with_error():
+@pytest.mark.parametrize('executor', ['thread', 'process'])
+def test_parmap_with_error(executor):
     data = [1, 2, 3, 4, 5, 'a', 6, 7]
 
     def corrupt_data():
         for x in data:
             yield x
 
-    def process(x):
-        return x + 2
+    process = plus2
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process, executor='thread', num_workers=2)
+        s.parmap(process, executor=executor, num_workers=2)
         zz = list(s)
         print(zz)
 
-    zz = list(Stream(corrupt_data()).parmap(process, executor='thread', num_workers=2, return_exceptions=True))
+    zz = list(Stream(corrupt_data()).parmap(process, executor=executor, num_workers=2, return_exceptions=True))
     print(zz)
     assert isinstance(zz[5], TypeError)
 
     s = Stream(corrupt_data())
-    s.parmap(process, executor='thread', num_workers=2, return_exceptions=True)
+    s.parmap(process, executor=executor, num_workers=2, return_exceptions=True)
     n = 0
     nexc = 0
     for x in s:
@@ -280,88 +289,94 @@ def test_parmap_with_error():
     assert nexc == 1
 
 
-def test_chain():
+def plus2(x):
+    return x + 2
+
+def minus2(x):
+    if x > 8:
+        raise ValueError(x)
+    return x - 2
+
+
+@pytest.mark.parametrize('executor', ['thread', 'process'])
+def test_chain(executor):
     data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]
 
     def corrupt_data():
         for x in data:
             yield x
 
-    def process1(x):
-        return x + 2
-
-    def process2(x):
-        if x > 8:
-            raise ValueError(x)
-        return x - 2
+    process1 = plus2
+    process2 = minus2
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor='thread', num_workers=2)
+        s.parmap(process1, executor=executor, num_workers=2)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process2, executor='thread', num_workers=3)
+        s.parmap(process2, executor=executor, num_workers=3)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
-        s.parmap(process2, executor='thread', num_workers=4)
+        s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+        s.parmap(process2, executor=executor, num_workers=4)
         s.drain()
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor='thread', num_workers=2)
-        s.parmap(process2, executor='thread', num_workers=4, return_exceptions=True)
+        s.parmap(process1, executor=executor, num_workers=2)
+        s.parmap(process2, executor=executor, num_workers=4, return_exceptions=True)
         s.drain()
 
     s = Stream(corrupt_data())
-    s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
-    s.parmap(process2, executor='thread', num_workers=4, return_exceptions=True)
+    s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+    s.parmap(process2, executor=executor, num_workers=4, return_exceptions=True)
     s.drain()
 
     with pytest.raises((TypeError, ValueError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor='thread', num_workers=1) #2)
+        s.parmap(process1, executor=executor, num_workers=1, parmapper_name='---first') #2)
         s.buffer(3)
-        s.parmap(process2, executor='thread', num_workers=1) #3)
+        s.parmap(process2, executor=executor, num_workers=1, parmapper_name='+++second') #3)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+        s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
         s.buffer(2)
-        s.parmap(process2, executor='thread', num_workers=3)
+        s.parmap(process2, executor=executor, num_workers=3)
         s.drain()
 
     zz = list(Stream(corrupt_data())
-             .parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+             .parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
              .buffer(3)
-             .parmap(process2, executor='thread', num_workers=3, return_exceptions=True)
+             .parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
              .peek(interval=1)
              )
     print('')
     print(zz)
 
     s = Stream(corrupt_data())
-    s.parmap(process1, executor='thread', num_workers=2, return_exceptions=True)
+    s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
     s.filter_exceptions(BaseException)
     s.buffer(3)
-    s.parmap(process2, executor='thread', num_workers=3, return_exceptions=True)
+    s.parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
     s.peek()
     s.filter_exceptions(BaseException)
     assert list(s) == [1, 2, 3, 4, 5, 6]
 
 
-def test_stream_early_stop():
-    def double(x):
-        sleep(0.5)
-        return x * 2
+def stream_early_stop_double(x):
+    sleep(0.5)
+    return x * 2
 
+@pytest.mark.parametrize('executor', ['thread', 'process'])
+def test_stream_early_stop(executor):
     s = Stream(range(300000))
-    z = s.parmap(double, executor='thread', num_workers=3)
+    z = s.parmap(stream_early_stop_double, executor=executor, num_workers=3)
     n = 0
     for x in z:
         # print(x)
