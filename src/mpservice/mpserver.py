@@ -52,6 +52,16 @@ from .util import (
 
 # User should import the `TimeoutError` from this module for exception handling purposes.
 
+# Note on the use of RemoteException:
+# The motivation of RemoteException is to wrap an Exception object to go through
+# pickling (process queue) and pass traceback info (as a str) along with it.
+# The unpickling side will get an object of the original Exception class rather
+# than a RemoteException object.
+# As a result, objects taken off of a process queue will never be RemoteException objects.
+# However, if the queue is a thread queue, then a RemoteException object put in it
+# will come out as a RemoteException unchanged.
+
+
 # Set level for logs produced by the standard `multiprocessing` module.
 multiprocessing.log_to_stderr(logging.WARNING)
 
@@ -74,21 +84,26 @@ Will be removed in 0.13.0.
 class EnsembleError(RuntimeError):
     def __init__(self, results: dict):
         nerr = sum(
-            1 if isinstance(v, (BaseException, RemoteException)) else 0
+            1 if isinstance(v, RemoteException) else 0
             for v in results['y']
         )
         errmsg = None
         for v in results['y']:
-            if isinstance(v, (BaseException, RemoteException)):
+            if isinstance(v, RemoteException):
                 errmsg = repr(v)
                 break
         msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
-        super().__init__(msg)
-        self.results = results['y']
-        self._n_finished = results['n']
+        super().__init__(msg, results)
+        # self.args[1] is the results
+
+    def __repr__(self):
+        return self.args[0]
+
+    def __str__(self):
+        return self.args[0]
 
     def __reduce__(self):
-        return type(self), ({'y': self.results, 'n': self._n_finished},)
+        return type(self), (self.args[1],)
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
@@ -170,8 +185,9 @@ class Worker(ABC):
             In the subclass :class:`ProcessWorker`, ``q_out`` is a :class:`FastQueue`.
             In the subclass :class:`ThreadWorker`, ``q_out`` is either a :class:`FastQueue` or a :class:`SimpleQueue`.
 
-            The elements in ``q_out`` correspond to those in ``q_in``.
-            This is the case regardless of the settings for batching.
+            The elements in ``q_out`` are results for each individual element in ``q_in``.
+            "Batching" is an internal optimization for speed;
+            ``q_out`` does not contain result batches, but rather results of individuals.
         **init_kwargs
             Passed on to :meth:`__init__`.
         """
@@ -430,6 +446,11 @@ class Worker(ABC):
             _ = collector_thread.result()
 
     def _build_input_batches(self, q_in, q_out):
+        # This background thread get elements from `q_in`
+        # and put them in `self._batch_buffer`.
+        # Exceptions taken out of `q_in` will be short-circuited
+        # to `q_out`.
+
         threading.current_thread().name = f"{self.name}._build_input_batches"
         buffer = self._batch_buffer
         batchsize = self.batch_size
@@ -490,6 +511,8 @@ class Worker(ABC):
                         break
 
     def _get_input_batch(self):
+        # This function gets a batch from `self._batch_buffer`.
+
         extra_timeout = self.batch_wait_time
         batchsize = self.batch_size
         buffer = self._batch_buffer
@@ -1091,8 +1114,10 @@ class EnsembleServlet(Servlet):
                         # If fail fast, then the first exception causes
                         # this to return an EnsembleError as result.
                         catalog.pop(uid)
-                        y = EnsembleError(z)
-                        qout.put((uid, y))
+                        try:
+                            raise EnsembleError(z)
+                        except Exception as e:
+                            qout.put((uid, RemoteException(e)))
                     elif z['n'] == nn:
                         # All results for this request have been collected.
                         # If the results contain any exception member, then
@@ -1101,7 +1126,10 @@ class EnsembleServlet(Servlet):
                         # only if all members are exceptions.
                         catalog.pop(uid)
                         if all(isinstance(v, RemoteException) for v in z['y']):
-                            y = EnsembleError(z)
+                            try:
+                                raise EnsembleError(z)
+                            except Exception as e:
+                                y = RemoteException(e)
                         else:
                             y = z["y"]
                         qout.put((uid, y))

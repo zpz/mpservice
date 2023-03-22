@@ -363,14 +363,15 @@ def test_ensemble_error():
     }
     e = EnsembleError(z)
     print('')
-    print(e)
+    print(repr(e))
+    print(str(e))
     print(e.args)
-    print(e.results)
+    print(e.args[0])
+    print(e.args[1])
     print('')
     ep = pickle.loads(pickle.dumps(e))
     print(ep)
     print(e.args)
-    print(e.results)
 
 
 def test_ensemble_error2():
@@ -389,5 +390,5 @@ def test_ensemble_error2():
             except EnsembleError as e:
                 print(repr(e))
                 print(e)
-                print(e.results)
+                print(e.args)
                 raise
