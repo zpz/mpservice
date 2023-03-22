@@ -83,10 +83,7 @@ Will be removed in 0.13.0.
 
 class EnsembleError(RuntimeError):
     def __init__(self, results: dict):
-        nerr = sum(
-            1 if isinstance(v, RemoteException) else 0
-            for v in results['y']
-        )
+        nerr = sum(1 if isinstance(v, RemoteException) else 0 for v in results['y'])
         errmsg = None
         for v in results['y']:
             if isinstance(v, RemoteException):
