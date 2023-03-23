@@ -502,6 +502,7 @@ Run it::
                 # `RemoteException`.
                 if is_remote_exception(exc):
                     tb = get_remote_traceback(exc)
+                    # `exc.__cause__` will become `None` after pickle/unpickle.
                 else:
                     raise ValueError(f"{repr(exc)} does not contain traceback info")
                     # In this case, don't use RemoteException. Pickle the exc object directly.

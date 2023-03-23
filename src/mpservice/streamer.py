@@ -998,7 +998,10 @@ class Parmapper(Iterable):
 
         if not self._executor_is_shared:
             if self._executor is not None:
-                self._executor.shutdown()
+                try:
+                    self._executor.shutdown()
+                except OSError:
+                    pass
                 self._executor = None
 
         self._running = False
