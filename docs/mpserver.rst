@@ -203,6 +203,8 @@ then we may design such a workflow,
 
 .. autoclass:: mpservice.mpserver.EnsembleServlet
 
+.. autoclass:: mpservice.mpserver.SwitchServlet
+
 .. autodata:: mpservice.mpserver.Sequential
 
 .. autodata:: mpservice.mpserver.Ensemble

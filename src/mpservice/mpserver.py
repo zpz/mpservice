@@ -33,7 +33,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Any, Callable, Optional, Literal
+from typing import Any, Callable, Literal, Optional
 
 import psutil
 from overrides import final
@@ -836,7 +836,7 @@ class ProcessServlet(Servlet):
     @property
     def output_queue_type(self):
         return "process"
-    
+
 
 class ThreadServlet(Servlet):
     def __init__(
@@ -929,7 +929,7 @@ class ThreadServlet(Servlet):
     @property
     def output_queue_type(self):
         return "thread"
-    
+
 
 class SequentialServlet(Servlet):
     """
@@ -974,7 +974,10 @@ class SequentialServlet(Servlet):
         q1 = q_in
         for i, s in enumerate(self._servlets):
             if i + 1 < nn:  # not the last one
-                if s.output_queue_type == 'thread' and self._servlets[i + 1].input_queue_type == 'thread':
+                if (
+                    s.output_queue_type == 'thread'
+                    and self._servlets[i + 1].input_queue_type == 'thread'
+                ):
                     q2 = SimpleQueue()
                 else:
                     q2 = FastQueue()
@@ -1002,11 +1005,11 @@ class SequentialServlet(Servlet):
 
     @property
     def input_queue_type(self):
-        return self._servlets[0].input_queue_type()
-    
+        return self._servlets[0].input_queue_type
+
     @property
     def output_queue_type(self):
-        return self._servlets[-1].output_queue_type()
+        return self._servlets[-1].output_queue_type
 
 
 class EnsembleServlet(Servlet):
@@ -1193,7 +1196,7 @@ class EnsembleServlet(Servlet):
     @property
     def input_queue_type(self):
         return 'thread'
-    
+
     @property
     def output_queue_type(self):
         return 'thread'
@@ -1219,17 +1222,17 @@ Ensemble = EnsembleServlet
 
 class SwitchServlet(Servlet):
     """
-    SwitchServlet contains multiple member servlets.
+    SwitchServlet contains multiple member servlets (which are provided to :meth:`__init__`).
     Each input element is passed to and processed by exactly one of the members
     based on the output of the method :meth:`switch`.
 
     This is somewhat analogous to the "switch" construct in some
     programming languages.
     """
+
     def __init__(self, *servlets: Servlet):
         assert len(servlets) > 0
         self._servlets = servlets
-        self._qs = []
         self._started = False
 
     def _reset(self):
@@ -1240,6 +1243,7 @@ class SwitchServlet(Servlet):
 
     def start(self, q_in, q_out):
         assert not self._started
+        self._reset()
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
@@ -1268,7 +1272,7 @@ class SwitchServlet(Servlet):
           the parameter ``q_in`` to :meth:`start`. If the current servlet
           is preceded by another servlet, then ``x`` is an output of the
           other servlet.
-        
+
           In principle, this method should not modify ``x``.
           It is expected to be a quick check on ``x`` to determine
           which member servlet should process it.
@@ -1277,11 +1281,12 @@ class SwitchServlet(Servlet):
           That case is already taken care of before this method is called.
           This class should not be used to handle such exception cases.
 
-        Return
-        ------
-        The index of the member servlet that will receive and process ``x``.
-        This number is between 0 and the number of member servlets minus 1,
-        inclusive.
+        Returns
+        -------
+        int
+          The index of the member servlet that will receive and process ``x``.
+          This number is between 0 and the number of member servlets minus 1,
+          inclusive.
         '''
         raise NotImplementedError
 
@@ -1403,8 +1408,14 @@ class Server:
         # into this queue. A background thread takes data out of this
         # queue and puts them into `_q_in`, which could block.
 
-        self._q_in = SimpleQueue() if self._servlet.input_queue_type == 'thread' else FastQueue()
-        self._q_out = SimpleQueue() if self._servlet.output_queue_type == 'thread' else FastQueue()
+        self._q_in = (
+            SimpleQueue() if self._servlet.input_queue_type == 'thread' else FastQueue()
+        )
+        self._q_out = (
+            SimpleQueue()
+            if self._servlet.output_queue_type == 'thread'
+            else FastQueue()
+        )
         self._servlet.start(self._q_in, self._q_out)
 
         t = Thread(target=self._gather_output)
@@ -1729,14 +1740,10 @@ class Server:
                 uid, y = z
                 fut = futures.pop(uid)
                 try:
+                    if isinstance(y, RemoteException):
+                        y = y.exc
                     if isinstance(y, BaseException):
-                        # Unexpected situation; to be investigated.
-                        logger.warning(
-                            "A non-remote exception has occurred, likely a bug: %r", y
-                        )
                         fut.set_exception(y)
-                    elif isinstance(y, RemoteException):
-                        fut.set_exception(y.exc)
                     else:
                         fut.set_result(y)
                     fut.data["t1"] = perf_counter()
