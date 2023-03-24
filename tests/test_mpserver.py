@@ -7,7 +7,7 @@ import pytest
 from mpservice.mpserver import (
     ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
     SequentialServlet, EnsembleServlet, Server, make_threadworker,
-    TimeoutError, EnsembleError,
+    TimeoutError, EnsembleError, SwitchServlet,
 )
 from mpservice.streamer import Stream
 from mpservice.util import is_remote_exception, RemoteException
@@ -392,3 +392,36 @@ def test_ensemble_error2():
                 print(e)
                 print(e.args)
                 raise
+
+
+
+def test_switch_servlet():
+    class MySwitch(SwitchServlet):
+        def __init__(self):
+            super().__init__(
+                ThreadServlet(PassThrough),
+                ProcessServlet(Double),
+                ThreadServlet(AddFive),
+                ProcessServlet(Worker3),
+            )
+
+        def switch(self, x):
+            if x > 100:
+                return 0
+            if x > 50:
+                return 1
+            if x > 10:
+                return 2
+            return 3
+
+    with Server(MySwitch()) as service:
+        assert service.call(123) == 123
+        assert service.call(62) == 124
+        assert service.call(30) == 35
+        assert service.call(10) == 10
+        assert service.call(7) == 7
+
+        with pytest.raises(Error3):
+            service.call(3)
+
+
