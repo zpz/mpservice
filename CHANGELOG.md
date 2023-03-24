@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Refinements to ``mpservice.util.SpawnProcessPoolExecutor``.
 - Added ``mpservice.util.ProcessPoolExecutor``, which is an alias to ``mpservice.util.SpawnProcessPoolExecutor``.
 - New class ``mpservice.util.ThreadPoolExecutor``.
+- New class ``mpservice.mpserver.SwitchServlet``.
 
 ### Fixed
 
