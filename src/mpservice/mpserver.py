@@ -706,7 +706,7 @@ class Servlet(ABC):
         The primary mechanism to stop a servlet is to put
         the special constant ``NOMOREDATA`` in the input queue.
         The user should have done that; but just to be sure,
-        this method may do that again. 
+        this method may do that again.
         '''
         raise NotImplementedError
 
@@ -1425,8 +1425,11 @@ class Server:
             psutil.Process().cpu_affinity(cpus=cpus)
 
         if sys_info_log_cadence is not None:
-            warnings.warn("The parameter `sys_info_log_cadence` is deprecated in version 0.12.1 and will be removed in 0.13.0",
-                          DeprecationWarning, stacklevel=2)
+            warnings.warn(
+                "The parameter `sys_info_log_cadence` is deprecated in version 0.12.1 and will be removed in 0.13.0",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._started = False
 
     def __enter__(self):
@@ -1452,9 +1455,7 @@ class Server:
             SimpleQueue() if self.servlet.input_queue_type == 'thread' else FastQueue()
         )
         self._q_out = (
-            SimpleQueue()
-            if self.servlet.output_queue_type == 'thread'
-            else FastQueue()
+            SimpleQueue() if self.servlet.output_queue_type == 'thread' else FastQueue()
         )
         self.servlet.start(self._q_in, self._q_out)
 
