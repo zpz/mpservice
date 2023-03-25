@@ -70,7 +70,7 @@ async def test_sequential_server_async():
     with Server(SequentialServlet(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
-            ), sys_info_log_cadence=None) as service:
+            )) as service:
         z = await service.async_call(3)
         assert z == 3 * 2 + 3
 
@@ -84,7 +84,7 @@ def test_sequential_server():
     with Server(SequentialServlet(
             ProcessServlet(Double, cpus=[1,2]),
             ProcessServlet(Shift, cpus=[3]),
-            ), sys_info_log_cadence=None) as service:
+            )) as service:
         z = service.call(3)
         assert z == 3 * 2 + 3
 
@@ -94,8 +94,7 @@ def test_sequential_server():
 
 
 def test_sequential_batch():
-    with Server(ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4),
-            sys_info_log_cadence=None) as service:
+    with Server(ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)) as service:
         z = service.call(3)
         assert z == 3 + 4
 
@@ -129,8 +128,7 @@ def test_sequential_timeout():
 
 
 def test_sequential_stream():
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3]),
-            sys_info_log_cadence=None) as service:
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [v*v for v in data]
@@ -425,3 +423,6 @@ def test_switch_servlet():
             service.call(3)
 
 
+if __name__ == '__main__':
+    test_sequential_server()
+    test_sequential_stream()

@@ -28,9 +28,9 @@ import multiprocessing
 import multiprocessing.queues
 import queue
 import threading
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
-from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal, Optional
@@ -268,6 +268,8 @@ class Worker(ABC):
         batch_size_log_cadence
             Log batch size statistics every this many batches. If ``None``, this log is turned off.
 
+            This log is for debugging and development purposes.
+
             This is ignored if ``batch_size=0``.
         """
         if batch_size is None or batch_size == 0:
@@ -337,6 +339,9 @@ class Worker(ABC):
     def start(self, *, q_in, q_out):
         """
         This is called by :meth:`run` to kick off the processing loop.
+
+        To stop the processing, pass in the constant ``NOMOREDATA``
+        through ``q_in``.
         """
         try:
             if self.batch_size > 1:
@@ -345,7 +350,7 @@ class Worker(ABC):
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
             print(self.name, "stopped by KeyboardInterrupt")
-            # The process will exit. Don't print the usual
+            # The process or thread will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
 
@@ -470,6 +475,8 @@ class Worker(ABC):
                     while True:
                         if z == NOMOREDATA:
                             buffer.put(z)
+                            q_in.put(z)  # broadcast to fellow workers.
+                            q_out.put(z)
                             return
                         # Now `z` is a tuple like (uid, x).
                         if isinstance(z[1], BaseException):
@@ -690,6 +697,17 @@ class Servlet(ABC):
 
     @abstractmethod
     def stop(self) -> None:
+        '''
+        When this method is called, there shouldn't be "pending" work
+        in the servlet. If for whatever reason, the servlet is in a busy,
+        messy state, it is not required to "wait" for things to finish.
+        The priority is to ensure the processes and threads are stopped.
+
+        The primary mechanism to stop a servlet is to put
+        the special constant ``NOMOREDATA`` in the input queue.
+        The user should have done that; but just to be sure,
+        this method may do that again.
+        '''
         raise NotImplementedError
 
     @property
@@ -714,6 +732,11 @@ class Servlet(ABC):
         If "thread", caller can provide either a thread queue or a
         process queue. If "process", caller must provide a process queue.
         '''
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def workers(self) -> list[Worker]:
         raise NotImplementedError
 
 
@@ -768,6 +791,7 @@ class ProcessServlet(Servlet):
         When the servlet has multiple processes, the output stream does not follow
         the order of the elements in the input stream.
         """
+        assert issubclass(worker_cls, ProcessWorker)
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         if cpus is None:
@@ -818,12 +842,15 @@ class ProcessServlet(Servlet):
             name = q_out.get()
             logger.debug("   ... worker <%s> is ready", name)
 
+        self._q_in = q_in
+        self._q_out = q_out
         logger.info("servlet %s is ready", self._name)
         self._started = True
 
     def stop(self):
         """Stop the workers."""
         assert self._started
+        self._q_in.put(NOMOREDATA)
         for w in self._workers:
             _ = w.result()
         self._workers = []
@@ -836,6 +863,10 @@ class ProcessServlet(Servlet):
     @property
     def output_queue_type(self):
         return "process"
+
+    @property
+    def workers(self):
+        return self._workers
 
 
 class ThreadServlet(Servlet):
@@ -867,6 +898,7 @@ class ThreadServlet(Servlet):
         When the servlet has multiple threads, the output stream does not follow
         the order of the elements in the input stream.
         """
+        assert issubclass(worker_cls, ThreadWorker)
         self._worker_cls = worker_cls
         self._name = name or worker_cls.__name__
         self._num_threads = num_threads or 1
@@ -911,12 +943,15 @@ class ThreadServlet(Servlet):
             name = q_out.get()
             logger.debug("   ... worker <%s> is ready", name)
 
+        self._q_in = q_in
+        self._q_out = q_out
         logger.info("servlet %s is ready", self._name)
         self._started = True
 
     def stop(self):
         """Stop the worker threads."""
         assert self._started
+        self._q_in.put(NOMOREDATA)
         for w in self._workers:
             _ = w.result()
         self._workers = []
@@ -929,6 +964,10 @@ class ThreadServlet(Servlet):
     @property
     def output_queue_type(self):
         return "thread"
+
+    @property
+    def workers(self):
+        return self._workers
 
 
 class SequentialServlet(Servlet):
@@ -986,22 +1025,23 @@ class SequentialServlet(Servlet):
                 q2 = q_out
             s.start(q1, q2)
             q1 = q2
+        self._q_in = q_in
         self._started = True
 
     def stop(self):
         """Stop the member servlets."""
         assert self._started
+        self._q_in.put(NOMOREDATA)
+        for q in self._qs:
+            q.put(NOMOREDATA)
         for s in self._servlets:
             s.stop()
         self._qs = []
         self._started = False
 
     @property
-    def _workers(self):
-        w = []
-        for s in self._servlets:
-            w.extend(s._workers)
-        return w
+    def workers(self):
+        return [w for s in self._servlets for w in s.workers]
 
     @property
     def input_queue_type(self):
@@ -1089,7 +1129,8 @@ class EnsembleServlet(Servlet):
             if v == NOMOREDATA:  # sentinel for end of input
                 for q in qins:
                     q.put(v)  # send the same sentinel to each servlet
-                break
+                qout.put(v)
+                return
 
             uid, x = v
             if isinstance(x, BaseException):
@@ -1114,7 +1155,6 @@ class EnsembleServlet(Servlet):
         catalog = self._uid_to_results
         fail_fast = self._fail_fast
         nn = len(qouts)
-        n_nomore = 0
         while True:
             all_empty = True
             for idx, q in enumerate(qouts):
@@ -1129,15 +1169,8 @@ class EnsembleServlet(Servlet):
                     all_empty = False
                     v = q.get()
                     if v == NOMOREDATA:
-                        n_nomore += 1
-                        if n_nomore == nn:
-                            # All member servlets have got the 'end' indicator.
-                            qout.put(v)
-                            return
-
-                        # Not all member servlets have finished yet.
-                        # Continue to check the other member servlets.
-                        break
+                        qout.put(v)
+                        return
                     uid, y = v
                     # `y` can be an exception object or a regular result.
                     z = catalog.get(uid)
@@ -1178,7 +1211,9 @@ class EnsembleServlet(Servlet):
                 sleep(0.01)  # TODO: what is a good duration?
 
     def stop(self):
+        # Caller is responsible to put a NOMOREDATA item in the input queue.
         assert self._started
+        self._qin.put(NOMOREDATA)
         for s in self._servlets:
             s.stop()
         for t in self._threads:
@@ -1187,11 +1222,8 @@ class EnsembleServlet(Servlet):
         self._started = False
 
     @property
-    def _workers(self):
-        w = []
-        for s in self._servlets:
-            w.extend(s._workers)
-        return w
+    def workers(self):
+        return [w for s in self._servlets for w in s.workers]
 
     @property
     def input_queue_type(self):
@@ -1255,7 +1287,9 @@ class SwitchServlet(Servlet):
         self._started = True
 
     def stop(self):
+        # Caller is responsible to put a NOMOREDATA item in the input queue.
         assert self._started
+        self._qin.put(NOMOREDATA)
         for s in self._servlets:
             s.stop()
         _ = self._thread_enqueue.result()
@@ -1300,7 +1334,8 @@ class SwitchServlet(Servlet):
             if v == NOMOREDATA:  # sentinel for end of input
                 for q in qins:
                     q.put(v)  # send the same sentinel to each servlet
-                break
+                qout.put(v)
+                return
 
             uid, x = v
             if isinstance(x, BaseException):
@@ -1310,7 +1345,7 @@ class SwitchServlet(Servlet):
                 qout.put((uid, x))
                 continue
             idx = self.switch(x)
-            self._qins[idx].put((uid, x))
+            qins[idx].put((uid, x))
 
     @property
     def input_queue_type(self):
@@ -1321,6 +1356,10 @@ class SwitchServlet(Servlet):
         if all(s.output_queue_type == 'thread' for s in self._servlets):
             return 'thread'
         return 'process'
+
+    @property
+    def workers(self):
+        return [w for s in self._servlets for w in s.workers]
 
 
 class Server:
@@ -1344,7 +1383,7 @@ class Server:
         *,
         main_cpu: int = 0,
         backlog: int = 1024,
-        sys_info_log_cadence: int = 1_000_000,
+        sys_info_log_cadence: int = None,
     ):
         """
         Parameters
@@ -1369,10 +1408,9 @@ class Server:
             The ``backlog`` value is simply the size limit on this internal
             book-keeping dict.
         sys_info_log_cadence
-            Log worker process system info (cpu/memory utilization)
-            every this many requests; if ``None``, turn off this log.
+            .. deprecated:: 0.12.1. Will be removed in 0.13.0.
         """
-        self._servlet = servlet
+        self.servlet = servlet
 
         assert backlog > 0
         self._backlog = backlog
@@ -1386,7 +1424,12 @@ class Server:
                 cpus = main_cpu
             psutil.Process().cpu_affinity(cpus=cpus)
 
-        self._sys_info_log_cadence = sys_info_log_cadence
+        if sys_info_log_cadence is not None:
+            warnings.warn(
+                "The parameter `sys_info_log_cadence` is deprecated in version 0.12.1 and will be removed in 0.13.0",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._started = False
 
     def __enter__(self):
@@ -1409,14 +1452,12 @@ class Server:
         # queue and puts them into `_q_in`, which could block.
 
         self._q_in = (
-            SimpleQueue() if self._servlet.input_queue_type == 'thread' else FastQueue()
+            SimpleQueue() if self.servlet.input_queue_type == 'thread' else FastQueue()
         )
         self._q_out = (
-            SimpleQueue()
-            if self._servlet.output_queue_type == 'thread'
-            else FastQueue()
+            SimpleQueue() if self.servlet.output_queue_type == 'thread' else FastQueue()
         )
-        self._servlet.start(self._q_in, self._q_out)
+        self.servlet.start(self._q_in, self._q_out)
 
         t = Thread(target=self._gather_output)
         t.start()
@@ -1436,7 +1477,7 @@ class Server:
 
         self._input_buffer.put(NOMOREDATA)
 
-        self._servlet.stop()
+        self.servlet.stop()
 
         for t in self._threads:
             _ = t.result()
@@ -1692,81 +1733,27 @@ class Server:
         q_out = self._q_out
         futures = self._uid_to_futures
 
-        log_cadence = self._sys_info_log_cadence
-        if log_cadence:
-            ts0 = datetime.utcnow()
-            logcounter = 0
-
-            def _log_sys_info():
-                pp = [
-                    (w.name, psutil.Process(w.pid))
-                    for w in self._servlet._workers
-                    if not isinstance(w, Thread)
-                ]
-                msg = [
-                    f"  time from             {ts0}",
-                    f"  time to               {datetime.utcnow()}",
-                    f"  items served          {logcounter:_}",
-                ]
-                attrs = [
-                    "memory_full_info",
-                    "cpu_affinity",
-                    "cpu_percent",
-                    "cpu_times",
-                    "num_threads",
-                    "num_fds",
-                    "io_counters",
-                    "status",
-                ]
-                for pname, pobj in pp:
-                    msg.append(f"  process {pname}")
-                    info = pobj.as_dict(attrs)
-                    for k in attrs:
-                        v = info[k]
-                        if v:
-                            if k == "memory_full_info":
-                                msg.append(
-                                    f"        {'memory_uss':<15} {v.uss / 1_000_000:.2f} MB"
-                                )
-                            else:
-                                msg.append(f"        {k:<15} {v}")
-                logger.info("worker process stats:\n%s", "\n".join(msg))
-
-        try:
-            while True:
-                z = q_out.get()
-                if z == NOMOREDATA:
-                    break
-                uid, y = z
-                fut = futures.pop(uid)
-                try:
-                    if isinstance(y, RemoteException):
-                        y = y.exc
-                    if isinstance(y, BaseException):
-                        fut.set_exception(y)
-                    else:
-                        fut.set_result(y)
-                    fut.data["t1"] = perf_counter()
-                except (
-                    concurrent.futures.InvalidStateError,
-                    asyncio.InvalidStateError,
-                ):
-                    if fut.cancelled():
-                        # Could have been cancelled due to TimeoutError.
-                        pass
-                    else:
-                        # Unexpected situation; to be investigated.
-                        raise
-
-                if log_cadence:
-                    logcounter += 1
-                    if (
-                        logcounter >= log_cadence and q_out.empty()
-                    ) or logcounter >= log_cadence * 10:
-                        _log_sys_info()
-                        logcounter = 0
-                        ts0 = datetime.utcnow()
-        finally:
-            # if log_cadence and logcounter:
-            # _log_sys_info()
-            pass
+        while True:
+            z = q_out.get()
+            if z == NOMOREDATA:
+                break
+            uid, y = z
+            fut = futures.pop(uid)
+            try:
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if isinstance(y, BaseException):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
+                fut.data["t1"] = perf_counter()
+            except (
+                concurrent.futures.InvalidStateError,
+                asyncio.InvalidStateError,
+            ):
+                if fut.cancelled():
+                    # Could have been cancelled due to TimeoutError.
+                    pass
+                else:
+                    # Unexpected situation; to be investigated.
+                    raise
