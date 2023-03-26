@@ -1099,7 +1099,7 @@ _global_process_pools_lock: threading.Lock = threading.Lock()
 
 
 def get_shared_thread_pool(
-    name: str = "default", max_workers: int = None
+    name: str = "default", max_workers: Optional[int] = None
 ) -> ThreadPoolExecutor:
     """
     Get a globally shared "thread pool", that is,

@@ -110,7 +110,7 @@ class Stream(Iterable):
         instream
             The input stream of elements. This is a possibly unlimited  `Iterable`_.
         """
-        self.streamlets: list[Stream] = [instream]
+        self.streamlets: list[Iterable] = [instream]
 
     @deprecated(
         deprecated_in="0.11.9",
