@@ -1071,14 +1071,14 @@ ProcessPoolExecutor = SpawnProcessPoolExecutor
 
 
 class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
-    '''
+    """
     This class is a drop-in replacement of the standard
     `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
-    Tthe parameter ``loud_exception`` controls whether to print out exception
+    The parameter ``loud_exception`` controls whether to print out exception
     info if the submitted worker task fails with an exception.
     The default is ``True``, whereas ``False`` has the behavior of the standard library,
     which does not print exception info in the worker thread.
-    '''
+    """
 
     def __init__(self, max_workers=None, *, loud_exception: bool = True, **kwargs):
         super().__init__(max_workers=max_workers, **kwargs)
@@ -1090,7 +1090,7 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         return super().submit(fn, *args, **kwargs)
 
 
-# References:
+# References
 #  https://thorstenball.com/blog/2014/10/13/why-threads-cant-fork/
 _global_thread_pools_: dict[str, ThreadPoolExecutor] = weakref.WeakValueDictionary()
 _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
@@ -1099,7 +1099,7 @@ _global_process_pools_lock: threading.Lock = threading.Lock()
 
 
 def get_shared_thread_pool(
-    name: str = "default", max_workers: int = None
+    name: str = "default", max_workers: Optional[int] = None
 ) -> ThreadPoolExecutor:
     """
     Get a globally shared "thread pool", that is,

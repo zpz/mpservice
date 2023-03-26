@@ -1,6 +1,7 @@
-from queue import Empty
 import multiprocessing
-from time import perf_counter, sleep
+from queue import Empty
+from time import perf_counter
+
 from mpservice._queues import Unique
 
 
@@ -47,4 +48,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

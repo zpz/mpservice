@@ -1,5 +1,6 @@
-import multiprocessing as mp
 import logging
+import multiprocessing as mp
+
 from mpservice.util import ProcessLogger
 
 
@@ -34,6 +35,3 @@ def test_logging():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     test_logging()
-
-
-

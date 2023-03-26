@@ -10,11 +10,9 @@ from zpz.logging import config_logger
 config_logger(with_process_name=True)
 
 
-
 def double(x):
     time.sleep(0.001)
     return [v * 2 for v in x]
-
 
 
 def main():

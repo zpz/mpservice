@@ -16,7 +16,6 @@ def add(batch):
     return sum(batch)
 
 
-
 def main():
     s = Stream(range(20))
     s = s.transform(double).transform(shift).batch(3).transform(add)
@@ -24,4 +23,3 @@ def main():
 
 
 main()
-

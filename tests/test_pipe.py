@@ -1,6 +1,7 @@
 import concurrent.futures
 import os
-from mpservice.pipe import Server, Client
+
+from mpservice.pipe import Client, Server
 
 
 def _server(path):
@@ -30,4 +31,3 @@ def test_basic():
         p2 = executor.submit(_server, path)
         assert p1.result() == 'client done'
         assert p2.result() == 'server done'
-

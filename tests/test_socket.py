@@ -2,8 +2,8 @@ import asyncio
 import multiprocessing
 import time
 
+from mpservice.mpserver import ProcessServlet, ProcessWorker, Server
 from mpservice.socket import SocketApplication, SocketClient, run_app
-from mpservice.mpserver import ProcessWorker, ProcessServlet, Server
 from zpz.logging import config_logger
 
 mp = multiprocessing.get_context('spawn')
@@ -48,12 +48,10 @@ class Double(ProcessWorker):
 def run_mp_server():
 
     model = Server(ProcessServlet(Double))
-    app = SocketApplication(
-        on_startup=[model.__enter__],
-        on_shutdown=[model.__exit__])
+    app = SocketApplication(on_startup=[model.__enter__], on_shutdown=[model.__exit__])
     app.add_route('/', model.async_call)
 
-    config_logger(level='info')   # this is for the server running in another process
+    config_logger(level='info')  # this is for the server running in another process
     run_app(app, path='/tmp/sock_abc')
 
 

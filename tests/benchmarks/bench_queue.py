@@ -1,6 +1,7 @@
-from time import perf_counter
-from threading import Thread
 from queue import Queue
+from threading import Thread
+from time import perf_counter
+
 from mpservice._queues import SingleLane
 
 

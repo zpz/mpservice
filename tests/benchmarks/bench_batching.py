@@ -1,6 +1,7 @@
-from time import sleep, perf_counter
-from random import uniform, seed
-from mpservice.mpserver import ProcessWorker, Servlet, Server
+from random import seed, uniform
+from time import perf_counter, sleep
+
+from mpservice.mpserver import ProcessWorker, Server, Servlet
 from zpz.logging import config_logger
 
 
@@ -32,4 +33,3 @@ if __name__ == '__main__':
     s = Servlet(Double, batch_size=1000, batch_wait_time=0.01)
     with Server(s) as model:
         main(model)
-

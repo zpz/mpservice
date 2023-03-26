@@ -1,7 +1,7 @@
 import logging
-from mpservice.server_process import ServerProcess
-from mpservice.util import MP_SPAWN_CTX, SpawnProcess
 from multiprocessing import Process
+
+from mpservice.server_process import ServerProcess
 
 
 class MyServerProcess(ServerProcess):
@@ -25,7 +25,7 @@ def worker(server):
 
 def main():
     server = MyServerProcess.start()
-    p = Process(target=worker, args=(server, ))
+    p = Process(target=worker, args=(server,))
     p.start()
     p.join()
 

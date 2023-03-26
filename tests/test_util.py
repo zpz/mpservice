@@ -1,15 +1,22 @@
-import threading
 import logging
 import multiprocessing
 import pickle
 import sys
+import threading
 from time import sleep
 from types import TracebackType
+
 import pytest
-from mpservice.util import Thread, TimeoutError, Process, MP_SPAWN_CTX, ThreadPoolExecutor, ProcessPoolExecutor
-from mpservice.util import RemoteException, is_remote_exception, get_remote_traceback
-
-
+from mpservice.util import (
+    Process,
+    ProcessPoolExecutor,
+    RemoteException,
+    Thread,
+    ThreadPoolExecutor,
+    TimeoutError,
+    get_remote_traceback,
+    is_remote_exception,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +36,9 @@ def _test_thread_process(cls):
     assert not t.done()
     assert t.is_alive()
     with pytest.raises(TimeoutError):
-        y = t.result(0.1)
+        t.result(0.1)
     with pytest.raises(TimeoutError):
-        y = t.exception(0.1)
+        t.exception(0.1)
     assert t.result() == 6
     assert t.exception() is None
     t.join()
@@ -39,10 +46,10 @@ def _test_thread_process(cls):
     t = cls(target=delay_double, args=(12,))
     t.start()
     with pytest.raises(TimeoutError):
-        y = t.result(0.2)
+        t.result(0.2)
 
     with pytest.raises(ValueError):
-        y = t.result()
+        t.result()
 
     e = t.exception()
     assert type(e) is ValueError
@@ -110,7 +117,7 @@ def test_remote_exception():
         assert xxx.__cause__ is None
 
         err = RemoteException(e)
-    
+
     err = pickle.loads(pickle.dumps(err))
     # Now, not in an exception handling context.
     # raise err
@@ -166,7 +173,7 @@ def test_concurrent_futures_executor():
 
 
 def loud_worker():
-    x = 8/0
+    pass
 
 
 def _test_loud_exception():

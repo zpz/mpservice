@@ -4,8 +4,8 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.util import SpawnProcess, Thread
 from mpservice.server_process import Manager
+from mpservice.util import SpawnProcess, Thread
 
 
 class Doubler:
@@ -32,9 +32,22 @@ class Doubler:
         return id(self)
 
     def sleep(self, n):
-        print(type(self).__name__, id(self), mp.current_process().name, threading.current_thread().name, 'to sleep')
+        print(
+            type(self).__name__,
+            id(self),
+            mp.current_process().name,
+            threading.current_thread().name,
+            'to sleep',
+        )
         time.sleep(n)
-        print('  ', type(self).__name__, id(self), mp.current_process().name, threading.current_thread().name, 'done sleeping')
+        print(
+            '  ',
+            type(self).__name__,
+            id(self),
+            mp.current_process().name,
+            threading.current_thread().name,
+            'done sleeping',
+        )
         return n
 
 
@@ -62,9 +75,22 @@ class Tripler:
         return id(self)
 
     def sleep(self, n):
-        print(type(self).__name__, id(self), mp.current_process().name, threading.current_thread().name, 'to sleep')
+        print(
+            type(self).__name__,
+            id(self),
+            mp.current_process().name,
+            threading.current_thread().name,
+            'to sleep',
+        )
         time.sleep(n)
-        print('  ', type(self).__name__, id(self), mp.current_process().name, threading.current_thread().name, 'done sleeping')
+        print(
+            '  ',
+            type(self).__name__,
+            id(self),
+            mp.current_process().name,
+            threading.current_thread().name,
+            'done sleeping',
+        )
         return n
 
 
@@ -153,4 +179,3 @@ def test_concurrency():
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
             assert len(active_children()) == 1
-
