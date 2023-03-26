@@ -1,4 +1,5 @@
 import time
+
 from mpservice.streamer import Stream
 
 NX = 100
@@ -28,7 +29,7 @@ def plain():
 
     print('time elapsed:', t1 - t0)
 
-    assert result == list(range(1, NX+1))
+    assert result == list(range(1, NX + 1))
 
 
 def streamed(workers):
@@ -39,7 +40,7 @@ def streamed(workers):
     t1 = time.perf_counter()
 
     print('time elapsed:', t1 - t0)
-    assert result == list(range(1, NX+1))
+    assert result == list(range(1, NX + 1))
 
 
 def chained(workers):

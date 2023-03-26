@@ -4,7 +4,6 @@ from time import sleep
 
 import pytest
 from deprecation import DeprecatedWarning
-
 from mpservice.streamer import Stream
 
 
@@ -52,6 +51,7 @@ def test_filter():
         def __init__(self, n):
             self._idx = 0
             self.n = n
+
         def __call__(self, x):
             z = self._idx >= self.n
             self._idx += 1
@@ -62,8 +62,9 @@ def test_filter():
     class Head:
         def __init__(self):
             self._idx = 0
+
         def __call__(self, x):
-            z = (x <= self._idx)
+            z = x <= self._idx
             self._idx += 1
             return z
 
@@ -71,11 +72,22 @@ def test_filter():
 
 
 def test_filter_exceptions():
-    exc = [1, ValueError(3), 2, IndexError(4), FileNotFoundError(), 3, KeyboardInterrupt(), 4]
+    exc = [
+        1,
+        ValueError(3),
+        2,
+        IndexError(4),
+        FileNotFoundError(),
+        3,
+        KeyboardInterrupt(),
+        4,
+    ]
 
     assert Stream(exc).filter_exceptions(BaseException).collect() == [1, 2, 3, 4]
 
-    assert Stream(exc).filter_exceptions(BaseException, Exception).collect() == exc[:-2] + [exc[-1]]
+    assert Stream(exc).filter_exceptions(BaseException, Exception).collect() == exc[
+        :-2
+    ] + [exc[-1]]
 
     with pytest.raises(IndexError):
         assert Stream(exc).filter_exceptions(ValueError).collect() == exc
@@ -88,7 +100,9 @@ def test_filter_exceptions():
     with pytest.raises(KeyboardInterrupt):
         assert ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
 
-    assert Stream(exc).filter_exceptions(BaseException, FileNotFoundError).collect() == [1, 2, exc[4], 3, 4]
+    assert Stream(exc).filter_exceptions(
+        BaseException, FileNotFoundError
+    ).collect() == [1, 2, exc[4], 3, 4]
 
 
 def test_peek():
@@ -130,14 +144,31 @@ def test_tail():
 
 
 def test_groupby():
-    data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-    assert Stream(data).groupby(lambda x: x[0]).collect() == [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
+    data = [
+        'atlas',
+        'apple',
+        'answer',
+        'bee',
+        'block',
+        'away',
+        'peter',
+        'question',
+        'plum',
+        'please',
+    ]
+    assert Stream(data).groupby(lambda x: x[0]).collect() == [
+        ['atlas', 'apple', 'answer'],
+        ['bee', 'block'],
+        ['away'],
+        ['peter'],
+        ['question'],
+        ['plum', 'please'],
+    ]
 
 
 def test_batch():
     s = Stream(range(11))
-    assert list(s.batch(3)) == [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
+    assert list(s.batch(3)) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
     assert list(s) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
@@ -153,7 +184,14 @@ def test_unbatch():
 def test_accumulate():
     data = list(range(6))
     assert Stream(data).accumulate(lambda x, y: x + y).collect() == [0, 1, 3, 6, 10, 15]
-    assert Stream(data).accumulate(lambda x, y: x + y, 3).collect() == [3, 4, 6, 9, 13, 18]
+    assert Stream(data).accumulate(lambda x, y: x + y, 3).collect() == [
+        3,
+        4,
+        6,
+        9,
+        13,
+        18,
+    ]
 
     def add(x, y):
         if y % 2 == 0:
@@ -170,7 +208,7 @@ def test_buffer():
 
 def test_buffer_noop():
     # No action if buffer is not used.
-    x = Stream(range(1000)).buffer(20)
+    Stream(range(1000)).buffer(20)
     assert True
 
 
@@ -205,7 +243,7 @@ def parmap_f1(x):
 
 def parmap_f2(x):
     sleep(random.random() * 0.003)
-    return x*2
+    return x * 2
 
 
 class MySink:
@@ -227,17 +265,38 @@ def test_parmap(executor):
     expected = [v + 3.8 for v in SYNC_INPUT]
 
     with pytest.warns(DeprecatedWarning):
-        assert Stream(SYNC_INPUT).transform(f1, concurrency=1, executor=executor).collect() == expected
+        assert (
+            Stream(SYNC_INPUT).transform(f1, concurrency=1, executor=executor).collect()
+            == expected
+        )
 
-    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor=executor)) == expected
+    assert (
+        list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor=executor))
+        == expected
+    )
 
-    assert list(Stream(SYNC_INPUT).parmap(f1, num_workers=20, executor=executor)) == expected
+    assert (
+        list(Stream(SYNC_INPUT).parmap(f1, num_workers=20, executor=executor))
+        == expected
+    )
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
-    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor).parmap(f2, executor=executor)) == expected
+    assert (
+        list(
+            Stream(SYNC_INPUT)
+            .parmap(f1, executor=executor)
+            .parmap(f2, executor=executor)
+        )
+        == expected
+    )
 
     mysink = MySink()
-    n = Stream(SYNC_INPUT).parmap(f1, executor=executor).parmap(mysink, executor='thread').drain()
+    n = (
+        Stream(SYNC_INPUT)
+        .parmap(f1, executor=executor)
+        .parmap(mysink, executor='thread')
+        .drain()
+    )
     # The second executor must be 'thread' here.
     assert n == len(SYNC_INPUT)
 
@@ -253,7 +312,7 @@ def parmap_noop_foo(n):
 @pytest.mark.parametrize('executor', ['thread', 'process'])
 def test_parmap_noop(executor):
     # No problem if no action.
-    x = Stream(range(1000)).parmap(parmap_noop_foo, executor=executor)
+    Stream(range(1000)).parmap(parmap_noop_foo, executor=executor)
     assert True
 
 
@@ -273,7 +332,11 @@ def test_parmap_with_error(executor):
         zz = list(s)
         print(zz)
 
-    zz = list(Stream(corrupt_data()).parmap(process, executor=executor, num_workers=2, return_exceptions=True))
+    zz = list(
+        Stream(corrupt_data()).parmap(
+            process, executor=executor, num_workers=2, return_exceptions=True
+        )
+    )
     print(zz)
     assert isinstance(zz[5], TypeError)
 
@@ -291,6 +354,7 @@ def test_parmap_with_error(executor):
 
 def plus2(x):
     return x + 2
+
 
 def minus2(x):
     if x > 8:
@@ -338,9 +402,13 @@ def test_chain(executor):
 
     with pytest.raises((TypeError, ValueError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor=executor, num_workers=1, parmapper_name='---first') #2)
+        s.parmap(
+            process1, executor=executor, num_workers=1, parmapper_name='---first'
+        )  # 2)
         s.buffer(3)
-        s.parmap(process2, executor=executor, num_workers=1, parmapper_name='+++second') #3)
+        s.parmap(
+            process2, executor=executor, num_workers=1, parmapper_name='+++second'
+        )  # 3)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
@@ -350,12 +418,13 @@ def test_chain(executor):
         s.parmap(process2, executor=executor, num_workers=3)
         s.drain()
 
-    zz = list(Stream(corrupt_data())
-             .parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
-             .buffer(3)
-             .parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
-             .peek(interval=1)
-             )
+    zz = list(
+        Stream(corrupt_data())
+        .parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+        .buffer(3)
+        .parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
+        .peek(interval=1)
+    )
     print('')
     print(zz)
 
@@ -372,6 +441,7 @@ def test_chain(executor):
 def stream_early_stop_double(x):
     sleep(0.5)
     return x * 2
+
 
 @pytest.mark.parametrize('executor', ['thread', 'process'])
 def test_stream_early_stop(executor):
@@ -419,12 +489,13 @@ def pad_worker(x):
 
 def test_parmap_initializer():
     data = Stream(range(30)).parmap(
-        pad_worker, executor='process', num_workers=3,
+        pad_worker,
+        executor='process',
+        num_workers=3,
         executor_initializer=prepare_pad,
-        executor_init_args=('abc', ),
+        executor_init_args=('abc',),
     )
     assert data.collect() == [f"abc {x}" for x in range(30)]
-
 
 
 def add_four(x):
@@ -438,7 +509,4 @@ def worker1(n):
 
 def test_parmap_nest():
     data = Stream([10, 20, 30]).parmap(worker1, executor='process', num_workers=3)
-    assert data.collect() == [
-        [v + 4 for v in range(n)]
-        for n in (10, 20, 30)
-    ]
+    assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]

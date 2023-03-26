@@ -1,5 +1,6 @@
 # error.py
-from mpservice.util import MP_SPAWN_CTX, RemoteException
+from mpservice.util import MP_SPAWN_CTX
+
 
 def increment(qin, qout):
     while True:
@@ -11,6 +12,7 @@ def increment(qin, qout):
             qout.put((x, x + 1))
         except Exception as e:
             qout.put((x, e))
+
 
 def main():
     qin = MP_SPAWN_CTX.Queue()
@@ -30,6 +32,7 @@ def main():
         if isinstance(y[1], BaseException):
             raise y[1]
         print(y)
+
 
 if __name__ == '__main__':
     main()

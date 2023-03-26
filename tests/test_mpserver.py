@@ -1,16 +1,24 @@
 import asyncio
-import time
 import pickle
+import time
 
 import pytest
-
 from mpservice.mpserver import (
-    ProcessWorker, ThreadWorker, ProcessServlet, ThreadServlet, PassThrough,
-    SequentialServlet, EnsembleServlet, Server, make_threadworker,
-    TimeoutError, EnsembleError, SwitchServlet,
+    EnsembleError,
+    EnsembleServlet,
+    PassThrough,
+    ProcessServlet,
+    ProcessWorker,
+    SequentialServlet,
+    Server,
+    SwitchServlet,
+    ThreadServlet,
+    ThreadWorker,
+    TimeoutError,
+    make_threadworker,
 )
 from mpservice.streamer import Stream
-from mpservice.util import is_remote_exception, RemoteException
+from mpservice.util import RemoteException, is_remote_exception
 
 
 class Double(ProcessWorker):
@@ -34,7 +42,7 @@ class Square(ProcessWorker):
         super().__init__(batch_size=4)
 
     def call(self, x):
-        return [v*v for v in x]
+        return [v * v for v in x]
 
 
 class Delay(ProcessWorker):
@@ -51,10 +59,12 @@ def test_basic():
 
 @pytest.mark.asyncio
 async def test_sequential_server_async():
-    with Server(SequentialServlet(
-            ProcessServlet(Double, cpus=[1,2]),
+    with Server(
+        SequentialServlet(
+            ProcessServlet(Double, cpus=[1, 2]),
             ProcessServlet(Shift, cpus=[3]),
-            )) as service:
+        )
+    ) as service:
         z = await service.async_call(3)
         assert z == 3 * 2 + 3
 
@@ -65,10 +75,12 @@ async def test_sequential_server_async():
 
 
 def test_sequential_server():
-    with Server(SequentialServlet(
-            ProcessServlet(Double, cpus=[1,2]),
+    with Server(
+        SequentialServlet(
+            ProcessServlet(Double, cpus=[1, 2]),
             ProcessServlet(Shift, cpus=[3]),
-            )) as service:
+        )
+    ) as service:
         z = service.call(3)
         assert z == 3 * 2 + 3
 
@@ -78,7 +90,9 @@ def test_sequential_server():
 
 
 def test_sequential_batch():
-    with Server(ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)) as service:
+    with Server(
+        ProcessServlet(Shift, cpus=[1, 2, 3], batch_size=10, stepsize=4)
+    ) as service:
         z = service.call(3)
         assert z == 3 + 4
 
@@ -102,23 +116,23 @@ def test_sequential_error():
 async def test_sequential_timeout_async():
     with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
-            z = await service.async_call(2.2, timeout=1)
+            await service.async_call(2.2, timeout=1)
 
 
 def test_sequential_timeout():
     with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
-            z = service.call(2.2, timeout=1)
+            service.call(2.2, timeout=1)
 
 
 def test_sequential_stream():
     with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = range(100)
         ss = service.stream(data)
-        assert list(ss) == [v*v for v in data]
+        assert list(ss) == [v * v for v in data]
 
         s = Stream(data).parmap(service.call, executor='thread', num_workers=10)
-        assert list(s) == [v*v for v in data]
+        assert list(s) == [v * v for v in data]
 
 
 class GetHead(ProcessWorker):
@@ -137,12 +151,13 @@ class GetLen(ProcessWorker):
 
 
 my_wide_server = SequentialServlet(
-        EnsembleServlet(
-            ProcessServlet(GetHead, cpus=[1,2]),
-            ProcessServlet(GetTail, cpus=[3]),
-            ProcessServlet(GetLen, cpus=[2])),
-        ThreadServlet(make_threadworker(lambda x: (x[0] + x[1]) * x[2])),
-        )
+    EnsembleServlet(
+        ProcessServlet(GetHead, cpus=[1, 2]),
+        ProcessServlet(GetTail, cpus=[3]),
+        ProcessServlet(GetLen, cpus=[2]),
+    ),
+    ThreadServlet(make_threadworker(lambda x: (x[0] + x[1]) * x[2])),
+)
 
 
 @pytest.mark.asyncio
@@ -179,25 +194,26 @@ class PostCombine(ThreadWorker):
 
 
 your_wide_server = SequentialServlet(
-        EnsembleServlet(
-            ThreadServlet(PassThrough),
-            ProcessServlet(AddThree, cpus=[1, 2]),
-            ProcessServlet(Delay, cpus=[3])),
-        ThreadServlet(PostCombine),
-        )
+    EnsembleServlet(
+        ThreadServlet(PassThrough),
+        ProcessServlet(AddThree, cpus=[1, 2]),
+        ProcessServlet(Delay, cpus=[3]),
+    ),
+    ThreadServlet(PostCombine),
+)
 
 
 @pytest.mark.asyncio
 async def test_ensemble_timeout_async():
     with Server(your_wide_server, sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
-            z = await service.async_call(8.2, timeout=1)
+            await service.async_call(8.2, timeout=1)
 
 
 def test_ensemble_timeout():
     with Server(your_wide_server, sys_info_log_cadence=None) as service:
         with pytest.raises(TimeoutError):
-            z = service.call(8.2, timeout=1)
+            service.call(8.2, timeout=1)
 
 
 his_wide_server = SequentialServlet(
@@ -205,9 +221,10 @@ his_wide_server = SequentialServlet(
         ProcessServlet(Shift, stepsize=1, cpus=[1], batch_size=0),
         ProcessServlet(Shift, stepsize=3, cpus=[1, 2], batch_size=1),
         ProcessServlet(Shift, stepsize=5, cpus=[0, 3], batch_size=4),
-        ProcessServlet(Shift, stepsize=7, cpus=[2])),
+        ProcessServlet(Shift, stepsize=7, cpus=[2]),
+    ),
     ThreadServlet(make_threadworker(lambda y: [min(y), max(y)])),
-    )
+)
 
 
 def test_ensemble_stream():
@@ -358,10 +375,10 @@ def test_ensemble_error():
 
 def test_ensemble_error2():
     s = EnsembleServlet(
-                ProcessServlet(Double),
-                ThreadServlet(make_threadworker(lambda x: x + 1)),
-                ProcessServlet(Square, cpus=[1]),
-                )
+        ProcessServlet(Double),
+        ThreadServlet(make_threadworker(lambda x: x + 1)),
+        ProcessServlet(Square, cpus=[1]),
+    )
     with Server(s) as service:
         y = service.call(3)
         assert y == [6, 4, 9]
@@ -374,7 +391,6 @@ def test_ensemble_error2():
                 print(e)
                 print(e.args)
                 raise
-
 
 
 def test_switch_servlet():

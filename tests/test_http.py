@@ -4,20 +4,16 @@ import time
 
 import httpx
 import pytest
-from starlette.responses import PlainTextResponse
-from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse, JSONResponse
-from starlette.testclient import TestClient
-
 from mpservice.http import make_server
-
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.testclient import TestClient
 
 HOST = '0.0.0.0'
 SHUTDOWN_MSG = "server shutdown"
 
 
 def make_app():
-
     async def simple1(request):
         return PlainTextResponse('1', status_code=201)
 
@@ -128,4 +124,3 @@ async def test_mp():
             assert response.status_code == 201
 
     process.join()
-

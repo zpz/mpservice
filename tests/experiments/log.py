@@ -1,6 +1,6 @@
 # log.py
 import logging
-import multiprocessing as mp
+
 from mpservice.util import SpawnProcess
 
 

@@ -1,14 +1,17 @@
-from mpservice.util import get_shared_thread_pool
-from mpservice import util
 import multiprocessing as mp
+
+from mpservice import util
+from mpservice.util import get_shared_thread_pool
 
 
 def worker():
-    print('in child', mp.current_process().name, list(util._global_thread_pools_.items()))
+    print(
+        'in child', mp.current_process().name, list(util._global_thread_pools_.items())
+    )
 
 
 def main():
-    pool = get_shared_thread_pool()
+    get_shared_thread_pool()
     with util._global_thread_pools_lock:
         p = mp.get_context('fork').Process(target=worker)
         p.start()
@@ -19,4 +22,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

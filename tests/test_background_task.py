@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import time
+
 import pytest
 from mpservice.background_task import BackgroundTask
 
@@ -14,8 +15,7 @@ class MyTask(BackgroundTask):
             if time.perf_counter() - t0 >= wait:
                 break
             if _cancelled.is_set():
-                raise concurrent.futures.CancelledError(
-                    'cancelled per request')
+                raise concurrent.futures.CancelledError('cancelled per request')
             if not _info.empty():
                 _ = _info.get_nowait()
             _info.put_nowait({'x': x, 'y': y, 'time_waited': time.perf_counter() - t0})
