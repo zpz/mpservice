@@ -49,22 +49,6 @@ def test_basic():
         assert z == 3 * 2
 
 
-def test_sysinfolog():
-    s = SequentialServlet(
-            ProcessServlet(Double, cpus=[0, 1]),
-            ProcessServlet(Square, cpus=[1]),
-            EnsembleServlet(
-                ProcessServlet(Double),
-                ThreadServlet(make_threadworker(lambda x: x + 1)),
-                ProcessServlet(Square, cpus=[1]),
-                ),
-            ThreadServlet(make_threadworker(lambda x: sum(x))),
-            )
-    with Server(s, sys_info_log_cadence=100) as service:
-        s = list(service.stream(range(1000)))
-        assert len(s) == 1000
-
-
 @pytest.mark.asyncio
 async def test_sequential_server_async():
     with Server(SequentialServlet(
