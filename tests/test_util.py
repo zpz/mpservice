@@ -173,7 +173,7 @@ def test_concurrent_futures_executor():
 
 
 def loud_worker():
-    pass
+    raise ValueError(3)
 
 
 def _test_loud_exception():
@@ -226,4 +226,4 @@ def _test_loud_exception():
 
 
 # if __name__ == '__main__':
-#     test_loud_exception()
+#     _test_loud_exception()

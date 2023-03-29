@@ -385,7 +385,14 @@ def test_ensemble_error2():
 
         with pytest.raises(EnsembleError):
             try:
-                y = service.call('a')
+                try:
+                    y = service.call('a')
+                except EnsembleError as e:
+                    print(repr(e))
+                    print(e)
+                    print(e.args)
+                    print('')
+                    raise pickle.loads(pickle.dumps(RemoteException(e)))
             except EnsembleError as e:
                 print(repr(e))
                 print(e)

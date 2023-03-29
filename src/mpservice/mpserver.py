@@ -41,6 +41,7 @@ from overrides import final
 from ._queues import SingleLane
 from .util import (
     MP_SPAWN_CTX,
+    EnsembleError,
     RemoteException,
     SpawnProcess,
     Thread,
@@ -79,28 +80,6 @@ PipelineFull = ServerBacklogFull
 Alias to :class:`ServerBacklogFull` for backward compatibility.
 Will be removed in 0.13.0.
 """
-
-
-class EnsembleError(RuntimeError):
-    def __init__(self, results: dict):
-        nerr = sum(1 if isinstance(v, RemoteException) else 0 for v in results['y'])
-        errmsg = None
-        for v in results['y']:
-            if isinstance(v, RemoteException):
-                errmsg = repr(v)
-                break
-        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
-        super().__init__(msg, results)
-        # self.args[1] is the results
-
-    def __repr__(self):
-        return self.args[0]
-
-    def __str__(self):
-        return self.args[0]
-
-    def __reduce__(self):
-        return type(self), (self.args[1],)
 
 
 class FastQueue(multiprocessing.queues.SimpleQueue):
