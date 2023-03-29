@@ -65,7 +65,10 @@ class TimeoutError(Exception):
 # User should import it from `mpserver`.
 class EnsembleError(RuntimeError):
     def __init__(self, results: dict):
-        nerr = sum(1 if isinstance(v, (BaseException, RemoteException)) else 0 for v in results['y'])
+        nerr = sum(
+            1 if isinstance(v, (BaseException, RemoteException)) else 0
+            for v in results['y']
+        )
         errmsg = None
         for v in results['y']:
             if isinstance(v, (BaseException, RemoteException)):
@@ -83,7 +86,6 @@ class EnsembleError(RuntimeError):
 
     def __reduce__(self):
         return type(self), (self.args[1],)
-
 
 
 def get_docker_host_ip():
