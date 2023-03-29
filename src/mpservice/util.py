@@ -1096,6 +1096,11 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     is handy for debugging in cases where the user fails to check the Future object in a timely manner.
     '''
 
+    # The loud-ness of this executor is different from the loud-ness of
+    # ``SpawnProcess``. In this executor, loudness refers to each submitted function.
+    # A process may stay on and execute many submitted functions.
+    # The loudness of SpawnProcess plays a role only when that process crashes.
+
     def __init__(self, max_workers=None, *, loud_exception=True, **kwargs):
         assert 'mp_context' not in kwargs
         super().__init__(max_workers=max_workers, mp_context=MP_SPAWN_CTX, **kwargs)
