@@ -60,6 +60,32 @@ class TimeoutError(Exception):
     pass
 
 
+# This class should be in the module `mpserver`.
+# It is here because the class `RemoteException` needs to handle it.
+# User should import it from `mpserver`.
+class EnsembleError(RuntimeError):
+    def __init__(self, results: dict):
+        nerr = sum(1 if isinstance(v, (BaseException, RemoteException)) else 0 for v in results['y'])
+        errmsg = None
+        for v in results['y']:
+            if isinstance(v, (BaseException, RemoteException)):
+                errmsg = repr(v)
+                break
+        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
+        super().__init__(msg, results)
+        # self.args[1] is the results
+
+    def __repr__(self):
+        return self.args[0]
+
+    def __str__(self):
+        return self.args[0]
+
+    def __reduce__(self):
+        return type(self), (self.args[1],)
+
+
+
 def get_docker_host_ip():
     """
     From within a Docker container, this function finds the IP address
@@ -506,6 +532,18 @@ Run it::
                 else:
                     raise ValueError(f"{repr(exc)} does not contain traceback info")
                     # In this case, don't use RemoteException. Pickle the exc object directly.
+
+        if isinstance(exc, EnsembleError):
+            # When an EnsembleError is just raised, all the exception objects in it
+            # are RemoteException objects, so this block is no op.
+            # But once an EnsembleError object has gone through pickling/unpickling,
+            # the RemoteException objects contained in it will change back to
+            # BaseException objects. If this object is put in RemoteException again
+            # (prior to its being placed on a queue), this block will be useful.
+            z = exc.args[1]['y']
+            for i in range(len(z)):
+                if isinstance(z[i], BaseException):
+                    z[i] = self.__class__(z[i])
 
         self.exc = exc
         """
