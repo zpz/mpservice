@@ -225,5 +225,5 @@ def _test_loud_exception():
         t = pool.submit(loud_worker)
 
 
-if __name__ == '__main__':
-    _test_loud_exception()
+# if __name__ == '__main__':
+#     _test_loud_exception()
