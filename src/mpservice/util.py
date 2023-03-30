@@ -600,7 +600,9 @@ class Thread(threading.Thread):
                 if isinstance(e, SystemExit) and e.args[0] == 0:
                     pass
                 else:
-                    print(f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':")
+                    print(
+                        f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
+                    )
                     traceback.print_exception(*sys.exc_info())
                     # raise  # Standard threading will print error info as well if raised here.
         finally:
@@ -1086,7 +1088,9 @@ def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except BaseException:
-        print(f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':")
+        print(
+            f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
+        )
         traceback.print_exception(*sys.exc_info())
         raise
         # https://stackoverflow.com/a/54295910
