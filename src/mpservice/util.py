@@ -597,9 +597,14 @@ class Thread(threading.Thread):
         except BaseException as e:
             self._exception_ = e
             if self._loud_exception_:
-                print(f"Exception in thread {threading.current_thread().name}:")
-                traceback.print_exception(*sys.exc_info())
-                # raise  # Standard threading will print error info as well if raised here.
+                if isinstance(e, SystemExit) and e.args[0] == 0:
+                    pass
+                else:
+                    print(
+                        f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
+                    )
+                    traceback.print_exception(*sys.exc_info())
+                    # raise  # Standard threading will print error info as well if raised here.
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -890,7 +895,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         ``start`` arranges for this to be run in a child process.
         """
         worker_logger = self._kwargs.pop("__worker_logger__")
-        worker_logger.start()
+        if logging.getLogger().hasHandlers():
+            pass
+            # Do not start log forwarding because logging is configured in this process,
+            # but this is usually not recommended.
+            # This sually happends because logging is configured on the module level rather than
+            # in the ``if __name__ == '__main__':`` block.
+        else:
+            worker_logger.start()
         result_and_error = self._kwargs.pop("__result_and_error__")
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
@@ -902,11 +914,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 if loud_exception:
-                    print(
-                        f"Exception in process {multiprocessing.current_process().name}:"
-                    )
-                    traceback.print_exception(*sys.exc_info())
-                    # raise  # standard mp handles error printing as well if raised here
+                    if isinstance(e, SystemExit) and e.args[0] == 0:
+                        pass
+                    else:
+                        print(
+                            f"Exception in process '{multiprocessing.current_process().name}':"
+                        )
+                        traceback.print_exception(*sys.exc_info())
+                        # raise  # standard mp handles error printing as well if raised here
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
@@ -1064,7 +1079,7 @@ def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except BaseException:
-        print(f"Exception in process {multiprocessing.current_process().name}:")
+        print(f"Exception in process '{multiprocessing.current_process().name}':")
         traceback.print_exception(*sys.exc_info())
         raise
 
@@ -1073,7 +1088,9 @@ def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except BaseException:
-        print(f"Exception in thread {threading.current_thread().name}:")
+        print(
+            f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
+        )
         traceback.print_exception(*sys.exc_info())
         raise
         # https://stackoverflow.com/a/54295910

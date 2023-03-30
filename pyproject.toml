@@ -69,7 +69,8 @@ ignore = ["E501", "S101", "S102", "S103", "S104", "S108", "S301", "S311", "S608"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short"
+testpaths = ["tests"]
+addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --ignore benchmarks --ignore tests/experiments --durations 3"
 
 
 [tool.coverage.report]
@@ -79,4 +80,5 @@ skip_empty = true
 
 
 [tool.coverage.run]
+source = ["mpservice"]
 data_file = "/tmp/.coverage"

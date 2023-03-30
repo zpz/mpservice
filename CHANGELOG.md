@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.2] - in progress
+
+### Changed
+
+- ``SpawnProcess`` does not forward logs to the main process if the root logger has any handler configured.
+
+### Fixed
+
+- ``SpawnProcess`` and ``Thread`` in "loud_exception" mode do not print exception info if the exception
+  is ``SystemExit(0)``. This is the case when a "server process" exits.
+
+
 ## [0.12.1] - 2023-03-26
 
 ### Added
