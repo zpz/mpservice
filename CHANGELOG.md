@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.12.2] - in progress
+## [0.12.2] - 2023-03-31
 
 ### Changed
 
@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - ``SpawnProcess`` and ``Thread`` in "loud_exception" mode do not print exception info if the exception
   is ``SystemExit(0)``. This is the case when a "server process" exits.
+
+### Improved
+
+- ``mpservice.mpserver.Server.stream`` retries on enqueue timeout.
+- Finetune to waiting times in `Server`.
 
 
 ## [0.12.1] - 2023-03-26

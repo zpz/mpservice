@@ -1551,7 +1551,7 @@ class Server:
             to overall throughput. You can usually leave it at the default value.
         """
 
-        def _enqueue(tasks, return_exceptions):
+        def _enqueue(tasks):
             threading.current_thread().name = (
                 f"{self.__class__.__name__}.stream._enqueue"
             )
@@ -1560,18 +1560,17 @@ class Server:
             _enq = self._enqueue
             try:
                 for x in data_stream:
-                    try:
-                        fut = _enq(x, timeout)
-                        timedout = False
-                    except Exception as e:
-                        if return_exceptions:
-                            timedout = True
-                            fut = concurrent.futures.Future()
-                            fut.set_exception(e)
-                        else:
-                            logger.error("exception '%r' happened for input '%s'", e, x)
-                            raise
-                    tasks.put((x, fut, timedout))
+                    nretries = 0
+                    t0 = None
+                    while len(self._uid_to_futures) >= self._backlog:
+                        if t0 is None:
+                            t0 = perf_counter()
+                        if nretries >= 100:
+                            raise ServerBacklogFull(len(self._uid_to_futures), f"{perf_counter() - t0:.3f} seconds enqueue")
+                        nretries += 1
+                        sleep(0.1)
+                    fut = _enq(x, timeout)
+                    tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
                 # exception state. This exception is not covered by `return_exceptions`;
@@ -1581,7 +1580,7 @@ class Server:
 
         tasks = queue.SimpleQueue()
         executor = ThreadPoolExecutor(1)
-        t = executor.submit(_enqueue, tasks, return_exceptions)
+        t = executor.submit(_enqueue, tasks)
 
         _wait = self._wait_for_result
 
@@ -1595,50 +1594,46 @@ class Server:
                     executor.shutdown()
                 break
 
-            x, fut, timedout = z
-            if timedout:
-                # This happens only when `return_exceptions` is True.
-                if return_x:
-                    yield x, fut.exception()
-                else:
-                    yield fut.exception()
-            else:
-                try:
-                    y = _wait(fut)
-                    # May raise TimeoutError or an exception out of RemoteException.
-                except Exception as e:
-                    if return_exceptions:
-                        if return_x:
-                            yield x, e
-                        else:
-                            yield e
-                    else:
-                        logger.error("exception '%r' happened for input %r", e, x)
-                        raise
-                else:
+            x, fut = z
+            try:
+                y = _wait(fut)
+                # May raise TimeoutError or an exception out of RemoteException.
+            except Exception as e:
+                if return_exceptions:
                     if return_x:
-                        yield x, y
+                        yield x, e
                     else:
-                        yield y
+                        yield e
+                else:
+                    logger.error("exception '%r' happened for input %r", e, x)
+                    raise
+            else:
+                if return_x:
+                    yield x, y
+                else:
+                    yield y
 
     async def _async_enqueue(self, x, timeout, backpressure):
         t0 = perf_counter()
         deadline = t0 + timeout
+        delta = max(timeout * 0.01, 0.01)
 
         while len(self._uid_to_futures) >= self._backlog:
             if backpressure:
-                raise ServerBacklogFull(len(self._uid_to_futures))
+                raise ServerBacklogFull(len(self._uid_to_futures), "0 seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
-            if (t := perf_counter()) > deadline:
-                raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
-            await asyncio.sleep(min(0.1, deadline - t))
+            if (t := perf_counter()) > deadline - delta:
+                raise ServerBacklogFull(len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue")
+                # If this is behind a HTTP service, should return
+                # code 503 (Service Unavailable) to client.
+            await asyncio.sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
 
         # fut = asyncio.Future()
         fut = concurrent.futures.Future()
-        fut.data = {"t0": t0, "timeout": timeout}
+        fut.data = {"t0": t0, "t1": perf_counter(), "timeout": timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put((uid, x))
@@ -1646,13 +1641,15 @@ class Server:
 
     async def _async_wait_for_result(self, fut):
         t0 = fut.data["t0"]
-        t2 = t0 + fut.data["timeout"]
+        timeout = fut.data['timeout']
+        delta = max(timeout * 0.01, 0.01)
+        deadline = t0 + timeout
         while not fut.done():
             timenow = perf_counter()
-            if timenow > t2:
+            if timenow > deadline:
                 fut.cancel()
-                raise TimeoutError(f"{timenow - t0:.3f} seconds total")
-            await asyncio.sleep(min(0.01, t2 - timenow))
+                raise TimeoutError(f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total")
+            await asyncio.sleep(delta)
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
@@ -1673,16 +1670,17 @@ class Server:
         # There are no concurrent calls to this method.
         t0 = perf_counter()
         deadline = t0 + timeout
+        delta = max(timeout * 0.01, 0.01)
 
         while len(self._uid_to_futures) >= self._backlog:
-            if (t := perf_counter()) >= deadline:
-                raise TimeoutError(f"{t - t0:.3f} seconds enqueue")
-            sleep(min(0.1, deadline - t))
+            if (t := perf_counter()) >= deadline - delta:
+                raise ServerBacklogFull(len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue")
+            sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
 
         fut = concurrent.futures.Future()
-        fut.data = {"t0": t0, "timeout": timeout}
+        fut.data = {"t0": t0, "t1": perf_counter(), "timeout": timeout}
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put((uid, x))
@@ -1690,13 +1688,15 @@ class Server:
 
     def _wait_for_result(self, fut):
         t0 = fut.data["t0"]
-        t2 = t0 + fut.data["timeout"]
+        timeout = fut.data['timeout']
+        deadline = t0 + timeout
+        delta = max(timeout * 0.01, 0.01)
         try:
-            return fut.result(timeout=max(0, t2 - perf_counter()))
+            return fut.result(timeout=max(delta, deadline - perf_counter()))
             # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
-            raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total") from e
+            raise TimeoutError(f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total") from e
 
     def _onboard_input(self):
         qin = self._input_buffer
@@ -1725,7 +1725,7 @@ class Server:
                     fut.set_exception(y)
                 else:
                     fut.set_result(y)
-                fut.data["t1"] = perf_counter()
+                fut.data["t2"] = perf_counter()
             except (
                 concurrent.futures.InvalidStateError,
                 asyncio.InvalidStateError,
