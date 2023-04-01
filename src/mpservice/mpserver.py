@@ -1566,7 +1566,10 @@ class Server:
                         if t0 is None:
                             t0 = perf_counter()
                         if nretries >= 100:
-                            raise ServerBacklogFull(len(self._uid_to_futures), f"{perf_counter() - t0:.3f} seconds enqueue")
+                            raise ServerBacklogFull(
+                                len(self._uid_to_futures),
+                                f"{perf_counter() - t0:.3f} seconds enqueue",
+                            )
                         nretries += 1
                         sleep(0.1)
                     fut = _enq(x, timeout)
@@ -1624,7 +1627,9 @@ class Server:
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(
+                    len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue"
+                )
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             await asyncio.sleep(delta)
@@ -1648,7 +1653,9 @@ class Server:
             timenow = perf_counter()
             if timenow > deadline:
                 fut.cancel()
-                raise TimeoutError(f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total")
+                raise TimeoutError(
+                    f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
+                )
             await asyncio.sleep(delta)
         return fut.result()
         # This could raise an exception originating from RemoteException.
@@ -1674,7 +1681,9 @@ class Server:
 
         while len(self._uid_to_futures) >= self._backlog:
             if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(
+                    len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue"
+                )
             sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
@@ -1696,7 +1705,9 @@ class Server:
             # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
-            raise TimeoutError(f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total") from e
+            raise TimeoutError(
+                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
+            ) from e
 
     def _onboard_input(self):
         qin = self._input_buffer
