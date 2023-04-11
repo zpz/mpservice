@@ -46,8 +46,6 @@ import weakref
 from types import TracebackType
 from typing import Optional
 
-from deprecation import deprecated  # noqa: E402
-
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
