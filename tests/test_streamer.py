@@ -217,6 +217,7 @@ def test_buffer_batch():
     assert n == 19
 
 
+# @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_buffer_break():
     def make_data():
         for x in range(100):
@@ -362,6 +363,7 @@ def minus2(x):
     return x - 2
 
 
+# @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 @pytest.mark.parametrize('executor', ['thread', 'process'])
 def test_chain(executor):
     data = [1, 2, 3, 4, 5, 6, 7, 'a', 8, 9]

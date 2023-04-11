@@ -813,13 +813,12 @@ class Buffer(Iterable):
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
         self._finalizer_func = None
-        self._loud_exception = False
 
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
         self._worker = Thread(
-            target=self._run_worker, loud_exception=self._loud_exception
+            target=self._run_worker
         )
         self._worker.start()
         self._finalize_func = multiprocessing.util.Finalize(
@@ -912,7 +911,6 @@ class Parmapper(Iterable):
         self._executor = None
         self._executor_is_shared = None
         self._finalize_func = None
-        self._loud_exception = False
         self._name = parmapper_name
         self._running = False
 
@@ -960,7 +958,6 @@ class Parmapper(Iterable):
             target=self._run_worker,
             args=(self._func,),
             kwargs=self._func_kwargs,
-            loud_exception=self._loud_exception,
         )
 
         self._worker.start()

@@ -70,7 +70,10 @@ ignore = ["E501", "S101", "S102", "S103", "S104", "S108", "S301", "S311", "S608"
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = ["tests"]
-addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --ignore benchmarks --ignore tests/experiments --durations 3"
+addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --ignore benchmarks --ignore tests/experiments --durations 3 -p no:threadexception"
+
+# About exception hook in pytest:
+# https://github.com/pytest-dev/pytest/discussions/9193
 
 
 [tool.coverage.report]

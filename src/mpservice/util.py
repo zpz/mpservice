@@ -577,15 +577,10 @@ class Thread(threading.Thread):
     .. seealso:: :class:`SpawnProcess`
     """
 
-    def __init__(self, *args, loud_exception: bool = True, **kwargs):
-        """
-        ``loud_exception``: if ``True``, it's the standard ``Thread`` behavior;
-        if ``False``, it's the ``concurrent.futures`` behavior.
-        """
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._result_ = None
         self._exception_ = None
-        self._loud_exception_ = loud_exception
 
     def run(self):
         """
@@ -594,30 +589,44 @@ class Thread(threading.Thread):
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
+        except SystemExit as e:
+            # TODO: what if `e.code` is not 0?
+            pass
         except BaseException as e:
             self._exception_ = e
-            if self._loud_exception_:
-                if isinstance(e, SystemExit) and e.args[0] == 0:
-                    pass
-                else:
-                    print(
-                        f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
-                    )
-                    traceback.print_exception(*sys.exc_info())
-                    # raise  # Standard threading will print error info as well if raised here.
+            raise  # Standard threading will print error info here.
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
             del self._target, self._args, self._kwargs
 
+    def join(self, timeout=None):
+        '''
+        Same behavior as the standard lib, except that if the thread
+        terminates with an exception, the exception is raised.
+        '''
+        super().join(timeout=timeout)
+        if self.is_alive():
+            # Timed out
+            return
+        if self._exception_ is not None:
+            raise self._exception_
+
     def done(self) -> bool:
+        '''
+        Return ``True`` if the thread has terminated.
+        Return ``False`` if the thread is running or not yet started.
+        '''
         if self.is_alive():
             return False
         return self._started.is_set()
         # Otherwise, not started yet.
 
     def result(self, timeout=None):
-        self.join(timeout)
+        '''
+        Behavior is similar to ``concurrent.futures.Future.result``.
+        '''
+        super().join(timeout)
         if self.is_alive():
             raise TimeoutError
         if self._exception_ is not None:
@@ -625,7 +634,10 @@ class Thread(threading.Thread):
         return self._result_
 
     def exception(self, timeout=None):
-        self.join(timeout)
+        '''
+        Behavior is similar to ``concurrent.futures.Future.exception``.
+        '''
+        super().join(timeout)
         if self.is_alive():
             raise TimeoutError
         return self._exception_
@@ -843,7 +855,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     (because they are sent to and handled in the main process).
     """
 
-    def __init__(self, *args, kwargs=None, loud_exception: bool = True, **moreargs):
+    def __init__(self, *args, kwargs=None, **moreargs):
         """
         Parameters
         ----------
@@ -851,18 +863,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             Positional arguments passed on to the standard ``Process``.
         kwargs
             Passed on to the standard ``Process``.
-        loud_exception
-            If ``True``, behave like the standard multiprocessing ``Process`` in the case of exceptions, that is,
-            some error info is printed to the console.
-            If ``False``, behave like ``concurrent.futures`` in the case of exceptions, that is,
-            no error info is printed to the console.
         **moreargs
             Additional keyword arguments passed on to the standard ``Process``.
         """
-        # print('')
-        # print('process init', args, kwargs, loud_exception)
-        # print('')
-
         if kwargs is None:
             kwargs = {}
         else:
@@ -876,9 +879,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         worker_logger = ProcessLogger()
         worker_logger.start()
         kwargs["__worker_logger__"] = worker_logger
-
-        assert "__loud_exception__" not in kwargs
-        kwargs["__loud_exception__"] = loud_exception
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
@@ -906,22 +906,18 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         result_and_error = self._kwargs.pop("__result_and_error__")
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
-        loud_exception = self._kwargs.pop("__loud_exception__")
         if self._target:
             try:
                 z = self._target(*self._args, **self._kwargs)
+            except SystemExit as e:
+                # TODO: what if `e.code` is not 0?
+                result_and_error.send(None)
+                result_and_error.send(None)
+                raise
             except BaseException as e:
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
-                if loud_exception:
-                    if isinstance(e, SystemExit) and e.args[0] == 0:
-                        pass
-                    else:
-                        print(
-                            f"Exception in process '{multiprocessing.current_process().name}':"
-                        )
-                        traceback.print_exception(*sys.exc_info())
-                        # raise  # standard mp handles error printing as well if raised here
+                raise
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
@@ -929,65 +925,62 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.send(None)
 
+    def _get_result(self):
+        # Error could happen below if the process has terminated in some
+        # unusual ways.
+        if not hasattr(self, '__result__'):
+            self.__result__ = self.__result_and_error__.recv()
+        if not hasattr(self, '__error__'):
+            self.__error__ = self.__result_and_error__.recv()
+
+    def join(self, timeout=None):
+        '''
+        Same behavior as the standard lib, except that if the process
+        terminates with an exception, the exception is raised.
+        '''
+        super().join(timeout=timeout)
+        exitcode = self.exitcode
+        if exitcode is None:
+            # Not terminated. Timed out.
+            return
+        if exitcode == 0:
+            # Terminated w/o error.
+            return
+        if exitcode == 1:
+            self._get_result()
+            raise self.__error__
+        assert exitcode < 0
+        raise ChildProcessError(
+            f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}"
+        )
+
     def done(self) -> bool:
         """
-        Return ``True`` if the target function has successfully finished
-        or crashed in the child process.
+        Return ``True`` if the process has terminated normally or with exception.
+        Return ``False`` if the process is running or not yet started.
         """
         return self.exitcode is not None
 
     def result(self, timeout: Optional[float | int] = None):
-        """
-        Return the value returned by the target function.
-        If the call hasn't yet completed, then this method will wait up to
-        ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
-        then a ``TimeoutError`` will be raised. If ``timeout`` is ``None`` (the default),
-        there is no limit to the wait time.
-
-        If the call raised an exception, the method will raise the same exception.
-        """
-        self.join(timeout)
+        '''
+        Behavior is similar to ``concurrent.futures.Future.result``.
+        '''
+        super().join(timeout)
         if not self.done():
             raise TimeoutError
-        if not hasattr(self, "__result__"):
-            try:
-                self.__result__ = self.__result_and_error__.recv()
-                self.__error__ = self.__result_and_error__.recv()
-            except EOFError as e:
-                exitcode = self.exitcode
-                if exitcode:
-                    raise e from ChildProcessError(
-                        f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
-                    )
-                raise
+        self._get_result()
         if self.__error__ is not None:
             raise self.__error__
         return self.__result__
 
     def exception(self, timeout: Optional[float | int] = None):
-        """
-        Return the exception raised by the target function.
-        If the call hasn't yet completed then this method will wait up to
-        ``timeout`` seconds. If the call hasn't completed in ``timeout`` seconds,
-        then a ``TimeoutError`` will be raised.
-        If ``timeout`` is ``None``, there is no limit to the wait time.
-
-        If the target function completed without raising, ``None`` is returned.
-        """
-        self.join(timeout)
+        '''
+        Behavior is similar to ``concurrent.futures.Future.exception``.
+        '''
+        super().join(timeout)
         if not self.done():
             raise TimeoutError
-        if not hasattr(self, "__result__"):
-            try:
-                self.__result__ = self.__result_and_error__.recv()
-                self.__error__ = self.__result_and_error__.recv()
-            except EOFError as e:
-                exitcode = self.exitcode
-                if exitcode:
-                    raise e from ChildProcessError(
-                        f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
-                    )
-                raise
+        self._get_result()
         return self.__error__
 
 
@@ -1078,7 +1071,7 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException:
+    except Exception:
         print(f"Exception in process '{multiprocessing.current_process().name}':")
         traceback.print_exception(*sys.exc_info())
         raise
@@ -1087,7 +1080,7 @@ def _loud_process_function(fn, *args, **kwargs):
 def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except BaseException:
+    except Exception:
         print(
             f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
         )

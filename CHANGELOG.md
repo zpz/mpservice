@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.3] - in progress
+
+### Removed
+
+- ``mpservice.util.{Process, Thread}`` lost parameter ``loud_exception``.
+
+### Added
+
+- ``mpservice.util.{Process, Thread}`` have customized method ``join`` that will raise the exception raised in the child process or thread.
+
+### Enhanced
+
+- ``mpservice.util.{Process, Thread}`` finetune related to exceptions.
+
+
 ## [0.12.2] - 2023-03-31
 
 ### Changed
