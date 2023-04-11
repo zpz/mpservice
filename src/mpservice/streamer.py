@@ -817,9 +817,7 @@ class Buffer(Iterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(
-            target=self._run_worker
-        )
+        self._worker = Thread(target=self._run_worker)
         self._worker.start()
         self._finalize_func = multiprocessing.util.Finalize(
             self,

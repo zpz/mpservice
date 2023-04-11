@@ -46,7 +46,6 @@ def _test_thread_process(cls):
     assert t.exception() is None
     t.join()
 
-
     # Exception
     t = cls(target=delay_double, args=(12,))
     t.start()
@@ -69,7 +68,7 @@ def _test_thread_process(cls):
         t.join()
 
     # BaseException
-    t = cls(target=delay_double, args=(200, ))
+    t = cls(target=delay_double, args=(200,))
     t.start()
     with pytest.raises(KeyboardInterrupt):
         t.join()

@@ -589,7 +589,7 @@ class Thread(threading.Thread):
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
-        except SystemExit as e:
+        except SystemExit:
             # TODO: what if `e.code` is not 0?
             pass
         except BaseException as e:
@@ -909,7 +909,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if self._target:
             try:
                 z = self._target(*self._args, **self._kwargs)
-            except SystemExit as e:
+            except SystemExit:
                 # TODO: what if `e.code` is not 0?
                 result_and_error.send(None)
                 result_and_error.send(None)
@@ -950,9 +950,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             self._get_result()
             raise self.__error__
         assert exitcode < 0
-        raise ChildProcessError(
-            f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}"
-        )
+        raise ChildProcessError(f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}")
 
     def done(self) -> bool:
         """
