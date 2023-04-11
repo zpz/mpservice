@@ -106,17 +106,6 @@ def get_docker_host_ip():
     return z[: z.find(" ")]
 
 
-@deprecated(deprecated_in="0.11.9", removed_in="0.12.2")
-def is_exception(e) -> bool:
-    # Test showed the raised objects are always instances, not classes, even
-    # if we do
-    #   raise ValueError
-    # the captured object is a ValueError instance, not the class.
-    return isinstance(e, BaseException) or (
-        (type(e) is type) and issubclass(e, BaseException)
-    )
-
-
 def is_async(func):
     while isinstance(func, functools.partial):
         func = func.func
