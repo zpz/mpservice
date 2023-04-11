@@ -25,10 +25,13 @@ def delay_double(x, delay=2):
     sleep(delay)
     if x < 10:
         return x * 2
-    raise ValueError(x)
+    if x < 100:
+        raise ValueError(x)
+    raise KeyboardInterrupt
 
 
 def _test_thread_process(cls):
+    # No exception
     t = cls(target=delay_double, args=(3,))
     t.start()
     logger.info('to sleep')
@@ -43,8 +46,15 @@ def _test_thread_process(cls):
     assert t.exception() is None
     t.join()
 
+    # Exception
     t = cls(target=delay_double, args=(12,))
     t.start()
+    with pytest.raises(ValueError):
+        t.join()
+
+    t = cls(target=delay_double, args=(13,))
+    t.start()
+
     with pytest.raises(TimeoutError):
         t.result(0.2)
 
@@ -54,7 +64,17 @@ def _test_thread_process(cls):
     e = t.exception()
     assert type(e) is ValueError
 
-    t.join()
+    with pytest.raises(ValueError):
+        t.join()
+
+    # BaseException
+    t = cls(target=delay_double, args=(200,))
+    t.start()
+    with pytest.raises(KeyboardInterrupt):
+        t.join()
+    with pytest.raises(KeyboardInterrupt):
+        t.result()
+    assert isinstance(t.exception(), KeyboardInterrupt)
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
@@ -183,30 +203,26 @@ def _test_loud_exception():
     t.start()
     t.join()
 
-    print('\ncustom thread loud\n')
+    print('\ncustom thread\n')
     t = Thread(target=loud_worker)
     t.start()
-    t.join()
-
-    print('\ncustom thread not loud\n')
-    t = Thread(target=loud_worker, loud_exception=False)
-    t.start()
-    t.join()
+    try:
+        t.join()
+    except ValueError as e:
+        print(repr(e))
 
     print('\nstandard process\n')
     t = multiprocessing.Process(target=loud_worker)
     t.start()
     t.join()
 
-    print('\ncustom process loud\n')
+    print('\ncustom process\n')
     t = Process(target=loud_worker)
     t.start()
-    t.join()
-
-    print('\ncustom process not loud\n')
-    t = Process(target=loud_worker, loud_exception=False)
-    t.start()
-    t.join()
+    try:
+        t.join()
+    except ValueError as e:
+        print(repr(e))
 
     print('\ncustom thread pool loud\n')
     with ThreadPoolExecutor() as pool:
@@ -225,5 +241,6 @@ def _test_loud_exception():
         t = pool.submit(loud_worker)
 
 
-# if __name__ == '__main__':
-#     _test_loud_exception()
+if __name__ == '__main__':
+    # Run this and watch the printout behavior.
+    _test_loud_exception()
