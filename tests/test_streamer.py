@@ -3,7 +3,6 @@ import random
 from time import sleep
 
 import pytest
-from deprecation import DeprecatedWarning
 from mpservice.streamer import Stream
 
 
@@ -119,10 +118,6 @@ def test_peek():
         print(x)
 
     assert Stream(data).peek(print_func=foo, interval=0.6).drain() == 10
-    print('')
-
-    with pytest.warns(DeprecatedWarning):
-        Stream(data).peek_every_nth(4).drain()
     print('')
 
     exc = [0, 1, 2, ValueError(100), 4]
@@ -264,12 +259,6 @@ def test_parmap(executor):
     SYNC_INPUT = list(range(278))
 
     expected = [v + 3.8 for v in SYNC_INPUT]
-
-    with pytest.warns(DeprecatedWarning):
-        assert (
-            Stream(SYNC_INPUT).transform(f1, concurrency=1, executor=executor).collect()
-            == expected
-        )
 
     assert (
         list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor=executor))

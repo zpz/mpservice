@@ -14,8 +14,6 @@ from pickle import loads as pickle_loads
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Optional
 
-from overrides import EnforceOverrides
-
 from ._queues import SingleLane
 from .util import (
     MAX_THREADS,
@@ -187,7 +185,7 @@ async def open_unix_connection(path: str, *, timeout=None):
             await asyncio.sleep(0.1)
 
 
-class SocketApplication(EnforceOverrides):
+class SocketApplication:
     """
     ``SocketApplication`` is designed to to used similar to the "application" in a
     HTTP framework. The main API is to register "endpoint" functions by the method
@@ -249,7 +247,7 @@ class SocketApplication(EnforceOverrides):
         return await self._routes[path](data)
 
 
-class SocketServer(EnforceOverrides):
+class SocketServer:
     def __init__(
         self,
         app: SocketApplication,
@@ -427,7 +425,7 @@ def run_app(app, **kwargs):
     asyncio.run(server.run())
 
 
-class SocketClient(EnforceOverrides):
+class SocketClient:
     def __init__(
         self,
         *,

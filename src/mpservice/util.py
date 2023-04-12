@@ -46,8 +46,6 @@ import weakref
 from types import TracebackType
 from typing import Optional
 
-from deprecation import deprecated  # noqa: E402
-
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.
@@ -104,17 +102,6 @@ def get_docker_host_ip():
     z = subprocess.check_output(["ip", "-4", "route", "list", "match", "0/0"])
     z = z.decode()[len("default via ") :]
     return z[: z.find(" ")]
-
-
-@deprecated(deprecated_in="0.11.9", removed_in="0.12.2")
-def is_exception(e) -> bool:
-    # Test showed the raised objects are always instances, not classes, even
-    # if we do
-    #   raise ValueError
-    # the captured object is a ValueError instance, not the class.
-    return isinstance(e, BaseException) or (
-        (type(e) is type) and issubclass(e, BaseException)
-    )
 
 
 def is_async(func):
@@ -591,7 +578,7 @@ class Thread(threading.Thread):
                 self._result_ = self._target(*self._args, **self._kwargs)
         except SystemExit:
             # TODO: what if `e.code` is not 0?
-            pass
+            raise
         except BaseException as e:
             self._exception_ = e
             raise  # Standard threading will print error info here.
@@ -1070,7 +1057,10 @@ def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except Exception:
-        print(f"Exception in process '{multiprocessing.current_process().name}':")
+        print(
+            f"Exception in process '{multiprocessing.current_process().name}':",
+            file=sys.stderr,
+        )
         traceback.print_exception(*sys.exc_info())
         raise
 
@@ -1080,7 +1070,8 @@ def _loud_thread_function(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except Exception:
         print(
-            f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':"
+            f"Exception in process '{multiprocessing.current_process().name}' thread '{threading.current_thread().name}':",
+            file=sys.stderr,
         )
         traceback.print_exception(*sys.exc_info())
         raise
@@ -1109,13 +1100,12 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     # A process may stay on and execute many submitted functions.
     # The loudness of SpawnProcess plays a role only when that process crashes.
 
-    def __init__(self, max_workers=None, *, loud_exception=True, **kwargs):
+    def __init__(self, max_workers=None, **kwargs):
         assert 'mp_context' not in kwargs
         super().__init__(max_workers=max_workers, mp_context=MP_SPAWN_CTX, **kwargs)
-        self._loud_exception = loud_exception
 
-    def submit(self, fn, /, *args, **kwargs):
-        if self._loud_exception:
+    def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
+        if loud_exception:
             return super().submit(_loud_process_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
 
@@ -1133,12 +1123,8 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     which does not print exception info in the worker thread.
     """
 
-    def __init__(self, max_workers=None, *, loud_exception: bool = True, **kwargs):
-        super().__init__(max_workers=max_workers, **kwargs)
-        self._loud_exception = loud_exception
-
-    def submit(self, fn, /, *args, **kwargs):
-        if self._loud_exception:
+    def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
+        if loud_exception:
             return super().submit(_loud_thread_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
 

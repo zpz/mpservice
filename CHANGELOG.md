@@ -9,15 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 
-- ``mpservice.util.{Process, Thread}`` lost parameter ``loud_exception``.
+- Remove dependency on ``overrides``.
 
 ### Added
 
-- ``mpservice.util.{Process, Thread}`` have customized method ``join`` that will raise the exception raised in the child process or thread.
+- ``util.{Process, Thread}`` have customized method ``join`` that will raise the exception raised in the child process or thread.
 
-### Enhanced
+### Enhanced or changed
 
-- ``mpservice.util.{Process, Thread}`` finetune related to exceptions.
+- ``util.{Process, Thread}`` finetune related to exceptions.
+- ``util.{Process, Thread}``: parameter ``loud_exception`` moved from ``__init__`` to ``submit``.
+- ``streamer`` finetune related to exception printout in worker threads/processes.
 
 
 ## [0.12.2] - 2023-03-31
@@ -33,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Improved
 
-- ``mpservice.mpserver.Server.stream`` retries on enqueue timeout.
+- ``mpserver.Server.stream`` retries on enqueue timeout.
 - Finetune to waiting times in `Server`.
 
 
@@ -43,15 +45,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - ``EnsembleServlet`` gets new parameter ``fail_fast`` to control behavior when ensemble members return exceptions.
 - New exception class ``EnsembleError``.
-- Added ``mpservice.util.Process``, which is an alias to ``mpservice.util.SpawnProcess``.
-- Refinements to ``mpservice.util.SpawnProcessPoolExecutor``.
-- Added ``mpservice.util.ProcessPoolExecutor``, which is an alias to ``mpservice.util.SpawnProcessPoolExecutor``.
-- New class ``mpservice.util.ThreadPoolExecutor``.
-- New class ``mpservice.mpserver.SwitchServlet``.
+- Added ``.util.Process``, which is an alias to ``util.SpawnProcess``.
+- Refinements to ``util.SpawnProcessPoolExecutor``.
+- Added ``util.ProcessPoolExecutor``, which is an alias to ``util.SpawnProcessPoolExecutor``.
+- New class ``util.ThreadPoolExecutor``.
+- New class ``mpserver.SwitchServlet``.
 
 ### Fixed
 
-- ``mpservice.util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
+- ``util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
   discoverable. This functionality was there previously but it was buggy.
 - Fixed a deadlock situation during the shutdown of streamer ``parmap``.
 
@@ -68,7 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 - Deprecated context manager on `Streamer`. Instead, use the object directly.
-- Deprecated function `mpservice.util.is_exception`.
+- Deprecated function `util.is_exception`.
 
 ### Changed
 
@@ -77,10 +79,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added or enhanced
 
-- `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
+- `streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
   and `executor_init_args`.
 - Simplifications to the implementation of `streamer.py`, making use of `GeneratorExit` and removing class `Stream`.
-- New utility functions `mpservice.util.get_shared_thread_pool`, `mpservice.util.get_shared_process_pool`.
+- New utility functions `util.get_shared_thread_pool`, `util.get_shared_process_pool`.
 
 
 ## [0.11.8] - 2022-12-21
@@ -89,27 +91,27 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ### Removed
 
-- `mpservice.streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
+- `streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
   `Dropper`.
-- `mpservice.streamer.Streamer.drop_exceptions`.
+- `streamer.Streamer.drop_exceptions`.
 
 ### Changed
 
-- `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
-- `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
-- `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
-- `mpservice.streamer.Streamer.peek` was refactored.
-- `mpservice.streamer.Streamer.transform` was renamed to `parmap`.
+- `streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
+- `mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
+- `streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
+- `streamer.Streamer.peek` was refactored.
+- `streamer.Streamer.transform` was renamed to `parmap`.
 - Relaxed the requirement for using context manager with `Streamer`.
 - `Streamer.parmap` uses processes by default, instead of threads.
 
 ### Added or enhanced
 
 - Enhanced documentation. Started to host generated doc on Read the Docs.
-- New class `mpservice.mpserver.CpuAffinity`.
-- New method on `mpservice.streamer.Streamer` and corresponding classes:
+- New class `mpserver.CpuAffinity`.
+- New method on `streamer.Streamer` and corresponding classes:
   `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`, `groupby` and `Grouper`.
-- New method `mpservice.streamer.Streamer.filter_exceptions`, `mpservice.streamer.Streamer.accumulate`.
+- New method `streamer.Streamer.filter_exceptions`, `streamer.Streamer.accumulate`.
 
 
 ## [0.11.7.post1] - 2022-10-21
@@ -134,21 +136,21 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.11.5] - 2022-09-22
 
-- `RemoteException` is re-written with much simplifications; the class is moved from `mpservice.remote_exception` to `mpservice.util`; the module `mpservice.remote_exception` is removed.
+- `RemoteException` is re-written with much simplifications; the class is moved from `remote_exception` to `util`; the module `remote_exception` is removed.
 - Enhancements to `SpawnProcess`.
-- Improvements to `mpservice.util.ProcessLogger`.
-- The new constant `mpservice.util.MP_SPAWN_CTX` is a customization to the standard spawn
+- Improvements to util.ProcessLogger`.
+- The new constant `.util.MP_SPAWN_CTX` is a customization to the standard spawn
   context that uses `SpawnProcess` instead of `Process`.
 - Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
 - `Streamer.transform` gets new parameter `executor` to support multiprocessing for CPU-bound operators.
-- The module `mpservice.server_process` is re-written.
+- The module `server_process` is re-written.
 - The module `named_pipe` is renamed `pipe`.
 
 
 ## [0.11.4] - 2022-09-01
 
-- `mpservice.util.ProcessLogger` gets context manager methods.
-- New class `mpservice.util.SpawnProcess`.
+- `util.ProcessLogger` gets context manager methods.
+- New class `util.SpawnProcess`.
 
 
 ## [0.11.3] - 2022-06-24
@@ -161,8 +163,8 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.11.2] - 2022-06-05
 
-- Refinement and simplification to `mpservice.streamer`.
-- Refinement to `mpservice.server_process`.
+- Refinement and simplification to `streamer`.
+- Refinement to `server_process`.
 
 
 ## [0.11.1] - 2022-05-31
@@ -174,14 +176,14 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.11.0] - 2022-05-27
 
-- Refactor to `mpservice.mpserver` with API changes.
+- Refactor to `mpserver` with API changes.
   New design allows flexible composition of sequential and ensemble setups,
   leading to considerable enhancements in capability and flexibility.
   There are also considerable improvements to the implementation
   (in terms of simplicity, elegance, robustness).
 - Replaced all uses of `time.monotonic` by `time.perf_counter`, which has much
   higher resolution.
-- Added module `mpservice.named_pipe`.
+- Added module `named_pipe`.
 
 
 ## [0.10.9] - 2022-05-21
@@ -224,9 +226,9 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.10.4] - 2022-04-03
 
-- Rewrote `mpservice.socket` to be fully based on `asyncio.streams`.
+- Rewrote `socket` to be fully based on `asyncio.streams`.
 - Refactored socket server side to make its usage similar to a web app.
-- Refactored `mpservice._streamer` for much improved robustness and simplicity.
+- Refactored `_streamer` for much improved robustness and simplicity.
 - Streamer API changes, mainly:
   1. use context manager;
   2. operations modify the hosting object in-place, hence eliminating the need to assign
@@ -236,7 +238,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 - Rewrote `RemoteException`, especially for pickle-safety.
 - `SocketServer` shutdown handling.
 - Removed `MPServer.{start, stop}`; use `__enter__/__exit__`.
-- Removed some contents of `mpservice.util`.
+- Removed some contents of `util`.
 
 
 ## [0.10.3.post1, post2, post3, post4, post5] - 2022-03-25
@@ -257,13 +259,13 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 - Simplify `MPServer.stream`; remove `MPServer.async_stream`; the functionality
   of `async_stream` is provided by `stream`.
-- Make more utility functions available in `mpservice.util`.
-- Simplify `mpservice._async_streamer`.
+- Make more utility functions available in `util`.
+- Simplify `_async_streamer`.
 
 
 ## [0.10.1] - 2022-03-17
 
-- `mpservice.http_server` was renamed to `mpservice.http`.
+- `http_server` was renamed to `http`.
 - Initial implementation of socket client/server.
 
 
@@ -283,13 +285,13 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 - Use 'spawn' method for process creation.
 - Refactored and simplified test/build process.
-- Removed `mpservice.http_server.run_local_app`.
+- Removed `http_server.run_local_app`.
 - Minor bug fixes.
 
 
 ## [0.9.8.post2] - 2022-01-31
 
-- Improvements to the utilities in `mpservice.http_server`, esp regarding service shutdown.
+- Improvements to the utilities in `http_server`, esp regarding service shutdown.
 
 
 ## [0.9.8.post1] - 2022-01-31
@@ -300,7 +302,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 ## [0.9.8] - 2022-01-30
 
 - Reworked error propagation in streamer; fixed bugs therein.
-- Renamed `mpservice.exception` to `mpservice.remote_exception`.
+- Renamed `exception` to `remote_exception`.
 - Corner-case bug fixes in `MPServer`.
 - Increase queue size in `ConcurrentTransformer`.
 
@@ -363,7 +365,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 ## [0.9.0] - 2021-08-28
 
 - Bug fix.
-- `mpservice.mpserver.Servlet.__call__` is renamed to `call`.
+- `mpserver.Servlet.__call__` is renamed to `call`.
 
 
 ## [0.8.9] - 2021-08-16
@@ -403,7 +405,7 @@ Fine tuning on `streamer`.
 
 Added:
 
-- `mpservice.streamer.{transform, unordered_transform}` get new parameter `return_exceptions`.
+- `streamer.{transform, unordered_transform}` get new parameter `return_exceptions`.
   Similarly, `drain` gets new parameter `ignore_exceptions`.
 
 
@@ -411,7 +413,7 @@ Added:
 
 Added:
 
-- `mpservice.streamer`
+- `streamer`
 
 
 ## [0.8.1] - 2021-07-24
@@ -419,8 +421,8 @@ Added:
 Changed:
 
 - `Servlet.process` is renamed to `Servlet.__call__`.
-- `mpservice._http` renamed to `mpservice.http_server` with enhancements.
-- `mpservice._server_process` renamed to `mpservice.server_process`.
+- `_http` renamed to `http_server` with enhancements.
+- `_server_process` renamed to `server_process`.
 
 
 ## [0.8.0] - 2021-05-19

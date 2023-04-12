@@ -56,7 +56,6 @@ from typing import (
     TypeVar,
 )
 
-from deprecation import deprecated
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
@@ -111,17 +110,6 @@ class Stream(Iterable):
             The input stream of elements. This is a possibly unlimited  `Iterable`_.
         """
         self.streamlets: list[Iterable] = [instream]
-
-    @deprecated(
-        deprecated_in="0.11.9",
-        removed_in="0.12.2",
-        details="Please use the object directly without context manager.",
-    )
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        pass
 
     def __iter__(self):
         yield from self.streamlets[-1]
@@ -393,12 +381,6 @@ class Stream(Iterable):
 
         return self.map(Peeker())
 
-    @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``peek`` instead."
-    )
-    def peek_every_nth(self, n: int):
-        return self.peek(interval=n)
-
     def head(self, n: int) -> Self:
         """
         Take the first ``n`` elements and ignore the rest.
@@ -573,28 +555,6 @@ class Stream(Iterable):
         """
         self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
-
-    @deprecated(
-        deprecated_in="0.11.8", removed_in="0.12.2", details="Use ``parmap`` instead"
-    )
-    def transform(
-        self,
-        func,
-        *,
-        executor="thread",
-        concurrency=None,
-        return_x=False,
-        return_exceptions=False,
-        **func_args,
-    ):
-        return self.parmap(
-            func,
-            executor=executor,
-            num_workers=concurrency,
-            return_x=return_x,
-            return_exceptions=return_exceptions,
-            **func_args,
-        )
 
     def parmap(
         self,
@@ -834,9 +794,12 @@ class Buffer(Iterable):
                 if self._stopped.is_set():
                     return
                 q.put(x)  # if `q` is full, will wait here
-        except Exception:
+        except Exception as e:
             q.put(STOPPED)
-            raise
+            q.put(e)
+            # raise
+            # Do not raise here. Otherwise it would print traceback,
+            # while the same would be printed again in ``__iter__``.
         else:
             q.put(FINISHED)
 
@@ -871,7 +834,8 @@ class Buffer(Iterable):
                 if z == FINISHED:
                     break
                 if z == STOPPED:
-                    raise self._worker.exception()
+                    # raise self._worker.exception()
+                    raise self._tasks.get()
                 try:
                     yield z
                 except GeneratorExit:
@@ -968,13 +932,16 @@ class Parmapper(Iterable):
             for x in self._instream:
                 if self._stopped.is_set():
                     return
-                t = executor.submit(func, x, **kwargs)
+                t = executor.submit(func, x, loud_exception=False, **kwargs)
                 tasks.put((x, t))
                 # The size of the queue `tasks` regulates how many
                 # concurrent calls to `func` there can be.
-        except Exception:
+        except Exception as e:
             tasks.put(STOPPED)
-            raise
+            tasks.put(e)
+            # raise
+            # Do not raise here. Otherwise it would print traceback,
+            # while the same would be printed again in ``__iter__``.
         else:
             tasks.put(FINISHED)
 
@@ -1012,7 +979,8 @@ class Parmapper(Iterable):
             if z == FINISHED:
                 break
             if z == STOPPED:
-                raise self._worker.exception()
+                # raise self._worker.exception()
+                raise self._tasks.get()
 
             x, fut = z
 

@@ -36,7 +36,6 @@ from time import perf_counter, sleep
 from typing import Any, Callable, Literal, Optional
 
 import psutil
-from overrides import final
 
 from ._queues import SingleLane
 from .util import (
@@ -1343,12 +1342,12 @@ class SwitchServlet(Servlet):
 
 class Server:
     @classmethod
-    @final
     def get_mp_context(cls):
         """
         If subclasses need to use additional Queues, Locks, Conditions, etc,
         they should create them out of this context.
         This returns a spawn context.
+
         Subclasses should not customize this method.
         """
         return MP_SPAWN_CTX
