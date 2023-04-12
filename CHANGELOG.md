@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - ``util.{Process, Thread}`` finetune related to exceptions.
 - ``util.{Process, Thread}``: parameter ``loud_exception`` moved from ``__init__`` to ``submit``.
+- ``streamer`` finetune related to exception printout in worker threads/processes.
 
 
 ## [0.12.2] - 2023-03-31
