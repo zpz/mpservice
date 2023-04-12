@@ -195,4 +195,3 @@ def test_concurrent_futures_executor():
         t.result()
     logger.warning('main warning')
     logger.debug('main debug')
-

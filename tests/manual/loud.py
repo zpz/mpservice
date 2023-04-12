@@ -1,14 +1,12 @@
 import multiprocessing
 import threading
 
-
 from mpservice.util import (
     Process,
     ProcessPoolExecutor,
     Thread,
     ThreadPoolExecutor,
 )
-
 
 
 def loud_worker():
@@ -63,4 +61,3 @@ def main():
 if __name__ == '__main__':
     # Run this and watch the printout behavior.
     main()
-

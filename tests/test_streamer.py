@@ -3,7 +3,6 @@ import random
 from time import sleep
 
 import pytest
-from deprecation import DeprecatedWarning
 from mpservice.streamer import Stream
 
 

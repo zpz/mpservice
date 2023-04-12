@@ -1057,7 +1057,10 @@ def _loud_process_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except Exception:
-        print(f"Exception in process '{multiprocessing.current_process().name}':", file=sys.stderr)
+        print(
+            f"Exception in process '{multiprocessing.current_process().name}':",
+            file=sys.stderr,
+        )
         traceback.print_exception(*sys.exc_info())
         raise
 
