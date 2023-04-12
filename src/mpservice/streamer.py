@@ -794,9 +794,12 @@ class Buffer(Iterable):
                 if self._stopped.is_set():
                     return
                 q.put(x)  # if `q` is full, will wait here
-        except Exception:
+        except Exception as e:
             q.put(STOPPED)
-            raise
+            q.put(e)
+            # raise
+            # Do not raise here. Otherwise it would print traceback,
+            # while the same would be printed again in ``__iter__``.
         else:
             q.put(FINISHED)
 
@@ -831,7 +834,8 @@ class Buffer(Iterable):
                 if z == FINISHED:
                     break
                 if z == STOPPED:
-                    raise self._worker.exception()
+                    # raise self._worker.exception()
+                    raise self._tasks.get()
                 try:
                     yield z
                 except GeneratorExit:
@@ -928,13 +932,16 @@ class Parmapper(Iterable):
             for x in self._instream:
                 if self._stopped.is_set():
                     return
-                t = executor.submit(func, x, **kwargs)
+                t = executor.submit(func, x, loud_exception=False, **kwargs)
                 tasks.put((x, t))
                 # The size of the queue `tasks` regulates how many
                 # concurrent calls to `func` there can be.
-        except Exception:
+        except Exception as e:
             tasks.put(STOPPED)
-            raise
+            tasks.put(e)
+            # raise
+            # Do not raise here. Otherwise it would print traceback,
+            # while the same would be printed again in ``__iter__``.
         else:
             tasks.put(FINISHED)
 
@@ -972,7 +979,8 @@ class Parmapper(Iterable):
             if z == FINISHED:
                 break
             if z == STOPPED:
-                raise self._worker.exception()
+                # raise self._worker.exception()
+                raise self._tasks.get()
 
             x, fut = z
 

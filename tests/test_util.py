@@ -2,7 +2,6 @@ import logging
 import multiprocessing
 import pickle
 import sys
-import threading
 from time import sleep
 from types import TracebackType
 
@@ -12,7 +11,6 @@ from mpservice.util import (
     ProcessPoolExecutor,
     RemoteException,
     Thread,
-    ThreadPoolExecutor,
     TimeoutError,
     get_remote_traceback,
     is_remote_exception,
@@ -27,7 +25,9 @@ def delay_double(x, delay=2):
         return x * 2
     if x < 100:
         raise ValueError(x)
-    raise KeyboardInterrupt
+    if x < 1000:
+        raise KeyboardInterrupt
+    raise SystemExit()
 
 
 def _test_thread_process(cls):
@@ -75,6 +75,11 @@ def _test_thread_process(cls):
     with pytest.raises(KeyboardInterrupt):
         t.result()
     assert isinstance(t.exception(), KeyboardInterrupt)
+
+    # SystemExit
+    t = cls(target=delay_double, args=(2000,))
+    t.start()
+    t.join()
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
@@ -191,56 +196,3 @@ def test_concurrent_futures_executor():
     logger.warning('main warning')
     logger.debug('main debug')
 
-
-def loud_worker():
-    raise ValueError(3)
-
-
-def _test_loud_exception():
-    # This prints error info
-    print('\nstandard thread\n')
-    t = threading.Thread(target=loud_worker)
-    t.start()
-    t.join()
-
-    print('\ncustom thread\n')
-    t = Thread(target=loud_worker)
-    t.start()
-    try:
-        t.join()
-    except ValueError as e:
-        print(repr(e))
-
-    print('\nstandard process\n')
-    t = multiprocessing.Process(target=loud_worker)
-    t.start()
-    t.join()
-
-    print('\ncustom process\n')
-    t = Process(target=loud_worker)
-    t.start()
-    try:
-        t.join()
-    except ValueError as e:
-        print(repr(e))
-
-    print('\ncustom thread pool loud\n')
-    with ThreadPoolExecutor() as pool:
-        t = pool.submit(loud_worker)
-
-    print('\ncustom thread pool not loud\n')
-    with ThreadPoolExecutor(loud_exception=False) as pool:
-        t = pool.submit(loud_worker)
-
-    print('\ncustom process pool loud\n')
-    with ProcessPoolExecutor() as pool:
-        t = pool.submit(loud_worker)
-
-    print('\ncustom process pool not loud\n')
-    with ProcessPoolExecutor(loud_exception=False) as pool:
-        t = pool.submit(loud_worker)
-
-
-if __name__ == '__main__':
-    # Run this and watch the printout behavior.
-    _test_loud_exception()
