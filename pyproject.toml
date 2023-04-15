@@ -57,7 +57,7 @@ name = "mpservice"
 
 # See https://beta.ruff.rs/docs/rules/
 [tool.ruff]
-target-version = "py310"
+target-version = "py38"
 select = ["E", "F", "S", "I001"]  # isort
 ignore = ["E501", "S101", "S102", "S103", "S104", "S108", "S301", "S311", "S608"]
 
@@ -76,7 +76,7 @@ addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --ignore=benc
 
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 85
 show_missing = true
 skip_empty = true
 

@@ -1009,12 +1009,3 @@ class Parmapper(Iterable):
                 except GeneratorExit:
                     self._finalize()
                     raise
-
-
-Streamer = Stream
-"""An alias to :class:`Stream` for backward compatibility.
-
-.. deprecated:: 0.11.9
-    Will be removed in 0.12.2.
-    Use ``Stream`` instead.
-"""
