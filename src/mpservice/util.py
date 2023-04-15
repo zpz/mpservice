@@ -21,6 +21,8 @@ to the main process via a queue. :class:`~mpservice.util.SpawnProcess` has this 
 Last but not least, if exception happens in a child process and we don't want the program to crash right there,
 instead we send it to the main or another process to be investigated when/where we are ready to,
 the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteException` helps on this.
+
+This module also provides some utilities for concurrency with ``threading`` and ``concurrent.futures``.
 """
 
 from __future__ import annotations
@@ -153,7 +155,7 @@ class RemoteTraceback(Exception):
         return self.tb
 
 
-def rebuild_exception(exc: BaseException, tb: str):
+def _rebuild_exception(exc: BaseException, tb: str):
     exc.__cause__ = RemoteTraceback(tb)
 
     return exc
@@ -550,7 +552,7 @@ Run it::
         return f"{self.__class__.__name__}('{self.exc.__str__()}')"
 
     def __reduce__(self):
-        return rebuild_exception, (self.exc, self.tb)
+        return _rebuild_exception, (self.exc, self.tb)
 
 
 class Thread(threading.Thread):

@@ -92,10 +92,10 @@ def make_server(
     Parameters
     ----------
     app
-        A `starlette <https://www.starlette.io/>`_ instance or the import string for such
-        an instance, like ``'mymodule:app'``.
+        A `starlette.application.Starlette <https://www.starlette.io/>`_ instance or the import string for such
+        an instance, like ``'mypackage.mymodule:app'``.
     host
-        The default ``'0.0.0.0'`` is suitable if the code runs with a Docker container.
+        The default ``'0.0.0.0'`` is suitable if the code runs within a Docker container.
     port
         Port.
     access_log
