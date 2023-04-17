@@ -38,8 +38,8 @@ class Shift(ProcessWorker):
 
 
 class Square(ProcessWorker):
-    def __init__(self):
-        super().__init__(batch_size=4)
+    def __init__(self, **kwargs):
+        super().__init__(batch_size=4, **kwargs)
 
     def call(self, x):
         return [v * v for v in x]

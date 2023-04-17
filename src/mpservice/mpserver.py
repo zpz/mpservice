@@ -823,7 +823,7 @@ class ProcessServlet(Servlet):
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._name)
+        logger.info("servlet %s is ready", self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
@@ -919,7 +919,7 @@ class ThreadServlet(Servlet):
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._name)
+        logger.info("servlet %s is ready", self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
