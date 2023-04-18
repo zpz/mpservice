@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Subclasses of ``Worker`` should be sure to accept this parameter in their ``__init__``.
 
 
+## Enhanced
+
+- ``util.SpawnProcess`` finetune on ``join`` and finalization cleanup.
+
+
 ## [0.12.3] - 2023-04-14
 
 ### Removed

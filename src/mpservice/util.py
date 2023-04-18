@@ -948,13 +948,17 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise self.__error__
         assert exitcode < 0
         if exitcode == -errno.ENOTBLK:  # 15
-            raise ChildProcessError(f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination")
+            raise ChildProcessError(
+                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination"
+            )
             # For example, ``self.terminate()`` was called. That's a code smell.
             # ``signal.Signals.SIGTERM`` is 15.
             # ``signal.Signals.SIGKILL`` is 9.
             # ``signal.Signals.SIGINT`` is 2.
         else:
-            raise ChildProcessError(f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}")
+            raise ChildProcessError(
+                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}"
+            )
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 
