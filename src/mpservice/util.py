@@ -704,7 +704,7 @@ class ProcessLogger:
         self._q = self._ctx.Queue()
 
         self._t = Thread(
-            target=ProcessLogger._logger_thread,
+            target=self._logger_thread,
             args=(self._q,),
             name="ProcessLoggerThread",
             daemon=True,
@@ -714,8 +714,10 @@ class ProcessLogger:
             self,
             type(self)._finalize_logger_thread,
             (self._t, self._q),
-            exitpriority=10,
+            exitpriority=5,
         )
+        # The other process does not need finalizer;
+        # it doesn't have a background thread.
 
     @staticmethod
     def _logger_thread(q: multiprocessing.queues.Queue):
@@ -753,16 +755,22 @@ class ProcessLogger:
         During the execution of the process, logging should not be configured.
         Logging config should happen in the main process/thread.
         """
-        root = logging.getLogger()
-        root.setLevel(logging.DEBUG)
-        self._qh = logging.handlers.QueueHandler(self._q)
-        root.addHandler(self._qh)
+        # Do not start log forwarding because logging is configured in this process,
+        # but this is usually not recommended.
+        # This sually happends because logging is configured on the module level rather than
+        # in the ``if __name__ == '__main__':`` block.
+        if not logging.getLogger().hasHandlers():
+            root = logging.getLogger()
+            root.setLevel(logging.DEBUG)
+            self._qh = logging.handlers.QueueHandler(self._q)
+            root.addHandler(self._qh)
 
     def _stop_in_other_process(self):
-        if self._q is not None:
+        if self._q is not None and hasattr(self, '_qh'):
             logging.getLogger().removeHandler(self._qh)
             self._q.close()
             self._q = None
+            delattr(self, '_qh')
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -884,14 +892,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         ``start`` arranges for this to be run in a child process.
         """
         worker_logger = self._kwargs.pop("__worker_logger__")
-        if logging.getLogger().hasHandlers():
-            pass
-            # Do not start log forwarding because logging is configured in this process,
-            # but this is usually not recommended.
-            # This sually happends because logging is configured on the module level rather than
-            # in the ``if __name__ == '__main__':`` block.
-        else:
-            worker_logger.start()
+        worker_logger.start()
         result_and_error = self._kwargs.pop("__result_and_error__")
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
@@ -910,17 +911,24 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             else:
                 result_and_error.send(z)
                 result_and_error.send(None)
+            finally:
+                result_and_error.close()
         else:
             result_and_error.send(None)
             result_and_error.send(None)
+            result_and_error.close()
 
     def _get_result(self):
         # Error could happen below if the process has terminated in some
         # unusual ways.
         if not hasattr(self, '__result__'):
             self.__result__ = self.__result_and_error__.recv()
-        if not hasattr(self, '__error__'):
             self.__error__ = self.__result_and_error__.recv()
+            self.__result_and_error__.close()
+            self.__result_and_error__ = None
+        if self.__worker_logger__ is not None:
+            self.__worker_logger__.stop()
+            self.__worker_logger__ = None
 
     def join(self, timeout=None):
         '''
@@ -932,14 +940,27 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode is None:
             # Not terminated. Timed out.
             return
+        self._get_result()
         if exitcode == 0:
             # Terminated w/o error.
             return
         if exitcode == 1:
-            self._get_result()
             raise self.__error__
         assert exitcode < 0
-        raise ChildProcessError(f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}")
+        if exitcode == -errno.ENOTBLK:  # 15
+            raise ChildProcessError(
+                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination"
+            )
+            # For example, ``self.terminate()`` was called. That's a code smell.
+            # ``signal.Signals.SIGTERM`` is 15.
+            # ``signal.Signals.SIGKILL`` is 9.
+            # ``signal.Signals.SIGINT`` is 2.
+        else:
+            raise ChildProcessError(
+                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}"
+            )
+        # For a little more info on the error codes, see
+        #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 
     def done(self) -> bool:
         """

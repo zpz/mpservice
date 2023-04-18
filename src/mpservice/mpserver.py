@@ -175,6 +175,7 @@ class Worker(ABC):
     def __init__(
         self,
         *,
+        worker_index: int = 0,
         batch_size: Optional[int] = None,
         batch_wait_time: Optional[float] = None,
         batch_size_log_cadence: int = 1_000_000,
@@ -193,6 +194,13 @@ class Worker(ABC):
 
         Parameters
         ----------
+        worker_index
+            0-based sequential number of the worker in a "servlet".
+            A subclass may use this to distinguish the worker processes/threads
+            in the same Servlet and give them some different treatments,
+            although they do essentially the same thing. For example,
+            let each worker use one particular GPU.
+
         batch_size
             Max batch size; see :meth:`call`.
 
@@ -267,6 +275,7 @@ class Worker(ABC):
             else:
                 assert 0 < batch_wait_time < 1
 
+        self.worker_index = worker_index
         self.batch_size = batch_size
         self.batch_size_log_cadence = batch_size_log_cadence
         self.batch_wait_time = batch_wait_time
@@ -724,7 +733,6 @@ class ProcessServlet(Servlet):
         worker_cls: type[ProcessWorker],
         *,
         cpus: Optional[Sequence[CpuAffinity | None | int | Sequence[int]]] = None,
-        name: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -757,10 +765,6 @@ class ProcessServlet(Servlet):
             4. CPUs 4, 5, 6
             5. CPU 4
             6. Any CPU, no pinning
-        name
-            The main part of the names of the worker processes.
-            If not specified, the name of this class is used.
-            Each process is named after this value plus its CPU affinity info.
         **kwargs
             Passed to the ``__init__`` method of ``worker_cls``.
 
@@ -771,7 +775,6 @@ class ProcessServlet(Servlet):
         """
         assert issubclass(worker_cls, ProcessWorker)
         self._worker_cls = worker_cls
-        self._name = name or worker_cls.__name__
         if cpus is None:
             self._cpus = [CpuAffinity(None)]
         else:
@@ -796,13 +799,10 @@ class ProcessServlet(Servlet):
             A queue for results.
         """
         assert not self._started
-        for cpu in self._cpus:
+        for worker_index, cpu in enumerate(self._cpus):
             # Create as many processes as the length of `cpus`.
             # Each process is pinned to the specified cpu core.
-            if cpu.target is None:
-                sname = self._name
-            else:
-                sname = f"{self._name}-{cpu}"
+            sname = f"{self._worker_cls.__name__}-process-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
             self._workers.append(
                 SpawnProcess(
@@ -812,6 +812,7 @@ class ProcessServlet(Servlet):
                         "q_in": q_in,
                         "q_out": q_out,
                         "cpus": cpu,
+                        "worker_index": worker_index,
                         **self._init_kwargs,
                     },
                 )
@@ -822,7 +823,7 @@ class ProcessServlet(Servlet):
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._name)
+        logger.info("servlet %s is ready", self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
@@ -853,7 +854,6 @@ class ThreadServlet(Servlet):
         worker_cls: type[ThreadWorker],
         *,
         num_threads: Optional[int] = None,
-        name: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -864,10 +864,6 @@ class ThreadServlet(Servlet):
         num_threads
             The number of threads to create. Each thread will host and run
             an instance of ``worker_cls``.
-        name
-            The main part of the names of the worker processes.
-            If not specified, the name of this class is used.
-            Each thread is named after this value plus a serial number.
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
 
@@ -878,7 +874,6 @@ class ThreadServlet(Servlet):
         """
         assert issubclass(worker_cls, ThreadWorker)
         self._worker_cls = worker_cls
-        self._name = name or worker_cls.__name__
         self._num_threads = num_threads or 1
         self._init_kwargs = kwargs
         self._workers = []
@@ -905,7 +900,7 @@ class ThreadServlet(Servlet):
         """
         assert not self._started
         for ithread in range(self._num_threads):
-            sname = f"{self._name}-{ithread}"
+            sname = f"{self._worker_cls.__name__}-thread-{ithread}"
             logger.info("adding worker <%s> in thread ...", sname)
             w = Thread(
                 target=self._worker_cls.run,
@@ -913,6 +908,7 @@ class ThreadServlet(Servlet):
                 kwargs={
                     "q_in": q_in,
                     "q_out": q_out,
+                    "worker_index": ithread,
                     **self._init_kwargs,
                 },
             )
@@ -923,7 +919,7 @@ class ThreadServlet(Servlet):
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._name)
+        logger.info("servlet %s is ready", self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
