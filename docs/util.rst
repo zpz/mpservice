@@ -7,30 +7,28 @@ Utilities
     :no-special-members:
     :no-undoc-members:
 
-.. autoexception:: mpservice.util.TimeoutError
+.. autoclass:: mpservice.multiprocessing.RemoteException
 
-.. autoclass:: mpservice.util.RemoteException
+.. autoexception:: mpservice.multiprocessing.RemoteTraceback
 
-.. autoexception:: mpservice.util.RemoteTraceback
+.. autofunction:: mpservice.multiprocessing.is_remote_exception
 
-.. autofunction:: mpservice.util.is_remote_exception
+.. autofunction:: mpservice.multiprocessing.get_remote_traceback
 
-.. autofunction:: mpservice.util.get_remote_traceback
+.. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
-.. autodata:: mpservice.util.MP_SPAWN_CTX
+.. autoclass:: mpservice.multiprocessing.SpawnProcess
 
-.. autoclass:: mpservice.util.SpawnProcess
+.. autoclass:: mpservice.multiprocessing.Process
 
-.. autoclass:: mpservice.util.Process
+.. autoclass:: mpservice.threading.Thread
 
-.. autoclass:: mpservice.util.Thread
-
-.. autoclass:: mpservice.util.ProcessPoolExecutor
+.. autoclass:: mpservice.multiprocessing.ProcessPoolExecutor
 
 .. this causes warning in build autoclass:: mpservice.util.ThreadPoolExecutor
 
-.. autofunction:: mpservice.util.get_shared_thread_pool
+.. autofunction:: mpservice.threading.get_shared_thread_pool
 
-.. autofunction:: mpservice.util.get_shared_process_pool
+.. autofunction:: mpservice.multiprocessing.get_shared_process_pool
 
 

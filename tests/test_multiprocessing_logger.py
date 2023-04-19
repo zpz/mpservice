@@ -1,11 +1,10 @@
 import logging
 import multiprocessing as mp
 
-from mpservice.util import ProcessLogger
+from mpservice.multiprocessing import Process
 
 
-def worker1(pl):
-    pl.start()
+def worker1():
     logger = logging.getLogger('worker1')
     logger.warning('worker1 warning')
     logger.info('worker1 info')
@@ -20,12 +19,8 @@ def worker2():
 
 
 def test_logging():
-    ctx = mp.get_context('spawn')
-    pl = ProcessLogger(ctx=ctx)
-    pl.start()
-    task1 = ctx.Process(target=worker1, args=(pl,))
-
-    task2 = ctx.Process(target=worker2)
+    task1 = Process(target=worker1)
+    task2 = mp.Process(target=worker2)  # fork
     task1.start()
     task2.start()
     task1.join()

@@ -4,8 +4,8 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.server_process import Manager
-from mpservice.util import SpawnProcess, Thread
+from mpservice.multiprocessing import Manager, SpawnProcess
+from mpservice.threading import Thread
 
 
 class Doubler:

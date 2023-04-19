@@ -14,11 +14,10 @@ from mpservice.mpserver import (
     SwitchServlet,
     ThreadServlet,
     ThreadWorker,
-    TimeoutError,
     make_threadworker,
 )
 from mpservice.streamer import Stream
-from mpservice.util import RemoteException, is_remote_exception
+from mpservice.multiprocessing import RemoteException, is_remote_exception
 
 
 class Double(ProcessWorker):

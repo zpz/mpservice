@@ -1,13 +1,8 @@
 import multiprocessing
 import threading
 
-from mpservice.util import (
-    Process,
-    ProcessPoolExecutor,
-    Thread,
-    ThreadPoolExecutor,
-)
-
+from mpservice.multiprocessing import Process, ProcessPoolExecutor
+from mpservice.threading import Thread, ThreadPoolExecutor
 
 def loud_worker():
     raise ValueError(3)

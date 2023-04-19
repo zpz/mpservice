@@ -6,15 +6,14 @@ from time import sleep
 from types import TracebackType
 
 import pytest
-from mpservice.util import (
+from mpservice.multiprocessing import (
     Process,
     ProcessPoolExecutor,
     RemoteException,
-    Thread,
-    TimeoutError,
     get_remote_traceback,
     is_remote_exception,
 )
+from mpservice.threading import Thread
 
 logger = logging.getLogger(__name__)
 
