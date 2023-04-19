@@ -4,6 +4,8 @@ import functools
 import inspect
 import subprocess
 
+# The following imports are provided for backcompat, and will be removed at a later time.
+# Please import from the corresponding modules.
 
 def get_docker_host_ip():
     """

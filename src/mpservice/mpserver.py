@@ -43,7 +43,8 @@ from .multiprocessing import (
     RemoteException,
     SpawnProcess,
 )
-from .threading import Thread, ThreadPoolExecutor
+from .threading import Thread
+from .concurrent_futures import ThreadPoolExecutor
 from ._remote_exception import EnsembleError
 
 # This modules uses the 'spawn' method to create processes.

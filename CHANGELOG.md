@@ -7,9 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.12.4] - in process
 
+### Refactor
+
+Refactored ``util`` to split it into modules ``mpservice.multiprocessing``,
+``mpservice.threading``, ``mpservice.concurrent_futures`` to have some imports
+correspond to those in the standard libs.
+
+``server_process`` was merged into ``mpservice.multiprocessing``.
+
 ### Removed
 
 - ``ProcessServlet`` and ``ThreadServlet`` lost parameter ``name`` to ``__init__``.
+- class ``ProcessLogger``.
 
 ## Added
 

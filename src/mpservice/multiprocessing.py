@@ -3,11 +3,11 @@
 ``mpservice`` provides help to address several common difficulties.
 
 First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
-:data:`~mpservice.util.MP_SPAWN_CTX` is provided to make this easier.
+:data:`~mpservice.multiprocessing.MP_SPAWN_CTX` is provided to make this easier.
 
 Second, in well structured code, a **spawned** process will not get the logging configurations that have been set
 in the main process. On the other hand, we should definitely not separately configure logging in
-non-main processes. The class :class:`~mpservice.util.SpawnProcess` addresses this issue. In fact,
+non-main processes. The class :class:`~mpservice.multiprocessing.SpawnProcess` addresses this issue. In fact,
 ``MP_SPAWN_CTX.Process`` is a reference to ``SpawnProcess``. Therefore, when you use ``MP_SPAWN_CTX``,
 logging in the non-main processes are covered---log messages are sent to the main process to be handled,
 all transparently.
@@ -15,17 +15,16 @@ all transparently.
 Third, one convenience of `concurrent.futures`_ compared to `multiprocessing`_ is that the former
 makes it easy to get the results or exceptions of the child process via the object returned from job submission.
 With `multiprocessing`_, in contrast, we have to pass the results or explicitly captured exceptions
-to the main process via a queue. :class:`~mpservice.util.SpawnProcess` has this covered as well. It can be used in the
-``concurrent.futures`` way.
+to the main process via a queue. :class:`~mpservice.multiprocessing.SpawnProcess` has this covered as well.
+It can be used in the ``concurrent.futures`` way.
 
 Last but not least, if exception happens in a child process and we don't want the program to crash right there,
 instead we send it to the main or another process to be investigated when/where we are ready to,
-the traceback info will be lost in pickling. :class:`~mpservice.util.RemoteException` helps on this.
+the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import errno
 import logging
 import logging.handlers
@@ -35,12 +34,8 @@ import multiprocessing.context
 import multiprocessing.queues
 import multiprocessing.util
 import multiprocessing.managers
-import os
-import sys
 import threading
-import traceback
 import warnings
-import weakref
 from typing import Optional, Callable
 
 from ._remote_exception import is_remote_exception, get_remote_traceback, RemoteTraceback, RemoteException
@@ -425,53 +420,6 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 """
 
 
-def _loud_process_function(fn, *args, **kwargs):
-    try:
-        return fn(*args, **kwargs)
-    except Exception:
-        print(
-            f"Exception in process '{multiprocessing.current_process().name}':",
-            file=sys.stderr,
-        )
-        traceback.print_exception(*sys.exc_info())
-        raise
-
-
-class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
-    '''
-    This class is a drop-in replacement of the standard
-    `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
-    It uses a "spawn" context and the process class :class:`SpawnProcess`, hence getting
-    the benefits of SpawnProcess.
-
-    In addition, the parameter ``loud_exception`` controls whether to print out exception
-    info if the submitted worker task fails with an exception.
-    The default is ``True``, whereas ``False`` has the behavior of the standard library,
-    which does not print exception info in the worker process.
-    Although exception info can be obtained in the caller process via the
-    `Future <https://docs.python.org/3/library/concurrent.futures.html#future-objects>`_ object
-    returned from the method :meth:`submit`, the printing in the worker process
-    is handy for debugging in cases where the user fails to check the Future object in a timely manner.
-    '''
-
-    # The loud-ness of this executor is different from the loud-ness of
-    # ``SpawnProcess``. In this executor, loudness refers to each submitted function.
-    # A process may stay on and execute many submitted functions.
-    # The loudness of SpawnProcess plays a role only when that process crashes.
-
-    def __init__(self, max_workers=None, **kwargs):
-        assert 'mp_context' not in kwargs
-        super().__init__(max_workers=max_workers, mp_context=MP_SPAWN_CTX, **kwargs)
-
-    def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
-        if loud_exception:
-            return super().submit(_loud_process_function, fn, *args, **kwargs)
-        return super().submit(fn, *args, **kwargs)
-
-
-ProcessPoolExecutor = SpawnProcessPoolExecutor
-
-
 class Manager(multiprocessing.managers.SyncManager):
 
     """A "server process" provides a server running in one process,
@@ -592,58 +540,3 @@ class Manager(multiprocessing.managers.SyncManager):
             )
         super().register(typeid, callable_, **kwargs)
 
-
-
-
-
-
-_global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictionary()
-_global_process_pools_lock: threading.Lock = threading.Lock()
-
-
-def get_shared_process_pool(
-    name: str = "default", max_workers: int = None
-) -> ProcessPoolExecutor:
-    """
-    Get a globally shared "process pool", that is,
-    `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
-
-    Analogous to :func:`get_shared_thread_pool`.
-    """
-    with _global_process_pools_lock:
-        executor = _global_process_pools_.get(name)
-        # If the named pool exists, it is returned; the input `max_workers` is ignored.
-        if executor is None or executor._processes is None:
-            # `executor._processes` is None if user inadvertently called `shutdown` on the executor.
-            if name == "default":
-                if max_workers is not None:
-                    warnings.warn(
-                        f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
-                    )
-                    max_workers = None
-            else:
-                if max_workers is not None:
-                    assert 1 <= (os.cpu_count() or 1) * 2
-            executor = ProcessPoolExecutor(max_workers)
-            _global_process_pools_[name] = executor
-    return executor
-
-
-if hasattr(os, 'register_at_fork'):  # not available on Windows
-
-    def _clear_global_state():
-        box = _global_process_pools_
-        for name in list(box.keys()):
-            pool = box.get(name)
-            if pool is not None:
-                # TODO: if `pool` has locks, are there problems?
-                pool.shutdown(wait=False)
-            box.pop(name, None)
-        global _global_process_pools_lock
-        try:
-            _global_process_pools_lock.release()
-        except RuntimeError:
-            pass
-        _global_process_pools_lock = threading.Lock()
-
-    os.register_at_fork(after_in_child=_clear_global_state)

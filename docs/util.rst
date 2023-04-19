@@ -23,12 +23,12 @@ Utilities
 
 .. autoclass:: mpservice.threading.Thread
 
-.. autoclass:: mpservice.multiprocessing.ProcessPoolExecutor
+.. autoclass:: mpservice.concurrent_futures.ProcessPoolExecutor
 
 .. this causes warning in build autoclass:: mpservice.util.ThreadPoolExecutor
 
-.. autofunction:: mpservice.threading.get_shared_thread_pool
+.. autofunction:: mpservice.concurrent_futures.get_shared_thread_pool
 
-.. autofunction:: mpservice.multiprocessing.get_shared_process_pool
+.. autofunction:: mpservice.concurrent_futures.get_shared_process_pool
 
 
