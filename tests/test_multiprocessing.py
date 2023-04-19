@@ -28,7 +28,7 @@ def delay_double(x, delay=2):
     raise SystemExit()
 
 
-def _test_thread_process(cls):
+def _test_thread_process(cls, TimeoutError):
     # No exception
     t = cls(target=delay_double, args=(3,))
     t.start()
@@ -82,11 +82,13 @@ def _test_thread_process(cls):
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
-    _test_thread_process(Thread)
+    from mpservice.threading import TimeoutError
+    _test_thread_process(Thread, TimeoutError)
 
 
 def test_process():
-    _test_thread_process(Process)
+    from mpservice.multiprocessing import TimeoutError
+    _test_thread_process(Process, TimeoutError)
 
 
 def goo(x, q):

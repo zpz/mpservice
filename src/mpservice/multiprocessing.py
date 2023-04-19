@@ -39,9 +39,18 @@ import warnings
 from typing import Callable, Optional
 
 from ._remote_exception import (
-    RemoteException,
+    RemoteException, is_remote_exception, RemoteTraceback, get_remote_traceback,
 )
 from .threading import Thread
+
+
+_ = is_remote_exception
+_ = RemoteTraceback
+_ = get_remote_traceback
+
+
+class TimeoutError(Exception):
+    pass
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):

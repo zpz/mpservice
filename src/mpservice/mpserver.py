@@ -47,9 +47,8 @@ from .multiprocessing import (
 )
 from .threading import Thread
 
-# This modules uses the 'spawn' method to create processes.
 
-# User should import the `TimeoutError` from this module for exception handling purposes.
+# This modules uses the 'spawn' method to create processes.
 
 # Note on the use of RemoteException:
 # The motivation of RemoteException is to wrap an Exception object to go through
@@ -68,6 +67,9 @@ logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 
+
+class TimeoutError(Exception):
+    pass
 
 class ServerBacklogFull(RuntimeError):
     pass

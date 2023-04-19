@@ -9,6 +9,10 @@ import threading
 #   20000 took 1 sec.
 
 
+class TimeoutError(Exception):
+    pass
+
+
 MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
 """
 This default is suitable for I/O bound operations.

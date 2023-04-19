@@ -6,6 +6,15 @@ import subprocess
 
 # The following imports are provided for backcompat, and will be removed at a later time.
 # Please import from the corresponding modules.
+from .multiprocessing import (
+    SpawnProcess, Process, MP_SPAWN_CTX,
+    is_remote_exception, get_remote_traceback, RemoteException, RemoteTraceback,
+)
+from .threading import MAX_THREADS, Thread
+from .concurrent_futures import (
+    ThreadPoolExecutor, ProcessPoolExecutor, SpawnProcessPoolExecutor,
+    get_shared_process_pool, get_shared_thread_pool,
+)
 
 
 def get_docker_host_ip():
