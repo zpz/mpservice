@@ -83,11 +83,13 @@ def _test_thread_process(cls, TimeoutError):
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
     from mpservice.threading import TimeoutError
+
     _test_thread_process(Thread, TimeoutError)
 
 
 def test_process():
     from mpservice.multiprocessing import TimeoutError
+
     _test_thread_process(Process, TimeoutError)
 
 

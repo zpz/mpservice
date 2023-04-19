@@ -47,7 +47,6 @@ from .multiprocessing import (
 )
 from .threading import Thread
 
-
 # This modules uses the 'spawn' method to create processes.
 
 # Note on the use of RemoteException:
@@ -70,6 +69,7 @@ NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 
 class TimeoutError(Exception):
     pass
+
 
 class ServerBacklogFull(RuntimeError):
     pass

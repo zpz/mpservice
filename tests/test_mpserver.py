@@ -14,8 +14,8 @@ from mpservice.mpserver import (
     SwitchServlet,
     ThreadServlet,
     ThreadWorker,
-    make_threadworker,
     TimeoutError,
+    make_threadworker,
 )
 from mpservice.multiprocessing import RemoteException, is_remote_exception
 from mpservice.streamer import Stream

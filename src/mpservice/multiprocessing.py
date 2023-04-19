@@ -39,10 +39,12 @@ import warnings
 from typing import Callable, Optional
 
 from ._remote_exception import (
-    RemoteException, is_remote_exception, RemoteTraceback, get_remote_traceback,
+    RemoteException,
+    RemoteTraceback,
+    get_remote_traceback,
+    is_remote_exception,
 )
 from .threading import Thread
-
 
 _ = is_remote_exception
 _ = RemoteTraceback
