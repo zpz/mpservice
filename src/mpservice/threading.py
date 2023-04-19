@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import threading
 
-
 # Overhead of Thread:
 # sequentially creating/running/joining
 # threads with a trivial worker function:
@@ -93,4 +92,3 @@ class Thread(threading.Thread):
         if self.is_alive():
             raise TimeoutError
         return self._exception_
-

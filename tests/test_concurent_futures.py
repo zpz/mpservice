@@ -1,10 +1,8 @@
 import logging
-from time import sleep
 
 from mpservice.concurrent_futures import (
     ProcessPoolExecutor,
 )
-
 
 logger = logging.getLogger(__name__)
 

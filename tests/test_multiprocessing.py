@@ -14,7 +14,6 @@ from mpservice.multiprocessing import (
 )
 from mpservice.threading import Thread
 
-
 logger = logging.getLogger(__name__)
 
 

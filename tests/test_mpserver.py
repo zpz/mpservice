@@ -16,8 +16,8 @@ from mpservice.mpserver import (
     ThreadWorker,
     make_threadworker,
 )
-from mpservice.streamer import Stream
 from mpservice.multiprocessing import RemoteException, is_remote_exception
+from mpservice.streamer import Stream
 
 
 class Double(ProcessWorker):

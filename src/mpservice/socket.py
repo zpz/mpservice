@@ -15,11 +15,10 @@ from time import perf_counter
 from typing import Any, Awaitable, Callable, Optional
 
 from ._queues import SingleLane
+from .concurrent_futures import ThreadPoolExecutor
 from .multiprocessing import RemoteException
 from .threading import MAX_THREADS
-from .concurrent_futures import ThreadPoolExecutor
-from .util import is_async, get_docker_host_ip
-
+from .util import get_docker_host_ip, is_async
 
 logger = logging.getLogger(__name__)
 

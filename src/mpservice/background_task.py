@@ -12,8 +12,8 @@ from collections.abc import Hashable
 from datetime import datetime
 from typing import Optional
 
-from .threading import MAX_THREADS
 from .concurrent_futures import ThreadPoolExecutor
+from .threading import MAX_THREADS
 
 
 class Task:

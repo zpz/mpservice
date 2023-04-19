@@ -38,14 +38,14 @@ from typing import Any, Callable, Literal, Optional
 import psutil
 
 from ._queues import SingleLane
+from ._remote_exception import EnsembleError
+from .concurrent_futures import ThreadPoolExecutor
 from .multiprocessing import (
     MP_SPAWN_CTX,
     RemoteException,
     SpawnProcess,
 )
 from .threading import Thread
-from .concurrent_futures import ThreadPoolExecutor
-from ._remote_exception import EnsembleError
 
 # This modules uses the 'spawn' method to create processes.
 

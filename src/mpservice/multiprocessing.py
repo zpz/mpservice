@@ -31,14 +31,16 @@ import logging.handlers
 import multiprocessing
 import multiprocessing.connection
 import multiprocessing.context
+import multiprocessing.managers
 import multiprocessing.queues
 import multiprocessing.util
-import multiprocessing.managers
 import threading
 import warnings
-from typing import Optional, Callable
+from typing import Callable, Optional
 
-from ._remote_exception import is_remote_exception, get_remote_traceback, RemoteTraceback, RemoteException
+from ._remote_exception import (
+    RemoteException,
+)
 from .threading import Thread
 
 
@@ -539,4 +541,3 @@ class Manager(multiprocessing.managers.SyncManager):
                 '"%s" was registered; the existing registry is overwritten.' % typeid
             )
         super().register(typeid, callable_, **kwargs)
-

@@ -1,13 +1,12 @@
-
 from __future__ import annotations
 
-import os
-import warnings
-import threading
-import multiprocessing
-import traceback
-import sys
 import concurrent.futures
+import multiprocessing
+import os
+import sys
+import threading
+import traceback
+import warnings
 import weakref
 
 from .multiprocessing import MP_SPAWN_CTX
@@ -40,8 +39,6 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         if loud_exception:
             return super().submit(_loud_thread_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
-
-
 
 
 def _loud_process_function(fn, *args, **kwargs):
@@ -89,8 +86,6 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
 
 
 ProcessPoolExecutor = SpawnProcessPoolExecutor
-
-
 
 
 # References
@@ -152,7 +147,6 @@ def get_shared_thread_pool(
     return executor
 
 
-
 def get_shared_process_pool(
     name: str = "default", max_workers: int = None
 ) -> ProcessPoolExecutor:
@@ -207,4 +201,3 @@ if hasattr(os, 'register_at_fork'):  # not available on Windows
         _global_process_pools_lock = threading.Lock()
 
     os.register_at_fork(after_in_child=_clear_global_state)
-
