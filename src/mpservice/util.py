@@ -1,19 +1,14 @@
-from __future__ import annotations
+import warnings
 
-import functools
-import inspect
-import subprocess
+# The following imports are provided for back compat, and will be removed at a later time.
+# Please import from the corresponding modules.
 
-from .concurrent_futures import (
+from .concurrent.futures import (
     ProcessPoolExecutor,
-    SpawnProcessPoolExecutor,
     ThreadPoolExecutor,
     get_shared_process_pool,
     get_shared_thread_pool,
 )
-
-# The following imports are provided for backcompat, and will be removed at a later time.
-# Please import from the corresponding modules.
 from .multiprocessing import (
     MP_SPAWN_CTX,
     Process,
@@ -24,36 +19,14 @@ from .multiprocessing import (
     is_remote_exception,
 )
 from .threading import MAX_THREADS, Thread
+from .socket import get_docker_host_ip, is_async
 
+SpawnProcessPoolExecutor = ProcessPoolExecutor
 
-def get_docker_host_ip():
-    """
-    From within a Docker container, this function finds the IP address
-    of the host machine.
-    """
-    # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
-    # another idea:
-    # ip -4 route list match 0/0 | cut -d' ' -f3
-    #
-    # Usually the result is '172.17.0.1'
-    #
-    # The command `ip` is provided by the Linux package `iproute2`.
+warnings.warn(f"``mpservice.util`` is deprecated in 0.12.4 and will be removed after 0.13.0.", warnings.DeprecationWarning, stacklevel=2)
 
-    z = subprocess.check_output(["ip", "-4", "route", "list", "match", "0/0"])
-    z = z.decode()[len("default via ") :]
-    return z[: z.find(" ")]
-
-
-def is_async(func):
-    while isinstance(func, functools.partial):
-        func = func.func
-    return inspect.iscoroutinefunction(func) or (
-        not inspect.isfunction(func)
-        and hasattr(func, "__call__")
-        and inspect.iscoroutinefunction(func.__call__)
-    )
-
-
+# This function is no longer used in this package but can be useful.
+# It will be removed eventually.
 def full_class_name(cls):
     if not isinstance(cls, type):
         cls = cls.__class__

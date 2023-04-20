@@ -1,8 +1,7 @@
 import logging
 
-from mpservice.concurrent_futures import (
-    ProcessPoolExecutor,
-)
+from mpservice.concurrent.futures import ProcessPoolExecutor
+
 
 logger = logging.getLogger(__name__)
 

@@ -9,27 +9,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Refactor
 
-Refactored ``util`` to split it into modules ``mpservice.multiprocessing``,
-``mpservice.threading``, ``mpservice.concurrent_futures`` to have some imports
-correspond to those in the standard libs.
+- Refactored ``util`` to split it into modules ``mpservice.multiprocessing``,
+  ``mpservice.threading``, ``mpservice.concurrent.futures`` to have some imports
+  correspond to those in the standard libs. ``util`` is deprecated.
 
-``server_process`` was merged into ``mpservice.multiprocessing``.
+- ``server_process`` was merged into ``mpservice.multiprocessing``.
 
 ### Removed
 
 - ``ProcessServlet`` and ``ThreadServlet`` lost parameter ``name`` to ``__init__``.
 - class ``ProcessLogger``.
 
+### Changed
+
+- The modules ``mpserver``, ``multiprocessing``, ``threading`` each defines its own ``TimeoutError``
+  exception class.
+
 ## Added
 
 - ``mpserver.Worker`` got new parameter ``worker_index`` to ``__init__``, which is
   automatically provided by the parent ``ProcessServlet`` or ``ThreadServlet``.
   Subclasses of ``Worker`` should be sure to accept this parameter in their ``__init__``.
-
-
+- function ``multiprocessing.get_context``.
+- ``multiprocessing.Manager`` gets two init parameters ``process_name`` and ``process_cpu``.
+- ``concurrent.futures.ProcessPoolExecutor`` gets parameter ``mp_context`` to be compatible
+  with the standard lib, but with a different default that is ``multiprocessing.MP_SPAWN_CTX``.
+  
 ## Enhanced
 
-- ``util.SpawnProcess`` finetune on ``join`` and finalization cleanup.
+- ``multiprocessing.SpawnProcess`` finetune on ``join`` and finalization cleanup.
 
 
 ## [0.12.3] - 2023-04-14

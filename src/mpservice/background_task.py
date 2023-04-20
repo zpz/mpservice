@@ -12,7 +12,7 @@ from collections.abc import Hashable
 from datetime import datetime
 from typing import Optional
 
-from .concurrent_futures import ThreadPoolExecutor
+from .concurrent.futures import ThreadPoolExecutor
 from .threading import MAX_THREADS
 
 

@@ -59,7 +59,7 @@ from typing import (
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
-from .concurrent_futures import (
+from .concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
     get_shared_process_pool,

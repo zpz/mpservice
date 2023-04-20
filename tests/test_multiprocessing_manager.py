@@ -4,7 +4,7 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import Manager, SpawnProcess
+from mpservice.multiprocessing import Manager, SpawnProcess, CpuAffinity
 from mpservice.threading import Thread
 
 
@@ -99,7 +99,10 @@ Manager.register(Tripler)
 
 
 def test_manager():
-    with Manager() as manager:
+    with Manager(process_cpu=1, process_name='my_manager_process') as manager:
+        assert manager._process.name == 'my_manager_process'
+        assert CpuAffinity.get(pid=manager._process.pid) == [1]
+
         doubler = manager.Doubler('d')
         print(doubler.get_mp())
         assert doubler.get_name() == 'd'

@@ -2,7 +2,10 @@
 Utilities
 =========
 
-.. automodule:: mpservice.util
+Multiprocessing
+===============
+
+.. automodule:: mpservice.multiprocessing
     :no-members:
     :no-special-members:
     :no-undoc-members:
@@ -17,18 +20,34 @@ Utilities
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
+.. autofunction:: mpservice.multiprocessing.get_context
+
 .. autoclass:: mpservice.multiprocessing.SpawnProcess
 
 .. autoclass:: mpservice.multiprocessing.Process
 
+
+Server process
+==============
+
+.. autoclass:: mpservice.multiprocessing.Manager
+
+
+Threading
+=========
+
 .. autoclass:: mpservice.threading.Thread
 
-.. autoclass:: mpservice.concurrent_futures.ProcessPoolExecutor
 
-.. this causes warning in build autoclass:: mpservice.util.ThreadPoolExecutor
+Concurrent Futures
+==================
 
-.. autofunction:: mpservice.concurrent_futures.get_shared_thread_pool
+.. autoclass:: mpservice.concurrent.futures.ProcessPoolExecutor
 
-.. autofunction:: mpservice.concurrent_futures.get_shared_process_pool
+.. autoclass:: mpservice.concurrent.futures.ThreadPoolExecutor
+
+.. autofunction:: mpservice.concurrent.futures.get_shared_thread_pool
+
+.. autofunction:: mpservice.concurrent.futures.get_shared_process_pool
 
 

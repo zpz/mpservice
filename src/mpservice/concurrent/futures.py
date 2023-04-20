@@ -9,7 +9,7 @@ import traceback
 import warnings
 import weakref
 
-from .multiprocessing import MP_SPAWN_CTX
+from mpservice.multiprocessing import MP_SPAWN_CTX
 
 
 def _loud_thread_function(fn, *args, **kwargs):
@@ -53,12 +53,11 @@ def _loud_process_function(fn, *args, **kwargs):
         raise
 
 
-class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
+class ProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     '''
     This class is a drop-in replacement of the standard
     `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
-    It uses a "spawn" context and the process class :class:`SpawnProcess`, hence getting
-    the benefits of SpawnProcess.
+    By default, it uses a "spawn" context and the process class :class:`SpawnProcess`.
 
     In addition, the parameter ``loud_exception`` controls whether to print out exception
     info if the submitted worker task fails with an exception.
@@ -75,17 +74,15 @@ class SpawnProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     # A process may stay on and execute many submitted functions.
     # The loudness of SpawnProcess plays a role only when that process crashes.
 
-    def __init__(self, max_workers=None, **kwargs):
-        assert 'mp_context' not in kwargs
-        super().__init__(max_workers=max_workers, mp_context=MP_SPAWN_CTX, **kwargs)
+    def __init__(self, max_workers=None, mp_context=None, **kwargs):
+        if mp_context is None:
+            mp_context = MP_SPAWN_CTX
+        super().__init__(max_workers=max_workers, mp_context=mp_context, **kwargs)
 
     def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
         if loud_exception:
             return super().submit(_loud_process_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
-
-
-ProcessPoolExecutor = SpawnProcessPoolExecutor
 
 
 # References
