@@ -2,7 +2,6 @@ import warnings
 
 # The following imports are provided for back compat, and will be removed at a later time.
 # Please import from the corresponding modules.
-
 from .concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
@@ -18,12 +17,16 @@ from .multiprocessing import (
     get_remote_traceback,
     is_remote_exception,
 )
-from .threading import MAX_THREADS, Thread
 from .socket import get_docker_host_ip, is_async
+from .threading import MAX_THREADS, Thread
 
 SpawnProcessPoolExecutor = ProcessPoolExecutor
 
-warnings.warn(f"``mpservice.util`` is deprecated in 0.12.4 and will be removed after 0.13.0.", warnings.DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "``mpservice.util`` is deprecated in 0.12.4 and will be removed after 0.13.0.",
+    warnings.DeprecationWarning,
+    stacklevel=2,
+)
 
 # This function is no longer used in this package but can be useful.
 # It will be removed eventually.

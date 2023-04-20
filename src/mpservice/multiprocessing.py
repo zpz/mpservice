@@ -39,6 +39,7 @@ import warnings
 from typing import Callable, Optional
 
 import psutil
+
 from ._remote_exception import (
     RemoteException,
     RemoteTraceback,
@@ -555,7 +556,12 @@ class Manager(multiprocessing.managers.SyncManager):
             )
         super().register(typeid, callable_, **kwargs)
 
-    def __init__(self, *, process_cpu: int | list[int] | None = None, process_name: str | None = None):
+    def __init__(
+        self,
+        *,
+        process_cpu: int | list[int] | None = None,
+        process_name: str | None = None,
+    ):
         super().__init__(ctx=MP_SPAWN_CTX)
         self._process_cpu = process_cpu
         self._process_name = process_name
@@ -628,4 +634,3 @@ class CpuAffinity:
     def get(self, *, pid=None) -> list[int]:
         """Return the current CPU affinity."""
         return psutil.Process(pid).cpu_affinity()
-

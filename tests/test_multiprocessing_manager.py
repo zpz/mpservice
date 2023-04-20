@@ -4,7 +4,7 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import Manager, SpawnProcess, CpuAffinity
+from mpservice.multiprocessing import CpuAffinity, Manager, SpawnProcess
 from mpservice.threading import Thread
 
 

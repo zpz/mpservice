@@ -42,9 +42,9 @@ from ._remote_exception import EnsembleError
 from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing import (
     MP_SPAWN_CTX,
+    CpuAffinity,
     RemoteException,
     SpawnProcess,
-    CpuAffinity,
 )
 from .threading import Thread
 
@@ -744,15 +744,15 @@ class ProcessServlet(Servlet):
             sname = f"{self._worker_cls.__name__}-process-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
             p = SpawnProcess(
-                    target=self._worker_cls.run,
-                    name=sname,
-                    kwargs={
-                        "q_in": q_in,
-                        "q_out": q_out,
-                        "worker_index": worker_index,
-                        **self._init_kwargs,
-                    },
-                )
+                target=self._worker_cls.run,
+                name=sname,
+                kwargs={
+                    "q_in": q_in,
+                    "q_out": q_out,
+                    "worker_index": worker_index,
+                    **self._init_kwargs,
+                },
+            )
             p.start()
             cpu.set(pid=p.pid)
             self._workers.append(p)
