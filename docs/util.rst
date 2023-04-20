@@ -2,35 +2,52 @@
 Utilities
 =========
 
-.. automodule:: mpservice.util
+Multiprocessing
+===============
+
+.. automodule:: mpservice.multiprocessing
     :no-members:
     :no-special-members:
     :no-undoc-members:
 
-.. autoexception:: mpservice.util.TimeoutError
+.. autoclass:: mpservice.multiprocessing.RemoteException
 
-.. autoclass:: mpservice.util.RemoteException
+.. autoexception:: mpservice.multiprocessing.RemoteTraceback
 
-.. autoexception:: mpservice.util.RemoteTraceback
+.. autofunction:: mpservice.multiprocessing.is_remote_exception
 
-.. autofunction:: mpservice.util.is_remote_exception
+.. autofunction:: mpservice.multiprocessing.get_remote_traceback
 
-.. autofunction:: mpservice.util.get_remote_traceback
+.. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
-.. autodata:: mpservice.util.MP_SPAWN_CTX
+.. autofunction:: mpservice.multiprocessing.get_context
 
-.. autoclass:: mpservice.util.SpawnProcess
+.. autoclass:: mpservice.multiprocessing.SpawnProcess
 
-.. autoclass:: mpservice.util.Process
+.. autoclass:: mpservice.multiprocessing.Process
 
-.. autoclass:: mpservice.util.Thread
 
-.. autoclass:: mpservice.util.ProcessPoolExecutor
+Server process
+==============
 
-.. this causes warning in build autoclass:: mpservice.util.ThreadPoolExecutor
+.. autoclass:: mpservice.multiprocessing.Manager
 
-.. autofunction:: mpservice.util.get_shared_thread_pool
 
-.. autofunction:: mpservice.util.get_shared_process_pool
+Threading
+=========
+
+.. autoclass:: mpservice.threading.Thread
+
+
+Concurrent Futures
+==================
+
+.. autoclass:: mpservice.concurrent.futures.ProcessPoolExecutor
+
+.. autoclass:: mpservice.concurrent.futures.ThreadPoolExecutor
+
+.. autofunction:: mpservice.concurrent.futures.get_shared_thread_pool
+
+.. autofunction:: mpservice.concurrent.futures.get_shared_process_pool
 
 

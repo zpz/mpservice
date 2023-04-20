@@ -1,11 +1,10 @@
 import logging
 import multiprocessing as mp
 
-from mpservice.util import ProcessLogger
+from mpservice.multiprocessing import Process
 
 
-def worker1(pl):
-    pl.start()
+def worker1():
     logger = logging.getLogger('worker1')
     logger.warning('worker1 warning')
     logger.info('worker1 info')
@@ -20,12 +19,8 @@ def worker2():
 
 
 def test_logging():
-    ctx = mp.get_context('spawn')
-    pl = ProcessLogger(ctx=ctx)
-    pl.start()
-    task1 = ctx.Process(target=worker1, args=(pl,))
-
-    task2 = ctx.Process(target=worker2)
+    task1 = Process(target=worker1)
+    task2 = mp.get_context('spawn').Process(target=worker2)  # fork
     task1.start()
     task2.start()
     task1.join()
@@ -35,3 +30,13 @@ def test_logging():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     test_logging()
+
+# Printout is like this:
+#
+# worker2 warning
+# WARNING:worker1:worker1 warning
+# INFO:worker1:worker1 info
+# DEBUG:worker1:worker1 debug
+#
+# That is, in the standard spawned process, logging is not configured, hence
+# the printout is governed by the default in terms of both format and level.

@@ -1,7 +1,7 @@
 import multiprocessing as mp
 
 from mpservice import util
-from mpservice.util import get_shared_thread_pool
+from mpservice.threading import get_shared_thread_pool
 
 
 def worker():

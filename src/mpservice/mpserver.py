@@ -38,19 +38,17 @@ from typing import Any, Callable, Literal, Optional
 import psutil
 
 from ._queues import SingleLane
-from .util import (
+from ._remote_exception import EnsembleError
+from .concurrent.futures import ThreadPoolExecutor
+from .multiprocessing import (
     MP_SPAWN_CTX,
-    EnsembleError,
+    CpuAffinity,
     RemoteException,
     SpawnProcess,
-    Thread,
-    ThreadPoolExecutor,
-    TimeoutError,
 )
+from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
-
-# User should import the `TimeoutError` from this module for exception handling purposes.
 
 # Note on the use of RemoteException:
 # The motivation of RemoteException is to wrap an Exception object to go through
@@ -68,6 +66,10 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
+
+
+class TimeoutError(Exception):
+    pass
 
 
 class ServerBacklogFull(RuntimeError):
@@ -129,6 +131,9 @@ class Worker(ABC):
 
     Typically a subclass needs to enhance :meth:`__init__` and implement :meth:`call`,
     and leave the other methods intact.
+
+    A ``Worker`` object is not created and used by itself. It is always started by a
+    :class:`ProcessServlet` or a :class:`ThreadServlet`.
     """
 
     @classmethod
@@ -175,7 +180,7 @@ class Worker(ABC):
     def __init__(
         self,
         *,
-        worker_index: int = 0,
+        worker_index: int,
         batch_size: Optional[int] = None,
         batch_wait_time: Optional[float] = None,
         batch_size_log_cadence: int = 1_000_000,
@@ -542,83 +547,17 @@ class Worker(ABC):
         return out
 
 
-class CpuAffinity:
-    """
-    ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
-
-    This operation is known as "pinning a process to certain CPUs"
-    or "setting the CPU/processor affinity of a process".
-
-    Setting and getting CPU affinity is done via |psutil.cpu_affinity|_.
-
-    .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
-    .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
-    .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
-    """
-
-    def __init__(self, target: Optional[int | Sequence[int]] = None, /):
-        """
-        Parameters
-        ----------
-        target
-            The CPUs to pin the current process to.
-
-            If ``None``, no pinning is done. This object is used only to query the current affinity.
-            (I believe all process starts in an un-pinned status.)
-
-            If an int, it is the zero-based index of the CPU. Valid values are 0, 1,...,
-            the number of CPUs minus 1. If a list, the elements are CPU indices.
-            Duplicate values will be removed. Invalid values will raise ``ValueError``.
-
-            If ``[]``, pin to all eligible CPUs.
-        """
-        if target is not None:
-            if isinstance(target, int):
-                target = [target]
-            else:
-                assert all(isinstance(v, int) for v in target)
-                # `psutil` would truncate floats but I don't like that.
-        self.target = target
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.target})"
-
-    def __str__(self):
-        return self.__repr__()
-
-    def set(self) -> None:
-        """
-        Set CPU affinity to the value passed into :meth:`__init__`.
-        If that value was ``None``, do nothing.
-        """
-        if self.target is not None:
-            psutil.Process().cpu_affinity(self.target)
-
-    def get(self) -> list[int]:
-        """Return the current CPU affinity."""
-        return psutil.Process().cpu_affinity()
-
-
 class ProcessWorker(Worker):
-    @classmethod
-    def run(cls, *, cpus: CpuAffinity, **kwargs):
-        """
-        This classmethod runs in the worker process to construct
-        the worker object and start its processing loop.
+    """
+    This classmethod runs in the worker process to construct
+    the worker object and start its processing loop.
 
-        This function is the parameter ``target`` to :class:`~mpservice.util.SpawnProcess`.
-        As such, elements in ``**kwargs`` go through pickling,
-        hence they should consist
-        mainly of small, Python builtin types such as string, number, small dict's, etc.
-        Be careful about passing custom class objects in ``**kwargs``.
-
-        Parameters
-        ----------
-        cpus
-            Specify which CPUs the current process should run on.
-        """
-        cpus.set()
-        super().run(**kwargs)
+    This function is the parameter ``target`` to :class:`~mpservice.multiprocessing.SpawnProcess`.
+    As such, elements in ``**kwargs`` go through pickling,
+    hence they should consist
+    mainly of small, Python builtin types such as string, number, small dict's, etc.
+    Be careful about passing custom class objects in ``**kwargs``.
+    """
 
 
 class ThreadWorker(Worker):
@@ -804,20 +743,19 @@ class ProcessServlet(Servlet):
             # Each process is pinned to the specified cpu core.
             sname = f"{self._worker_cls.__name__}-process-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
-            self._workers.append(
-                SpawnProcess(
-                    target=self._worker_cls.run,
-                    name=sname,
-                    kwargs={
-                        "q_in": q_in,
-                        "q_out": q_out,
-                        "cpus": cpu,
-                        "worker_index": worker_index,
-                        **self._init_kwargs,
-                    },
-                )
+            p = SpawnProcess(
+                target=self._worker_cls.run,
+                name=sname,
+                kwargs={
+                    "q_in": q_in,
+                    "q_out": q_out,
+                    "worker_index": worker_index,
+                    **self._init_kwargs,
+                },
             )
-            self._workers[-1].start()
+            p.start()
+            cpu.set(pid=p.pid)
+            self._workers.append(p)
             name = q_out.get()
             logger.debug("   ... worker <%s> is ready", name)
 

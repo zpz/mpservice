@@ -59,17 +59,18 @@ from typing import (
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
-from .util import (
-    MAX_THREADS,
-    MP_SPAWN_CTX,
+from .concurrent.futures import (
     ProcessPoolExecutor,
-    Thread,
     ThreadPoolExecutor,
-    get_remote_traceback,
     get_shared_process_pool,
     get_shared_thread_pool,
+)
+from .multiprocessing import (
+    MP_SPAWN_CTX,
+    get_remote_traceback,
     is_remote_exception,
 )
+from .threading import MAX_THREADS, Thread
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"

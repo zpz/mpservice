@@ -25,6 +25,7 @@ this role assignment is take care of internally.
 To prevent glitches, make sure the two files are non-existent before server and client
 are created.
 """
+from __future__ import annotations
 
 import multiprocessing.connection
 import os

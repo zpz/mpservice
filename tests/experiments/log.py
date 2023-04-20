@@ -1,7 +1,7 @@
 # log.py
 import logging
 
-from mpservice.util import SpawnProcess
+from mpservice.multiprocessing import SpawnProcess
 
 
 def worker():

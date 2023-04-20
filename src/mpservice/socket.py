@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import functools
+import inspect
 import logging
 import os
 import queue
 import stat
+import subprocess
 import threading
 import time
 from collections.abc import Iterable, Sequence
@@ -15,15 +18,41 @@ from time import perf_counter
 from typing import Any, Awaitable, Callable, Optional
 
 from ._queues import SingleLane
-from .util import (
-    MAX_THREADS,
-    RemoteException,
-    ThreadPoolExecutor,
-    get_docker_host_ip,
-    is_async,
-)
+from .concurrent.futures import ThreadPoolExecutor
+from .multiprocessing import RemoteException
+from .threading import MAX_THREADS
 
 logger = logging.getLogger(__name__)
+
+
+def is_async(func):
+    while isinstance(func, functools.partial):
+        func = func.func
+    return inspect.iscoroutinefunction(func) or (
+        not inspect.isfunction(func)
+        and hasattr(func, "__call__")
+        and inspect.iscoroutinefunction(func.__call__)
+    )
+
+
+def get_docker_host_ip():
+    """
+    From within a Docker container, this function finds the IP address
+    of the host machine.
+    """
+    # INTERNAL_HOST_IP=$(ip route show default | awk '/default/ {print $3})')
+    # another idea:
+    # ip -4 route list match 0/0 | cut -d' ' -f3
+    #
+    # Usually the result is '172.17.0.1'
+    #
+    # The command `ip` is provided by the Linux package `iproute2`.
+
+    z = subprocess.check_output(
+        ["ip", "-4", "route", "list", "match", "0/0"]
+    )  # noqa: S603, S607
+    z = z.decode()[len("default via ") :]
+    return z[: z.find(" ")]
 
 
 def put_in_queue(q, x, stop_event, timeout=0.1):

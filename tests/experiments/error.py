@@ -1,5 +1,5 @@
 # error.py
-from mpservice.util import MP_SPAWN_CTX
+from mpservice.multiprocessing import MP_SPAWN_CTX
 
 
 def increment(qin, qout):
