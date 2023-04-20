@@ -8,5 +8,7 @@ def test_docs():
     print('\n... running doctest ...')
     subprocess.run(['make', 'doctest'], cwd=p_docs, check=True)  # noqa: S603, S607
     print('\n... building documentation ...')
-    subprocess.run(['make', 'html', 'SPHINXOPTS=-W'], cwd=p_docs, check=True)  # noqa: S603, S607
+    subprocess.run(
+        ['make', 'html', 'SPHINXOPTS=-W'], cwd=p_docs, check=True
+    )  # noqa: S603, S607
     # If build fails, this will raise exception.
