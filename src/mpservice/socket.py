@@ -49,8 +49,8 @@ def get_docker_host_ip():
     # The command `ip` is provided by the Linux package `iproute2`.
 
     z = subprocess.check_output(
-        ["ip", "-4", "route", "list", "match", "0/0"]
-    )  # noqa: S603, S607
+        ["ip", "-4", "route", "list", "match", "0/0"]    # noqa: S603, S607
+    )
     z = z.decode()[len("default via ") :]
     return z[: z.find(" ")]
 
