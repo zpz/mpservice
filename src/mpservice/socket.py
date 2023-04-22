@@ -384,6 +384,7 @@ class SocketServer:
         async def _keep_receiving():
             # Infinite loop to handle requests on this connection
             # until the connection is closed by the client.
+            loop = asyncio.get_running_loop()
             while True:
                 try:
                     req_id, data = await read_record(reader, timeout=0.1)
@@ -395,7 +396,7 @@ class SocketServer:
                 path = data[0]
                 data = data[1]
                 if path == self._shutdown_path:
-                    t = asyncio.Future()
+                    t = loop.create_future()
                     await reqs.put((req_id, t))
                     self.to_shutdown = True
                     t.set_result(None)
