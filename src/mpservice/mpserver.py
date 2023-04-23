@@ -1569,7 +1569,7 @@ class Server:
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
 
-        # fut = asyncio.Future()
+        # fut = asyncio.get_running_loop().create_future()
         fut = concurrent.futures.Future()
         fut.data = {"t0": t0, "t1": perf_counter(), "timeout": timeout}
         uid = id(fut)
