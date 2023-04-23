@@ -39,6 +39,7 @@ from __future__ import annotations
 # that defines that class itself.
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
+import asyncio
 import functools
 import multiprocessing.util
 import os
@@ -54,6 +55,7 @@ from typing import (
     Literal,
     Optional,
     TypeVar,
+    Awaitable,
 )
 
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -644,6 +646,42 @@ class Stream(Iterable):
         )
         return self
 
+    def parmap_async(
+        self,
+        func: Callable[[T], Awaitable[TT]],
+        *,
+        num_workers: Optional[int] = None,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        parmapper_name: str = 'parmapperasync',
+        **kwargs,
+    ) -> Self:
+        '''
+        Similar to :meth:`parmap`, except that the worker function is async.
+
+        Parameters
+        ----------
+        num_workers
+            The max number of concurrent (i.e. ongoing at the same time) calls to ``func``.
+ 
+        Notes
+        -----
+        This method itself is **sync**, and its user API is the same as the other methods.
+        The fact that the worker function is async does not change how the streaming pipeline works
+        for the user.
+        '''
+        self.streamlets.append(
+            ParmapperAsync(
+            self.streamlets[-1],
+            func,
+            num_workers=num_workers,
+            return_x=return_x,
+            return_exceptions=return_exceptions,
+            parmapper_name=parmapper_name,
+            **kwargs,
+            )
+        )
+        
 
 class Mapper(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
@@ -915,6 +953,7 @@ class Parmapper(Iterable):
                     initializer=self._executor_initializer,
                     initargs=self._executor_init_args,
                 )
+                # TODO: what about the process names?
 
         self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
@@ -949,6 +988,7 @@ class Parmapper(Iterable):
     def _finalize(self):
         if not self._running:
             return
+        self._running = False
         self._stopped.set()
 
         while True:
@@ -966,8 +1006,6 @@ class Parmapper(Iterable):
                 except OSError:
                     pass
                 self._executor = None
-
-        self._running = False
 
     def __del__(self):
         self._finalize()
@@ -990,6 +1028,180 @@ class Parmapper(Iterable):
             except Exception as e:
                 if self._return_exceptions:
                     # TODO: think about when `e` is a "remote exception".
+                    try:
+                        if self._return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    except GeneratorExit:
+                        self._finalize()
+                        raise
+                else:
+                    self._finalize()
+                    raise
+            else:
+                try:
+                    if self._return_x:
+                        yield x, y
+                    else:
+                        yield y
+                except GeneratorExit:
+                    self._finalize()
+                    raise
+
+
+
+
+class ParmapperAsync(Iterable):
+    def __init__(
+        self,
+        instream: Iterable,
+        func: Callable[[T], Awaitable[TT]],
+        *,
+        num_workers: Optional[int] = None,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        parmapper_name='parmapperasync',
+        **kwargs,
+    ):
+        self._instream = instream
+        self._func = func
+        self._func_kwargs = kwargs
+        self._return_x = return_x
+        self._return_exceptions = return_exceptions
+        self._num_workers = num_workers or 256
+        self._finalize_func = None
+        self._name = parmapper_name
+        self._running = False
+        self._worker = None
+        self._stopped = None
+
+    def _start(self):
+        assert not self._running
+        self._outstream = queue.Queue(self._num_workers)
+        self._stopped = threading.Event()
+
+        self._worker = Thread(
+            target=self._run_worker,
+            name=f"{self._name}-thread",
+            # TODO: what if there are multiple such threads owned by multiple ParmapperAsync objects?
+            # How to use diff names for them?
+        )
+        self._worker.start()
+        self._running = True
+
+    def _run_worker(self):
+        async def enqueue(tasks):
+            func = self._func
+            kwargs = self._func_kwargs
+            instream = self._instream
+            loop = asyncio.get_running_loop()
+            try:
+                for x in instream:
+                    if self._stopped.is_set():
+                        await tasks.put(FINISHED)  # to avoid starving `_run_worker_dequeue`
+                        return
+                    t = loop.create_task(func(x, **kwargs))
+                    await tasks.put((x, t))
+                    # The size of the queue `tasks` regulates how many
+                    # concurrent calls to `func` there can be.
+            except Exception as e:
+                await tasks.put(STOPPED)
+                await tasks.put(e)
+                # raise
+                # Do not raise here. Otherwise it would print traceback,
+                # while the same would be printed again in ``__iter__``.
+            else:
+                await tasks.put(FINISHED)
+
+        async def dequeue(tasks):
+            outstream = self._outstream
+            return_exceptions = self._return_exceptions
+            while True:
+                v = await tasks.get()
+                if v == FINISHED:
+                    # This is placed by `enqueue`, hence
+                    # must be the last item in the queue.
+                    outstream.put(FINISHED)
+                    return
+                if v == STOPPED:
+                    # This is placed by `enqueue`, hence
+                    # must be the last item in the queue.
+                    outstream.put(STOPPED)
+                    e = await tasks.get()
+                    outstream.put(e)
+                    return
+                if self._stopped.is_set():
+                    break
+                x, t = v
+                try:
+                    y = await t
+                    outstream.put((x, y))
+                except Exception as e:
+                    outstream.put((x, e))
+                    if not return_exceptions:
+                        self._stopped.set()  # signal `enqueue` to stop
+                        break
+
+            # Stop has been requested.
+            # Get all Tasks out of the queue;
+            # cancel those that are not finished.
+            # Do not cancel and wait for cancellation to finish one by one.
+            # Instead, send cancel signal into all of them, then wait on them.
+            assert self._stopped.is_set()
+            cancelling = []
+            while True:
+                v = await tasks.get()
+                if v == FINISHED:
+                    break
+                x, t = v
+                if t.done():
+                    # Ignore the result; no need to put in ``outstream``.
+                    continue
+                t.cancel()
+                cancelling.append(t)
+            for t in cancelling:
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+            outstream.put(FINISHED)
+
+        async def main():
+            tasks = asyncio.Queue(self._num_workers - 2)
+            t1 = asyncio.create_task(enqueue(tasks))
+            t2 = asyncio.create_task(dequeue(tasks))
+            await t1
+            await t2
+
+        asyncio.run(main())
+
+    def _finalize(self):
+        if not self._running:
+            return
+        self._running = False
+        self._stopped.set()
+        self._worker.join()
+        self._worker = None
+
+    def __del__(self):
+        self._finalize()
+
+    def __iter__(self):
+        self._start()
+        outstream = self._outstream
+        while True:
+            z = outstream.get()
+            if z == FINISHED:
+                break
+            if z == STOPPED:
+                raise outstream.get()
+
+            x, y = z
+            if isinstance(y, Exception):
+                e = y
+                if self._return_exceptions:
                     try:
                         if self._return_x:
                             yield x, e

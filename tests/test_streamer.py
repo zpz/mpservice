@@ -1,6 +1,7 @@
+import asyncio
 import math
 import random
-from time import sleep
+from time import sleep, perf_counter
 
 import pytest
 from mpservice.streamer import Stream
@@ -501,3 +502,21 @@ def worker1(n):
 def test_parmap_nest():
     data = Stream([10, 20, 30]).parmap(worker1, executor='process', num_workers=3)
     assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]
+
+
+async def async_double(x):
+    await asyncio.sleep(random.uniform(0.5, 1))
+    return x + x
+
+
+def test_parmap_async():
+    data = range(1000)
+    stream = Stream(data)
+    stream.parmap_async(async_double)
+    t0 = perf_counter()
+    for x, y in zip(data, stream):
+        assert y == x * 2
+    t1 = perf_counter()
+    assert t1 - t0 < 10
+    # sequential processing would take 500+ sec
+
