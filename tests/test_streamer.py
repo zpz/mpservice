@@ -1,7 +1,7 @@
 import asyncio
 import math
 import random
-from time import sleep, perf_counter
+from time import perf_counter, sleep
 
 import pytest
 from mpservice.streamer import Stream
@@ -519,4 +519,3 @@ def test_parmap_async():
     t1 = perf_counter()
     assert t1 - t0 < 10
     # sequential processing would take 500+ sec
-

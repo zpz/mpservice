@@ -51,11 +51,11 @@ from collections.abc import Iterable, Sequence
 from random import random
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Literal,
     Optional,
     TypeVar,
-    Awaitable,
 )
 
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -663,7 +663,7 @@ class Stream(Iterable):
         ----------
         num_workers
             The max number of concurrent (i.e. ongoing at the same time) calls to ``func``.
- 
+
         Notes
         -----
         This method itself is **sync**, and its user API is the same as the other methods.
@@ -672,16 +672,16 @@ class Stream(Iterable):
         '''
         self.streamlets.append(
             ParmapperAsync(
-            self.streamlets[-1],
-            func,
-            num_workers=num_workers,
-            return_x=return_x,
-            return_exceptions=return_exceptions,
-            parmapper_name=parmapper_name,
-            **kwargs,
+                self.streamlets[-1],
+                func,
+                num_workers=num_workers,
+                return_x=return_x,
+                return_exceptions=return_exceptions,
+                parmapper_name=parmapper_name,
+                **kwargs,
             )
         )
-        
+
 
 class Mapper(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
@@ -1050,8 +1050,6 @@ class Parmapper(Iterable):
                     raise
 
 
-
-
 class ParmapperAsync(Iterable):
     def __init__(
         self,
@@ -1099,7 +1097,9 @@ class ParmapperAsync(Iterable):
             try:
                 for x in instream:
                     if self._stopped.is_set():
-                        await tasks.put(FINISHED)  # to avoid starving `_run_worker_dequeue`
+                        await tasks.put(
+                            FINISHED
+                        )  # to avoid starving `_run_worker_dequeue`
                         return
                     t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))
