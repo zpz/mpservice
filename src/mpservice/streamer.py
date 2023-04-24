@@ -958,14 +958,25 @@ class Parmapper(Iterable):
         self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
             target=self._run_worker,
-            args=(self._func, self._func_kwargs, self._tasks, self._executor,
-                  self._instream, self._stopped),
+            args=(
+                self._func,
+                self._func_kwargs,
+                self._tasks,
+                self._executor,
+                self._instream,
+                self._stopped,
+            ),
         )
         self._worker.start()
         self._finalizer = multiprocessing.util.Finalize(
             self,
             type(self)._do_finalize,
-            (self._tasks, self._worker, self._stopped, None if self._executor_is_shared else self._executor,),
+            (
+                self._tasks,
+                self._worker,
+                self._stopped,
+                None if self._executor_is_shared else self._executor,
+            ),
             exitpriority=10,
         )
 
@@ -1090,10 +1101,14 @@ class ParmapperAsync(Iterable):
             # TODO: what if there are multiple such threads owned by multiple ParmapperAsync objects?
             # How to use diff names for them?
             args=(
-                self._func, self._func_kwargs, self._num_workers,
-                self._instream, self._outstream, self._stopped,
+                self._func,
+                self._func_kwargs,
+                self._num_workers,
+                self._instream,
+                self._outstream,
+                self._stopped,
                 self._return_exceptions,
-            )
+            ),
         )
         self._worker.start()
         self._finalizer = multiprocessing.util.Finalize(
@@ -1104,7 +1119,9 @@ class ParmapperAsync(Iterable):
         )
 
     @classmethod
-    def _run_worker(cls, func, kwargs, num_workers, instream, outstream, stopped, return_exceptions):
+    def _run_worker(
+        cls, func, kwargs, num_workers, instream, outstream, stopped, return_exceptions
+    ):
         # In the following async functions, some sync operations like I/O on a ``queue.Queue``
         # could involve some waiting. To prevent them from blocking async task executions,
         # run them in a thread executor.
@@ -1117,7 +1134,9 @@ class ParmapperAsync(Iterable):
                 while True:
                     # Getting the next item from the `instream` could involve some waiting and sleeping,
                     # hence doing that in another thread.
-                    x = await loop.run_in_executor(thread_pool, next, instream_, FINISHED)
+                    x = await loop.run_in_executor(
+                        thread_pool, next, instream_, FINISHED
+                    )
                     # See https://stackoverflow.com/a/61774972
                     if x == FINISHED:
                         break

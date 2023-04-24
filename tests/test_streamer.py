@@ -529,7 +529,9 @@ def test_parmap_async():
         for x, y in zip(data, stream):
             assert y == x + 2
 
-    stream = Stream(data).parmap_async(async_plus_2, return_x=True, return_exceptions=True)
+    stream = Stream(data).parmap_async(
+        async_plus_2, return_x=True, return_exceptions=True
+    )
     for x, y in stream:
         if x == 'a':
             assert isinstance(y, TypeError)
