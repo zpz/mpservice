@@ -48,9 +48,13 @@ from ._remote_exception import (
 )
 from .threading import Thread
 
-_ = is_remote_exception
-_ = RemoteTraceback
-_ = get_remote_traceback
+__all__ = [
+    'RemoteException', 'RemoteTraceback', 'get_remote_traceback', 'is_remote_exception',
+    'TimeoutError',
+    'SpawnProcess', 'Process', 'SpawnContext', 'MP_SPAWN_CTX', 'get_context',
+    'Manager',
+    'CpuAffinity',
+]
 
 
 class TimeoutError(Exception):

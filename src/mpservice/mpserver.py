@@ -59,7 +59,13 @@ from .threading import Thread
 # However, if the queue is a thread queue, then a RemoteException object put in it
 # will come out as a RemoteException unchanged.
 
-
+__all__ = [
+    'TimeoutError', 'ServerBacklogFull',
+    'Worker', 'ProcessWorker', 'ThreadWorker', 'make_thread_worker', 'PassThrough',
+    'Servlet', 'ProcessServlet', 'ThreadServlet', 'SequentialServlet', 'EnsembleServlet', 'SwitchServlet',
+    'Server',
+]
+    
 # Set level for logs produced by the standard `multiprocessing` module.
 multiprocessing.log_to_stderr(logging.WARNING)
 
@@ -83,7 +89,7 @@ Will be removed in 0.13.0.
 """
 
 
-class FastQueue(multiprocessing.queues.SimpleQueue):
+class _FastQueue(multiprocessing.queues.SimpleQueue):
     """
     A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
     this class reduces some overhead in a particular use-case in this module,
@@ -112,10 +118,10 @@ class FastQueue(multiprocessing.queues.SimpleQueue):
         self._rlock = ctx.RLock()
 
 
-class SimpleQueue(queue.SimpleQueue):
+class _SimpleQueue(queue.SimpleQueue):
     """
     A customization of `queue.SimpleQueue <https://docs.python.org/3/library/queue.html#queue.SimpleQueue>_`,
-    this class is analogous to :class:`FastQueue` but is designed to be used between two threads.
+    this class is analogous to :class:`_FastQueue` but is designed to be used between two threads.
     """
 
     def __init__(self):
@@ -140,8 +146,8 @@ class Worker(ABC):
     def run(
         cls,
         *,
-        q_in: FastQueue | SimpleQueue,
-        q_out: FastQueue | SimpleQueue,
+        q_in: _FastQueue | _SimpleQueue,
+        q_out: _FastQueue | _SimpleQueue,
         **init_kwargs,
     ):
         """
@@ -157,13 +163,13 @@ class Worker(ABC):
         q_in
             A queue that carries input elements to be processed.
 
-            In the subclass :class:`ProcessWorker`, ``q_in`` is a :class:`FastQueue`.
-            In the subclass :class:`ThreadWorker`, ``q_in`` is either a :class:`FastQueue` or a :class:`SimpleQueue`.
+            In the subclass :class:`ProcessWorker`, ``q_in`` is a :class:`_FastQueue`.
+            In the subclass :class:`ThreadWorker`, ``q_in`` is either a :class:`_FastQueue` or a :class:`_SimpleQueue`.
         q_out
             A queue that carries output values.
 
-            In the subclass :class:`ProcessWorker`, ``q_out`` is a :class:`FastQueue`.
-            In the subclass :class:`ThreadWorker`, ``q_out`` is either a :class:`FastQueue` or a :class:`SimpleQueue`.
+            In the subclass :class:`ProcessWorker`, ``q_out`` is a :class:`_FastQueue`.
+            In the subclass :class:`ThreadWorker`, ``q_out`` is either a :class:`_FastQueue` or a :class:`_SimpleQueue`.
 
             The elements in ``q_out`` are results for each individual element in ``q_in``.
             "Batching" is an internal optimization for speed;
@@ -724,7 +730,7 @@ class ProcessServlet(Servlet):
         self._workers = []
         self._started = False
 
-    def start(self, q_in: FastQueue, q_out: FastQueue):
+    def start(self, q_in: _FastQueue, q_out: _FastQueue):
         """
         Create the requested number of processes, in each starting an instance
         of ``self._worker_cls``.
@@ -817,7 +823,7 @@ class ThreadServlet(Servlet):
         self._workers = []
         self._started = False
 
-    def start(self, q_in: FastQueue | SimpleQueue, q_out: FastQueue | SimpleQueue):
+    def start(self, q_in: _FastQueue | _SimpleQueue, q_out: _FastQueue | _SimpleQueue):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
@@ -830,11 +836,11 @@ class ThreadServlet(Servlet):
         q_out
             A queue for results.
 
-            ``q_in`` and ``q_out`` are either :class:`FastQueue`\\s (for processes)
-            or :class:`SimpleQueue`\\s (for threads). Because this servlet may be connected to
+            ``q_in`` and ``q_out`` are either :class:`_FastQueue`\\s (for processes)
+            or :class:`_SimpleQueue`\\s (for threads). Because this servlet may be connected to
             either :class:`ProcessServlet`\\s or :class:`ThreadServlet`\\s, either type of queues may
             be appropriate. In contrast, for :class:`ProcessServlet`, the input and output
-            queues are both :class:`FastQueue`\\s.
+            queues are both :class:`_FastQueue`\\s.
         """
         assert not self._started
         for ithread in range(self._num_threads):
@@ -917,7 +923,7 @@ class SequentialServlet(Servlet):
 
         The types of ``q_in`` and ``q_out`` are decided by the caller.
         The types of intermediate queues are decided within this function.
-        As a rule, use :class:`SimpleQueue` between two threads; use :class:`FastQueue`
+        As a rule, use :class:`_SimpleQueue` between two threads; use :class:`_FastQueue`
         between two processes or between a process and a thread.
         """
         assert not self._started
@@ -929,9 +935,9 @@ class SequentialServlet(Servlet):
                     s.output_queue_type == 'thread'
                     and self._servlets[i + 1].input_queue_type == 'thread'
                 ):
-                    q2 = SimpleQueue()
+                    q2 = _SimpleQueue()
                 else:
-                    q2 = FastQueue()
+                    q2 = _FastQueue()
                 self._qs.append(q2)
             else:
                 q2 = q_out
@@ -1008,7 +1014,7 @@ class EnsembleServlet(Servlet):
         on each input item.
 
         ``q_in`` and ``q_out`` contain inputs from and outputs to
-        the "outside world". Their types, either :class:`FastQueue` or :class:`SimpleQueue`,
+        the "outside world". Their types, either :class:`_FastQueue` or :class:`SimpleQueue`,
         are decided by the caller.
         """
         assert not self._started
@@ -1016,8 +1022,8 @@ class EnsembleServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = SimpleQueue() if s.input_queue_type == 'thread' else FastQueue()
-            q2 = SimpleQueue() if s.output_queue_type == 'thread' else FastQueue()
+            q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
+            q2 = _SimpleQueue() if s.output_queue_type == 'thread' else _FastQueue()
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
@@ -1191,7 +1197,7 @@ class SwitchServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = SimpleQueue() if s.input_queue_type == 'thread' else FastQueue()
+            q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
             s.start(q1, q_out)
             self._qins.append(q1)
         self._thread_enqueue = Thread(target=self._enqueue)
@@ -1364,10 +1370,10 @@ class Server:
         # queue and puts them into `_q_in`, which could block.
 
         self._q_in = (
-            SimpleQueue() if self.servlet.input_queue_type == 'thread' else FastQueue()
+            _SimpleQueue() if self.servlet.input_queue_type == 'thread' else _FastQueue()
         )
         self._q_out = (
-            SimpleQueue() if self.servlet.output_queue_type == 'thread' else FastQueue()
+            _SimpleQueue() if self.servlet.output_queue_type == 'thread' else _FastQueue()
         )
         self.servlet.start(self._q_in, self._q_out)
 
@@ -1543,6 +1549,7 @@ class Server:
                 else:
                     logger.error("exception '%r' happened for input %r", e, x)
                     raise
+                    # TODO: rethink the thread shutdown
             else:
                 if return_x:
                     yield x, y

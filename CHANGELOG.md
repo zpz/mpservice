@@ -5,11 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.12.5] - in progress
+## [0.12.5] - 2023-04-24
 
 ### Added
 
 - New method ``streamer.Stream.parmap_async``, taking an async worker function.
+
+### Fixed
+
+- Bug in deprecation warning in ``util`` and ``server_process``.
 
 
 ## [0.12.4] - 2023-04-22
