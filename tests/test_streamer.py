@@ -504,18 +504,45 @@ def test_parmap_nest():
     assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]
 
 
-async def async_double(x):
+async def async_plus_2(x):
     await asyncio.sleep(random.uniform(0.5, 1))
-    return x + x
+    return x + 2
 
 
 def test_parmap_async():
     data = range(1000)
     stream = Stream(data)
-    stream.parmap_async(async_double)
+    stream.parmap_async(async_plus_2)
     t0 = perf_counter()
     for x, y in zip(data, stream):
-        assert y == x * 2
+        assert y == x + 2
     t1 = perf_counter()
-    assert t1 - t0 < 10
+    print(t1 - t0)
+    assert t1 - t0 < 5
     # sequential processing would take 500+ sec
+
+    # Test exception in the worker function
+    data = list(range(20))
+    data[12] = 'a'
+    stream = Stream(data).parmap_async(async_plus_2)
+    with pytest.raises(TypeError):
+        for x, y in zip(data, stream):
+            assert y == x + 2
+
+    stream = Stream(data).parmap_async(
+        async_plus_2, return_x=True, return_exceptions=True
+    )
+    for x, y in stream:
+        if x == 'a':
+            assert isinstance(y, TypeError)
+        else:
+            assert y == x + 2
+
+    # Test premature quit, i.e. GeneratorExit
+    stream = Stream(data).parmap_async(async_plus_2)
+    istream = iter(stream)
+    for i, x in enumerate(data):
+        if i == 12:
+            break
+        y = next(istream)
+        assert y == x + 2
