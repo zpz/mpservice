@@ -681,6 +681,7 @@ class Stream(Iterable):
                 **kwargs,
             )
         )
+        return self
 
 
 class Mapper(Iterable):
@@ -1089,13 +1090,25 @@ class ParmapperAsync(Iterable):
         self._running = True
 
     def _run_worker(self):
+        # In the following async functions, some sync operations like I/O on a ``queue.Queue``
+        # could involve some waiting. To prevent them from blocking async task executions,
+        # run them in a thread executor.
+
         async def enqueue(tasks):
             func = self._func
             kwargs = self._func_kwargs
             instream = self._instream
             loop = asyncio.get_running_loop()
+            thread_pool = get_shared_thread_pool()
             try:
-                for x in instream:
+                instream = iter(instream)
+                while True:
+                    # Getting the next item from the `instream` could involve some waiting and sleeping,
+                    # hence doing that in another thread.
+                    x = await loop.run_in_executor(thread_pool, next, instream, FINISHED)
+                    # See https://stackoverflow.com/a/61774972
+                    if x == FINISHED:
+                        break
                     if self._stopped.is_set():
                         await tasks.put(
                             FINISHED
@@ -1117,28 +1130,30 @@ class ParmapperAsync(Iterable):
         async def dequeue(tasks):
             outstream = self._outstream
             return_exceptions = self._return_exceptions
+            loop = asyncio.get_running_loop()
+            thread_pool = get_shared_thread_pool()
             while True:
                 v = await tasks.get()
                 if v == FINISHED:
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
-                    outstream.put(FINISHED)
+                    await loop.run_in_executor(thread_pool, outstream.put, FINISHED)
                     return
                 if v == STOPPED:
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
-                    outstream.put(STOPPED)
+                    await loop.run_in_executor(thread_pool, outstream.put, STOPPED)
                     e = await tasks.get()
-                    outstream.put(e)
+                    await loop.run_in_executor(thread_pool, outstream.put, e)
                     return
                 if self._stopped.is_set():
                     break
                 x, t = v
                 try:
                     y = await t
-                    outstream.put((x, y))
+                    await loop.run_in_executor(thread_pool, outstream.put, (x, y))
                 except Exception as e:
-                    outstream.put((x, e))
+                    await loop.run_in_executor(thread_pool, outstream.put, (x, e))
                     if not return_exceptions:
                         self._stopped.set()  # signal `enqueue` to stop
                         break
@@ -1212,7 +1227,7 @@ class ParmapperAsync(Iterable):
                         raise
                 else:
                     self._finalize()
-                    raise
+                    raise e
             else:
                 try:
                     if self._return_x:
