@@ -912,9 +912,8 @@ class Parmapper(Iterable):
         self._executor_init_args = executor_init_args
         self._executor = None
         self._executor_is_shared = None
-        self._finalize_func = None
+        self._finalizer = None
         self._name = parmapper_name
-        self._running = False
 
     def _start(self):
         num_workers = self._num_workers
@@ -959,19 +958,22 @@ class Parmapper(Iterable):
         self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
             target=self._run_worker,
-            args=(self._func,),
-            kwargs=self._func_kwargs,
+            args=(self._func, self._func_kwargs, self._tasks, self._executor,
+                  self._instream, self._stopped),
+        )
+        self._worker.start()
+        self._finalizer = multiprocessing.util.Finalize(
+            self,
+            type(self)._do_finalize,
+            (self._tasks, self._worker, self._stopped, None if self._executor_is_shared else self._executor,),
+            exitpriority=10,
         )
 
-        self._worker.start()
-        self._running = True
-
-    def _run_worker(self, func, **kwargs):
-        tasks = self._tasks
-        executor = self._executor
+    @classmethod
+    def _run_worker(cls, func, kwargs, tasks, executor, instream, stopped):
         try:
-            for x in self._instream:
-                if self._stopped.is_set():
+            for x in instream:
+                if stopped.is_set():
                     return
                 t = executor.submit(func, x, loud_exception=False, **kwargs)
                 tasks.put((x, t))
@@ -986,27 +988,31 @@ class Parmapper(Iterable):
         else:
             tasks.put(FINISHED)
 
-    def _finalize(self):
-        if not self._running:
+    @staticmethod
+    def _do_finalize(tasks, worker, stopped, executor):
+        if stopped.is_set():
             return
-        self._running = False
-        self._stopped.set()
+        stopped.set()
 
         while True:
-            while not self._tasks.empty():
-                _ = self._tasks.get()
+            while not tasks.empty():
+                _ = tasks.get()
 
-            self._worker.join(timeout=0.002)
-            if not self._worker.is_alive():
+            worker.join(timeout=0.002)
+            if not worker.is_alive():
                 break
 
-        if not self._executor_is_shared:
-            if self._executor is not None:
-                try:
-                    self._executor.shutdown()
-                except OSError:
-                    pass
-                self._executor = None
+        if executor is not None:
+            try:
+                executor.shutdown()
+            except OSError:
+                pass
+
+    def _finalize(self):
+        fin = self._finalizer
+        if fin:
+            self._finalizer = None
+            fin()
 
     def __del__(self):
         self._finalize()
@@ -1069,14 +1075,12 @@ class ParmapperAsync(Iterable):
         self._return_x = return_x
         self._return_exceptions = return_exceptions
         self._num_workers = num_workers or 256
-        self._finalize_func = None
         self._name = parmapper_name
-        self._running = False
         self._worker = None
         self._stopped = None
+        self._finalizer = None
 
     def _start(self):
-        assert not self._running
         self._outstream = queue.Queue(self._num_workers)
         self._stopped = threading.Event()
 
@@ -1085,31 +1089,39 @@ class ParmapperAsync(Iterable):
             name=f"{self._name}-thread",
             # TODO: what if there are multiple such threads owned by multiple ParmapperAsync objects?
             # How to use diff names for them?
+            args=(
+                self._func, self._func_kwargs, self._num_workers,
+                self._instream, self._outstream, self._stopped,
+                self._return_exceptions,
+            )
         )
         self._worker.start()
-        self._running = True
+        self._finalizer = multiprocessing.util.Finalize(
+            self,
+            type(self)._do_finalize,
+            (self._stopped, self._worker),
+            exitpriority=10,
+        )
 
-    def _run_worker(self):
+    @classmethod
+    def _run_worker(cls, func, kwargs, num_workers, instream, outstream, stopped, return_exceptions):
         # In the following async functions, some sync operations like I/O on a ``queue.Queue``
         # could involve some waiting. To prevent them from blocking async task executions,
         # run them in a thread executor.
 
         async def enqueue(tasks):
-            func = self._func
-            kwargs = self._func_kwargs
-            instream = self._instream
             loop = asyncio.get_running_loop()
             thread_pool = get_shared_thread_pool()
             try:
-                instream = iter(instream)
+                instream_ = iter(instream)
                 while True:
                     # Getting the next item from the `instream` could involve some waiting and sleeping,
                     # hence doing that in another thread.
-                    x = await loop.run_in_executor(thread_pool, next, instream, FINISHED)
+                    x = await loop.run_in_executor(thread_pool, next, instream_, FINISHED)
                     # See https://stackoverflow.com/a/61774972
                     if x == FINISHED:
                         break
-                    if self._stopped.is_set():
+                    if stopped.is_set():
                         await tasks.put(
                             FINISHED
                         )  # to avoid starving `_run_worker_dequeue`
@@ -1128,8 +1140,6 @@ class ParmapperAsync(Iterable):
                 await tasks.put(FINISHED)
 
         async def dequeue(tasks):
-            outstream = self._outstream
-            return_exceptions = self._return_exceptions
             loop = asyncio.get_running_loop()
             thread_pool = get_shared_thread_pool()
             while True:
@@ -1146,7 +1156,7 @@ class ParmapperAsync(Iterable):
                     e = await tasks.get()
                     await loop.run_in_executor(thread_pool, outstream.put, e)
                     return
-                if self._stopped.is_set():
+                if stopped.is_set():
                     break
                 x, t = v
                 try:
@@ -1155,7 +1165,7 @@ class ParmapperAsync(Iterable):
                 except Exception as e:
                     await loop.run_in_executor(thread_pool, outstream.put, (x, e))
                     if not return_exceptions:
-                        self._stopped.set()  # signal `enqueue` to stop
+                        stopped.set()  # signal `enqueue` to stop
                         break
 
             # Stop has been requested.
@@ -1163,7 +1173,7 @@ class ParmapperAsync(Iterable):
             # cancel those that are not finished.
             # Do not cancel and wait for cancellation to finish one by one.
             # Instead, send cancel signal into all of them, then wait on them.
-            assert self._stopped.is_set()
+            assert stopped.is_set()
             cancelling = []
             while True:
                 v = await tasks.get()
@@ -1184,7 +1194,7 @@ class ParmapperAsync(Iterable):
             outstream.put(FINISHED)
 
         async def main():
-            tasks = asyncio.Queue(self._num_workers - 2)
+            tasks = asyncio.Queue(num_workers - 2)
             t1 = asyncio.create_task(enqueue(tasks))
             t2 = asyncio.create_task(dequeue(tasks))
             await t1
@@ -1192,13 +1202,18 @@ class ParmapperAsync(Iterable):
 
         asyncio.run(main())
 
-    def _finalize(self):
-        if not self._running:
+    @staticmethod
+    def _do_finalize(stopped, worker):
+        if stopped.is_set():
             return
-        self._running = False
-        self._stopped.set()
-        self._worker.join()
-        self._worker = None
+        stopped.set()
+        worker.join()
+
+    def _finalize(self):
+        fin = self._finalizer
+        if fin:
+            self._finalizer = None
+            fin()
 
     def __del__(self):
         self._finalize()

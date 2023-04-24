@@ -521,6 +521,7 @@ def test_parmap_async():
     assert t1 - t0 < 5
     # sequential processing would take 500+ sec
 
+    # Test exception in the worker function
     data = list(range(20))
     data[12] = 'a'
     stream = Stream(data).parmap_async(async_plus_2)
@@ -535,3 +536,11 @@ def test_parmap_async():
         else:
             assert y == x + 2
 
+    # Test premature quit, i.e. GeneratorExit
+    stream = Stream(data).parmap_async(async_plus_2)
+    istream = iter(stream)
+    for i, x in enumerate(data):
+        if i == 12:
+            break
+        y = next(istream)
+        assert y == x + 2
