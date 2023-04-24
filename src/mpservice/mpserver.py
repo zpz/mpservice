@@ -65,7 +65,7 @@ __all__ = [
     'Worker',
     'ProcessWorker',
     'ThreadWorker',
-    'make_thread_worker',
+    'make_threadworker',
     'PassThrough',
     'Servlet',
     'ProcessServlet',
