@@ -60,12 +60,22 @@ from .threading import Thread
 # will come out as a RemoteException unchanged.
 
 __all__ = [
-    'TimeoutError', 'ServerBacklogFull',
-    'Worker', 'ProcessWorker', 'ThreadWorker', 'make_thread_worker', 'PassThrough',
-    'Servlet', 'ProcessServlet', 'ThreadServlet', 'SequentialServlet', 'EnsembleServlet', 'SwitchServlet',
+    'TimeoutError',
+    'ServerBacklogFull',
+    'Worker',
+    'ProcessWorker',
+    'ThreadWorker',
+    'make_thread_worker',
+    'PassThrough',
+    'Servlet',
+    'ProcessServlet',
+    'ThreadServlet',
+    'SequentialServlet',
+    'EnsembleServlet',
+    'SwitchServlet',
     'Server',
 ]
-    
+
 # Set level for logs produced by the standard `multiprocessing` module.
 multiprocessing.log_to_stderr(logging.WARNING)
 
@@ -1370,10 +1380,14 @@ class Server:
         # queue and puts them into `_q_in`, which could block.
 
         self._q_in = (
-            _SimpleQueue() if self.servlet.input_queue_type == 'thread' else _FastQueue()
+            _SimpleQueue()
+            if self.servlet.input_queue_type == 'thread'
+            else _FastQueue()
         )
         self._q_out = (
-            _SimpleQueue() if self.servlet.output_queue_type == 'thread' else _FastQueue()
+            _SimpleQueue()
+            if self.servlet.output_queue_type == 'thread'
+            else _FastQueue()
         )
         self.servlet.start(self._q_in, self._q_out)
 

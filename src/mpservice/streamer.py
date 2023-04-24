@@ -1144,9 +1144,7 @@ class ParmapperAsync(Iterable):
                     if x == FINISHED:
                         break
                     if stopped.is_set():
-                        await tasks.put(
-                            FINISHED
-                        )  # to avoid starving `dequeue`
+                        await tasks.put(FINISHED)  # to avoid starving `dequeue`
                         return
                     t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))

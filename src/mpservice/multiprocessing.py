@@ -49,9 +49,16 @@ from ._remote_exception import (
 from .threading import Thread
 
 __all__ = [
-    'RemoteException', 'RemoteTraceback', 'get_remote_traceback', 'is_remote_exception',
+    'RemoteException',
+    'RemoteTraceback',
+    'get_remote_traceback',
+    'is_remote_exception',
     'TimeoutError',
-    'SpawnProcess', 'Process', 'SpawnContext', 'MP_SPAWN_CTX', 'get_context',
+    'SpawnProcess',
+    'Process',
+    'SpawnContext',
+    'MP_SPAWN_CTX',
+    'get_context',
     'Manager',
     'CpuAffinity',
 ]

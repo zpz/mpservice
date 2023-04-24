@@ -11,8 +11,12 @@ import weakref
 
 from mpservice.multiprocessing import MP_SPAWN_CTX
 
-
-__all__ = ['ThreadPoolExecutor', 'ProcessPoolExecutor', 'get_shared_thread_pool', 'get_shared_process_pool']
+__all__ = [
+    'ThreadPoolExecutor',
+    'ProcessPoolExecutor',
+    'get_shared_thread_pool',
+    'get_shared_process_pool',
+]
 
 
 def _loud_thread_function(fn, *args, **kwargs):
