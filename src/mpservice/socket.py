@@ -22,7 +22,6 @@ from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing import RemoteException
 from .threading import MAX_THREADS
 
-
 __all__ = [
     'SocketApplication',
     'SocketServer',

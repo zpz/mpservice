@@ -1553,8 +1553,11 @@ class Server:
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
         # The downstream should get results out of it as soon as possible.
         stopped = threading.Event()
-        worker = Thread(target=_enqueue, args=(tasks, stopped),
-                        name=f"{self.__class__.__name__}.stream._enqueue")
+        worker = Thread(
+            target=_enqueue,
+            args=(tasks, stopped),
+            name=f"{self.__class__.__name__}.stream._enqueue",
+        )
         worker.start()
 
         _wait = self._wait_for_result
