@@ -31,6 +31,8 @@ import multiprocessing.connection
 import os
 import stat
 
+__all__ = ['Server', 'Client']
+
 
 def _mkfifo(path: str):
     if os.path.exists(path):

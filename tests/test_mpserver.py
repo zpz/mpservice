@@ -135,6 +135,27 @@ def test_sequential_stream():
         assert list(s) == [v * v for v in data]
 
 
+def test_stream_error():
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        data = list(range(30))
+        data[22] = 'a'
+        ss = service.stream(data)
+        with pytest.raises(TypeError):
+            assert list(ss) == [v * v for v in data]
+
+
+def test_stream_early_quit():
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3]), backlog=10) as service:
+        data = range(100)
+        ss = service.stream(data)
+        n = 0
+        for x, y in zip(data, ss):
+            assert y == x * x
+            n += 1
+            if n > 33:
+                break
+
+
 class GetHead(ProcessWorker):
     def call(self, x):
         return x[0]

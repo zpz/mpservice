@@ -36,7 +36,7 @@ import multiprocessing.queues
 import multiprocessing.util
 import threading
 import warnings
-from typing import Callable, Optional
+from typing import Callable
 
 import psutil
 
@@ -48,9 +48,20 @@ from ._remote_exception import (
 )
 from .threading import Thread
 
-_ = is_remote_exception
-_ = RemoteTraceback
-_ = get_remote_traceback
+__all__ = [
+    'RemoteException',
+    'RemoteTraceback',
+    'get_remote_traceback',
+    'is_remote_exception',
+    'TimeoutError',
+    'SpawnProcess',
+    'Process',
+    'SpawnContext',
+    'MP_SPAWN_CTX',
+    'get_context',
+    'Manager',
+    'CpuAffinity',
+]
 
 
 class TimeoutError(Exception):
@@ -328,7 +339,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         """
         return self.exitcode is not None
 
-    def result(self, timeout: Optional[float | int] = None):
+    def result(self, timeout: float | int | None = None):
         '''
         Behavior is similar to ``concurrent.futures.Future.result``.
         '''
@@ -340,7 +351,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise self.__error__
         return self.__result__
 
-    def exception(self, timeout: Optional[float | int] = None):
+    def exception(self, timeout: float | int | None = None):
         '''
         Behavior is similar to ``concurrent.futures.Future.exception``.
         '''
@@ -589,7 +600,7 @@ class CpuAffinity:
     .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
     """
 
-    def __init__(self, target: Optional[int | list[int]] = None, /):
+    def __init__(self, target: int | list[int] | None = None, /):
         """
         Parameters
         ----------

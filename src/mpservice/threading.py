@@ -9,6 +9,9 @@ import threading
 #   20000 took 1 sec.
 
 
+__all__ = ['TimeoutError', 'MAX_THREADS', 'Thread']
+
+
 class TimeoutError(Exception):
     pass
 

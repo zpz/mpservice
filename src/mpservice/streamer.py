@@ -74,6 +74,9 @@ from .multiprocessing import (
 )
 from .threading import MAX_THREADS, Thread
 
+__all__ = ['Stream']
+
+
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
 CRASHED = "57cf8a88-434e-4772-9bca-01086f6c45e9"
@@ -565,7 +568,7 @@ class Stream(Iterable):
         /,
         executor: Literal["thread", "process"],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name: str = 'parmapper',
@@ -650,7 +653,7 @@ class Stream(Iterable):
         self,
         func: Callable[[T], Awaitable[TT]],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name: str = 'parmapperasync',
@@ -890,7 +893,7 @@ class Parmapper(Iterable):
         func: Callable[[T], TT],
         *,
         executor: Literal["thread", "process"] = "process",
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         executor_initializer=None,
@@ -1074,7 +1077,7 @@ class ParmapperAsync(Iterable):
         instream: Iterable,
         func: Callable[[T], Awaitable[TT]],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name='parmapperasync',
@@ -1141,9 +1144,7 @@ class ParmapperAsync(Iterable):
                     if x == FINISHED:
                         break
                     if stopped.is_set():
-                        await tasks.put(
-                            FINISHED
-                        )  # to avoid starving `_run_worker_dequeue`
+                        await tasks.put(FINISHED)  # to avoid starving `dequeue`
                         return
                     t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))
@@ -1180,9 +1181,15 @@ class ParmapperAsync(Iterable):
                 x, t = v
                 try:
                     y = await t
-                    await loop.run_in_executor(thread_pool, outstream.put, (x, y))
+                    if outstream.full():
+                        await loop.run_in_executor(thread_pool, outstream.put, (x, y))
+                    else:
+                        outstream.put((x, y))
                 except Exception as e:
-                    await loop.run_in_executor(thread_pool, outstream.put, (x, e))
+                    if outstream.full():
+                        await loop.run_in_executor(thread_pool, outstream.put, (x, e))
+                    else:
+                        outstream.put((x, e))
                     if not return_exceptions:
                         stopped.set()  # signal `enqueue` to stop
                         break

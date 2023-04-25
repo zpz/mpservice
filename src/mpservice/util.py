@@ -1,5 +1,11 @@
 import warnings
 
+warnings.warn(
+    "``mpservice.util`` is deprecated in 0.12.4 and will be removed after 0.13.0.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 # The following imports are provided for back compat, and will be removed at a later time.
 # Please import from the corresponding modules.
 from .concurrent.futures import (
@@ -22,11 +28,6 @@ from .threading import MAX_THREADS, Thread
 
 SpawnProcessPoolExecutor = ProcessPoolExecutor
 
-warnings.warn(
-    "``mpservice.util`` is deprecated in 0.12.4 and will be removed after 0.13.0.",
-    warnings.DeprecationWarning,
-    stacklevel=2,
-)
 
 # This function is no longer used in this package but can be useful.
 # It will be removed eventually.
