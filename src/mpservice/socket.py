@@ -15,12 +15,21 @@ from collections.abc import Iterable, Sequence
 from pickle import dumps as pickle_dumps
 from pickle import loads as pickle_loads
 from time import perf_counter
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 from ._queues import SingleLane
 from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing import RemoteException
 from .threading import MAX_THREADS
+
+
+__all__ = [
+    'SocketApplication',
+    'SocketServer',
+    'SocketClient',
+    'make_server',
+    'run_app',
+]
 
 logger = logging.getLogger(__name__)
 
@@ -237,8 +246,8 @@ class SocketApplication:
     def __init__(
         self,
         *,
-        on_startup: Optional[Sequence[Callable]] = None,
-        on_shutdown: Optional[Sequence[Callable]] = None,
+        on_startup: Sequence[Callable] | None = None,
+        on_shutdown: Sequence[Callable] | None = None,
     ):
         self.on_startup = on_startup or []
         self.on_shutdown = on_shutdown or []
@@ -281,10 +290,10 @@ class SocketServer:
         self,
         app: SocketApplication,
         *,
-        path: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        backlog: Optional[int] = None,
+        path: str | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        backlog: int | None = None,
         shutdown_path: str = "/shutdown",
     ):
         """
@@ -459,10 +468,10 @@ class SocketClient:
     def __init__(
         self,
         *,
-        path: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        num_connections: Optional[int] = None,
+        path: None | str = None,
+        host: None | str = None,
+        port: None | int = None,
+        num_connections: None | int = None,
         connection_timeout: int = 60,
         backlog: int = 2048,
     ):
@@ -512,7 +521,7 @@ class SocketClient:
         self._to_shutdown = threading.Event()
         self._executor = ThreadPoolExecutor()
         self._tasks = []
-        self._pending_requests: Optional[queue.Queue] = None
+        self._pending_requests: queue.Queue | None = None
         self._active_requests = {}
         self._shutdown_timeout = 60
 

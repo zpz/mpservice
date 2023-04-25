@@ -568,7 +568,7 @@ class Stream(Iterable):
         /,
         executor: Literal["thread", "process"],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name: str = 'parmapper',
@@ -653,7 +653,7 @@ class Stream(Iterable):
         self,
         func: Callable[[T], Awaitable[TT]],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name: str = 'parmapperasync',
@@ -893,7 +893,7 @@ class Parmapper(Iterable):
         func: Callable[[T], TT],
         *,
         executor: Literal["thread", "process"] = "process",
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         executor_initializer=None,
@@ -1077,7 +1077,7 @@ class ParmapperAsync(Iterable):
         instream: Iterable,
         func: Callable[[T], Awaitable[TT]],
         *,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name='parmapperasync',
@@ -1184,12 +1184,12 @@ class ParmapperAsync(Iterable):
                     if outstream.full():
                         await loop.run_in_executor(thread_pool, outstream.put, (x, y))
                     else:
-                        outstream.put(x, y)
+                        outstream.put((x, y))
                 except Exception as e:
                     if outstream.full():
                         await loop.run_in_executor(thread_pool, outstream.put, (x, e))
                     else:
-                        outstream.put(x, e)
+                        outstream.put((x, e))
                     if not return_exceptions:
                         stopped.set()  # signal `enqueue` to stop
                         break

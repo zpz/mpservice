@@ -33,13 +33,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal
 
 import psutil
 
 from ._queues import SingleLane
 from ._remote_exception import EnsembleError
-from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
@@ -82,6 +81,7 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
+CRASHED = b"0daf930f-e823-4737-a011-9ee2145812a4"
 
 
 class TimeoutError(Exception):
@@ -197,8 +197,8 @@ class Worker(ABC):
         self,
         *,
         worker_index: int,
-        batch_size: Optional[int] = None,
-        batch_wait_time: Optional[float] = None,
+        batch_size: int | None = None,
+        batch_wait_time: float | None = None,
         batch_size_log_cadence: int = 1_000_000,
     ):
         """
@@ -305,7 +305,7 @@ class Worker(ABC):
     @abstractmethod
     def call(self, x):
         """
-        Private methods wait on the input queue to gather "work orders",
+        Private methods of this class wait on the input queue to gather "work orders",
         send them to :meth:`call` for processing,
         collect the outputs of :meth:`call`,  and put them in the output queue.
 
@@ -326,9 +326,10 @@ class Worker(ABC):
         elements in ``x`` varies between calls depending on the supply
         in the input queue. The list ``x`` does not have a fixed length.
 
-        Be sure to distinguish batching from the non-batching case where a single
-        input is naturally a list. In that case, the output of
-        the this method is the result corresponding to the single input ``x``.
+        Be sure to distinguish the case with batching (``batch_size > 0``)
+        and the case w/o batching (``batch_size = 0``) where a single
+        input is a list. In the latter case, the output of
+        this method is the result corresponding to the single input ``x``.
         The result could be anything---it may or may not be a list.
 
         If a subclass fixes ``batch_size`` in its ``__init__`` to be
@@ -361,6 +362,7 @@ class Worker(ABC):
             # The process or thread will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
+            # TODO: do we need to `raise` here?
 
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
@@ -687,7 +689,7 @@ class ProcessServlet(Servlet):
         self,
         worker_cls: type[ProcessWorker],
         *,
-        cpus: Optional[Sequence[CpuAffinity | None | int | Sequence[int]]] = None,
+        cpus: None | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
         **kwargs,
     ):
         """
@@ -807,7 +809,7 @@ class ThreadServlet(Servlet):
         self,
         worker_cls: type[ThreadWorker],
         *,
-        num_threads: Optional[int] = None,
+        num_threads: None | int = None,
         **kwargs,
     ):
         """
@@ -1504,10 +1506,7 @@ class Server:
             to overall throughput. You can usually leave it at the default value.
         """
 
-        def _enqueue(tasks):
-            threading.current_thread().name = (
-                f"{self.__class__.__name__}.stream._enqueue"
-            )
+        def _enqueue(tasks, stopped):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -1516,6 +1515,8 @@ class Server:
                     nretries = 0
                     t0 = None
                     while len(self._uid_to_futures) >= self._backlog:
+                        if stopped.is_set():
+                            break
                         if t0 is None:
                             t0 = perf_counter()
                         if nretries >= 100:
@@ -1525,30 +1526,48 @@ class Server:
                             )
                         nretries += 1
                         sleep(0.1)
+                    if stopped.is_set():
+                        break
                     fut = _enq(x, timeout)
                     tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
                 # exception state. This exception is not covered by `return_exceptions`;
                 # it will be detected in the main thread.
-            finally:
+            except Exception as e:
+                tasks.put(CRASHED)
+                tasks.put(e)
+            else:
                 tasks.put(NOMOREDATA)
 
+        def shutdown():
+            stopped.set()
+            while True:
+                worker.join(timeout=0.5)
+                if not worker.is_alive():
+                    break
+                while not tasks.empty():
+                    _ = tasks.get()
+
         tasks = queue.SimpleQueue()
-        executor = ThreadPoolExecutor(1)
-        t = executor.submit(_enqueue, tasks)
+        # `tasks` has no size limit. Its length is restricted by the speed of the service.
+        # The downstream should get results out of it as soon as possible.
+        stopped = threading.Event()
+        worker = Thread(target=_enqueue, args=(tasks, stopped),
+                        name=f"{self.__class__.__name__}.stream._enqueue")
+        worker.start()
 
         _wait = self._wait_for_result
 
         while True:
             z = tasks.get()
             if z == NOMOREDATA:
-                if t.done:
-                    if t.exception():
-                        raise t.exception()
-                else:
-                    executor.shutdown()
+                worker.join()
                 break
+            if z == CRASHED:
+                e = tasks.get()
+                worker.join()
+                raise e
 
             x, fut = z
             try:
@@ -1556,19 +1575,28 @@ class Server:
                 # May raise TimeoutError or an exception out of RemoteException.
             except Exception as e:
                 if return_exceptions:
-                    if return_x:
-                        yield x, e
-                    else:
-                        yield e
+                    try:
+                        if return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    except GeneratorExit:
+                        shutdown()
+                        raise
                 else:
                     logger.error("exception '%r' happened for input %r", e, x)
+                    shutdown()
                     raise
                     # TODO: rethink the thread shutdown
             else:
-                if return_x:
-                    yield x, y
-                else:
-                    yield y
+                try:
+                    if return_x:
+                        yield x, y
+                    else:
+                        yield y
+                except GeneratorExit:
+                    shutdown()
+                    raise
 
     async def _async_enqueue(self, x, timeout, backpressure):
         t0 = perf_counter()

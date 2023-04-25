@@ -10,7 +10,6 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from datetime import datetime
-from typing import Optional
 
 from .concurrent.futures import ThreadPoolExecutor
 from .threading import MAX_THREADS
@@ -170,7 +169,7 @@ class BackgroundTask(ABC):
     Facilities are provided to check task status, and cancel an ongoing task.
     """
 
-    def __init__(self, executor: Optional[concurrent.futures.Executor] = None):
+    def __init__(self, executor: concurrent.futures.Executor | None = None):
         """
         Parameters
         ----------
@@ -320,7 +319,7 @@ class BackgroundTask(ABC):
     def __getitem__(self, task_id: str) -> Task:
         return self._tasks[task_id]
 
-    def get(self, task_id: str, default=None) -> Optional[Task]:
+    def get(self, task_id: str, default=None) -> Task | None:
         return self._tasks.get(task_id, default)
 
     def __iter__(self):

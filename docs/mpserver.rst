@@ -144,7 +144,7 @@ Workers
 
 .. autoclass:: mpservice.mpserver._FastQueue
 
-.. autoclass:: mpservice.mpserver.SimpleQueue
+.. autoclass:: mpservice.mpserver._SimpleQueue
 
 .. autoclass:: mpservice.mpserver.Worker
 
