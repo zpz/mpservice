@@ -548,7 +548,6 @@ def test_parmap_async():
         assert y == x + 2
 
 
-
 @pytest.mark.asyncio
 async def test_async_parmap():
     async def data():

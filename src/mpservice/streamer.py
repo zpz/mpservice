@@ -45,11 +45,10 @@ import logging
 import multiprocessing.util
 import os
 import queue
-import sys
 import threading
 import traceback
 from collections import deque
-from collections.abc import Iterable, Sequence, AsyncIterable
+from collections.abc import AsyncIterable, Iterable, Sequence
 from random import random
 from typing import (
     Any,
@@ -720,7 +719,7 @@ class Stream:
     ) -> Self:
         '''
         Add an async operator that runs the async worker function ``func``.
-        
+
         This method itself is *sync*, but the worker function ``func`` is *async*.
         Plus, this function adds an *async* iterable, namely :class:`AsyncParmapper`, to the chain of operators.
         This operator requires its input stream to be async iterable. Because ``AsyncParmapper``
@@ -1402,14 +1401,14 @@ class AsyncParmapper(AsyncIterable):
             else:
                 try:
                     await t
-                except Exception:
+                except Exception:  # ignore
                     pass
 
         if cancelled:
             try:
                 await asyncio.wait(cancelled)
             except Exception as e:
-                logger.info("error during clean-up is ignored: %s" % e)
+                logger.info("error during clean-up is ignored: %s", e)
 
         if self._worker is not None:
             await self._worker
