@@ -41,13 +41,15 @@ from __future__ import annotations
 # Will no longer be needed in Python 3.10.
 import asyncio
 import functools
+import logging
 import multiprocessing.util
 import os
 import queue
+import sys
 import threading
 import traceback
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Sequence, AsyncIterable
 from random import random
 from typing import (
     Any,
@@ -76,6 +78,7 @@ from .threading import MAX_THREADS, Thread
 
 __all__ = ['Stream']
 
+logger = logging.getLogger(__name__)
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
@@ -87,7 +90,7 @@ T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
 
 
-class Stream(Iterable):
+class Stream:
     """
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
@@ -118,7 +121,26 @@ class Stream(Iterable):
         self.streamlets: list[Iterable] = [instream]
 
     def __iter__(self):
-        yield from self.streamlets[-1]
+        '''
+        The final operator on the steam must be a *sync* "iterable".
+        Currently, all the operators are sync iterable with the only exception
+        :class:`AsyncParmapper`.
+
+        If no operator has been added, then this draws upon the input stream
+        provided to :meth:`__init__`; the input stream must be (sync) iterable.
+        '''
+        return self.streamlets[-1].__iter__()
+
+    def __aiter__(self):
+        '''
+        The final operator on the stream must be an "async iterable".
+        Currently, there is only one async operator, namely, :class:`AsyncParmapper`,
+        which is added by calling :meth:`async_parmap`.
+
+        If no operator has been added, then this draws upon the input stream
+        provided to :meth:`__init__`; the input stream must be async iterable.
+        '''
+        return self.streamlets[-1].__aiter__()
 
     def drain(self) -> int:
         """Drain off the stream and return the number of elements processed.
@@ -686,6 +708,52 @@ class Stream(Iterable):
         )
         return self
 
+    def async_parmap(
+        self,
+        func: Callable[[T], Awaitable[TT]],
+        *,
+        num_workers: int | None = None,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        parmapper_name: str = 'asyncparmapper',
+        **kwargs,
+    ) -> Self:
+        '''
+        Add an async operator that runs the async worker function ``func``.
+        
+        This method itself is *sync*, but the worker function ``func`` is *async*.
+        Plus, this function adds an *async* iterable, namely :class:`AsyncParmapper`, to the chain of operators.
+        This operator requires its input stream to be async iterable. Because ``AsyncParmapper``
+        is currently the only async operator, it follows that :meth:`async_parmap` is the only
+        operator that can be called (but it can be called more than once), and the input stream
+        also needs to be async iterable.
+
+        After calling :meth:`async_parmap`, one either *asynchorously* iterate
+        the :class:`Stream` object, or call ``async_parmap`` again to add another
+        operator.
+
+        This method is called within an async environment.
+        It runs in the current thread on the current asyncio event loop.
+
+        Parameters
+        ----------
+        num_workers
+            The max number of concurrent (i.e. ongoing at the same time) calls to ``func``.
+
+        '''
+        self.streamlets.append(
+            AsyncParmapper(
+                self.streamlets[-1],
+                func,
+                num_workers=num_workers,
+                return_x=return_x,
+                return_exceptions=return_exceptions,
+                parmapper_name=parmapper_name,
+                **kwargs,
+            )
+        )
+        return self
+
 
 class Mapper(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
@@ -1034,41 +1102,35 @@ class Parmapper(Iterable):
     def __iter__(self):
         self._start()
 
-        while True:
-            z = self._tasks.get()
-            if z == FINISHED:
-                break
-            if z == STOPPED:
-                # raise self._worker.exception()
-                raise self._tasks.get()
+        try:
+            while True:
+                z = self._tasks.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    # raise self._worker.exception()
+                    raise self._tasks.get()
 
-            x, fut = z
+                x, fut = z
 
-            try:
-                y = fut.result()
-            except Exception as e:
-                if self._return_exceptions:
-                    # TODO: think about when `e` is a "remote exception".
-                    try:
+                try:
+                    y = fut.result()
+                except Exception as e:
+                    if self._return_exceptions:
+                        # TODO: think about when `e` is a "remote exception".
                         if self._return_x:
                             yield x, e
                         else:
                             yield e
-                    except GeneratorExit:
-                        self._finalize()
+                    else:
                         raise
                 else:
-                    self._finalize()
-                    raise
-            else:
-                try:
                     if self._return_x:
                         yield x, y
                     else:
                         yield y
-                except GeneratorExit:
-                    self._finalize()
-                    raise
+        finally:
+            self._finalize()
 
 
 class ParmapperAsync(Iterable):
@@ -1247,34 +1309,151 @@ class ParmapperAsync(Iterable):
     def __iter__(self):
         self._start()
         outstream = self._outstream
-        while True:
-            z = outstream.get()
-            if z == FINISHED:
-                break
-            if z == STOPPED:
-                raise outstream.get()
+        try:
+            while True:
+                z = outstream.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    raise outstream.get()
 
-            x, y = z
-            if isinstance(y, Exception):
-                e = y
-                if self._return_exceptions:
-                    try:
+                x, y = z
+                if isinstance(y, Exception):
+                    e = y
+                    if self._return_exceptions:
                         if self._return_x:
                             yield x, e
                         else:
                             yield e
-                    except GeneratorExit:
-                        self._finalize()
-                        raise
+                    else:
+                        raise e
                 else:
-                    self._finalize()
-                    raise e
-            else:
-                try:
                     if self._return_x:
                         yield x, y
                     else:
                         yield y
-                except GeneratorExit:
-                    self._finalize()
-                    raise
+        finally:
+            self._finalize()
+
+
+class AsyncParmapper(AsyncIterable):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        func: Callable[[T], Awaitable[TT]],
+        *,
+        num_workers: int | None = None,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        parmapper_name='asyncparmapper',
+        **kwargs,
+    ):
+        self._instream = instream
+        self._func = func
+        self._func_kwargs = kwargs
+        self._return_x = return_x
+        self._return_exceptions = return_exceptions
+        self._num_workers = num_workers or 256
+        self._name = parmapper_name
+        self._tasks = None
+        self._worker = None
+        self._stopped = None
+
+    async def _start(self):
+        async def enqueue():
+            instream = self._instream
+            tasks = self._tasks
+            stopped = self._stopped
+            loop = asyncio.get_running_loop()
+            func = self._func
+            kwargs = self._func_kwargs
+            try:
+                async for x in instream:
+                    if stopped.is_set():
+                        break
+                    t = loop.create_task(func(x, **kwargs))
+                    await tasks.put((x, t))
+                    # The size of the queue `tasks` regulates how many
+                    # concurrent calls to `func` there can be.
+                await tasks.put(FINISHED)
+            except Exception as e:
+                await tasks.put(STOPPED)
+                await tasks.put(e)
+
+        self._stopped = asyncio.Event()
+        self._tasks = asyncio.Queue(self._num_workers - 2)
+        self._worker = asyncio.create_task(enqueue(), name=self._name)
+
+    async def _finalize(self):
+        self._stopped.set()
+        tasks = self._tasks
+        cancelled = []
+        while not tasks.empty():
+            z = await tasks.get()
+            if z == FINISHED:
+                break
+            if z == STOPPED:
+                e = await tasks.get()
+                break
+            x, t = z
+            if not t.done():
+                t.cancel()
+                cancelled.append(t)
+            else:
+                try:
+                    await t
+                except Exception:
+                    pass
+
+        if cancelled:
+            try:
+                await asyncio.wait(cancelled)
+            except Exception as e:
+                logger.info("error during clean-up is ignored: %s" % e)
+
+        if self._worker is not None:
+            await self._worker
+            self._worker = None
+            # Do another round of task clean-up.
+            await self._finalize()
+
+    async def __aiter__(self):
+        await self._start()
+        tasks = self._tasks
+        try:
+            while True:
+                z = await tasks.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    e = await tasks.get()
+                    raise e
+
+                x, t = z
+                try:
+                    y = await t
+                except Exception as e:
+                    if self._return_exceptions:
+                        if self._return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    else:
+                        raise e
+                else:
+                    if self._return_x:
+                        yield x, y
+                    else:
+                        yield y
+        finally:
+            await self._finalize()
+
+        # TODO: when user breaks out of the iteration before it finishes,
+        # No `GeneratorExit` is raised, and the `finally` block is not called.
+        # Need to fix.
+        # References:
+        #  https://peps.python.org/pep-0525/#finalization
+        #  https://docs.python.org/3/library/sys.html#sys.set_asyncgen_hooks
+        #  https://snarky.ca/unravelling-async-for-loops/
+        #  https://github.com/python/cpython/blob/3.11/Lib/asyncio/base_events.py#L539
+        #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
