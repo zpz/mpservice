@@ -1407,8 +1407,8 @@ class AsyncParmapper(AsyncIterable):
         if cancelled:
             try:
                 await asyncio.wait(cancelled)
-            except Exception as e:
-                logger.info("error during clean-up is ignored: %s", e)  # noqa: F841
+            except Exception as e:  # noqa: F841
+                logger.info("error during clean-up is ignored: %s", e)
 
         if self._worker is not None:
             await self._worker
