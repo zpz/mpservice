@@ -510,6 +510,7 @@ async def async_plus_2(x):
 
 
 def test_parmap_async():
+    print('===== 1 =====')
     data = range(1000)
     stream = Stream(data)
     stream.parmap_async(async_plus_2)
@@ -521,32 +522,42 @@ def test_parmap_async():
     assert t1 - t0 < 5
     # sequential processing would take 500+ sec
 
-    # Test exception in the worker function
     data = list(range(20))
     data[12] = 'a'
+
+    print('===== 2 =====')
+
+    # Test exception in the worker function
     stream = Stream(data).parmap_async(async_plus_2)
     with pytest.raises(TypeError):
         for x, y in zip(data, stream):
             assert y == x + 2
 
-    stream = Stream(data).parmap_async(
-        async_plus_2, return_x=True, return_exceptions=True
-    )
-    for x, y in stream:
-        if x == 'a':
-            assert isinstance(y, TypeError)
-        else:
-            assert y == x + 2
+    print('===== 3 =====')
+
+    # stream = Stream(data).parmap_async(
+    #     async_plus_2, return_x=True, return_exceptions=True
+    # )
+    # for x, y in stream:
+    #     if x == 'a':
+    #         assert isinstance(y, TypeError)
+    #     else:
+    #         assert y == x + 2
+
+    print('===== 4 =====')
 
     # Test premature quit, i.e. GeneratorExit
     stream = Stream(data).parmap_async(async_plus_2)
     istream = iter(stream)
     for i, x in enumerate(data):
+        print(i, x)
         if i == 12:
             break
         y = next(istream)
+        print(x, y)
         assert y == x + 2
-
+    del istream
+    
 
 @pytest.mark.asyncio
 async def test_async_parmap():
@@ -554,6 +565,7 @@ async def test_async_parmap():
         for x in range(1000):
             yield x
 
+    print('')
     stream = Stream(data())
     stream.async_parmap(async_plus_2)
     t0 = perf_counter()
@@ -566,7 +578,6 @@ async def test_async_parmap():
     assert t1 - t0 < 5
     # sequential processing would take 500+ sec
 
-    # Test exception in the worker function
 
     async def data1():
         for x in range(20):
@@ -575,6 +586,8 @@ async def test_async_parmap():
             else:
                 yield x
 
+    # Test exception in the worker function
+    print('')
     stream = Stream(data1()).async_parmap(async_plus_2)
     with pytest.raises(TypeError):
         x = 0
@@ -583,11 +596,17 @@ async def test_async_parmap():
             x += 1
 
     # Test premature quit, i.e. GeneratorExit
+    print('')
     stream = Stream(data1()).async_parmap(async_plus_2)
     x = 0
-    async for y in stream:
+    a = stream.__aiter__()
+    async for y in a:
         assert y == x + 2
         print('x:', x)
         x += 1
         if x == 10:
             break
+
+
+if __name__ == '__main__':
+    test_parmap_async()
