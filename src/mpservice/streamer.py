@@ -1288,7 +1288,7 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                     try:
                         t.result()
                         # Ignore the result; no need to put in ``outstream``.
-                    except:
+                    except:  # noqa: S110, E722
                         pass  # noqa: E722
                 else:
                     t.cancel()
@@ -1412,7 +1412,7 @@ class AsyncParmapper(AsyncIterable):
         if cancelled:
             try:
                 await asyncio.wait(cancelled)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         if self._worker is not None:
