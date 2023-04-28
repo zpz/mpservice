@@ -557,7 +557,7 @@ def test_parmap_async():
         print(x, y)
         assert y == x + 2
     del istream
-    
+
 
 @pytest.mark.asyncio
 async def test_async_parmap():
@@ -577,7 +577,6 @@ async def test_async_parmap():
     print(t1 - t0)
     assert t1 - t0 < 5
     # sequential processing would take 500+ sec
-
 
     async def data1():
         for x in range(20):

@@ -1169,7 +1169,16 @@ class ParmapperAsync(Iterable, FinalizedMixin):
 
     @staticmethod
     def _finalize_func(stopped, worker_thread, loop, loop_thread):
-        print('stopped', stopped, 'worker_thread', worker_thread, 'loop', loop, 'loop_thread', loop_thread)
+        print(
+            'stopped',
+            stopped,
+            'worker_thread',
+            worker_thread,
+            'loop',
+            loop,
+            'loop_thread',
+            loop_thread,
+        )
         # Refer to the clean-up code of `asyncio.run`.
         print('finalizing')
         stopped.set()
@@ -1290,7 +1299,6 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                 except asyncio.CancelledError:
                     pass
 
-
         async def main():
             tasks = asyncio.Queue(self._num_workers - 2)
             t1 = asyncio.create_task(enqueue(tasks))
@@ -1389,7 +1397,7 @@ class AsyncParmapper(AsyncIterable):
             if z == FINISHED:
                 break
             if z == STOPPED:
-                e = await tasks.get()
+                await tasks.get()
                 break
             x, t = z
             if not t.done():
