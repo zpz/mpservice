@@ -1289,7 +1289,7 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                         t.result()
                         # Ignore the result; no need to put in ``outstream``.
                     except:
-                        pass
+                        pass  # noqa: E722
                 else:
                     t.cancel()
                     cancelling.append(t)
