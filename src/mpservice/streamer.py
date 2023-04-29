@@ -40,9 +40,9 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 import asyncio
+import contextlib
 import functools
 import logging
-import multiprocessing.util
 import os
 import queue
 import threading
@@ -679,21 +679,27 @@ class Stream:
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name: str = 'parmapperasync',
+        async_context: dict = None,
         **kwargs,
     ) -> Self:
         '''
         Similar to :meth:`parmap`, except that the worker function is async.
 
+        This method itself is **sync**, and its user API is the same as the other methods.
+        The fact that the worker function is async does not change how the streaming pipeline works
+        for the user.
+
+        Usually this method is called within a sync environment.
+        The operator uses a worker thread to run the async ``func``.
+        User does not need to worry about the async-ness of the execution there.
+
+        In an async environment with an async ``func``, you may prefer
+        :meth:`async_parmap`.
+
         Parameters
         ----------
         num_workers
             The max number of concurrent (i.e. ongoing at the same time) calls to ``func``.
-
-        Notes
-        -----
-        This method itself is **sync**, and its user API is the same as the other methods.
-        The fact that the worker function is async does not change how the streaming pipeline works
-        for the user.
         '''
         self.streamlets.append(
             ParmapperAsync(
@@ -703,6 +709,7 @@ class Stream:
                 return_x=return_x,
                 return_exceptions=return_exceptions,
                 parmapper_name=parmapper_name,
+                async_context=async_context,
                 **kwargs,
             )
         )
@@ -722,7 +729,7 @@ class Stream:
         Add an async operator that runs the async worker function ``func``.
 
         This method itself is *sync*, but the worker function ``func`` is *async*.
-        Plus, this function adds an *async* iterable, namely :class:`AsyncParmapper`, to the chain of operators.
+        Furthermore, this function adds an *async* iterable, namely :class:`AsyncParmapper`, to the chain of operators.
         This operator requires its input stream to be async iterable. Because ``AsyncParmapper``
         is currently the only async operator, it follows that :meth:`async_parmap` is the only
         operator that can be called (but it can be called more than once), and the input stream
@@ -733,7 +740,7 @@ class Stream:
         operator.
 
         This method is called within an async environment.
-        It runs in the current thread on the current asyncio event loop.
+        The operator runs in the current thread on the current asyncio event loop.
 
         Parameters
         ----------
@@ -908,7 +915,7 @@ class Buffer(Iterable):
             q.put(FINISHED)
 
     def _finalize(self):
-        if self._stopped.is_set():
+        if self._stopped is None:
             return
         self._stopped.set()
         tasks = self._tasks
@@ -917,6 +924,7 @@ class Buffer(Iterable):
         # `tasks` is now empty. The thread needs to put at most one
         # more element into the queue, which is safe.
         self._worker.join()
+        self._stopped = None
 
     def __iter__(self):
         self._start()
@@ -972,6 +980,7 @@ class Parmapper(Iterable):
         self._name = parmapper_name
         self._tasks = None
         self._worker = None
+        self._stopped = None
 
     def _start(self):
         num_workers = self._num_workers
@@ -1021,6 +1030,8 @@ class Parmapper(Iterable):
         self._worker.start()
 
     def _finalize(self):
+        if self._stopped is None:
+            return
         self._stopped.set()
 
         tasks = self._tasks
@@ -1035,6 +1046,7 @@ class Parmapper(Iterable):
             if not worker.is_alive():
                 break
 
+        self._stopped = None
         if executor is not None:
             try:
                 executor.shutdown()
@@ -1097,19 +1109,12 @@ class Parmapper(Iterable):
         finally:
             self._finalize()
 
-
-class FinalizedMixin:
-    def _finalize(self):
-        fin = self._finalizer
-        if fin:
-            self._finalizer = None
-            fin()
-
-    def __del__(self):
-        self._finalize()
+        # Regarding clean-up of generators, see
+        #   https://stackoverflow.com/a/30862344/6178706
+        #   https://docs.python.org/3.6/reference/expressions.html#generator.close
 
 
-class ParmapperAsync(Iterable, FinalizedMixin):
+class ParmapperAsync(Iterable):
     def __init__(
         self,
         instream: Iterable,
@@ -1119,6 +1124,7 @@ class ParmapperAsync(Iterable, FinalizedMixin):
         return_x: bool = False,
         return_exceptions: bool = False,
         parmapper_name='parmapperasync',
+        async_context: dict = None,
         **kwargs,
     ):
         self._instream = instream
@@ -1133,7 +1139,8 @@ class ParmapperAsync(Iterable, FinalizedMixin):
         self._stopped = None
         self._loop = None
         self._loop_thread = None
-        self._finalizer = None
+        self._async_context = async_context or {}
+        self._async_contexts = []
 
     @property
     def loop(self):
@@ -1144,13 +1151,46 @@ class ParmapperAsync(Iterable, FinalizedMixin):
         return self._loop
 
     def run_coroutine(self, coro: Awaitable):
+        '''
+        This is for unusual cases where we need to run some code on the asyncio
+        event loop that is owned by this object. That event loop is used
+        mainly in one worker thread.
+
+        .. note:: this method can't be used after this object has been iterated over,
+        because at the end of :meth:`__iter__` the event loop is closed.
+
+        See :meth:`use_async_context` for a special use case.
+        '''
         t = asyncio.run_coroutine_threadsafe(coro, self.loop)
         return t.result()
+
+    def use_async_context(self, *contexts):
+        '''
+        This is used when the worker function (``func`` passed into :meth:`__init__`)
+        takes an async context manager as an argument. The context manager needs to be
+        initialized/finalized only once for the entire session, not in each invokation
+        of ``func``. Such initialization/finalization needs to execute on the asyncio
+        event loop that is owned by this ``ParmapperAsync`` object.
+
+        This method taks such context managers and conducts their initialization
+        and finalization.
+
+        One example use case: ``func`` makes HTTP requests using the package ``httpx``
+        and takes a ``httpx.AsyncClient`` "session" argument.
+
+        See ``tests/test_streamer.py::test_parmap_loop`` for an example.
+        '''
+        self._async_contexts.extend(contexts)
 
     def _start(self):
         self._outstream = queue.Queue(self._num_workers)
         self._stopped = threading.Event()
-        self.loop  # to be sure the loop is started
+        self.loop
+        # to be sure `self._loop` is a loop rather than `None`
+        # when passed to `Finalize`.
+
+        for c in self._async_contexts:
+            self.run_coroutine(c.__aenter__())
 
         self._worker_thread = Thread(
             target=self._run_worker,
@@ -1159,39 +1199,25 @@ class ParmapperAsync(Iterable, FinalizedMixin):
             # How to use diff names for them?
         )
         self._worker_thread.start()
-        print('loop', self._loop)
-        self._finalizer = multiprocessing.util.Finalize(
-            self,
-            type(self)._finalize_func,
-            (self._stopped, self._worker_thread, self._loop, self._loop_thread),
-            exitpriority=10,
-        )
 
-    @staticmethod
-    def _finalize_func(stopped, worker_thread, loop, loop_thread):
-        print(
-            'stopped',
-            stopped,
-            'worker_thread',
-            worker_thread,
-            'loop',
-            loop,
-            'loop_thread',
-            loop_thread,
-        )
+    def _finalize(self):
         # Refer to the clean-up code of `asyncio.run`.
-        print('finalizing')
-        stopped.set()
-        print('to join worker thread')
-        worker_thread.join()
-        print('to stop loop')
+        if self._stopped is None:
+            return
+        self._stopped.set()
+        self._worker_thread.join()
+        self._stopped = None
+
+        for c in reversed(self._async_contexts):
+            self.run_coroutine(c.__aexit__())
+        self._async_contexts = []
+
+        loop = self._loop
         loop.call_soon_threadsafe(loop.stop)
         while loop.is_running():
             time.sleep(0.01)
-        print('to close loop')
         loop.close()
-        loop_thread.join()
-        print('loop thread joined')
+        self._loop_thread.join()
 
     def _run_worker(self):
         # In the following async functions, some sync operations like I/O on a ``queue.Queue``
@@ -1202,7 +1228,7 @@ class ParmapperAsync(Iterable, FinalizedMixin):
             loop = asyncio.get_running_loop()
             thread_pool = get_shared_thread_pool()
             func = self._func
-            kwargs = self._func_kwargs
+            kwargs = {**self._func_kwargs, **self._async_context}
             stopped = self._stopped
             try:
                 instream_ = iter(self._instream)
@@ -1212,6 +1238,7 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                     x = await loop.run_in_executor(
                         thread_pool, next, instream_, FINISHED
                     )
+                    # `FINISHED` is returned if there's no more elements.
                     # See https://stackoverflow.com/a/61774972
                     if x == FINISHED:  # `instream_` exhausted
                         break
@@ -1240,24 +1267,31 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                 if v == FINISHED:
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
-                    await loop.run_in_executor(thread_pool, outstream.put, FINISHED)
+                    try:
+                        outstream.put_nowait(FINISHED)
+                    except queue.Full:
+                        await loop.run_in_executor(thread_pool, outstream.put, FINISHED)
+                    # No more cleanup is needed.
                     return
                 if v == STOPPED:
+                    try:
+                        outstream.put_nowait(STOPPED)
+                    except queue.Full:
+                        await loop.run_in_executor(thread_pool, outstream.put, STOPPED)
+                    e = await tasks.get()
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
-                    await loop.run_in_executor(thread_pool, outstream.put, STOPPED)
-                    e = await tasks.get()
-                    await loop.run_in_executor(thread_pool, outstream.put, e)
+                    try:
+                        outstream.put_nowait(e)
+                    except queue.Full:
+                        await loop.run_in_executor(thread_pool, outstream.put, e)
+                    # No more cleanup is needed.
                     return
                 if stopped.is_set():
                     break
                 x, t = v
                 try:
                     y = await t
-                    try:
-                        outstream.put_nowait((x, y))
-                    except queue.Full:
-                        await loop.run_in_executor(thread_pool, outstream.put, (x, y))
                 except Exception as e:
                     try:
                         outstream.put_nowait((x, e))
@@ -1266,8 +1300,11 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                     if not return_exceptions:
                         stopped.set()  # signal `enqueue` to stop
                         break
-
-            outstream.put(FINISHED)
+                else:
+                    try:
+                        outstream.put_nowait((x, y))
+                    except queue.Full:
+                        await loop.run_in_executor(thread_pool, outstream.put, (x, y))
 
             # Stop has been requested.
             # Get all Tasks out of the queue;
@@ -1293,18 +1330,18 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                 else:
                     t.cancel()
                     cancelling.append(t)
-            for t in cancelling:
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+            if cancelling:
+                await asyncio.wait(cancelling)
 
         async def main():
-            tasks = asyncio.Queue(self._num_workers - 2)
-            t1 = asyncio.create_task(enqueue(tasks))
-            t2 = asyncio.create_task(dequeue(tasks))
-            await t1
-            await t2
+            async with contextlib.AsyncExitStack() as stack:
+                cms = {name: await stack.enter_async_context(cm)
+                       for name, cm in self._async_context.items()}
+                tasks = asyncio.Queue(self._num_workers - 2)
+                t1 = asyncio.create_task(enqueue(tasks))
+                t2 = asyncio.create_task(dequeue(tasks))
+                await t1
+                await t2
 
         f = asyncio.run_coroutine_threadsafe(main(), self.loop)
         f.result()
@@ -1336,8 +1373,12 @@ class ParmapperAsync(Iterable, FinalizedMixin):
                     else:
                         yield y
         finally:
-            print('-------finally-------')
             self._finalize()
+            # TODO:
+            # In one puzzling case, this generator object is not gc'ed,
+            # and the program hangs.
+            # See the end of `tests/test_streamer.py::test_parmap_async`.
+            # A workaround is to ``del`` this object or call its ``_finalize``.
 
 
 class AsyncParmapper(AsyncIterable):
@@ -1389,6 +1430,8 @@ class AsyncParmapper(AsyncIterable):
         self._worker = asyncio.create_task(enqueue(), name=self._name)
 
     async def _finalize(self):
+        if self._stopped is None:
+            return
         self._stopped.set()
         tasks = self._tasks
         cancelled = []
@@ -1410,16 +1453,15 @@ class AsyncParmapper(AsyncIterable):
                     pass
 
         if cancelled:
-            try:
-                await asyncio.wait(cancelled)
-            except Exception:  # noqa: S110
-                pass
+            await asyncio.wait(cancelled)
 
         if self._worker is not None:
             await self._worker
             self._worker = None
             # Do another round of task clean-up.
             await self._finalize()
+        else:
+            self._stopped = None
 
     async def __aiter__(self):
         await self._start()
@@ -1452,13 +1494,10 @@ class AsyncParmapper(AsyncIterable):
         finally:
             await self._finalize()
 
-        # When user prematurely abandons iterating an async generator, like this one,
-        # `GeneratorExit` error is thrown into the generator during loop cleanup.
-        # (Then the `finally` code block gets executed.)
-        # This is different from the sync case, which I think throws `GeneratorExit`
-        # into the generator right away.
-
-        # References:
+        # About termination of async generators, see
+        #  https://docs.python.org/3.6/reference/expressions.html#asynchronous-generator-functions
+        #
+        # and
         #  https://peps.python.org/pep-0525/#finalization
         #  https://docs.python.org/3/library/sys.html#sys.set_asyncgen_hooks
         #  https://snarky.ca/unravelling-async-for-loops/

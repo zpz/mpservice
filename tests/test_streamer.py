@@ -535,18 +535,18 @@ def test_parmap_async():
 
     print('===== 3 =====')
 
-    # stream = Stream(data).parmap_async(
-    #     async_plus_2, return_x=True, return_exceptions=True
-    # )
-    # for x, y in stream:
-    #     if x == 'a':
-    #         assert isinstance(y, TypeError)
-    #     else:
-    #         assert y == x + 2
+    stream = Stream(data).parmap_async(
+        async_plus_2, return_x=True, return_exceptions=True
+    )
+    for x, y in stream:
+        if x == 'a':
+            assert isinstance(y, TypeError)
+        else:
+            assert y == x + 2
 
     print('===== 4 =====')
 
-    # Test premature quit, i.e. GeneratorExit
+    # Test premature quit
     stream = Stream(data).parmap_async(async_plus_2)
     istream = iter(stream)
     for i, x in enumerate(data):
@@ -556,7 +556,44 @@ def test_parmap_async():
         y = next(istream)
         print(x, y)
         assert y == x + 2
+    # I don't know why `istream` is not garbage collected.
+    # Program hangs here. Trigger GC mannually:
     del istream
+
+
+class AsyncWrapper:
+    def __init__(self, shift: int):
+        self._shift = shift
+
+    async def __aenter__(self):
+        print(f'----- {self.__class__.__name__}.__aenter__ -----')
+        self._shift += 1
+        return self
+
+    async def __aexit__(self, *args):
+        print(f'----- {self.__class__.__name__}.__aexit__ -----')
+        pass
+
+    async def __call__(self, x):
+        return x + self._shift
+
+
+async def wrap(x, wrapper: AsyncWrapper):
+    await asyncio.sleep(0.1)
+    return await wrapper(x)
+
+
+def test_parmap_async_context():
+    data = range(1000)
+    wrapper = AsyncWrapper(3)
+    stream = Stream(data).parmap_async(wrap, async_context={'wrapper': wrapper}, return_x=True)
+    # stream.streamlets[-1].use_async_context(wrapper)
+    t0 = perf_counter()
+    for x, y in stream:
+        assert y == x + 4
+    t1 = perf_counter()
+    print(t1 - t0)
+    assert t1 - t0 < 1
 
 
 @pytest.mark.asyncio
@@ -605,7 +642,3 @@ async def test_async_parmap():
         x += 1
         if x == 10:
             break
-
-
-if __name__ == '__main__':
-    test_parmap_async()
