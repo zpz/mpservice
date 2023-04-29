@@ -32,7 +32,7 @@ class Thread(threading.Thread):
     object's behavior similar to the ``Future`` object returned
     by ``concurrent.futures.ThreadPoolExecutor.submit``.
 
-    .. seealso:: :class:`SpawnProcess`
+    .. seealso:: :class:`mpservice.multiprocessing.SpawnProcess`
     """
 
     def __init__(self, *args, **kwargs):
