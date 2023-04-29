@@ -510,7 +510,6 @@ async def async_plus_2(x):
 
 
 def test_parmap_async():
-    print('===== 1 =====')
     data = range(1000)
     stream = Stream(data)
     stream.parmap_async(async_plus_2)
@@ -525,15 +524,11 @@ def test_parmap_async():
     data = list(range(20))
     data[12] = 'a'
 
-    print('===== 2 =====')
-
     # Test exception in the worker function
     stream = Stream(data).parmap_async(async_plus_2)
     with pytest.raises(TypeError):
         for x, y in zip(data, stream):
             assert y == x + 2
-
-    print('===== 3 =====')
 
     stream = Stream(data).parmap_async(
         async_plus_2, return_x=True, return_exceptions=True
@@ -543,8 +538,6 @@ def test_parmap_async():
             assert isinstance(y, TypeError)
         else:
             assert y == x + 2
-
-    print('===== 4 =====')
 
     # Test premature quit
     stream = Stream(data).parmap_async(async_plus_2)
@@ -556,9 +549,6 @@ def test_parmap_async():
         y = next(istream)
         print(x, y)
         assert y == x + 2
-    # I don't know why `istream` is not garbage collected.
-    # Program hangs here. Trigger GC mannually:
-    del istream
 
 
 class AsyncWrapper:
@@ -584,10 +574,11 @@ async def wrap(x, wrapper: AsyncWrapper):
 
 
 def test_parmap_async_context():
+    print('')
     data = range(1000)
-    wrapper = AsyncWrapper(3)
-    stream = Stream(data).parmap_async(wrap, async_context={'wrapper': wrapper}, return_x=True)
-    # stream.streamlets[-1].use_async_context(wrapper)
+    stream = Stream(data).parmap_async(
+        wrap, async_context={'wrapper': AsyncWrapper(3)}, return_x=True
+    )
     t0 = perf_counter()
     for x, y in stream:
         assert y == x + 4

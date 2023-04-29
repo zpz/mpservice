@@ -700,6 +700,28 @@ class Stream:
         ----------
         num_workers
             The max number of concurrent (i.e. ongoing at the same time) calls to ``func``.
+        async_context
+            This dict contains *async* context managers that are arguments to ``func``,
+            in addition to the arguments in ``kwargs``. These objects have been initialized
+            (``__init__`` called), but have not entered their contexts yet (``__aenter__`` not called).
+            The ``__aenter__`` and ``__aexit__`` of each of these objects will be called
+            once  at the beginning and end in the worker thread (properly in an async environment).
+            These objects will be passed to ``func`` as named arguments. Inside ``func``,
+            these objects are used directly without ``async with``. In other words, each of
+            these objects enters their context only once, then is used in any number of
+            invokations of ``func``.
+
+            One example: ``func`` conducts HTTP requests using the package ``httpx`` and uses
+            a ``httpx.AsyncClient`` as a "session" object. You may do something like this::
+
+                async def download_image(url, *, session: httpx.AsyncClient, **kwargs):
+                    response = await session.get(url, **kwargs)
+                    return response.content
+
+                stream = Stream(urls)
+                stream.parmap_async(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
+                for img in stream:
+                    ...
         '''
         self.streamlets.append(
             ParmapperAsync(
@@ -1135,62 +1157,12 @@ class ParmapperAsync(Iterable):
         self._num_workers = num_workers or 256
         self._name = parmapper_name
         self._worker_thread = None
-        self._worker_future = None
         self._stopped = None
-        self._loop = None
-        self._loop_thread = None
         self._async_context = async_context or {}
-        self._async_contexts = []
-
-    @property
-    def loop(self):
-        if self._loop is None:
-            self._loop = asyncio.new_event_loop()
-            self._loop_thread = Thread(target=self._loop.run_forever)
-            self._loop_thread.start()
-        return self._loop
-
-    def run_coroutine(self, coro: Awaitable):
-        '''
-        This is for unusual cases where we need to run some code on the asyncio
-        event loop that is owned by this object. That event loop is used
-        mainly in one worker thread.
-
-        .. note:: this method can't be used after this object has been iterated over,
-        because at the end of :meth:`__iter__` the event loop is closed.
-
-        See :meth:`use_async_context` for a special use case.
-        '''
-        t = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        return t.result()
-
-    def use_async_context(self, *contexts):
-        '''
-        This is used when the worker function (``func`` passed into :meth:`__init__`)
-        takes an async context manager as an argument. The context manager needs to be
-        initialized/finalized only once for the entire session, not in each invokation
-        of ``func``. Such initialization/finalization needs to execute on the asyncio
-        event loop that is owned by this ``ParmapperAsync`` object.
-
-        This method taks such context managers and conducts their initialization
-        and finalization.
-
-        One example use case: ``func`` makes HTTP requests using the package ``httpx``
-        and takes a ``httpx.AsyncClient`` "session" argument.
-
-        See ``tests/test_streamer.py::test_parmap_loop`` for an example.
-        '''
-        self._async_contexts.extend(contexts)
 
     def _start(self):
         self._outstream = queue.Queue(self._num_workers)
         self._stopped = threading.Event()
-        self.loop
-        # to be sure `self._loop` is a loop rather than `None`
-        # when passed to `Finalize`.
-
-        for c in self._async_contexts:
-            self.run_coroutine(c.__aenter__())
 
         self._worker_thread = Thread(
             target=self._run_worker,
@@ -1201,23 +1173,11 @@ class ParmapperAsync(Iterable):
         self._worker_thread.start()
 
     def _finalize(self):
-        # Refer to the clean-up code of `asyncio.run`.
         if self._stopped is None:
             return
         self._stopped.set()
         self._worker_thread.join()
         self._stopped = None
-
-        for c in reversed(self._async_contexts):
-            self.run_coroutine(c.__aexit__())
-        self._async_contexts = []
-
-        loop = self._loop
-        loop.call_soon_threadsafe(loop.stop)
-        while loop.is_running():
-            time.sleep(0.01)
-        loop.close()
-        self._loop_thread.join()
 
     def _run_worker(self):
         # In the following async functions, some sync operations like I/O on a ``queue.Queue``
@@ -1335,16 +1295,17 @@ class ParmapperAsync(Iterable):
 
         async def main():
             async with contextlib.AsyncExitStack() as stack:
-                cms = {name: await stack.enter_async_context(cm)
-                       for name, cm in self._async_context.items()}
+                {
+                    name: await stack.enter_async_context(cm)
+                    for name, cm in self._async_context.items()
+                }
                 tasks = asyncio.Queue(self._num_workers - 2)
                 t1 = asyncio.create_task(enqueue(tasks))
                 t2 = asyncio.create_task(dequeue(tasks))
                 await t1
                 await t2
 
-        f = asyncio.run_coroutine_threadsafe(main(), self.loop)
-        f.result()
+        asyncio.run(main())
 
     def __iter__(self):
         self._start()
@@ -1374,11 +1335,6 @@ class ParmapperAsync(Iterable):
                         yield y
         finally:
             self._finalize()
-            # TODO:
-            # In one puzzling case, this generator object is not gc'ed,
-            # and the program hangs.
-            # See the end of `tests/test_streamer.py::test_parmap_async`.
-            # A workaround is to ``del`` this object or call its ``_finalize``.
 
 
 class AsyncParmapper(AsyncIterable):

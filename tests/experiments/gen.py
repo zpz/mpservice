@@ -1,10 +1,10 @@
-
 def gen():
     try:
         for x in range(100):
             yield x
     finally:
         print('exiting')
+
 
 def main():
     g = gen()
@@ -16,6 +16,7 @@ def main():
     #         break
 
     print('done')
+
 
 if __name__ == '__main__':
     main()
