@@ -1,23 +1,21 @@
-import multiprocessing as mp
-
-from mpservice import util
-from mpservice.threading import get_shared_thread_pool
-
-
-def worker():
-    print(
-        'in child', mp.current_process().name, list(util._global_thread_pools_.items())
-    )
+def gen():
+    try:
+        for x in range(100):
+            yield x
+    finally:
+        print('exiting')
 
 
 def main():
-    get_shared_thread_pool()
-    with util._global_thread_pools_lock:
-        p = mp.get_context('fork').Process(target=worker)
-        p.start()
-        p.join()
-    with util._global_thread_pools_lock:
-        print('lock acquired')
+    g = gen()
+    for _ in range(10):
+        print(next(g))
+    # for x in g:
+    #     print(x)
+    #     if x > 10:
+    #         break
+
+    print('done')
 
 
 if __name__ == '__main__':

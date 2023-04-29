@@ -521,9 +521,10 @@ def test_parmap_async():
     assert t1 - t0 < 5
     # sequential processing would take 500+ sec
 
-    # Test exception in the worker function
     data = list(range(20))
     data[12] = 'a'
+
+    # Test exception in the worker function
     stream = Stream(data).parmap_async(async_plus_2)
     with pytest.raises(TypeError):
         for x, y in zip(data, stream):
@@ -538,11 +539,97 @@ def test_parmap_async():
         else:
             assert y == x + 2
 
-    # Test premature quit, i.e. GeneratorExit
+    # Test premature quit
     stream = Stream(data).parmap_async(async_plus_2)
     istream = iter(stream)
     for i, x in enumerate(data):
+        print(i, x)
         if i == 12:
             break
         y = next(istream)
+        print(x, y)
         assert y == x + 2
+
+
+class AsyncWrapper:
+    def __init__(self, shift: int):
+        self._shift = shift
+
+    async def __aenter__(self):
+        print(f'----- {self.__class__.__name__}.__aenter__ -----')
+        self._shift += 1
+        return self
+
+    async def __aexit__(self, *args):
+        print(f'----- {self.__class__.__name__}.__aexit__ -----')
+        pass
+
+    async def __call__(self, x):
+        return x + self._shift
+
+
+async def wrap(x, wrapper: AsyncWrapper):
+    await asyncio.sleep(0.1)
+    return await wrapper(x)
+
+
+def test_parmap_async_context():
+    print('')
+    data = range(1000)
+    stream = Stream(data).parmap_async(
+        wrap, async_context={'wrapper': AsyncWrapper(3)}, return_x=True
+    )
+    t0 = perf_counter()
+    for x, y in stream:
+        assert y == x + 4
+    t1 = perf_counter()
+    print(t1 - t0)
+    assert t1 - t0 < 1
+
+
+@pytest.mark.asyncio
+async def test_async_parmap():
+    async def data():
+        for x in range(1000):
+            yield x
+
+    print('')
+    stream = Stream(data())
+    stream.async_parmap(async_plus_2)
+    t0 = perf_counter()
+    x = 0
+    async for y in stream:
+        assert y == x + 2
+        x += 1
+    t1 = perf_counter()
+    print(t1 - t0)
+    assert t1 - t0 < 5
+    # sequential processing would take 500+ sec
+
+    async def data1():
+        for x in range(20):
+            if x == 11:
+                yield 'a'
+            else:
+                yield x
+
+    # Test exception in the worker function
+    print('')
+    stream = Stream(data1()).async_parmap(async_plus_2)
+    with pytest.raises(TypeError):
+        x = 0
+        async for y in stream:
+            assert y == x + 2
+            x += 1
+
+    # Test premature quit, i.e. GeneratorExit
+    print('')
+    stream = Stream(data1()).async_parmap(async_plus_2)
+    x = 0
+    a = stream.__aiter__()
+    async for y in a:
+        assert y == x + 2
+        print('x:', x)
+        x += 1
+        if x == 10:
+            break
