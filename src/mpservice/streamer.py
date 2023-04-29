@@ -46,7 +46,6 @@ import logging
 import os
 import queue
 import threading
-import time
 import traceback
 from collections import deque
 from collections.abc import AsyncIterable, Iterable, Sequence
