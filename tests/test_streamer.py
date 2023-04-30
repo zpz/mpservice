@@ -4,7 +4,7 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import Stream, SyncIter, AsyncIter
+from mpservice.streamer import AsyncIter, Stream, SyncIter
 
 
 async def agen(n=10):
@@ -554,9 +554,7 @@ def test_parmap_async():
         for x, y in zip(data, stream):
             assert y == x + 2
 
-    stream = Stream(data).parmap(
-        async_plus_2, return_x=True, return_exceptions=True
-    )
+    stream = Stream(data).parmap(async_plus_2, return_x=True, return_exceptions=True)
     for x, y in stream:
         if x == 'a':
             assert isinstance(y, TypeError)

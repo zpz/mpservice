@@ -141,11 +141,11 @@ class Stream:
         if hasattr(self.streamlets[-1], '__aiter__'):
             self.streamlets.append(SyncIter(self.streamlets[-1]))
         return self
-    
+
     def to_async(self):
         if hasattr(self.streamlets[-1], '__iter__'):
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
-        return self 
+        return self
 
     def __iter__(self):
         try:
@@ -632,7 +632,7 @@ class Stream:
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        parmapper_name: str|None = None,
+        parmapper_name: str | None = None,
         async_context: dict = None,
         **kwargs,
     ) -> Self:
@@ -841,9 +841,7 @@ class AsyncIter(AsyncIterable):
             while True:
                 # ``next(instream)`` could involve some waiting and sleeping,
                 # hence doing it in another thread.
-                x = await loop.run_in_executor(
-                    None, next, instream, FINISHED
-                )
+                x = await loop.run_in_executor(None, next, instream, FINISHED)
                 # `FINISHED` is returned if there's no more elements.
                 # See https://stackoverflow.com/a/61774972
                 if x == FINISHED:  # `instream_` exhausted
@@ -1305,7 +1303,6 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
                         yield y
         finally:
             self._finalize()
-
 
 
 class ParmapperAsync(Iterable):
