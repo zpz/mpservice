@@ -52,6 +52,7 @@ class Thread(threading.Thread):
             raise
         except BaseException as e:
             self._exception_ = e
+            print(f"{threading.current_thread.name}: {repr(e)}")
             raise  # Standard threading will print error info here.
         finally:
             # Avoid a refcycle if the thread is running a function with
