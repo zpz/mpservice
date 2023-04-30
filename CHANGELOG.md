@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.7] - in progress
+
+### Removed
+
+- Methods ``streamer.Stream.{async_parmap, parmap_async}`` are dropped and merged into ``parmap``.
+
+### Changed
+
+- ``streamer.Stream.parmap``: parameter ``executor`` became named only.
+
+### Added
+
+- ``streamer.Stream`` added extensive support for async.
+
+
 ## [0.12.6] - 2023-04-28
 
 ### Added

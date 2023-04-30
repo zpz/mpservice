@@ -134,8 +134,6 @@ Selection or filtering (may drop elements):
 Concurrent (will create other threads or processes):
     - :meth:`~Stream.buffer`
     - :meth:`~Stream.parmap`
-    - :meth:`~Stream.parmap_async`
-    - :meth:`~Stream.async_parmap`
 
 Read-only (will not change the elements):
     - :meth:`~Stream.buffer`

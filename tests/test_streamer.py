@@ -4,7 +4,31 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import Stream
+from mpservice.streamer import AsyncIter, Stream, SyncIter
+
+
+async def agen(n=10):
+    for x in range(n):
+        yield x
+
+
+def gen(n=10):
+    for x in range(n):
+        yield x
+
+
+@pytest.mark.asyncio
+async def test_synciter():
+    for i, x in enumerate(SyncIter(agen(10))):
+        assert x == i
+
+
+@pytest.mark.asyncio
+async def test_asynciter():
+    i = 0
+    async for x in AsyncIter(gen(10)):
+        assert x == i
+        i += 1
 
 
 def test_stream():
@@ -504,15 +528,15 @@ def test_parmap_nest():
     assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]
 
 
-async def async_plus_2(x):
-    await asyncio.sleep(random.uniform(0.5, 1))
+async def async_plus_2(x, sleep_min=0.5, sleep_max=1):
+    await asyncio.sleep(random.uniform(sleep_min, sleep_max))
     return x + 2
 
 
 def test_parmap_async():
     data = range(1000)
     stream = Stream(data)
-    stream.parmap_async(async_plus_2)
+    stream.parmap(async_plus_2)
     t0 = perf_counter()
     for x, y in zip(data, stream):
         assert y == x + 2
@@ -525,14 +549,12 @@ def test_parmap_async():
     data[12] = 'a'
 
     # Test exception in the worker function
-    stream = Stream(data).parmap_async(async_plus_2)
+    stream = Stream(data).parmap(async_plus_2)
     with pytest.raises(TypeError):
         for x, y in zip(data, stream):
             assert y == x + 2
 
-    stream = Stream(data).parmap_async(
-        async_plus_2, return_x=True, return_exceptions=True
-    )
+    stream = Stream(data).parmap(async_plus_2, return_x=True, return_exceptions=True)
     for x, y in stream:
         if x == 'a':
             assert isinstance(y, TypeError)
@@ -540,7 +562,7 @@ def test_parmap_async():
             assert y == x + 2
 
     # Test premature quit
-    stream = Stream(data).parmap_async(async_plus_2)
+    stream = Stream(data).parmap(async_plus_2)
     istream = iter(stream)
     for i, x in enumerate(data):
         print(i, x)
@@ -576,7 +598,7 @@ async def wrap(x, wrapper: AsyncWrapper):
 def test_parmap_async_context():
     print('')
     data = range(1000)
-    stream = Stream(data).parmap_async(
+    stream = Stream(data).parmap(
         wrap, async_context={'wrapper': AsyncWrapper(3)}, return_x=True
     )
     t0 = perf_counter()
@@ -589,13 +611,9 @@ def test_parmap_async_context():
 
 @pytest.mark.asyncio
 async def test_async_parmap():
-    async def data():
-        for x in range(1000):
-            yield x
-
     print('')
-    stream = Stream(data())
-    stream.async_parmap(async_plus_2)
+    stream = Stream(range(1000))
+    stream.to_async().parmap(async_plus_2)
     t0 = perf_counter()
     x = 0
     async for y in stream:
@@ -615,7 +633,7 @@ async def test_async_parmap():
 
     # Test exception in the worker function
     print('')
-    stream = Stream(data1()).async_parmap(async_plus_2)
+    stream = Stream(data1()).parmap(async_plus_2)
     with pytest.raises(TypeError):
         x = 0
         async for y in stream:
@@ -624,7 +642,7 @@ async def test_async_parmap():
 
     # Test premature quit, i.e. GeneratorExit
     print('')
-    stream = Stream(data1()).async_parmap(async_plus_2)
+    stream = Stream(data1()).parmap(async_plus_2)
     x = 0
     a = stream.__aiter__()
     async for y in a:
@@ -633,3 +651,24 @@ async def test_async_parmap():
         x += 1
         if x == 10:
             break
+
+
+@pytest.mark.asyncio
+async def test_async_switch():
+    s = Stream(range(100)).to_async().map(plus2)
+    x = 0
+    async for y in s:
+        assert y == x + 2
+        x += 1
+
+    s = Stream(range(100)).to_async().map(plus2)
+    x = 0
+    for y in s:
+        assert y == x + 2
+        x += 1
+
+    s = Stream(range(100)).to_async().parmap(async_plus_2)
+    x = 0
+    for y in s:  # `async for` would work too.
+        assert y == x + 2
+        x += 1
