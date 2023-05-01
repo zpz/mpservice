@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - ``streamer.Stream`` added extensive support for async.
+- Methods ``streamer.Stream.{to_sync, to_async, __aiter__}``.
 
 
 ## [0.12.6] - 2023-04-28
