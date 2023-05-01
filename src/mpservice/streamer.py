@@ -621,7 +621,6 @@ class Stream:
         data. The buffer evens out irregularities in the speeds of upstream
         production and downstream consumption.
 
-
         ``maxsize`` is the size of the internal buffer.
         """
         cls = self._choose_by_mode(Buffer, AsyncBuffer)
