@@ -46,8 +46,18 @@ def test_drain():
     assert Stream(range(8)).drain() == 8
 
 
+@pytest.mark.asyncio
+async def test_async_drain():
+    assert await Stream(range(8)).to_async().drain() == 8
+
+
 def test_collect():
     assert Stream(range(3)).collect() == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_async_collect():
+    assert await Stream(range(3)).to_async().collect() == [0, 1, 2]
 
 
 def test_map():
@@ -55,7 +65,35 @@ def test_map():
         return x + shift
 
     assert Stream(range(5)).map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
+    assert Stream(range(5)).map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
     assert Stream(range(5)).map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
+
+
+@pytest.mark.asyncio
+async def test_async_map():
+    def inc(x, shift=1):
+        return x + shift
+
+    s = Stream(range(5)).map(inc, shift=2)
+    with pytest.raises(AttributeError):
+        async for x in s:
+            print(x)
+
+    assert await s.to_async().collect() == [2, 3, 4, 5, 6]
+    assert await Stream(range(5)).to_async().map(inc, shift=2).collect() == [
+        2,
+        3,
+        4,
+        5,
+        6,
+    ]
+    assert await Stream(range(5)).to_async().map(lambda x: x * 2).collect() == [
+        0,
+        2,
+        4,
+        6,
+        8,
+    ]
 
 
 def test_filter():
@@ -95,6 +133,56 @@ def test_filter():
     assert list(Stream((2, 3, 1, 5, 4, 7)).filter(Head())) == [1, 4]
 
 
+@pytest.mark.asyncio
+async def test_async_filter():
+    assert await Stream(range(7)).to_async().filter(
+        lambda n: (n % 2) == 0
+    ).collect() == [0, 2, 4, 6]
+
+    def odd_or_even(x, even=True):
+        if even:
+            return (x % 2) == 0
+        return (x % 2) != 0
+
+    assert await Stream(range(7)).to_async().filter(odd_or_even).collect() == [
+        0,
+        2,
+        4,
+        6,
+    ]
+    assert await Stream(range(7)).to_async().filter(
+        odd_or_even, even=False
+    ).collect() == [1, 3, 5]
+
+    data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
+
+    class Tail:
+        def __init__(self, n):
+            self._idx = 0
+            self.n = n
+
+        def __call__(self, x):
+            z = self._idx >= self.n
+            self._idx += 1
+            return z
+
+    assert await Stream(data).to_async().filter(Tail(6)).collect() == [6, 7]
+
+    class Head:
+        def __init__(self):
+            self._idx = 0
+
+        def __call__(self, x):
+            z = x <= self._idx
+            self._idx += 1
+            return z
+
+    assert [x async for x in Stream((2, 3, 1, 5, 4, 7)).to_async().filter(Head())] == [
+        1,
+        4,
+    ]
+
+
 def test_filter_exceptions():
     exc = [
         1,
@@ -129,6 +217,48 @@ def test_filter_exceptions():
     ).collect() == [1, 2, exc[4], 3, 4]
 
 
+@pytest.mark.asyncio
+async def test_async_filter_exceptions():
+    exc = [
+        1,
+        ValueError(3),
+        2,
+        IndexError(4),
+        FileNotFoundError(),
+        3,
+        KeyboardInterrupt(),
+        4,
+    ]
+
+    assert await Stream(exc).to_async().filter_exceptions(BaseException).collect() == [
+        1,
+        2,
+        3,
+        4,
+    ]
+
+    assert await Stream(exc).to_async().filter_exceptions(
+        BaseException, Exception
+    ).collect() == exc[:-2] + [exc[-1]]
+
+    with pytest.raises(IndexError):
+        assert (
+            await Stream(exc).to_async().filter_exceptions(ValueError).collect() == exc
+        )
+
+    with pytest.raises(FileNotFoundError):
+        ss = Stream(exc).to_async()
+        assert await ss.filter_exceptions((ValueError, IndexError)).collect() == exc
+
+    ss = Stream(exc).to_async()
+    with pytest.raises(KeyboardInterrupt):
+        assert await ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
+
+    assert await Stream(exc).to_async().filter_exceptions(
+        BaseException, FileNotFoundError
+    ).collect() == [1, 2, exc[4], 3, 4]
+
+
 def test_peek():
     # The main point of this test is in checking the printout.
     print('')
@@ -150,10 +280,42 @@ def test_peek():
     assert Stream(exc).peek().drain() == len(exc)
 
 
+@pytest.mark.asyncio
+async def test_async_peek():
+    # The main point of this test is in checking the printout.
+    print('')
+
+    async def data():
+        for x in range(10):
+            yield x
+
+    s = Stream(data())
+    n = await s.peek(interval=3).drain()
+    assert n == 10
+    print('')
+
+    def foo(x):
+        print(x)
+
+    assert await Stream(data()).peek(print_func=foo, interval=0.6).drain() == 10
+    print('')
+
+    exc = [0, 1, 2, ValueError(100), 4]
+    # `peek` does not drop exceptions
+    assert await Stream(exc).to_async().peek().drain() == len(exc)
+
+
 def test_head():
     data = [0, 1, 2, 3, 'a', 5]
     assert list(Stream(data).head(3)) == data[:3]
     assert list(Stream(data).head(30)) == data
+
+
+@pytest.mark.asyncio
+async def test_async_head():
+    data = [0, 1, 2, 3, 'a', 5]
+    assert [x async for x in Stream(data).to_async().head(3)] == data[:3]
+    assert await Stream(data).to_async().head(30).collect() == data
 
 
 def test_tail():
@@ -161,6 +323,14 @@ def test_tail():
 
     assert Stream(data).tail(2).collect() == ['a', 5]
     assert list(Stream(data).tail(10)) == data
+
+
+@pytest.mark.asyncio
+async def test_async_tail():
+    data = [0, 1, 2, 3, 'a', 5]
+
+    assert await Stream(data).to_async().tail(2).collect() == ['a', 5]
+    assert await Stream(data).to_async().tail(10).collect() == data
 
 
 def test_groupby():
@@ -186,19 +356,61 @@ def test_groupby():
     ]
 
 
+@pytest.mark.asyncio
+async def test_async_groupby():
+    data = [
+        'atlas',
+        'apple',
+        'answer',
+        'bee',
+        'block',
+        'away',
+        'peter',
+        'question',
+        'plum',
+        'please',
+    ]
+
+    async def gen():
+        for x in data:
+            yield x
+
+    assert await Stream(gen()).groupby(lambda x: x[0]).collect() == [
+        ['atlas', 'apple', 'answer'],
+        ['bee', 'block'],
+        ['away'],
+        ['peter'],
+        ['question'],
+        ['plum', 'please'],
+    ]
+
+
 def test_batch():
     s = Stream(range(11))
     assert list(s.batch(3)) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
-
-    assert list(s) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
     s = Stream(list(range(11)))
     assert list(s.batch(3).unbatch()) == list(range(11))
 
 
+@pytest.mark.asyncio
+async def test_async_batch():
+    s = Stream(range(11)).to_async()
+    assert [x async for x in s.batch(3)] == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
+
+    s = Stream(list(range(11))).to_async()
+    assert await s.batch(3).unbatch().collect() == list(range(11))
+
+
 def test_unbatch():
     data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
     assert Stream(data).unbatch().collect() == list(range(8))
+
+
+@pytest.mark.asyncio
+async def test_async_unbatch():
+    data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
+    assert await Stream(data).to_async().unbatch().collect() == list(range(8))
 
 
 def test_accumulate():
@@ -221,9 +433,46 @@ def test_accumulate():
     assert Stream(data).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
 
 
+@pytest.mark.asyncio
+async def test_async_accumulate():
+    async def data():
+        for x in range(6):
+            yield x
+
+    assert await Stream(data()).accumulate(lambda x, y: x + y).collect() == [
+        0,
+        1,
+        3,
+        6,
+        10,
+        15,
+    ]
+    assert await Stream(data()).accumulate(lambda x, y: x + y, 3).collect() == [
+        3,
+        4,
+        6,
+        9,
+        13,
+        18,
+    ]
+
+    def add(x, y):
+        if y % 2 == 0:
+            return x + y
+        return x - y
+
+    assert await Stream(data()).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
+
+
 def test_buffer():
     assert list(Stream(range(11)).buffer(5)) == list(range(11))
     assert list(Stream(range(11)).buffer(20)) == list(range(11))
+
+
+@pytest.mark.asyncio
+async def test_async_buffer():
+    assert await Stream(range(11)).to_async().buffer(5).collect() == list(range(11))
+    assert await Stream(range(11)).to_async().buffer(20).collect() == list(range(11))
 
 
 def test_buffer_noop():
@@ -234,6 +483,20 @@ def test_buffer_noop():
 
 def test_buffer_batch():
     n = Stream(range(19)).buffer(10).batch(5).unbatch().peek(interval=1).drain()
+    assert n == 19
+
+
+@pytest.mark.asyncio
+async def test_async_buffer_batch():
+    n = (
+        await Stream(range(19))
+        .to_async()
+        .buffer(10)
+        .batch(5)
+        .unbatch()
+        .peek(interval=1)
+        .drain()
+    )
     assert n == 19
 
 
@@ -254,6 +517,30 @@ def test_buffer_break():
     x = Stream(make_data()).buffer(23).map(lambda x: x * 2)
     with pytest.raises(ValueError):
         for v in x:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_async_buffer_break():
+    async def make_data():
+        for x in range(100):
+            if x == 88:
+                raise ValueError(x)
+            await asyncio.sleep(random.random() * 0.02)
+            yield x
+
+    x = Stream(make_data()).buffer(23).map(lambda x: x * 2)
+    with pytest.raises(AttributeError):
+        for v in x:
+            print(v)
+
+    async for v in x:
+        if v > 50:
+            break
+
+    x = Stream(make_data()).buffer(23).map(lambda x: x * 2)
+    with pytest.raises(ValueError):
+        async for v in x:
             pass
 
 
@@ -528,8 +815,8 @@ def test_parmap_nest():
     assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]
 
 
-async def async_plus_2(x, sleep_min=0.5, sleep_max=1):
-    await asyncio.sleep(random.uniform(sleep_min, sleep_max))
+async def async_plus_2(x):
+    await asyncio.sleep(random.uniform(0.5, 1))
     return x + 2
 
 
@@ -613,6 +900,46 @@ def test_parmap_async_context():
 async def test_async_parmap():
     print('')
     stream = Stream(range(1000))
+    stream.to_async().parmap(plus2, executor='thread')
+    t0 = perf_counter()
+    x = 0
+    async for y in stream:
+        assert y == x + 2
+        x += 1
+    t1 = perf_counter()
+    print(t1 - t0)
+    assert t1 - t0 < 5
+    # sequential processing would take 500+ sec
+
+    async def data1():
+        for x in range(20):
+            if x == 11:
+                yield 'a'
+            else:
+                yield x
+
+    # Test exception in the worker function
+    stream = Stream(data1()).parmap(plus2, executor='process', num_workers=8)
+    with pytest.raises(TypeError):
+        x = 0
+        async for y in stream:
+            assert y == x + 2
+            x += 1
+
+    # Test premature quit, i.e. GeneratorExit
+    stream = Stream(data1()).parmap(plus2, executor='process')
+    x = 0
+    async for y in stream:
+        assert y == x + 2
+        x += 1
+        if x == 10:
+            break
+
+
+@pytest.mark.asyncio
+async def test_async_parmap_async():
+    print('')
+    stream = Stream(range(1000))
     stream.to_async().parmap(async_plus_2)
     t0 = perf_counter()
     x = 0
@@ -632,7 +959,6 @@ async def test_async_parmap():
                 yield x
 
     # Test exception in the worker function
-    print('')
     stream = Stream(data1()).parmap(async_plus_2)
     with pytest.raises(TypeError):
         x = 0
@@ -641,13 +967,10 @@ async def test_async_parmap():
             x += 1
 
     # Test premature quit, i.e. GeneratorExit
-    print('')
     stream = Stream(data1()).parmap(async_plus_2)
     x = 0
-    a = stream.__aiter__()
-    async for y in a:
+    async for y in stream:
         assert y == x + 2
-        print('x:', x)
         x += 1
         if x == 10:
             break
@@ -661,14 +984,8 @@ async def test_async_switch():
         assert y == x + 2
         x += 1
 
-    s = Stream(range(100)).to_async().map(plus2)
-    x = 0
-    for y in s:
-        assert y == x + 2
-        x += 1
-
-    s = Stream(range(100)).to_async().parmap(async_plus_2)
+    s = Stream(range(100)).to_async().parmap(async_plus_2).to_sync().map(plus2)
     x = 0
     for y in s:  # `async for` would work too.
-        assert y == x + 2
+        assert y == x + 4
         x += 1
