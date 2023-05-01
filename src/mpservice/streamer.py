@@ -9,9 +9,9 @@ that they can benefit from concurrency via threading or asyncio
 The other operations are typically light weight, although important in their own right.
 These operations perform batching, unbatching, buffering, mapping, filtering, grouping, etc.
 
-Both sync and async modes are supported. This mode is inferred primarily from the input stream
+Both sync and async modes are supported. This mode is inferred from the input ``instream``
 to :meth:`Stream.__init__`. If ``instream`` is (sync) iterable, then it's assumed that
-the execution environment is sync. Consequently, all the operations work in sync mode,
+the execution environment is sync. Subsequently, all the operations work in sync mode,
 and the user is expected to consume the result by sync iteration.
 
 On the other hand, if ``instream`` is async iterable, then it's assumed that
@@ -19,11 +19,9 @@ the execution environment is async. All the operations work accordingly,
 and the user is expected to consume the result by async iteration, that is,
 ``async for x in stream: ...``.
 
-However, regardless of the execution mode, the stream can be consumed by either
-sync or async iteration. If there is a mismatch between the consumption and execution
-modes, "adaptor" is used on the fly. See examples in ``tests/test_streamer.py::test_async_switch``.
-
-The mode can be switched by calling :meth:`Stream.to_sync` or :meth:`Stream.to_async`.
+At any time, the mode of the stream can be switched by calling :meth:`Stream.to_sync`
+or :meth:`Stream.to_async`. The mode is effective in all operations following
+the switch, until it is switched again.
 For example, ``Stream(range(100)).to_async()`` is going to work in async mode.
 """
 
@@ -148,16 +146,13 @@ class Stream:
         return self
 
     def __iter__(self):
-        try:
-            return self.streamlets[-1].__iter__()
-        except AttributeError:
-            return SyncIter(self.streamlets[-1]).__iter__()
+        # Usually between ``__iter__`` and ``__aiter__`` only
+        # one is available, dependending on the type of
+        # ``self.streamlets[-1]``.
+        return self.streamlets[-1].__iter__()
 
     def __aiter__(self):
-        try:
-            return self.streamlets[-1].__aiter__()
-        except AttributeError:
-            return AsyncIter(self.streamlets[-1]).__aiter__()
+        return self.streamlets[-1].__aiter__()
 
     def drain(self) -> int:
         """Drain off the stream and return the number of elements processed.
@@ -171,28 +166,37 @@ class Stream:
         then don't use this method. Instead, iterate the streamer yourself
         and do whatever you need to do.
         """
-        self.to_sync()
-        n = 0
-        for _ in self:
-            n += 1
-        return n
+        if hasattr(self.streamlets[-1], '__iter__'):
+            n = 0
+            for _ in self:
+                n += 1
+            return n
+
+        async def main():
+            n = 0
+            async for _ in self:
+                n += 1
+            return n
+
+        return main()
 
     def collect(self) -> list:
         """Return all the elements in a list.
 
         .. warning:: Do not call this method on "big data".
         """
-        self.to_sync()
-        return list(self)
+        if hasattr(self.streamlets[-1], '__iter__'):
+            return list(self)
 
-    @contextlib.contextmanager
-    def _ensure_sync(self):
-        is_sync = hasattr(self.streamlets[-1], '__iter__')
-        if not is_sync:
-            self.to_sync()
-        yield
-        if not is_sync:
-            self.to_async()
+        async def main():
+            return [x async for x in self]
+
+        return main()
+
+    def _choose_by_mode(self, sync_choice, async_choice):
+        if hasattr(self.streamlets[-1], '__iter__'):
+            return sync_choice
+        return async_choice
 
     def map(self, func: Callable[[T], Any], /, **kwargs) -> Self:
         """Perform a simple transformation on each data element.
@@ -235,8 +239,8 @@ class Stream:
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
         """
-        with self._ensure_sync():
-            self.streamlets.append(Mapper(self.streamlets[-1], func, **kwargs))
+        cls = self._choose_by_mode(Mapper, AsyncMapper)
+        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
         return self
 
     def filter(self, func: Callable[[T], bool], /, **kwargs) -> Self:
@@ -271,8 +275,8 @@ class Stream:
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
         """
-        with self._ensure_sync():
-            self.streamlets.append(Filter(self.streamlets[-1], func, **kwargs))
+        cls = self._choose_by_mode(Filter, AsyncFilter)
+        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
         return self
 
     def filter_exceptions(
@@ -451,8 +455,8 @@ class Stream:
         would need to walk through the entire stream,
         which is not needed for ``head``.
         """
-        with self._ensure_sync():
-            self.streamlets.append(Header(self.streamlets[-1], n))
+        cls = self._choose_by_mode(Header, AsyncHeader)
+        self.streamlets.append(cls(self.streamlets[-1], n))
         return self
 
     def tail(self, n: int) -> Self:
@@ -463,8 +467,8 @@ class Stream:
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
-        with self._ensure_sync():
-            self.streamlets.append(Tailor(self.streamlets[-1], n))
+        cls = self._choose_by_mode(Tailor, AsyncTailor)
+        self.streamlets.append(cls(self.streamlets[-1], n))
         return self
 
     def groupby(self, func: Callable[[T], Any], /, **kwargs) -> Self:
@@ -489,8 +493,8 @@ class Stream:
         >>> print(Stream(data).groupby(lambda x: x[0]).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
-        with self._ensure_sync():
-            self.streamlets.append(Grouper(self.streamlets[-1], func, **kwargs))
+        cls = self._choose_by_mode(Grouper, AsyncGrouper)
+        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
         return self
 
     def batch(self, batch_size: int) -> Self:
@@ -512,8 +516,8 @@ class Stream:
         >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
-        with self._ensure_sync():
-            self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
+        cls = self._choose_by_mode(Batcher, AsyncBatcher)
+        self.streamlets.append(cls(self.streamlets[-1], batch_size))
         return self
 
     def unbatch(self) -> Self:
@@ -545,8 +549,8 @@ class Stream:
         >>> print(stream)
         [1, 2, 2, 4, 4, 4, 4, 3, 3, 3, 5, 5, 5, 5, 5]
         """
-        with self._ensure_sync():
-            self.streamlets.append(Unbatcher(self.streamlets[-1]))
+        cls = self._choose_by_mode(Unbatcher, AsyncUnbatcher)
+        self.streamlets.append(cls(self.streamlets[-1]))
         return self
 
     def accumulate(
@@ -617,10 +621,11 @@ class Stream:
         data. The buffer evens out irregularities in the speeds of upstream
         production and downstream consumption.
 
+
         ``maxsize`` is the size of the internal buffer.
         """
-        with self._ensure_sync():
-            self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
+        cls = self._choose_by_mode(Buffer, AsyncBuffer)
+        self.streamlets.append(cls(self.streamlets[-1], maxsize))
         return self
 
     def parmap(
@@ -628,12 +633,9 @@ class Stream:
         func: Callable[[T], TT],
         /,
         *,
-        executor: Literal["thread", "process"] = None,
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        parmapper_name: str | None = None,
-        async_context: dict = None,
         **kwargs,
     ) -> Self:
         """Parallel, or concurrent, counterpart of :meth:`map`.
@@ -662,53 +664,17 @@ class Stream:
             ``None``. Regardless, the output is yielded to be consumed by the next
             operator in the pipeline. A stream of ``None``\\s could be used
             in counting, for example.
-
-        executor
-            Either 'thread' or 'process'.
-
-            This is ignored when ``func`` is async.
-
-            If ``executor`` is ``'process'``, then ``func`` must be pickle-able,
-            for example, it can't be a lambda or a function defined within
-            another function. The same caution applies to any parameter passed
-            to ``func`` in ``kwargs``.
         num_workers
             When ``func`` is sync, this is the
-            max number of threads (if ``executor='thread'``) or processes
-            (if ``executor='process'``) created to run ``func``.
+            max number of threads created to run ``func``.
             This is also the max number of concurrent calls to ``func``
             that can be ongoing at any time.
-            If ``None``, a default value is used depending on the value of ``executor``.
+            If ``None``, a default value is used.
             Unless there are concrete reasons that you need to restrict the level of concurrency
             or the use of resources, it is recommended to leave `num_workers` at `None`.
 
             When ``func`` is async, this is the max number of concurrent
             (i.e. ongoing at the same time) calls to ``func``.
-        async_context
-            This is applicable only when ``func`` is async, especially when
-            ``func`` is async but the calling environment is sync.
-
-            This dict contains *async* context managers that are arguments to ``func``,
-            in addition to the arguments in ``kwargs``. These objects have been initialized
-            (``__init__`` called), but have not entered their contexts yet (``__aenter__`` not called).
-            The ``__aenter__`` and ``__aexit__`` of each of these objects will be called
-            once  at the beginning and end in the worker thread (properly in an async environment).
-            These objects will be passed to ``func`` as named arguments. Inside ``func``,
-            these objects are used directly without ``async with``. In other words, each of
-            these objects enters their context only once, then is used in any number of
-            invokations of ``func``.
-
-            One example: ``func`` conducts HTTP requests using the package ``httpx`` and uses
-            a ``httpx.AsyncClient`` as a "session" object. You may do something like this::
-
-                async def download_image(url, *, session: httpx.AsyncClient, **kwargs):
-                    response = await session.get(url, **kwargs)
-                    return response.content
-
-                stream = Stream(urls)
-                stream.parmap_async(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
-                for img in stream:
-                    ...
         return_x
             If ``True``, output stream will contain tuples ``(x, y)``;
             if ``False``, output stream will contain ``y`` only.
@@ -720,37 +686,21 @@ class Stream:
             Note that a ``True`` value does not absorb exceptions
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
-        **kwargs
-            Additional arguments to ``func``, in addition to the first, positional argument
-            that is the data value.
         """
-        args = {}
         if inspect.iscoroutinefunction(func):
-            args = {'async_context': async_context}
             if hasattr(self.streamlets[-1], '__aiter__'):
                 # This method is called within an async environment.
                 # The operator runs in the current thread on the current asyncio event loop.
                 cls = AsyncParmapperAsync
-                if not parmapper_name:
-                    parmapper_name = 'parmapper-async-async'
             else:
                 # Usually this method is called within a sync environment.
                 # The operator uses a worker thread to run the async ``func``.
                 cls = ParmapperAsync
-                if not parmapper_name:
-                    parmapper_name = 'parmapper-sync-async'
         else:
-            if executor is None:
-                raise ValueError("`executor` is required when worker function is sync")
-            args = {'executor': executor}
             if hasattr(self.streamlets[-1], '__aiter__'):
                 cls = AsyncParmapper
-                if not parmapper_name:
-                    parmapper_name = 'parmapper-async-sync'
             else:
                 cls = Parmapper
-                if not parmapper_name:
-                    parmapper_name = 'parmapper'
         self.streamlets.append(
             cls(
                 self.streamlets[-1],
@@ -758,8 +708,6 @@ class Stream:
                 num_workers=num_workers,
                 return_x=return_x,
                 return_exceptions=return_exceptions,
-                parmapper_name=parmapper_name,
-                **args,
                 **kwargs,
             )
         )
@@ -860,6 +808,17 @@ class Mapper(Iterable):
             yield func(v)
 
 
+class AsyncMapper(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, func: Callable[[T], Any], **kwargs):
+        self._instream = instream
+        self.func = functools.partial(func, **kwargs) if kwargs else func
+
+    async def __aiter__(self):
+        func = self.func
+        async for v in self._instream:
+            yield func(v)
+
+
 class Filter(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], bool], **kwargs):
         self._instream = instream
@@ -868,6 +827,18 @@ class Filter(Iterable):
     def __iter__(self):
         func = self.func
         for v in self._instream:
+            if func(v):
+                yield v
+
+
+class AsyncFilter(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, func: Callable[[T], bool], **kwargs):
+        self._instream = instream
+        self.func = functools.partial(func, **kwargs) if kwargs else func
+
+    async def __aiter__(self):
+        func = self.func
+        async for v in self._instream:
             if func(v):
                 yield v
 
@@ -885,6 +856,22 @@ class Header(Iterable):
         n = 0
         nn = self.n
         for v in self._instream:
+            if n >= nn:
+                break
+            yield v
+            n += 1
+
+
+class AsyncHeader(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, n: int):
+        assert n > 0
+        self._instream = instream
+        self.n = n
+
+    async def __aiter__(self):
+        n = 0
+        nn = self.n
+        async for v in self._instream:
             if n >= nn:
                 break
             yield v
@@ -914,6 +901,20 @@ class Tailor(Iterable):
         yield from data
 
 
+class AsyncTailor(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, n: int):
+        self._instream = instream
+        assert n > 0
+        self.n = n
+
+    async def __aiter__(self):
+        data = deque(maxlen=self.n)
+        async for v in self._instream:
+            data.append(v)
+        for x in data:
+            yield x
+
+
 class Grouper(Iterable):
     def __init__(self, instream: Iterable, /, func: Callable[[T], Any], **kwargs):
         self._instream = instream
@@ -924,6 +925,28 @@ class Grouper(Iterable):
         group = None
         func = self.func
         for x in self._instream:
+            z = func(x)
+            if z == _z:
+                group.append(x)
+            else:
+                if group is not None:
+                    yield group
+                group = [x]
+                _z = z
+        if group:
+            yield group
+
+
+class AsyncGrouper(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, func: Callable[[T], Any], **kwargs):
+        self._instream = instream
+        self.func = functools.partial(func, **kwargs) if kwargs else func
+
+    async def __aiter__(self):
+        _z = object()
+        group = None
+        func = self.func
+        async for x in self._instream:
             z = func(x)
             if z == _z:
                 group.append(x)
@@ -954,6 +977,25 @@ class Batcher(Iterable):
             yield batch
 
 
+class AsyncBatcher(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, batch_size: int):
+        self._instream = instream
+        assert batch_size > 0
+        self._batch_size = batch_size
+
+    async def __aiter__(self):
+        batch_size = self._batch_size
+        batch = []
+        async for x in self._instream:
+            batch.append(x)
+            if len(batch) == batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+
+
 class Unbatcher(Iterable):
     def __init__(self, instream: Iterable, /):
         """
@@ -970,6 +1012,16 @@ class Unbatcher(Iterable):
     def __iter__(self):
         for x in self._instream:
             yield from x
+
+
+class AsyncUnbatcher(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /):
+        self._instream = instream
+
+    async def __aiter__(self):
+        async for x in self._instream:
+            for y in x:
+                yield y
 
 
 class Buffer(Iterable):
@@ -990,16 +1042,15 @@ class Buffer(Iterable):
         try:
             for x in self._instream:
                 if self._stopped.is_set():
-                    return
+                    break
                 q.put(x)  # if `q` is full, will wait here
+            q.put(FINISHED)
         except Exception as e:
             q.put(STOPPED)
             q.put(e)
             # raise
             # Do not raise here. Otherwise it would print traceback,
             # while the same would be printed again in ``__iter__``.
-        else:
-            q.put(FINISHED)
 
     def _finalize(self):
         if self._stopped is None:
@@ -1015,24 +1066,82 @@ class Buffer(Iterable):
 
     def __iter__(self):
         self._start()
+        tasks = self._tasks
+        try:
+            while True:
+                z = tasks.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    raise tasks.get()
+                yield z
+        finally:
+            self._finalize()
+
+
+
+class AsyncBuffer(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, maxsize: int):
+        self._instream = instream
+        assert 1 <= maxsize <= 10_000
+        self.maxsize = maxsize
+
+    def _start(self):
+        self._stopped = threading.Event()
+        self._tasks = SingleLane(self.maxsize)
+        self._worker = Thread(target=self._run_worker)
+        self._worker.start()
+
+    def _run_worker(self):
+        async def main():
+            threading.current_thread().name = "BufferThread"
+            q = self._tasks
+            try:
+                async for x in self._instream:
+                    if self._stopped.is_set():
+                        break
+                    q.put(x)  # if `q` is full, will wait here
+                q.put(FINISHED)
+            except Exception as e:
+                q.put(STOPPED)
+                q.put(e)
+                # raise
+                # Do not raise here. Otherwise it would print traceback,
+                # while the same would be printed again in ``__iter__``.
+
+        asyncio.run(main())
+
+    def _finalize(self):
+        if self._stopped is None:
+            return
+        self._stopped.set()
+        tasks = self._tasks
+        while not tasks.empty():
+            _ = tasks.get()
+        # `tasks` is now empty. The thread needs to put at most one
+        # more element into the queue, which is safe.
+        self._worker.join()
+        self._stopped = None
+
+    async def __aiter__(self):
+        self._start()
+        tasks = self._tasks
         try:
             while True:
                 try:
-                    z = self._tasks.get(timeout=1)
-                except queue.Empty as e:
-                    if self._worker.is_alive():
-                        continue
-                    if self._worker.exception():
-                        raise self._worker.exception()
-                    raise RuntimeError("unknown situation occurred") from e
-                else:
-                    if z == FINISHED:
-                        break
-                    if z == STOPPED:
-                        raise self._tasks.get()
-                    yield z
+                    z = tasks.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.002)
+                    # TODO: how to avoid this sleep?
+                    continue
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    raise tasks.get()
+                yield z
         finally:
             self._finalize()
+
 
 
 class ParmapperMixin:
@@ -1114,15 +1223,29 @@ class Parmapper(Iterable, ParmapperMixin):
         instream: Iterable,
         func: Callable[[T], TT],
         *,
-        executor: Literal["thread", "process"] = "process",
+        executor: Literal["thread", "process"],
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         executor_initializer=None,
         executor_init_args=(),
-        parmapper_name='parmapper',
+        parmapper_name='parmapper-sync-sync',
         **kwargs,
     ):
+        '''
+        Parameters
+        ----------
+        executor
+            Either 'thread' or 'process'.
+
+            If ``executor`` is ``'process'``, then ``func`` must be pickle-able,
+            for example, it can't be a lambda or a function defined within
+            another function. The same caution applies to any parameter passed
+            to ``func`` in ``kwargs``.
+        kwargs
+            Named arguments to ``func``, in addition to the first, positional
+            argument, which is an element of ``instream``.
+        '''
         assert executor in ("thread", "process")
         if executor_initializer is None:
             assert not executor_init_args
@@ -1209,13 +1332,13 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         instream: AsyncIterable,
         func: Callable[[T], TT],
         *,
-        executor: Literal["thread", "process"] = "process",
+        executor: Literal["thread", "process"],
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
         executor_initializer=None,
         executor_init_args=(),
-        parmapper_name='parmapper',
+        parmapper_name='parmapper-async-sync',
         **kwargs,
     ):
         assert executor in ("thread", "process")
@@ -1316,10 +1439,36 @@ class ParmapperAsync(Iterable):
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        parmapper_name='parmapper',
+        parmapper_name='parmapper-sync-async',
         async_context: dict = None,
         **kwargs,
     ):
+        '''
+        Parameters
+        ----------
+        async_context
+            This dict contains *async* context managers that are arguments to ``func``,
+            in addition to the arguments in ``kwargs``. These objects have been initialized
+            (``__init__`` called), but have not entered their contexts yet (``__aenter__`` not called).
+            The ``__aenter__`` and ``__aexit__`` of each of these objects will be called
+            once  at the beginning and end in the worker thread (properly in an async environment).
+            These objects will be passed to ``func`` as named arguments. Inside ``func``,
+            these objects are used directly without ``async with``. In other words, each of
+            these objects enters their context only once, then is used in any number of
+            invokations of ``func``.
+
+            One example: ``func`` conducts HTTP requests using the package ``httpx`` and uses
+            a ``httpx.AsyncClient`` as a "session" object. You may do something like this::
+
+                async def download_image(url, *, session: httpx.AsyncClient, **kwargs):
+                    response = await session.get(url, **kwargs)
+                    return response.content
+
+                stream = Stream(urls)
+                stream.parmap_async(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
+                for img in stream:
+                    ...
+        '''
         self._instream = instream
         self._func = func
         self._func_kwargs = kwargs
@@ -1506,8 +1655,7 @@ class AsyncParmapperAsync(AsyncIterable):
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        parmapper_name='parmapper',
-        async_context: dict = None,
+        parmapper_name='parmapper-async-async',
         **kwargs,
     ):
         self._instream = instream
@@ -1520,7 +1668,6 @@ class AsyncParmapperAsync(AsyncIterable):
         self._tasks = None
         self._worker = None
         self._stopped = None
-        self._async_context = async_context or {}
 
     async def _start(self):
         async def enqueue():
@@ -1530,12 +1677,11 @@ class AsyncParmapperAsync(AsyncIterable):
             loop = asyncio.get_running_loop()
             func = self._func
             kwargs = self._func_kwargs
-            async_context = self._async_context
             try:
                 async for x in instream:
                     if stopped.is_set():
                         break
-                    t = loop.create_task(func(x, **async_context, **kwargs))
+                    t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))
                     # The size of the queue `tasks` regulates how many
                     # concurrent calls to `func` there can be.
@@ -1583,39 +1729,35 @@ class AsyncParmapperAsync(AsyncIterable):
             self._stopped = None
 
     async def __aiter__(self):
-        async with contextlib.AsyncExitStack() as stack:
-            for cm in self._async_context.values():
-                await stack.enter_async_context(cm)
+        await self._start()
+        tasks = self._tasks
+        try:
+            while True:
+                z = await tasks.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    e = await tasks.get()
+                    raise e
 
-            await self._start()
-            tasks = self._tasks
-            try:
-                while True:
-                    z = await tasks.get()
-                    if z == FINISHED:
-                        break
-                    if z == STOPPED:
-                        e = await tasks.get()
-                        raise e
-
-                    x, t = z
-                    try:
-                        y = await t
-                    except Exception as e:
-                        if self._return_exceptions:
-                            if self._return_x:
-                                yield x, e
-                            else:
-                                yield e
-                        else:
-                            raise e
-                    else:
+                x, t = z
+                try:
+                    y = await t
+                except Exception as e:
+                    if self._return_exceptions:
                         if self._return_x:
-                            yield x, y
+                            yield x, e
                         else:
-                            yield y
-            finally:
-                await self._finalize()
+                            yield e
+                    else:
+                        raise e
+                else:
+                    if self._return_x:
+                        yield x, y
+                    else:
+                        yield y
+        finally:
+            await self._finalize()
 
         # About termination of async generators, see
         #  https://docs.python.org/3.6/reference/expressions.html#asynchronous-generator-functions
