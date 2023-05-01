@@ -995,7 +995,6 @@ class AsyncBatcher(AsyncIterable):
             yield batch
 
 
-
 class Unbatcher(Iterable):
     def __init__(self, instream: Iterable, /):
         """
@@ -1079,7 +1078,6 @@ class Buffer(Iterable):
             self._finalize()
 
 
-
 class AsyncBuffer(AsyncIterable):
     def __init__(self, instream: AsyncIterable, /, maxsize: int):
         self._instream = instream
@@ -1141,7 +1139,6 @@ class AsyncBuffer(AsyncIterable):
                 yield z
         finally:
             self._finalize()
-
 
 
 class ParmapperMixin:

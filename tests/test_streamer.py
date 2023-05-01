@@ -80,8 +80,20 @@ async def test_async_map():
             print(x)
 
     assert await s.to_async().collect() == [2, 3, 4, 5, 6]
-    assert await Stream(range(5)).to_async().map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
-    assert await Stream(range(5)).to_async().map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
+    assert await Stream(range(5)).to_async().map(inc, shift=2).collect() == [
+        2,
+        3,
+        4,
+        5,
+        6,
+    ]
+    assert await Stream(range(5)).to_async().map(lambda x: x * 2).collect() == [
+        0,
+        2,
+        4,
+        6,
+        8,
+    ]
 
 
 def test_filter():
@@ -121,18 +133,26 @@ def test_filter():
     assert list(Stream((2, 3, 1, 5, 4, 7)).filter(Head())) == [1, 4]
 
 
-
 @pytest.mark.asyncio
 async def test_async_filter():
-    assert await Stream(range(7)).to_async().filter(lambda n: (n % 2) == 0).collect() == [0, 2, 4, 6]
+    assert await Stream(range(7)).to_async().filter(
+        lambda n: (n % 2) == 0
+    ).collect() == [0, 2, 4, 6]
 
     def odd_or_even(x, even=True):
         if even:
             return (x % 2) == 0
         return (x % 2) != 0
 
-    assert await Stream(range(7)).to_async().filter(odd_or_even).collect() == [0, 2, 4, 6]
-    assert await Stream(range(7)).to_async().filter(odd_or_even, even=False).collect() == [1, 3, 5]
+    assert await Stream(range(7)).to_async().filter(odd_or_even).collect() == [
+        0,
+        2,
+        4,
+        6,
+    ]
+    assert await Stream(range(7)).to_async().filter(
+        odd_or_even, even=False
+    ).collect() == [1, 3, 5]
 
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
 
@@ -157,8 +177,10 @@ async def test_async_filter():
             self._idx += 1
             return z
 
-    assert [x async for x in Stream((2, 3, 1, 5, 4, 7)).to_async().filter(Head())] == [1, 4]
-
+    assert [x async for x in Stream((2, 3, 1, 5, 4, 7)).to_async().filter(Head())] == [
+        1,
+        4,
+    ]
 
 
 def test_filter_exceptions():
@@ -195,7 +217,6 @@ def test_filter_exceptions():
     ).collect() == [1, 2, exc[4], 3, 4]
 
 
-
 @pytest.mark.asyncio
 async def test_async_filter_exceptions():
     exc = [
@@ -209,14 +230,21 @@ async def test_async_filter_exceptions():
         4,
     ]
 
-    assert await Stream(exc).to_async().filter_exceptions(BaseException).collect() == [1, 2, 3, 4]
+    assert await Stream(exc).to_async().filter_exceptions(BaseException).collect() == [
+        1,
+        2,
+        3,
+        4,
+    ]
 
-    assert await Stream(exc).to_async().filter_exceptions(BaseException, Exception).collect() == exc[
-        :-2
-    ] + [exc[-1]]
+    assert await Stream(exc).to_async().filter_exceptions(
+        BaseException, Exception
+    ).collect() == exc[:-2] + [exc[-1]]
 
     with pytest.raises(IndexError):
-        assert await Stream(exc).to_async().filter_exceptions(ValueError).collect() == exc
+        assert (
+            await Stream(exc).to_async().filter_exceptions(ValueError).collect() == exc
+        )
 
     with pytest.raises(FileNotFoundError):
         ss = Stream(exc).to_async()
@@ -256,6 +284,7 @@ def test_peek():
 async def test_async_peek():
     # The main point of this test is in checking the printout.
     print('')
+
     async def data():
         for x in range(10):
             yield x
@@ -341,6 +370,7 @@ async def test_async_groupby():
         'plum',
         'please',
     ]
+
     async def gen():
         for x in data:
             yield x
@@ -372,7 +402,6 @@ async def test_async_batch():
     assert await s.batch(3).unbatch().collect() == list(range(11))
 
 
-
 def test_unbatch():
     data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
     assert Stream(data).unbatch().collect() == list(range(8))
@@ -382,7 +411,6 @@ def test_unbatch():
 async def test_async_unbatch():
     data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
     assert await Stream(data).to_async().unbatch().collect() == list(range(8))
-
 
 
 def test_accumulate():
@@ -411,7 +439,14 @@ async def test_async_accumulate():
         for x in range(6):
             yield x
 
-    assert await Stream(data()).accumulate(lambda x, y: x + y).collect() == [0, 1, 3, 6, 10, 15]
+    assert await Stream(data()).accumulate(lambda x, y: x + y).collect() == [
+        0,
+        1,
+        3,
+        6,
+        10,
+        15,
+    ]
     assert await Stream(data()).accumulate(lambda x, y: x + y, 3).collect() == [
         3,
         4,
@@ -453,7 +488,15 @@ def test_buffer_batch():
 
 @pytest.mark.asyncio
 async def test_async_buffer_batch():
-    n = await Stream(range(19)).to_async().buffer(10).batch(5).unbatch().peek(interval=1).drain()
+    n = (
+        await Stream(range(19))
+        .to_async()
+        .buffer(10)
+        .batch(5)
+        .unbatch()
+        .peek(interval=1)
+        .drain()
+    )
     assert n == 19
 
 
@@ -851,7 +894,6 @@ def test_parmap_async_context():
     t1 = perf_counter()
     print(t1 - t0)
     assert t1 - t0 < 1
-
 
 
 @pytest.mark.asyncio
