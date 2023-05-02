@@ -129,12 +129,12 @@ class Stream:
         ----------
         instream
             The input stream of elements, possibly unlimited.
-            
+
             The sync-ness or async-ness of ``instream`` suggests to the ``Stream`` object
             whether the host environment is sync or async.
             In an async context, you may pass in a sync ``instream`` (hence creating
             a sync Stream), then turn it async like this::
-            
+
                 stream = Stream(range(1000)).to_async()
         """
         self.streamlets: list[Iterable] = [instream]
@@ -166,7 +166,7 @@ class Stream:
 
     def drain(self) -> int:
         """Drain off the stream.
-         
+
         If ``self`` is sync, return the number of elements processed.
         If ``self`` is async, return an awaitable that will do what the sync version does.
 
@@ -196,7 +196,7 @@ class Stream:
     def collect(self) -> list:
         """If ``self`` is sync, return all the elements in a list.
         If ``self`` is async, return an awaitable that will do what the sync version does.
-        
+
         .. warning:: Do not call this method on "big data".
         """
         if hasattr(self.streamlets[-1], '__iter__'):
@@ -1616,7 +1616,9 @@ class ParmapperAsync(Iterable):
                 n_submitted += 1
                 t.cancel()
                 cancelling.append(t)
-            logger.info(f"cancelling {len(cancelling)} of the {n_submitted} tasks submitted")
+            logger.info(
+                f"cancelling {len(cancelling)} of the {n_submitted} tasks submitted"
+            )
             for t in cancelling:
                 try:
                     await t
@@ -1710,7 +1712,9 @@ class AsyncParmapperAsync(AsyncIterable):
                         x, t = tasks.get_nowait()
                         t.cancel()
                         tt.append(t)
-                    logger.info(f"cancelling {len(tt)} of the {n_submitted} tasks submitted")
+                    logger.info(
+                        f"cancelling {len(tt)} of the {n_submitted} tasks submitted"
+                    )
                     for t in tt:
                         try:
                             await t
