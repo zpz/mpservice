@@ -109,7 +109,11 @@ The first three lines are equivalent to this one line:
 
 >>> data_stream = Stream(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
 
-:class:`Stream` has many other "operators". They can be characterised in a few ways:
+
+Operators
+=========
+
+:class:`Stream` has many "operators". They can be characterised in a few ways:
 
 One-to-one (will not change the elements' count or order):
     - :meth:`~Stream.map`
@@ -131,15 +135,17 @@ Selection or filtering (may drop elements):
     - :meth:`~Stream.head`
     - :meth:`~Stream.tail`
 
-Concurrent (will create other threads or processes):
-    - :meth:`~Stream.buffer`
+Concurrent (using threads, processes, or asyncio):
     - :meth:`~Stream.parmap`
 
 Read-only (will not change the elements):
-    - :meth:`~Stream.buffer`
-    - :meth:`~Stream.peek`
+    - :meth:`~Stream.buffer` (speed stabilizing)
+    - :meth:`~Stream.peek` (info printing)
 
-These methods can be called either as a statement, or as a function, often in a "chained" fashion.
+The operation in ``parmap`` is supposedly heavy and expensive.
+All the other operations are meant to be ligthweight and simple.
+
+These methods can be called either as a single statement, or in a "chained" fashion.
 They "set up", or "add", operators to the streamer.
 However, they do not *start* the operators.
 
@@ -151,13 +157,73 @@ The "consuming" methods are "pulling" at the end of the final operator.
 
 There are several ways to consume the stream:
 
-- Iterate over the :class:`Stream` object, because it implements :meth:`~Stream.__iter__`.
+- Iterate over the :class:`Stream` object, because it implements :meth:`~Stream.__iter__` or :meth:`~Stream.__aiter__`.
 - Call the method :meth:`~Stream.collect` to get all the elements in a list---if you know there are not too many of them!
 - Call the method :meth:`~Stream.drain` to "finish off" the operations. This does not return the elements of the stream, but rather
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
-
 The latter two methods are trivial wrappers of the first.
+
+Sync vs async
+=============
+
+Both sync and async programming modes are supported. For the most part,
+the usage of Stream is one and same in both modes.
+This host or calling-site "mode" refers to the "sync-ness" or "async-ness" of the function in which
+the Stream object is being used.
+Related to the host mode, a Stream object may be "sync" or "async".
+The former means the object is "iterable", i.e. has method ``__iter__``, hence is to be consumed by::
+
+    for x in stream:
+        ...
+
+whereas the latter means the object is "async iterable", i.e. has method ``__aiter__``,
+hence is to be consumed by::
+
+    async for x in stream:
+        ...
+
+While you may use a sync Stream in an async function, you probably won't use an async Stream
+in a sync function.
+
+A streamlet is either sync or async. The sync- or async-ness of Stream is simply that of its final streamlet.
+When an operator is called, it adds a sync streamlet or async streamlet based on the sync-ness of the Stream
+(or equivalently, of the previous streamlet). For example,
+
+::
+
+    stream.map(...)
+
+will add a :class:`Mapper` streamlet if ``stream`` (at this point) is sync,
+or a :class:`AsyncMapper` otherwise.
+
+There is a special case, though.
+The first streamlet is the input data, which, beding defined externally, could be iterable, async iterable, or even both.
+(This is the only streamlet that can be both sync and async.)
+If it is both, is the Stram object (when it has only one streamlet) sync or async?
+Well, if you don't add any operator, you can use this stream in either sync or async iterations.
+If you add another operator, however, the stream is considered "sync", hence a sync streamlet is added.
+This decision is easy to see in the method :meth:`Stream._choose_by_mode`.
+
+To disambiguate, or to switch, the methods :meth:`~Stream.to_sync` and :meth:`~Stream.to_async` can be used.
+
+The usage of the operators is the same in sync and async modes, with two exceptions:
+:meth:`~Stream.drain` and :meth:`~Stream.collect`.
+In sync mode, both do the usualy thing to return a result.
+In async mode, both return a coroutine, which is to be "awaited".
+For example,
+
+::
+
+    def main():
+        data = range(1000)
+        stream = Stream(data).map(...).batch(...).filter(...).peek(...).parmap(...)
+        n = stream.drain()
+
+    async def main():
+        data = range(1000)
+        stream = Stream(data).to_async().map(...).batch(...).filter(...).peek(...).parmap(...)
+        n = await stream.drain()
 
 
 API reference
