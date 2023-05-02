@@ -4,6 +4,7 @@
 
 .. _Iterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable
 .. _Iterator: https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterator
+.. _AsyncIterable: https://docs.python.org/3/library/collections.abc.html#collections.abc.AsyncIterable
 .. _threading: https://docs.python.org/3/library/threading.html
 .. _Thread: https://docs.python.org/3/library/threading.html#threading.Thread
 .. _multiprocessing: https://docs.python.org/3/library/multiprocessing.html

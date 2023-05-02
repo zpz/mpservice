@@ -1,5 +1,5 @@
 """
-The module ``mpservice.streamer`` provides utilities for stream processing with threading or multiprocessing concurrencies.
+The module ``mpservice.streamer`` provides utilities for stream processing with threading, multiprocessing, or asyncio concurrencies.
 
 An input data stream goes through a series of operations.
 The output from one operation becomes the input to the next operation.
@@ -9,20 +9,16 @@ that they can benefit from concurrency via threading or asyncio
 The other operations are typically light weight, although important in their own right.
 These operations perform batching, unbatching, buffering, mapping, filtering, grouping, etc.
 
-Both sync and async modes are supported. This mode is inferred from the input ``instream``
-to :meth:`Stream.__init__`. If ``instream`` is (sync) iterable, then it's assumed that
-the execution environment is sync. Subsequently, all the operations work in sync mode,
-and the user is expected to consume the result by sync iteration.
+To fix terminology, we'll call the main methods of the class ``Stream`` "operators" or "operations".
+Each operator adds a "streamlet". The behavior of a Stream object is embodied by its chain of
+streamlets, which is accessible via the public attribute ``Stream.streamlets``
+(although there is little need to access it).
+"Consumption" of the stream entails "pulling" at the end of the last streamlet and,
+in a chain reaction, consequently pulls each data element through the entire series
+of streamlets or operators.
 
-On the other hand, if ``instream`` is async iterable, then it's assumed that
-the execution environment is async. All the operations work accordingly,
-and the user is expected to consume the result by async iteration, that is,
-``async for x in stream: ...``.
-
-At any time, the mode of the stream can be switched by calling :meth:`Stream.to_sync`
-or :meth:`Stream.to_async`. The mode is effective in all operations following
-the switch, until it is switched again.
-For example, ``Stream(range(100)).to_async()`` is going to work in async mode.
+Both sync and async programming modes are supported. For the most part,
+the usage of Stream is one and the same in both modes.
 """
 
 
@@ -55,6 +51,7 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 import asyncio
+import concurrent.futures
 import contextlib
 import functools
 import inspect
@@ -109,7 +106,7 @@ class Stream:
     """
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
-    by passing an `Iterable`_ to it, then calls its methods to use it.
+    by passing an `Iterable`_ or `AsyncIterable_` to it, then calls its methods to use it.
     Most of the methods return the object itself, facilitating calls
     in a "chained" fashion, like this::
 
@@ -126,21 +123,34 @@ class Stream:
         s.unbatch(...)
     """
 
-    def __init__(self, instream: Iterable, /):
+    def __init__(self, instream: Iterable | AsyncIterable, /):
         """
         Parameters
         ----------
         instream
-            The input stream of elements. This is a possibly unlimited  `Iterable`_.
+            The input stream of elements, possibly unlimited.
+            
+            The sync-ness or async-ness of ``instream`` suggests to the ``Stream`` object
+            whether the host environment is sync or async.
+            In an async context, you may pass in a sync ``instream`` (hence creating
+            a sync Stream), then turn it async like this::
+            
+                stream = Stream(range(1000)).to_async()
         """
         self.streamlets: list[Iterable] = [instream]
 
     def to_sync(self):
+        '''
+        Make the stream "sync" iterable only.
+        '''
         if hasattr(self.streamlets[-1], '__aiter__'):
             self.streamlets.append(SyncIter(self.streamlets[-1]))
         return self
 
     def to_async(self):
+        '''
+        Make the stream "async" iterable only.
+        '''
         if hasattr(self.streamlets[-1], '__iter__'):
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
         return self
@@ -155,7 +165,10 @@ class Stream:
         return self.streamlets[-1].__aiter__()
 
     def drain(self) -> int:
-        """Drain off the stream and return the number of elements processed.
+        """Drain off the stream.
+         
+        If ``self`` is sync, return the number of elements processed.
+        If ``self`` is async, return an awaitable that will do what the sync version does.
 
         This method is for the side effect: the entire stream has been processed
         by all the operations and results have been taken care of, for example,
@@ -181,8 +194,9 @@ class Stream:
         return main()
 
     def collect(self) -> list:
-        """Return all the elements in a list.
-
+        """If ``self`` is sync, return all the elements in a list.
+        If ``self`` is async, return an awaitable that will do what the sync version does.
+        
         .. warning:: Do not call this method on "big data".
         """
         if hasattr(self.streamlets[-1], '__iter__'):
@@ -233,7 +247,7 @@ class Stream:
             (which do not have to differ from the original) form the new stream going
             forward.
 
-            This function must be sync. If you have to use an async function, then use it with
+            .. note:: This function must be sync. If you have to use an async function, then use it with
             :meth:`parmap`.
         *kwargs
             Additional keyword arguments to ``func``, after the first argument, which
@@ -269,6 +283,8 @@ class Stream:
         func
             A function that takes a data element and returns ``True`` or ``False`` to indicate
             the element should be kept in or dropped from the stream.
+
+            This function must be sync.
 
             This function should not make changes to the input data element.
         *kwargs
@@ -478,6 +494,8 @@ class Stream:
         will be grouped into a list.
 
         Following this operator, every element in the output stream is a list of length 1 or more.
+
+        ``func`` must be sync.
 
         The output of ``func`` is usually a str or int or a tuple of a few strings or ints.
 
@@ -1018,8 +1036,12 @@ class AsyncUnbatcher(AsyncIterable):
 
     async def __aiter__(self):
         async for x in self._instream:
-            for y in x:
-                yield y
+            if hasattr(x, '__iter__'):
+                for y in x:
+                    yield y
+            else:
+                async for y in x:
+                    yield y
 
 
 class Buffer(Iterable):
@@ -1198,7 +1220,9 @@ class ParmapperMixin:
 
         while True:
             while not tasks.empty():
-                _ = tasks.get()
+                t = tasks.get()
+                if isinstance(t, concurrent.futures.Future):
+                    t.cancel()
 
             worker.join(timeout=0.01)
             if not worker.is_alive():
@@ -1528,6 +1552,7 @@ class ParmapperAsync(Iterable):
             outstream = self._outstream
             stopped = self._stopped
             return_exceptions = self._return_exceptions
+            n_submitted = 0
             while True:
                 v = await tasks.get()
                 if v == FINISHED:
@@ -1556,6 +1581,7 @@ class ParmapperAsync(Iterable):
                 if stopped.is_set():
                     break
                 x, t = v
+                n_submitted += 1
                 try:
                     y = await t
                 except Exception as e:
@@ -1587,17 +1613,15 @@ class ParmapperAsync(Iterable):
                     await tasks.get()
                     break
                 x, t = v
-                if t.done():
-                    try:
-                        t.result()
-                        # Ignore the result; no need to put in ``outstream``.
-                    except:  # noqa: S110, E722
-                        pass  # noqa: E722
-                else:
-                    t.cancel()
-                    cancelling.append(t)
-            if cancelling:
-                await asyncio.wait(cancelling)
+                n_submitted += 1
+                t.cancel()
+                cancelling.append(t)
+            logger.info(f"cancelling {len(cancelling)} of the {n_submitted} tasks submitted")
+            for t in cancelling:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):  # noqa: S110
+                    pass
 
         async def main():
             async with contextlib.AsyncExitStack() as stack:
@@ -1663,66 +1687,54 @@ class AsyncParmapperAsync(AsyncIterable):
         self._name = parmapper_name
         self._tasks = None
         self._worker = None
-        self._stopped = None
 
     async def _start(self):
         async def enqueue():
             instream = self._instream
             tasks = self._tasks
-            stopped = self._stopped
             loop = asyncio.get_running_loop()
             func = self._func
             kwargs = self._func_kwargs
+            n_submitted = 0
             try:
-                async for x in instream:
-                    if stopped.is_set():
-                        break
-                    t = loop.create_task(func(x, **kwargs))
-                    await tasks.put((x, t))
-                    # The size of the queue `tasks` regulates how many
-                    # concurrent calls to `func` there can be.
-                await tasks.put(FINISHED)
+                try:
+                    async for x in instream:
+                        t = loop.create_task(func(x, **kwargs))
+                        await tasks.put((x, t))
+                        n_submitted += 1
+                        # The size of the queue `tasks` regulates how many
+                        # concurrent calls to `func` there can be.
+                except asyncio.CancelledError:
+                    tt = []
+                    while not tasks.empty():
+                        x, t = tasks.get_nowait()
+                        t.cancel()
+                        tt.append(t)
+                    logger.info(f"cancelling {len(tt)} of the {n_submitted} tasks submitted")
+                    for t in tt:
+                        try:
+                            await t
+                        except (asyncio.CancelledError, Exception):  # noqa: S110
+                            pass
+                    raise
+                else:
+                    await tasks.put(FINISHED)
             except Exception as e:
                 await tasks.put(STOPPED)
                 await tasks.put(e)
 
-        self._stopped = asyncio.Event()
         self._tasks = asyncio.Queue(self._num_workers - 2)
         self._worker = asyncio.create_task(enqueue(), name=self._name)
 
     async def _finalize(self):
-        if self._stopped is None:
+        if self._worker is None:
             return
-        self._stopped.set()
-        tasks = self._tasks
-        cancelled = []
-        while not tasks.empty():
-            z = await tasks.get()
-            if z == FINISHED:
-                break
-            if z == STOPPED:
-                await tasks.get()
-                break
-            x, t = z
-            if not t.done():
-                t.cancel()
-                cancelled.append(t)
-            else:
-                try:
-                    await t
-                except Exception:  # noqa: S110
-                    pass
-
-        if cancelled:
-            await asyncio.wait(cancelled)
-
-        if self._worker is not None:
+        self._worker.cancel()
+        try:
             await self._worker
-            self._worker = None
-            # Do another round of task clean-up.
-            await self._finalize()
-        else:
-            self._stopped = None
+        except asyncio.CancelledError:
+            pass
+        self._worker = None
 
     async def __aiter__(self):
         await self._start()
