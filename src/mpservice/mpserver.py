@@ -1392,7 +1392,7 @@ class Server:
     @property
     def backlog(self) -> int:
         return self._backlog
-    
+
     def full(self) -> bool:
         return len(self._uid_to_futures) >= self._backlog
 
@@ -1493,7 +1493,9 @@ class Server:
         """
         fut = None
         try:
-            fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
+            fut = await self._async_enqueue(
+                x, timeout=timeout, backpressure=backpressure
+            )
             return await self._async_wait_for_result(fut)
         except BaseException:  # mainly asyncio.CancelledError, TimeoutError
             if fut is not None:
@@ -1687,7 +1689,12 @@ class Server:
         #   https://blog.csdn.net/ztf312/article/details/78902278
         #   https://stackoverflow.com/questions/75233794/how-is-the-multiprocessing-queue-instance-serialized-when-passed-as-an-argument/75247561#75247561
 
-        fut.data = {"t0": t0, "t1": perf_counter(), "timeout": timeout, "cancelled": cancelled}
+        fut.data = {
+            "t0": t0,
+            "t1": perf_counter(),
+            "timeout": timeout,
+            "cancelled": cancelled,
+        }
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put(((uid, fut.data['cancelled']), x))
@@ -1738,7 +1745,12 @@ class Server:
 
         fut = concurrent.futures.Future()
         cancelled = self._cancelled_event_manager.Event()
-        fut.data = {"t0": t0, "t1": perf_counter(), "timeout": timeout, 'cancelled': cancelled}
+        fut.data = {
+            "t0": t0,
+            "t1": perf_counter(),
+            "timeout": timeout,
+            'cancelled': cancelled,
+        }
         uid = id(fut)
         self._uid_to_futures[uid] = fut
         self._input_buffer.put(((uid, fut.data['cancelled']), x))

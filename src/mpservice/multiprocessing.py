@@ -455,7 +455,6 @@ def get_context(method=None):
     return multiprocessing.get_context(method)
 
 
-
 # ``MP_SPAWN_CTX.Manager`` does not use this class.
 class ServerProcess(multiprocessing.managers.SyncManager):
 
@@ -591,7 +590,11 @@ class ServerProcess(multiprocessing.managers.SyncManager):
 
 
 class Manager(ServerProcess):
-    @deprecated(deprecated_in='0.12.7', removed_in='0.13.0', details='Use ``mpservice.multiprocessing.ServerProcess`` instead.')
+    @deprecated(
+        deprecated_in='0.12.7',
+        removed_in='0.13.0',
+        details='Use ``mpservice.multiprocessing.ServerProcess`` instead.',
+    )
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

@@ -1729,7 +1729,6 @@ class AsyncParmapperAsync(AsyncIterable):
 
         tasks = self._tasks
         tt = []
-        k = 0
         while True:
             z = await tasks.get()
             if z == FINISHED:
@@ -1740,9 +1739,7 @@ class AsyncParmapperAsync(AsyncIterable):
             x, t = z
             t.cancel()
             tt.append(t)
-        logger.debug(
-            f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted"
-        )
+        logger.debug(f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted")
         for t in tt:
             try:
                 await t
