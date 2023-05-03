@@ -589,6 +589,14 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             self._process.name = self._process_name
 
 
+Manager = ServerProcess
+'''
+.. deprecated:: 0.12.7
+    Will be removed in 0.13.0.
+    Use ``ServerProcess`` instead.
+'''
+
+
 class Manager(ServerProcess):
     @deprecated(
         deprecated_in='0.12.7',
