@@ -153,6 +153,7 @@ def test_concurrency():
         t = manager.Tripler('t')
 
         for cls in (SpawnProcess, Thread):
+            print('cls:', cls)
             print('')
             pp = [
                 cls(target=worker, args=(d, 3)),
@@ -181,4 +182,9 @@ def test_concurrency():
             t1 = time.perf_counter()
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
+
+            # TODO: running in container, the value below is 1; running for release,
+            # the value is 2 or 3 when doing 'process'.
+            # But this is a recent change. Previously it's always 1.
+            # assert len(active_children()) in (1, 2, 3)
             assert len(active_children()) == 1

@@ -1309,7 +1309,6 @@ class Parmapper(Iterable, ParmapperMixin):
 
     def __iter__(self):
         self._start()
-
         try:
             while True:
                 z = self._tasks.get()
@@ -1722,30 +1721,33 @@ class AsyncParmapperAsync(AsyncIterable):
         self._tasks = asyncio.Queue(self._num_workers - 2)
         self._worker = asyncio.create_task(enqueue(), name=self._name)
 
-    async def _finalize(self):
+    async def _finalize(self, done):
         if self._worker is None:
             return
         self._worker.cancel()
+        # At this point `self._worker` could have finished.
 
-        tasks = self._tasks
-        tt = []
-        while True:
-            z = await tasks.get()
-            if z == FINISHED:
-                break
-            if z == STOPPED:
-                _ = tasks.get()
-                break
-            x, t = z
-            t.cancel()
-            tt.append(t)
-        logger.debug(f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted")
-        for t in tt:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):  # noqa: S110
-                pass
-
+        if not done:
+            tasks = self._tasks
+            tt = []
+            while True:
+                z = await tasks.get()
+                if z == FINISHED:
+                    break
+                if z == STOPPED:
+                    _ = tasks.get()
+                    break
+                x, t = z
+                t.cancel()
+                tt.append(t)
+            logger.debug(
+                f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted"
+            )
+            for t in tt:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):  # noqa: S110
+                    pass
         try:
             await self._worker
         except asyncio.CancelledError:
@@ -1755,13 +1757,16 @@ class AsyncParmapperAsync(AsyncIterable):
     async def __aiter__(self):
         await self._start()
         tasks = self._tasks
+        done = False
         try:
             while True:
                 z = await tasks.get()
                 if z == FINISHED:
+                    done = True
                     break
                 if z == STOPPED:
                     e = await tasks.get()
+                    done = True
                     raise e
 
                 x, t = z
@@ -1781,7 +1786,7 @@ class AsyncParmapperAsync(AsyncIterable):
                     else:
                         yield y
         finally:
-            await self._finalize()
+            await self._finalize(done)
 
         # About termination of async generators, see
         #  https://docs.python.org/3.6/reference/expressions.html#asynchronous-generator-functions

@@ -1789,7 +1789,49 @@ class Server:
         futures = self._uid_to_futures
 
         while True:
-            z = q_out.get()
+            try:
+                z = q_out.get()
+            except multiprocessing.managers.RemoteError as e:
+                if str(e).split('\n')[-2].startswith('KeyError: '):
+                    logger.info('error getting result from queue:\n%s', e)
+                    continue
+                    # I think this is because somehow the `cancelled` object is gone
+                    # due to cancellation. Needs more investigation.
+                    # This happend to `tests/test_mpserver.py::test_sequential_timeout_async`, like below:
+                    #
+                    # tests/test_mpserver.py::test_sequential_timeout_async
+                    # /usr/local/lib/python3.10/dist-packages/_pytest/threadexception.py:73: PytestUnhandledThreadExceptionWarning: Exception in thread Server._gather_output
+                    #
+                    # Traceback (most recent call last):
+                    #     File "/usr/lib/python3.10/threading.py", line 1016, in _bootstrap_inner
+                    #     self.run()
+                    #     File "/home/docker-user/mpservice/src/mpservice/threading.py", line 49, in run
+                    #     self._result_ = self._target(*self._args, **self._kwargs)
+                    #     File "/home/docker-user/mpservice/src/mpservice/mpserver.py", line 1793, in _gather_output
+                    #     z = q_out.get()
+                    #     File "/usr/lib/python3.10/multiprocessing/queues.py", line 367, in get
+                    #     return _ForkingPickler.loads(res)
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 942, in RebuildProxy
+                    #     return func(token, serializer, incref=incref, **kwds)
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 792, in __init__
+                    #     self._incref()
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 847, in _incref
+                    #     dispatch(conn, None, 'incref', (self._id,))
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 93, in dispatch
+                    #     raise convert_to_error(kind, result)
+                    # multiprocessing.managers.RemoteError:
+                    # ---------------------------------------------------------------------------
+                    # Traceback (most recent call last):
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 209, in _handle_request
+                    #     result = func(c, *args, **kwds)
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 439, in incref
+                    #     raise ke
+                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 426, in incref
+                    #     self.id_to_refcount[ident] += 1
+                    # KeyError: '7f29a6d0bf40'
+                else:
+                    raise
+
             if z == NOMOREDATA:
                 break
             (uid, cancelled), y = z
