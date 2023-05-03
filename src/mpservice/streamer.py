@@ -1726,6 +1726,7 @@ class AsyncParmapperAsync(AsyncIterable):
         if self._worker is None:
             return
         self._worker.cancel()
+        # At this point `self._worker` could have finished.
 
         tasks = self._tasks
         tt = []
