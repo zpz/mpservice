@@ -188,6 +188,3 @@ def test_concurrency():
             # But this is a recent change. Previously it's always 1.
             # assert len(active_children()) in (1, 2, 3)
             assert len(active_children()) == 1
-
-
-
