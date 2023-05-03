@@ -39,6 +39,7 @@ import warnings
 from typing import Callable
 
 import psutil
+from deprecation import deprecated
 
 from ._remote_exception import (
     RemoteException,
@@ -385,6 +386,8 @@ class SpawnContext(multiprocessing.context.SpawnContext):
     Process = SpawnProcess
 
 
+# MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
+# The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.
 MP_SPAWN_CTX = SpawnContext()
 """
 `multiprocessing`_ has a "context", which has to do with how a process is created and started.
@@ -452,16 +455,17 @@ def get_context(method=None):
     return multiprocessing.get_context(method)
 
 
-class Manager(multiprocessing.managers.SyncManager):
+# ``MP_SPAWN_CTX.Manager`` does not use this class.
+class ServerProcess(multiprocessing.managers.SyncManager):
 
     """A "server process" provides a server running in one process,
     to be called from other processes for shared data or functionalities.
 
     This module corresponds to the standard
     `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_ module
-    with simplified APIs for targeted use cases. The basic workflow  is as follows.
+    with simplified APIs for targeted use cases. The basic workflow is as follows.
 
-    1. Register one or more classes with the :class:`Manager` class::
+    1. Register one or more classes with the :class:`ServerProcess` class::
 
             class Doubler:
                 def __init__(self, ...):
@@ -477,25 +481,24 @@ class Manager(multiprocessing.managers.SyncManager):
                 def triple(self, x):
                     return x * 3
 
-            Manager.register(Doubler)
-            Manager.register(Tripler)
+            ServerProcess.register(Doubler)
+            ServerProcess.register(Tripler)
 
     2. Create a manager object and start it::
 
-            manager = Manager()
-            manager.start()
+            server = ServerProcess()
+            server.start()
 
     You can also use a context manager::
 
-            with Manager() as manager:
+            with ServerProcess() as server:
                 ...
 
     3. Create one or more proxies::
 
-            doubler = manager.Doubler(...)
-            tripler = manager.Tripler(...)
+            doubler = server.Doubler(...)
+            tripler = server.Tripler(...)
 
-    A manager object has a "server process".
     The above causes corresponding class objects to be created
     in the server process; the returned objects are "proxies"
     for the real objects. These proxies can be passed to any other
@@ -510,12 +513,12 @@ class Manager(multiprocessing.managers.SyncManager):
 
     ::
 
-            prox1 = manager.Doubler(...)
-            prox2 = manager.Doubler(...)
+            prox1 = server.Doubler(...)
+            prox2 = server.Doubler(...)
 
     will create independent objects in the server process.
 
-    Multiple manager objects will run their corresponding
+    Multiple ServerProcess objects will run their corresponding
     server processes independently.
 
     4. Pass the proxy objects to any process and use them there.
@@ -547,7 +550,7 @@ class Manager(multiprocessing.managers.SyncManager):
     def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
         """
         ``typeid_or_callable`` is usually a class object.
-        This method should be called before a :class:`Manager` object is "started".
+        This method should be called before a :class:`ServerProcess` object is "started".
         """
         if isinstance(typeid_or_callable, str):
             # This form allows the full API of the base class.
@@ -584,6 +587,16 @@ class Manager(multiprocessing.managers.SyncManager):
             CpuAffinity(self._process_cpu).set(pid=self._process.pid)
         if self._process_name:
             self._process.name = self._process_name
+
+
+class Manager(ServerProcess):
+    @deprecated(
+        deprecated_in='0.12.7',
+        removed_in='0.13.0',
+        details='Use ``mpservice.multiprocessing.ServerProcess`` instead.',
+    )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
 
 class CpuAffinity:

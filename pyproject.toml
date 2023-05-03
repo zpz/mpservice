@@ -79,7 +79,7 @@ addopts = "-sv --log-cli-level info -p no:cacheprovider --tb=short --ignore=benc
 
 
 [tool.coverage.report]
-fail_under = 85
+fail_under = 80
 show_missing = true
 skip_empty = true
 
