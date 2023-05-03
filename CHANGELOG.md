@@ -14,11 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - ``streamer.Stream.parmap``: parameter ``executor`` became named only.
+- ``multiprocessing.Manager`` was renamed ``ServerProcess``.
 
 ### Added
 
 - ``streamer.Stream`` added extensive support for async.
 - Methods ``streamer.Stream.{to_sync, to_async, __aiter__}``.
+- Method ``mpserver.Server.full`` and property ``mpserver.Server.backlog``.
+- Added capabilities to cancel a item submitted to ``mpserver.Server`` and halt its processing in the pipeline.
 
 
 ## [0.12.6] - 2023-04-28

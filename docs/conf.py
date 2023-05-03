@@ -35,7 +35,7 @@ numpydoc_show_inherited_class_members = False
 autodoc_default_options = {
     'members': True,
     'undoc-members': True,
-    'special-members': '__init__, __getitem__, __iter__, __next__, __len__, __enter__, __exit__',
+    'special-members': '__init__, __getitem__, __iter__, __next__, __aiter__, __len__, __enter__, __exit__',
     'member-order': 'bysource',
     'show-inheritance': True,
 }

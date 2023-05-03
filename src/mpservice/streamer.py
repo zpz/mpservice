@@ -1616,7 +1616,7 @@ class ParmapperAsync(Iterable):
                 n_submitted += 1
                 t.cancel()
                 cancelling.append(t)
-            logger.info(
+            logger.debug(
                 f"cancelling {len(cancelling)} of the {n_submitted} tasks submitted"
             )
             for t in cancelling:
@@ -1689,6 +1689,7 @@ class AsyncParmapperAsync(AsyncIterable):
         self._name = parmapper_name
         self._tasks = None
         self._worker = None
+        self._n_submitted = None
 
     async def _start(self):
         async def enqueue():
@@ -1707,23 +1708,14 @@ class AsyncParmapperAsync(AsyncIterable):
                         # The size of the queue `tasks` regulates how many
                         # concurrent calls to `func` there can be.
                 except asyncio.CancelledError:
-                    tt = []
-                    while not tasks.empty():
-                        x, t = tasks.get_nowait()
-                        t.cancel()
-                        tt.append(t)
-                    logger.info(
-                        f"cancelling {len(tt)} of the {n_submitted} tasks submitted"
-                    )
-                    for t in tt:
-                        try:
-                            await t
-                        except (asyncio.CancelledError, Exception):  # noqa: S110
-                            pass
+                    self._n_submitted = n_submitted
+                    await tasks.put(FINISHED)
                     raise
                 else:
+                    self._n_submitted = n_submitted
                     await tasks.put(FINISHED)
             except Exception as e:
+                self._n_submitted = n_submitted
                 await tasks.put(STOPPED)
                 await tasks.put(e)
 
@@ -1734,6 +1726,29 @@ class AsyncParmapperAsync(AsyncIterable):
         if self._worker is None:
             return
         self._worker.cancel()
+
+        tasks = self._tasks
+        tt = []
+        k = 0
+        while True:
+            z = await tasks.get()
+            if z == FINISHED:
+                break
+            if z == STOPPED:
+                _ = tasks.get()
+                break
+            x, t = z
+            t.cancel()
+            tt.append(t)
+        logger.debug(
+            f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted"
+        )
+        for t in tt:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: S110
+                pass
+
         try:
             await self._worker
         except asyncio.CancelledError:
