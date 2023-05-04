@@ -6,6 +6,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from .multiprocessing import Manager
+from .multiprocessing import ServerProcess as Manager
 
 __all__ = ['Manager']

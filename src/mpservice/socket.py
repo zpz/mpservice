@@ -262,9 +262,9 @@ class SocketApplication:
         and returns a response (which could be ``None`` if so desired).
         The response should be serializable by the encoder.
         To be safe, return a object of Python native types.
-        If exception is raised in this method, appropriate :class:`~mpservice.util.RemoteException`
+        If exception is raised in this method, appropriate :class:`RemoteException`
         object will be sent in the response.
-        The method could also proactively return a :class:`~mpservice.util.RemoteException` object.
+        The method could also proactively return a :class:`RemoteException` object.
 
         ``path`` is any string. The route is identified by this string. For familiarity,
         it may be a good idea to start the string with ``'/'``, although this is in no

@@ -4,7 +4,7 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import CpuAffinity, Manager, SpawnProcess
+from mpservice.multiprocessing import CpuAffinity, ServerProcess, SpawnProcess
 from mpservice.threading import Thread
 
 
@@ -94,12 +94,12 @@ class Tripler:
         return n
 
 
-Manager.register(Doubler)
-Manager.register(Tripler)
+ServerProcess.register(Doubler)
+ServerProcess.register(Tripler)
 
 
 def test_manager():
-    with Manager(process_cpu=1, process_name='my_manager_process') as manager:
+    with ServerProcess(process_cpu=1, process_name='my_manager_process') as manager:
         assert manager._process.name == 'my_manager_process'
         assert CpuAffinity.get(pid=manager._process.pid) == [1]
 
@@ -121,7 +121,7 @@ def test_manager():
         assert doubler.get_mp() == tripler.get_mp()
         assert doubler.get_tr() == tripler.get_tr()
 
-        with Manager() as manager2:
+        with ServerProcess() as manager2:
             doubler2 = manager2.Doubler('dd')
             print(doubler2.get_mp())
             assert doubler2.get_name() == 'dd'
@@ -137,7 +137,7 @@ def test_manager():
             assert doubler3.get_mp() == doubler2.get_mp()
 
     with pytest.warns(UserWarning):
-        Manager.register(Doubler)  # this will trigger a warning log.
+        ServerProcess.register(Doubler)  # this will trigger a warning log.
 
 
 def worker(sleeper, n):
@@ -148,7 +148,7 @@ def worker(sleeper, n):
 
 def test_concurrency():
     print('')
-    with Manager() as manager:
+    with ServerProcess() as manager:
         d = manager.Doubler('d')
         t = manager.Tripler('t')
 

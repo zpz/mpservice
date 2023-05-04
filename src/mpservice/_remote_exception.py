@@ -272,7 +272,7 @@ Now run it again,
     $ python error.py
     (1, 2)
     (3, 4)
-    mpservice.util.RemoteTraceback: Traceback (most recent call last):
+    mpservice._remote_exception.RemoteTraceback: Traceback (most recent call last):
     File "/home/docker-user/mpservice/tests/experiments/error.py", line 11, in increment
         qout.put((x, x + 1))
     TypeError: can only concatenate str (not "int") to str
@@ -358,7 +358,7 @@ Run it::
     $ python error.py
     (1, 2)
     (3, 4)
-    mpservice.util.RemoteTraceback: Traceback (most recent call last):
+    mpservice._remote_exception.RemoteTraceback: Traceback (most recent call last):
     File "/home/docker-user/mpservice/tests/experiments/error.py", line 11, in increment
         qout.put((x, x + 1))
     TypeError: can only concatenate str (not "int") to str

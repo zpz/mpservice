@@ -589,24 +589,6 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             self._process.name = self._process_name
 
 
-Manager = ServerProcess
-'''
-.. deprecated:: 0.12.7
-    Will be removed in 0.13.0.
-    Use ``ServerProcess`` instead.
-'''
-
-
-class Manager(ServerProcess):
-    @deprecated(
-        deprecated_in='0.12.7',
-        removed_in='0.13.0',
-        details='Use ``mpservice.multiprocessing.ServerProcess`` instead.',
-    )
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
 class CpuAffinity:
     """
     ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
@@ -666,3 +648,14 @@ class CpuAffinity:
     def get(self, *, pid=None) -> list[int]:
         """Return the current CPU affinity."""
         return psutil.Process(pid).cpu_affinity()
+
+
+def __getattr__(name):
+    if name == 'Manager':
+        warnings.warn(
+            "`Manager` is deprecated in 0.12.7 and will be removed in 0.14.0. Use `ServerProcess` instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ServerProcess
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
