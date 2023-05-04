@@ -82,6 +82,7 @@ logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 CRASHED = b"0daf930f-e823-4737-a011-9ee2145812a4"
+CANCELLED = b"873c5da7-0d9f-4f16-8ef6-81123c3e8682"
 
 
 class TimeoutError(Exception):
@@ -186,6 +187,10 @@ class Worker(ABC):
             ``q_out`` does not contain result batches, but rather results of individuals.
         **init_kwargs
             Passed on to :meth:`__init__`.
+
+            If the worker is going to run in a child process, then elements in ``**kwargs`` go through pickling,
+            hence they should consist mainly of small, Python builtin types such as string, number, small dict's, etc.
+            Be careful about passing custom class objects in ``**kwargs``.
         """
         obj = cls(**init_kwargs)
         q_out.put(obj.name)
@@ -376,7 +381,8 @@ class Worker(ABC):
             uid, x = z
             # Element in the input queue is always a 2-tuple, that is, ((ID, cancelled), value).
 
-            if uid[1].is_set():
+            if x == CANCELLED or uid[1].is_set():
+                q_out.put((uid, CANCELLED))
                 continue
 
             # If it's an exception, short-circuit to output.
@@ -492,12 +498,12 @@ class Worker(ABC):
                             q_out.put(z)
                             return
                         # Now `z` is a tuple like ((uid, cancelled), x).
-                        if isinstance(z[1], BaseException):
+                        if z[1] == CANCELLED or z[0][1].is_set():
+                            q_out.put((z[0], CANCELLED))
+                        elif isinstance(z[1], BaseException):
                             q_out.put((z[0], RemoteException(z[1])))
                         elif isinstance(z[1], RemoteException):
                             q_out.put(z)
-                        elif z[0][1].is_set():
-                            pass
                         else:
                             buffer.put(z)
 
@@ -572,19 +578,14 @@ class Worker(ABC):
         return out
 
 
+# TODO: consider deprecate.
 class ProcessWorker(Worker):
     """
-    This classmethod runs in the worker process to construct
-    the worker object and start its processing loop.
-
-    This function is the parameter ``target`` to :class:`~mpservice.multiprocessing.SpawnProcess`.
-    As such, elements in ``**kwargs`` go through pickling,
-    hence they should consist
-    mainly of small, Python builtin types such as string, number, small dict's, etc.
-    Be careful about passing custom class objects in ``**kwargs``.
+    Use this class if the operation is CPU bound.
     """
 
 
+# TODO: consider deprecate.
 class ThreadWorker(Worker):
     """
     Use this class if the operation is I/O bound (e.g. calling an external service
@@ -1070,7 +1071,8 @@ class EnsembleServlet(Servlet):
                 return
 
             (uid, cancelled), x = v
-            if cancelled.is_set():
+            if x == CANCELLED or cancelled.is_set():
+                qout.put(((uid, cancelled), CANCELLED))
                 continue
             if isinstance(x, BaseException):
                 x = RemoteException(x)
@@ -1078,7 +1080,7 @@ class EnsembleServlet(Servlet):
                 # short circuit exception to the output queue
                 qout.put(((uid, cancelled), x))
                 continue
-            z = {"y": [None] * nn, "n": 0, "cancelled": cancelled}
+            z = {"y": [None] * nn, "n": 0}
             # `y` is the list of outputs from the servlets, in order.
             # `n` is number of outputs already received.
             catalog[uid] = z
@@ -1117,6 +1119,11 @@ class EnsembleServlet(Servlet):
                         # The entry has been removed due to "fail fast"
                         continue
 
+                    if y == CANCELLED or cancelled.is_set():
+                        catalog.pop(uid)
+                        qout.put(((uid, cancelled), CANCELLED))
+                        continue
+
                     if isinstance(y, BaseException):
                         y = RemoteException(y)
 
@@ -1146,23 +1153,8 @@ class EnsembleServlet(Servlet):
                         else:
                             y = z["y"]
                         qout.put(((uid, cancelled), y))
-                    elif cancelled.is_set():
-                        catalog.pop(uid)
+
             if all_empty:
-                if len(catalog) > 10_000:
-                    # This might be a little expensive.
-                    # Try to minimize the frequency this is done.
-                    # Maybe it's the typical case that `catalog`
-                    # is not long, and if it's length is `10_000`,
-                    # it has accumulated a lot of cancelled items,
-                    # hence this one sweep will downsize it
-                    # considerably.
-                    dead = []
-                    for uid, z in catalog.items():
-                        if z['cancelled'].is_set():
-                            dead.append(uid)
-                    for uid in dead:
-                        catalog.pop(uid, None)
                 sleep(0.01)  # TODO: what is a good duration?
 
     def stop(self):
@@ -1293,7 +1285,8 @@ class SwitchServlet(Servlet):
                 return
 
             (uid, cancelled), x = v
-            if cancelled.is_set():
+            if x == CANCELLED or cancelled.is_set():
+                qout.put(((uid, cancelled), CANCELLED))
                 continue
             if isinstance(x, BaseException):
                 x = RemoteException(x)
@@ -1339,7 +1332,8 @@ class Server:
         servlet: Servlet,
         *,
         main_cpu: int = 0,
-        backlog: int = 1024,
+        backlog: int = None,
+        capacity: int = 256,
         sys_info_log_cadence: int = None,
     ):
         """
@@ -1353,6 +1347,9 @@ class Server:
             i.e. the process in which this server objects resides.
 
         backlog
+            .. deprecated:: 0.12.7. Will be removed in 0.14.0. Use `capacity` instead.
+
+        capacity
             Max number of requests concurrently in progress within this server,
             all pipes/servlets/stages combined.
 
@@ -1369,8 +1366,18 @@ class Server:
         """
         self.servlet = servlet
 
-        assert backlog > 0
-        self._backlog = backlog
+        if backlog is not None:
+            warnings.warn(
+                "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            capacity = backlog
+        assert capacity > 0
+        self._capacity = capacity
+        self._uid_to_futures = {}
+        # Size of this dict is capped at `self._backlog`.
+        # A few places need to enforce this size limit.
 
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
@@ -1390,11 +1397,15 @@ class Server:
         self._started = False
 
     @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    @property
     def backlog(self) -> int:
-        return self._backlog
+        return len(self._uid_to_futures)
 
     def full(self) -> bool:
-        return len(self._uid_to_futures) >= self._backlog
+        return self.backlog >= self._capacity
 
     def __enter__(self):
         """
@@ -1403,10 +1414,6 @@ class Server:
         assert not self._started
 
         self._threads = []
-
-        self._uid_to_futures = {}
-        # Size of this dict is capped at `self._backlog`.
-        # A few places need to enforce this size limit.
 
         self._input_buffer = queue.SimpleQueue()
         # This has unlimited size; `put` never blocks (as long as
@@ -1470,18 +1477,18 @@ class Server:
         x
             Input data element.
         timeout
-            In seconds. If result is not ready after this time, :class:`~mpservice.util.TimeoutError` is raised.
+            In seconds. If result is not ready after this time, :class:`TimeoutError` is raised.
 
             There are two situations where timeout happens.
             At first, ``x`` is placed in an input queue for processing.
             This step is called "enqueue".
             If the queue is full for the moment, the code will wait.
             If a spot does not become available during the ``timeout`` period,
-            the :class:`~mpservice.util.TimeoutError` message will be "... seconds enqueue".
+            the :class:`TimeoutError` message will be "... seconds enqueue".
 
             Once ``x`` is placed in the input queue, code will wait for the result at the end
             of an output queue. If result is not yet ready when the ``timeout`` period
-            is over, the :class:`~mpservice.util.TimeoutError` message will be ".. seconds total".
+            is over, the :class:`TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request.
         backpressure
@@ -1497,11 +1504,10 @@ class Server:
                 x, timeout=timeout, backpressure=backpressure
             )
             return await self._async_wait_for_result(fut)
-        except BaseException:  # mainly asyncio.CancelledError, TimeoutError
+        except BaseException:  # mainly asyncio.CancelledError, TimeoutError, ServerBacklogFull
             if fut is not None:
-                self._uid_to_futures.pop(id(fut), None)
                 fut.data['cancelled'].set()
-                # fut.cancel()
+                fut.cancel()
             raise
 
     def call(self, x, /, *, timeout: int | float = 60):
@@ -1560,14 +1566,14 @@ class Server:
                 for x in data_stream:
                     nretries = 0
                     t0 = None
-                    while len(self._uid_to_futures) >= self._backlog:
+                    while self.full():
                         if stopped.is_set():
                             break
                         if t0 is None:
                             t0 = perf_counter()
                         if nretries >= 100:
                             raise ServerBacklogFull(
-                                len(self._uid_to_futures),
+                                self.backlog,
                                 f"{perf_counter() - t0:.3f} seconds enqueue",
                             )
                         nretries += 1
@@ -1600,7 +1606,7 @@ class Server:
                         pass
                     else:
                         fut.data['cancelled'].set()
-                        self._uid_to_futures.pop(id(fut), None)
+                        fut.cancel()
 
         tasks = queue.SimpleQueue()
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
@@ -1615,59 +1621,53 @@ class Server:
 
         _wait = self._wait_for_result
 
-        while True:
-            z = tasks.get()
-            if z == NOMOREDATA:
-                worker.join()
-                break
-            if z == CRASHED:
-                e = tasks.get()
-                worker.join()
-                raise e
+        try:
+            while True:
+                z = tasks.get()
+                if z == NOMOREDATA:
+                    worker.join()
+                    break
+                if z == CRASHED:
+                    e = tasks.get()
+                    worker.join()
+                    raise e
 
-            x, fut = z
-            try:
-                y = _wait(fut)
-                # May raise TimeoutError or an exception out of RemoteException.
-            except Exception as e:
-                if return_exceptions:
-                    try:
+                x, fut = z
+                try:
+                    y = _wait(fut)
+                    # May raise TimeoutError or an exception out of RemoteException.
+                except Exception as e:
+                    if return_exceptions:
                         if return_x:
                             yield x, e
                         else:
                             yield e
-                    except GeneratorExit:
-                        shutdown()
+                    else:
+                        logger.error("exception '%r' happened for input %r", e, x)
                         raise
+                        # TODO: rethink the thread shutdown
                 else:
-                    logger.error("exception '%r' happened for input %r", e, x)
-                    shutdown()
-                    raise
-                    # TODO: rethink the thread shutdown
-            else:
-                try:
+                    if y == CANCELLED:
+                        continue
                     if return_x:
                         yield x, y
                     else:
                         yield y
-                except GeneratorExit:
-                    shutdown()
-                    raise
+        finally:
+            shutdown()
 
     async def _async_enqueue(self, x, timeout, backpressure):
         t0 = perf_counter()
         deadline = t0 + timeout
         delta = max(timeout * 0.01, 0.01)
 
-        while len(self._uid_to_futures) >= self._backlog:
+        while self.full():
             if backpressure:
-                raise ServerBacklogFull(len(self._uid_to_futures), "0 seconds enqueue")
+                raise ServerBacklogFull(self.backlog, "0 seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(
-                    len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue"
-                )
+                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             await asyncio.sleep(delta)
@@ -1734,11 +1734,9 @@ class Server:
         deadline = t0 + timeout
         delta = max(timeout * 0.01, 0.01)
 
-        while len(self._uid_to_futures) >= self._backlog:
+        while self.full():
             if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(
-                    len(self._uid_to_futures), f"{t - t0:.3f} seconds enqueue"
-                )
+                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
             sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
@@ -1765,8 +1763,8 @@ class Server:
             return fut.result(timeout=max(delta, deadline - perf_counter()))
             # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
-            fut.cancel()
             fut.data['cancelled'].set()
+            fut.cancel()
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -1789,56 +1787,15 @@ class Server:
         futures = self._uid_to_futures
 
         while True:
-            try:
-                z = q_out.get()
-            except multiprocessing.managers.RemoteError as e:
-                if str(e).split('\n')[-2].startswith('KeyError: '):
-                    logger.info('error getting result from queue:\n%s', e)
-                    continue
-                    # I think this is because somehow the `cancelled` object is gone
-                    # due to cancellation. Needs more investigation.
-                    # This happend to `tests/test_mpserver.py::test_sequential_timeout_async`, like below:
-                    #
-                    # tests/test_mpserver.py::test_sequential_timeout_async
-                    # /usr/local/lib/python3.10/dist-packages/_pytest/threadexception.py:73: PytestUnhandledThreadExceptionWarning: Exception in thread Server._gather_output
-                    #
-                    # Traceback (most recent call last):
-                    #     File "/usr/lib/python3.10/threading.py", line 1016, in _bootstrap_inner
-                    #     self.run()
-                    #     File "/home/docker-user/mpservice/src/mpservice/threading.py", line 49, in run
-                    #     self._result_ = self._target(*self._args, **self._kwargs)
-                    #     File "/home/docker-user/mpservice/src/mpservice/mpserver.py", line 1793, in _gather_output
-                    #     z = q_out.get()
-                    #     File "/usr/lib/python3.10/multiprocessing/queues.py", line 367, in get
-                    #     return _ForkingPickler.loads(res)
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 942, in RebuildProxy
-                    #     return func(token, serializer, incref=incref, **kwds)
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 792, in __init__
-                    #     self._incref()
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 847, in _incref
-                    #     dispatch(conn, None, 'incref', (self._id,))
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 93, in dispatch
-                    #     raise convert_to_error(kind, result)
-                    # multiprocessing.managers.RemoteError:
-                    # ---------------------------------------------------------------------------
-                    # Traceback (most recent call last):
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 209, in _handle_request
-                    #     result = func(c, *args, **kwds)
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 439, in incref
-                    #     raise ke
-                    #     File "/usr/lib/python3.10/multiprocessing/managers.py", line 426, in incref
-                    #     self.id_to_refcount[ident] += 1
-                    # KeyError: '7f29a6d0bf40'
-                else:
-                    raise
-
+            z = q_out.get()
             if z == NOMOREDATA:
                 break
+            print(z)
             (uid, cancelled), y = z
             fut = futures.pop(uid, None)
             if fut is None:
                 continue
-            if cancelled.is_set():
+            if y == CANCELLED or fut.cancelled() or cancelled.is_set():
                 continue
             try:
                 if isinstance(y, RemoteException):
@@ -1848,10 +1805,7 @@ class Server:
                 else:
                     fut.set_result(y)
                 fut.data["t2"] = perf_counter()
-            except (
-                concurrent.futures.InvalidStateError,
-                asyncio.InvalidStateError,
-            ):
+            except concurrent.futures.InvalidStateError:
                 if fut.cancelled():
                     # Could have been cancelled due to TimeoutError.
                     pass

@@ -175,7 +175,7 @@ class BackgroundTask(ABC):
         ----------
         executor
             If you provide your own *process* executor,
-            it's recommended to use ``mpservice.util.MP_SPAWN_CTX`` for its
+            it's recommended to use ``mpservice.multiprocessing.MP_SPAWN_CTX`` for its
             ``ctx`` parameter.
         """
         self._own_executor = False
