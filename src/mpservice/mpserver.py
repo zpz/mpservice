@@ -1667,9 +1667,7 @@ class Server:
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(
-                    self.backlog, f"{t - t0:.3f} seconds enqueue"
-                )
+                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             await asyncio.sleep(delta)
@@ -1738,9 +1736,7 @@ class Server:
 
         while self.full():
             if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(
-                    self.backlog, f"{t - t0:.3f} seconds enqueue"
-                )
+                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
             sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.

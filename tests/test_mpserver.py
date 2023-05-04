@@ -460,7 +460,7 @@ class DelayedShift(ProcessWorker, ThreadWorker):
     def call(self, x):
         time.sleep(self._delay)
         return x + self._shift
-    
+
 
 @pytest.mark.asyncio
 async def test_cancel():
@@ -489,7 +489,9 @@ async def test_cancel():
             y = server.call(x, timeout=0.6)
         assert server.backlog == 1
         await asyncio.sleep(0.5)
-        assert server.backlog == 0  # the 2nd servlet didn't run, otherwise this would be 1 at this moment
+        assert (
+            server.backlog == 0
+        )  # the 2nd servlet didn't run, otherwise this would be 1 at this moment
 
     with Server(
         SequentialServlet(
@@ -498,28 +500,33 @@ async def test_cancel():
                 ProcessServlet(DelayedShift, delay=1, shift=2),
                 ThreadServlet(DelayedShift, delay=0.8, shift=3),
                 ProcessServlet(DelayedShift, delay=1.2, shift=4),
-            )
+            ),
         )
     ) as server:
-            assert server.call(2) == [6, 7, 8]
-            assert server.backlog == 0
+        assert server.call(2) == [6, 7, 8]
+        assert server.backlog == 0
 
-            try:
-                y = await asyncio.wait_for(
-                    server.async_call(x),
-                    1.1,
-                )
-            except asyncio.TimeoutError:
-                pass
-            assert server.backlog == 1  # the ensemble step is running
-            await asyncio.sleep(0.65)  # total 1.75 sec
-            assert server.backlog == 1  # the ensemble step is running
-            await asyncio.sleep(0.1)  # total 1.85 sec
-            assert server.backlog == 0  # the ensemble step finished thanks to short-circut when its 2nd member returns
+        try:
+            y = await asyncio.wait_for(
+                server.async_call(x),
+                1.1,
+            )
+        except asyncio.TimeoutError:
+            pass
+        assert server.backlog == 1  # the ensemble step is running
+        await asyncio.sleep(0.65)  # total 1.75 sec
+        assert server.backlog == 1  # the ensemble step is running
+        await asyncio.sleep(0.1)  # total 1.85 sec
+        assert (
+            server.backlog == 0
+        )  # the ensemble step finished thanks to short-circut when its 2nd member returns
 
-            with pytest.raises(TimeoutError):
-                y = server.call(2, timeout=0.7)
-            assert server.backlog == 1  # the first servlet is already underway; wait for it to finish
-            time.sleep(0.31)  # total 1.01 sec
-            assert server.backlog == 0  # the ensemble servlet did not run because the item is already cancelled when the servlet receives it.
-    
+        with pytest.raises(TimeoutError):
+            y = server.call(2, timeout=0.7)
+        assert (
+            server.backlog == 1
+        )  # the first servlet is already underway; wait for it to finish
+        time.sleep(0.31)  # total 1.01 sec
+        assert (
+            server.backlog == 0
+        )  # the ensemble servlet did not run because the item is already cancelled when the servlet receives it.

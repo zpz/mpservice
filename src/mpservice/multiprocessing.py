@@ -39,7 +39,6 @@ import warnings
 from typing import Callable
 
 import psutil
-from deprecation import deprecated
 
 from ._remote_exception import (
     RemoteException,
@@ -60,7 +59,7 @@ __all__ = [
     'SpawnContext',
     'MP_SPAWN_CTX',
     'get_context',
-    'Manager',
+    'ServerProcess',
     'CpuAffinity',
 ]
 
