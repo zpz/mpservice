@@ -99,8 +99,8 @@ ServerProcess.register(Tripler)
 
 
 def test_manager():
-    with ServerProcess(process_cpu=1, process_name='my_manager_process') as manager:
-        assert manager._process.name == 'my_manager_process'
+    with ServerProcess(process_cpu=1, process_name='test_server_process') as manager:
+        assert manager._process.name == 'test_server_process'
         assert CpuAffinity.get(pid=manager._process.pid) == [1]
 
         doubler = manager.Doubler('d')
@@ -121,7 +121,7 @@ def test_manager():
         assert doubler.get_mp() == tripler.get_mp()
         assert doubler.get_tr() == tripler.get_tr()
 
-        with ServerProcess() as manager2:
+        with ServerProcess(process_name='test_server_process_2') as manager2:
             doubler2 = manager2.Doubler('dd')
             print(doubler2.get_mp())
             assert doubler2.get_name() == 'dd'
@@ -148,7 +148,7 @@ def worker(sleeper, n):
 
 def test_concurrency():
     print('')
-    with ServerProcess() as manager:
+    with ServerProcess(process_name='test_concurrency') as manager:
         d = manager.Doubler('d')
         t = manager.Tripler('t')
 
@@ -156,8 +156,8 @@ def test_concurrency():
             print('cls:', cls)
             print('')
             pp = [
-                cls(target=worker, args=(d, 3)),
-                cls(target=worker, args=(t, 3)),
+                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-1"),
+                cls(target=worker, args=(t, 3), name=f"{cls.__name__}-2"),
             ]
             t0 = time.perf_counter()
             for p in pp:
@@ -170,9 +170,9 @@ def test_concurrency():
 
             print('')
             pp = [
-                cls(target=worker, args=(d, 3)),
-                cls(target=worker, args=(d, 3)),
-                cls(target=worker, args=(d, 3)),
+                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-3"),
+                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-4"),
+                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-5"),
             ]
             t0 = time.perf_counter()
             for p in pp:
@@ -182,4 +182,5 @@ def test_concurrency():
             t1 = time.perf_counter()
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
+            time.sleep(0.1)  # give child process some time to shut down.
             assert len(active_children()) == 1

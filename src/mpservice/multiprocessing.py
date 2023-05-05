@@ -55,10 +55,8 @@ __all__ = [
     'is_remote_exception',
     'TimeoutError',
     'SpawnProcess',
-    'Process',
     'SpawnContext',
     'MP_SPAWN_CTX',
-    'get_context',
     'ServerProcess',
     'CpuAffinity',
 ]
@@ -362,10 +360,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__error__
 
 
-Process = SpawnProcess
-'''Alias to :class:`SpawnProcess`.'''
-
-
 class SpawnContext(multiprocessing.context.SpawnContext):
     '''
     We want to use :class:`SpawnProcess` as the process class when
@@ -383,6 +377,18 @@ class SpawnContext(multiprocessing.context.SpawnContext):
     '''
 
     Process = SpawnProcess
+
+    def Manager(self, *, name: str = None):
+        # The standard lib does not have the parameter ``name``.
+        m = super().Manager()
+        if name:
+            m._process.name = name
+        return m
+
+    def get_context(self, method=None):
+        if method is None or method == 'spawn':
+            return self
+        return super().get_context(method)
 
 
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
@@ -446,12 +452,6 @@ All multiprocessing code in ``mpservice`` uses either ``MP_SPAWN_CTX``, or ``Spa
 takes a parameter ``mp_context``.
 You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
-
-
-def get_context(method=None):
-    if method is None or method == 'spawn':
-        return MP_SPAWN_CTX
-    return multiprocessing.get_context(method)
 
 
 # ``MP_SPAWN_CTX.Manager`` does not use this class.
@@ -664,3 +664,17 @@ def __getattr__(name):
         )
         return ServerProcess
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+_names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]
+globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
+# Names like `Process`, `Queue`, `Pool`, etc are directly import-able from this module.
+# But they are not classes; rather they are bound methods of the context `MP_SPAWN_CTX`.
+# This is the same behavior as the standard `multiprocessing`.
+# With this, you can usually replace
+#
+#    from multiprocessing import ...
+#
+# by
+#
+#    from mpservice.multiprocessing import ...

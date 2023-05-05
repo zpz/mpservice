@@ -82,7 +82,7 @@ from .concurrent.futures import (
     get_shared_thread_pool,
 )
 from .multiprocessing import (
-    MP_SPAWN_CTX,
+    Event,
     get_remote_traceback,
     is_remote_exception,
 )
@@ -1053,11 +1053,10 @@ class Buffer(Iterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(target=self._run_worker)
+        self._worker = Thread(target=self._run_worker, name='Buffer-worker-thread')
         self._worker.start()
 
     def _run_worker(self):
-        threading.current_thread().name = "BufferThread"
         q = self._tasks
         try:
             for x in self._instream:
@@ -1108,12 +1107,11 @@ class AsyncBuffer(AsyncIterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(target=self._run_worker)
+        self._worker = Thread(target=self._run_worker, name='AsyncBuffer-worker-thread')
         self._worker.start()
 
     def _run_worker(self):
         async def main():
-            threading.current_thread().name = "BufferThread"
             q = self._tasks
             try:
                 async for x in self._instream:
@@ -1185,7 +1183,7 @@ class ParmapperMixin:
                     thread_name_prefix=self._name + '-thread',
                 )
         else:
-            self._stopped = MP_SPAWN_CTX.Event()
+            self._stopped = Event()
 
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool()

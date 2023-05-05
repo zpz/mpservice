@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Methods ``streamer.Stream.{to_sync, to_async, __aiter__}``.
 - Method ``mpserver.Server.full`` and properties ``mpserver.Server.{capacity, backlog}``.
 - Added capabilities to cancel a item submitted to ``mpserver.Server`` and halt its processing in the pipeline as soon as practical.
+- Made ``mpservice.multiprocessing`` more close to the standard ``multiprocessing`` in terms of what can be imported from it.
+- New parameter ``name`` to ``SpawnContext.Manager``.
 
 
 ## [0.12.6] - 2023-04-28

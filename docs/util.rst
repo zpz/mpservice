@@ -18,19 +18,13 @@ Multiprocessing
 
 .. autofunction:: mpservice.multiprocessing.get_remote_traceback
 
-.. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
-
-.. autofunction:: mpservice.multiprocessing.get_context
-
 .. autoclass:: mpservice.multiprocessing.SpawnProcess
 
-.. autoclass:: mpservice.multiprocessing.Process
+.. autoclass:: mpservice.multiprocessing.SpawnContext
 
+.. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
-Server process
-==============
-
-.. autoclass:: mpservice.multiprocessing.Manager
+.. autoclass:: mpservice.multiprocessing.ServerProcess
 
 
 Threading

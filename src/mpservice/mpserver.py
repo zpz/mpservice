@@ -43,7 +43,7 @@ from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
     RemoteException,
-    SpawnProcess,
+    Process,
 )
 from .threading import Thread
 
@@ -417,7 +417,8 @@ class Worker(ABC):
 
         self._batch_buffer = SingleLane(self.batch_size + 10)
         self._batch_get_called = threading.Event()
-        collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out))
+        collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out),
+                                  name=f"{self.name}._build_input_batches")
         collector_thread.start()
 
         n_batches = 0
@@ -472,7 +473,6 @@ class Worker(ABC):
         # Exceptions taken out of `q_in` will be short-circuited
         # to `q_out`.
 
-        threading.current_thread().name = f"{self.name}._build_input_batches"
         buffer = self._batch_buffer
         batchsize = self.batch_size
 
@@ -769,7 +769,7 @@ class ProcessServlet(Servlet):
             # Each process is pinned to the specified cpu core.
             sname = f"{self._worker_cls.__name__}-process-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
-            p = SpawnProcess(
+            p = Process(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
@@ -1047,16 +1047,15 @@ class EnsembleServlet(Servlet):
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
-        t = Thread(target=self._dequeue)
+        t = Thread(target=self._dequeue, name = f"{self.__class__.__name__}._dequeue")
         t.start()
         self._threads.append(t)
-        t = Thread(target=self._enqueue)
+        t = Thread(target=self._enqueue, name=f"{self.__class__.__name__}._enqueue")
         t.start()
         self._threads.append(t)
         self._started = True
 
     def _enqueue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
         qins = self._qins
@@ -1090,7 +1089,6 @@ class EnsembleServlet(Servlet):
                 # i.e. a (ID, value) tuple.
 
     def _dequeue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
@@ -1229,7 +1227,7 @@ class SwitchServlet(Servlet):
             q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
             s.start(q1, q_out)
             self._qins.append(q1)
-        self._thread_enqueue = Thread(target=self._enqueue)
+        self._thread_enqueue = Thread(target=self._enqueue, name=f"{self.__class__.__name__}._enqueue")
         self._thread_enqueue.start()
         self._started = True
 
@@ -1272,7 +1270,6 @@ class SwitchServlet(Servlet):
         raise NotImplementedError
 
     def _enqueue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
         qins = self._qins
@@ -1423,7 +1420,7 @@ class Server:
         # into this queue. A background thread takes data out of this
         # queue and puts them into `_q_in`, which could block.
 
-        self._cancelled_event_manager = MP_SPAWN_CTX.Manager()
+        self._cancelled_event_manager = MP_SPAWN_CTX.Manager(name=f"{self.__class__.__name__}-manager-cancelled-events")
 
         self._q_in = (
             _SimpleQueue()
@@ -1437,7 +1434,7 @@ class Server:
         )
         self.servlet.start(self._q_in, self._q_out)
 
-        t = Thread(target=self._gather_output)
+        t = Thread(target=self._gather_output, name=f"{self.__class__.__name__}._gather_output")
         t.start()
         self._threads.append(t)
         t = Thread(target=self._onboard_input)
@@ -1459,6 +1456,8 @@ class Server:
 
         for t in self._threads:
             _ = t.result()
+
+        self._cancelled_event_manager.shutdown()
 
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
@@ -1788,7 +1787,6 @@ class Server:
                 break
 
     def _gather_output(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._gather_output"
         q_out = self._q_out
         futures = self._uid_to_futures
 
@@ -1796,7 +1794,6 @@ class Server:
             z = q_out.get()
             if z == NOMOREDATA:
                 break
-            print(z)
             (uid, cancelled), y = z
             fut = futures.pop(uid)
             if y == CANCELLED or cancelled.is_set():
