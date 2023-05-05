@@ -1828,7 +1828,7 @@ class Server:
                     # method `._cancel`, and that is always accompanied by
                     # incrementing `self._n_cancelled`.
                     self._n_cancelled -= 1
-                    pass
+                    assert 0 <= self._n_cancelled <= len(self._uid_to_futures)
                 else:
                     # Unexpected situation; to be investigated.
                     raise
