@@ -55,10 +55,8 @@ __all__ = [
     'is_remote_exception',
     'TimeoutError',
     'SpawnProcess',
-    'Process',
     'SpawnContext',
     'MP_SPAWN_CTX',
-    'get_context',
     'ServerProcess',
     'CpuAffinity',
 ]
@@ -362,10 +360,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__error__
 
 
-Process = SpawnProcess
-'''Alias to :class:`SpawnProcess`.'''
-
-
 class SpawnContext(multiprocessing.context.SpawnContext):
     '''
     We want to use :class:`SpawnProcess` as the process class when
@@ -383,6 +377,22 @@ class SpawnContext(multiprocessing.context.SpawnContext):
     '''
 
     Process = SpawnProcess
+
+    def Manager(self, *, name: str | None = None, cpu: int | list[int] | None = None):
+        '''
+        The counterpart in the standard lib does not have the parameters ``name`` and ``cpu``.
+        '''
+        m = super().Manager()
+        if name:
+            m._process.name = name
+        if cpu is not None:
+            CpuAffinity(cpu).set(pid=m._process.pid)
+        return m
+
+    def get_context(self, method=None):
+        if method is None or method == 'spawn':
+            return self
+        return super().get_context(method)
 
 
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
@@ -448,21 +458,21 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 """
 
 
-def get_context(method=None):
-    if method is None or method == 'spawn':
-        return MP_SPAWN_CTX
-    return multiprocessing.get_context(method)
-
-
 # ``MP_SPAWN_CTX.Manager`` does not use this class.
 class ServerProcess(multiprocessing.managers.SyncManager):
 
     """A "server process" provides a server running in one process,
     to be called from other processes for shared data or functionalities.
 
-    This module corresponds to the standard
-    `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_ module
-    with simplified APIs for targeted use cases. The basic workflow is as follows.
+    The class ``ServerProcess`` is based on ``Manager`` in the standard ``multiprocessing``,
+    but is specifically for the use case where user needs to design and register a custom class
+    to be used in a "server process". The API of ``ServerProcess`` may continue to diverge
+    from that of ``Manager``.
+
+    If you don't need a custom class, but rather just need to use one of the standard classes,
+    for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
+
+    The basic workflow is as follows.
 
     1. Register one or more classes with the :class:`ServerProcess` class::
 
@@ -532,18 +542,18 @@ class ServerProcess(multiprocessing.managers.SyncManager):
 
     will return 6. Inputs and output of the public method
     should all be pickle-able.
-
-    In each new thread or process, a proxy object will create a new
-    connection to the server process (see``multiprocessing.managers.Server.accepter``,
-    ...,
-    ``Server.accept_connection``,
-    and
-    ``BaseProxy._connect``;
-    all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
-    the server process then creates a new thread
-    to handle requests from this connection (see ``Server.serve_client``
-    also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
     """
+
+    # In each new thread or process, a proxy object will create a new
+    # connection to the server process (see``multiprocessing.managers.Server.accepter``,
+    # ...,
+    # ``Server.accept_connection``,
+    # and
+    # ``BaseProxy._connect``;
+    # all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
+    # the server process then creates a new thread
+    # to handle requests from this connection (see ``Server.serve_client``
+    # also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
 
     @classmethod
     def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
@@ -572,20 +582,20 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     def __init__(
         self,
         *,
-        process_cpu: int | list[int] | None = None,
-        process_name: str | None = None,
+        cpu: int | list[int] | None = None,
+        name: str | None = None,
     ):
         super().__init__(ctx=MP_SPAWN_CTX)
-        self._process_cpu = process_cpu
-        self._process_name = process_name
+        self._cpu = cpu
+        self._name = name
         # `self._ctx` is `MP_SPAWN_CTX`
 
     def start(self, *args, **kwargs):
         super().start(*args, **kwargs)
-        if self._process_cpu:
-            CpuAffinity(self._process_cpu).set(pid=self._process.pid)
-        if self._process_name:
-            self._process.name = self._process_name
+        if self._cpu is not None:
+            CpuAffinity(self._cpu).set(pid=self._process.pid)
+        if self._name:
+            self._process.name = self._name
 
 
 class CpuAffinity:
@@ -652,9 +662,23 @@ class CpuAffinity:
 def __getattr__(name):
     if name == 'Manager':
         warnings.warn(
-            "`Manager` is deprecated in 0.12.7 and will be removed in 0.14.0. Use `ServerProcess` instead",
+            "'mpservice.multiprocessing.Manager' is deprecated in 0.12.7 and will be removed in 0.14.0. Use `mpservice.multiprocessing.ServerProcess` instead",
             DeprecationWarning,
             stacklevel=2,
         )
         return ServerProcess
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+_names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]
+globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
+# Names like `Process`, `Queue`, `Pool`, etc are directly import-able from this module.
+# But they are not classes; rather they are bound methods of the context `MP_SPAWN_CTX`.
+# This is the same behavior as the standard `multiprocessing`.
+# With this, you can usually replace
+#
+#    from multiprocessing import ...
+#
+# by
+#
+#    from mpservice.multiprocessing import ...

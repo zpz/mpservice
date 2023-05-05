@@ -145,7 +145,7 @@ def test_stream_error():
 
 
 def test_stream_early_quit():
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3]), backlog=10) as service:
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
         data = range(100)
         ss = service.stream(data)
         n = 0

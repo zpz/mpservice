@@ -42,8 +42,8 @@ from ._remote_exception import EnsembleError
 from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
+    Process,
     RemoteException,
-    SpawnProcess,
 )
 from .threading import Thread
 
@@ -417,7 +417,11 @@ class Worker(ABC):
 
         self._batch_buffer = SingleLane(self.batch_size + 10)
         self._batch_get_called = threading.Event()
-        collector_thread = Thread(target=self._build_input_batches, args=(q_in, q_out))
+        collector_thread = Thread(
+            target=self._build_input_batches,
+            args=(q_in, q_out),
+            name=f"{self.name}._build_input_batches",
+        )
         collector_thread.start()
 
         n_batches = 0
@@ -472,7 +476,6 @@ class Worker(ABC):
         # Exceptions taken out of `q_in` will be short-circuited
         # to `q_out`.
 
-        threading.current_thread().name = f"{self.name}._build_input_batches"
         buffer = self._batch_buffer
         batchsize = self.batch_size
 
@@ -769,7 +772,7 @@ class ProcessServlet(Servlet):
             # Each process is pinned to the specified cpu core.
             sname = f"{self._worker_cls.__name__}-process-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
-            p = SpawnProcess(
+            p = Process(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
@@ -1047,16 +1050,15 @@ class EnsembleServlet(Servlet):
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
-        t = Thread(target=self._dequeue)
+        t = Thread(target=self._dequeue, name=f"{self.__class__.__name__}._dequeue")
         t.start()
         self._threads.append(t)
-        t = Thread(target=self._enqueue)
+        t = Thread(target=self._enqueue, name=f"{self.__class__.__name__}._enqueue")
         t.start()
         self._threads.append(t)
         self._started = True
 
     def _enqueue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
         qins = self._qins
@@ -1090,7 +1092,6 @@ class EnsembleServlet(Servlet):
                 # i.e. a (ID, value) tuple.
 
     def _dequeue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._dequeue"
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
@@ -1229,7 +1230,9 @@ class SwitchServlet(Servlet):
             q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
             s.start(q1, q_out)
             self._qins.append(q1)
-        self._thread_enqueue = Thread(target=self._enqueue)
+        self._thread_enqueue = Thread(
+            target=self._enqueue, name=f"{self.__class__.__name__}._enqueue"
+        )
         self._thread_enqueue.start()
         self._started = True
 
@@ -1272,7 +1275,6 @@ class SwitchServlet(Servlet):
         raise NotImplementedError
 
     def _enqueue(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._enqueue"
         qin = self._qin
         qout = self._qout
         qins = self._qins
@@ -1324,9 +1326,6 @@ class Server:
         """
         return MP_SPAWN_CTX
 
-    # TODO: how to track helper processes created by subclasses, so that
-    # the sys info log in ``_gather_output`` can include them?
-
     def __init__(
         self,
         servlet: Servlet,
@@ -1376,9 +1375,12 @@ class Server:
         assert capacity > 0
         self._capacity = capacity
         self._uid_to_futures = {}
-        # Size of this dict is capped at `self._backlog`.
+        # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
+        self._count_cancelled_in_backlog = True
+        self._n_cancelled = 0
 
+        self._main_cpus = None
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
             if isinstance(main_cpu, int):
@@ -1386,6 +1388,7 @@ class Server:
             else:
                 assert isinstance(main_cpu, list)
                 cpus = main_cpu
+            self._main_cpus = cpus
             psutil.Process().cpu_affinity(cpus=cpus)
 
         if sys_info_log_cadence is not None:
@@ -1402,7 +1405,9 @@ class Server:
 
     @property
     def backlog(self) -> int:
-        return len(self._uid_to_futures)
+        if self._count_cancelled_in_backlog:
+            return len(self._uid_to_futures)
+        return len(self._uid_to_futures) - self._n_cancelled
 
     def full(self) -> bool:
         return self.backlog >= self._capacity
@@ -1422,7 +1427,10 @@ class Server:
         # into this queue. A background thread takes data out of this
         # queue and puts them into `_q_in`, which could block.
 
-        self._cancelled_event_manager = MP_SPAWN_CTX.Manager()
+        self._cancelled_event_manager = MP_SPAWN_CTX.Manager(
+            cpu=self._main_cpus,
+            name=f"{self.__class__.__name__}-manager-cancelled-events",
+        )
 
         self._q_in = (
             _SimpleQueue()
@@ -1436,7 +1444,9 @@ class Server:
         )
         self.servlet.start(self._q_in, self._q_out)
 
-        t = Thread(target=self._gather_output)
+        t = Thread(
+            target=self._gather_output, name=f"{self.__class__.__name__}._gather_output"
+        )
         t.start()
         self._threads.append(t)
         t = Thread(target=self._onboard_input)
@@ -1459,9 +1469,17 @@ class Server:
         for t in self._threads:
             _ = t.result()
 
+        self._cancelled_event_manager.shutdown()
+
         # Reset CPU affinity.
         psutil.Process().cpu_affinity(cpus=[])
         self._started = False
+
+    def _cancel(self, fut):
+        if not fut.data['cancelled'].is_set():
+            fut.data['cancelled'].set()
+            fut.cancel()
+            self._n_cancelled += 1
 
     async def async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
@@ -1506,8 +1524,7 @@ class Server:
             return await self._async_wait_for_result(fut)
         except BaseException:  # mainly asyncio.CancelledError, TimeoutError, ServerBacklogFull
             if fut is not None:
-                fut.data['cancelled'].set()
-                fut.cancel()
+                self._cancel(fut)
             raise
 
     def call(self, x, /, *, timeout: int | float = 60):
@@ -1605,8 +1622,7 @@ class Server:
                     except (ValueError, TypeError):
                         pass
                     else:
-                        fut.data['cancelled'].set()
-                        fut.cancel()
+                        self._cancel(fut)
 
         tasks = queue.SimpleQueue()
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
@@ -1711,6 +1727,8 @@ class Server:
                 raise TimeoutError(
                     f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
                 )
+                # cancellation of `fut` is done in the caller function,
+                # `async_call`.
             await asyncio.sleep(delta)
         return fut.result()
         # This could raise an exception originating from RemoteException.
@@ -1763,8 +1781,7 @@ class Server:
             return fut.result(timeout=max(delta, deadline - perf_counter()))
             # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
-            fut.data['cancelled'].set()
-            fut.cancel()
+            self._cancel(fut)
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -1782,7 +1799,6 @@ class Server:
                 break
 
     def _gather_output(self):
-        threading.current_thread().name = f"{self.__class__.__name__}._gather_output"
         q_out = self._q_out
         futures = self._uid_to_futures
 
@@ -1790,12 +1806,11 @@ class Server:
             z = q_out.get()
             if z == NOMOREDATA:
                 break
-            print(z)
             (uid, cancelled), y = z
-            fut = futures.pop(uid, None)
-            if fut is None:
-                continue
-            if y == CANCELLED or fut.cancelled() or cancelled.is_set():
+            fut = futures.pop(uid)
+            if y == CANCELLED or cancelled.is_set():
+                self._n_cancelled -= 1
+                assert 0 <= self._n_cancelled <= len(self._uid_to_futures)
                 continue
             try:
                 if isinstance(y, RemoteException):
@@ -1807,7 +1822,12 @@ class Server:
                 fut.data["t2"] = perf_counter()
             except concurrent.futures.InvalidStateError:
                 if fut.cancelled():
-                    # Could have been cancelled due to TimeoutError.
+                    # Cancellation could have happened just in the duration
+                    # of the above try block.
+                    # There's only one place that does cancellation, which is in
+                    # method `._cancel`, and that is always accompanied by
+                    # incrementing `self._n_cancelled`.
+                    self._n_cancelled -= 1
                     pass
                 else:
                     # Unexpected situation; to be investigated.
