@@ -1,3 +1,5 @@
+# noqa: I001, F401, F801
+
 import pytest
 
 
@@ -8,7 +10,7 @@ def test_deprecated():
         get_docker_host_ip, is_async,
         MAX_THREADS, Thread,
         SpawnProcessPoolExecutor,
-    )  # noqa: I001, F401
+    )
 
     with pytest.warns(DeprecationWarning):
         from mpservice.server_process import Manager
