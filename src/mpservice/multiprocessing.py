@@ -467,7 +467,7 @@ class ServerProcess(multiprocessing.managers.SyncManager):
 
     If you don't need a custom class, but rather just need to use one of the standard classes,
     for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
-    
+
     The basic workflow is as follows.
 
     1. Register one or more classes with the :class:`ServerProcess` class::
@@ -539,6 +539,7 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     will return 6. Inputs and output of the public method
     should all be pickle-able.
     """
+
     # In each new thread or process, a proxy object will create a new
     # connection to the server process (see``multiprocessing.managers.Server.accepter``,
     # ...,

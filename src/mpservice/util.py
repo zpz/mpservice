@@ -1,5 +1,5 @@
-from importlib import import_module
 import warnings
+from importlib import import_module
 
 
 # This function is no longer used in this package but can be useful.
@@ -15,9 +15,22 @@ def full_class_name(cls):
 
 def __getattr__(name):
     mname = None
-    if name in ('ProcessPoolExecutor', 'ThreadPoolExecutor', 'get_shared_process_pool', 'get_shared_thread_pool'):
+    if name in (
+        'ProcessPoolExecutor',
+        'ThreadPoolExecutor',
+        'get_shared_process_pool',
+        'get_shared_thread_pool',
+    ):
         mname = 'mpservice.concurrent.futures'
-    elif name in ('MP_SPAWN_CTX', 'Process', 'RemoteException', 'RemoteTraceback', 'SpawnProcess', 'get_remote_traceback', 'is_remote_exception'):
+    elif name in (
+        'MP_SPAWN_CTX',
+        'Process',
+        'RemoteException',
+        'RemoteTraceback',
+        'SpawnProcess',
+        'get_remote_traceback',
+        'is_remote_exception',
+    ):
         mname = 'mpservice.multiprocessing'
     elif name in ('get_docker_host_ip', 'is_async'):
         mname = 'mpservice.socket'
@@ -25,8 +38,9 @@ def __getattr__(name):
         mname = 'mpservice.threading'
     elif name == 'SpawnProcessPoolExecutor':
         from mpservice.concurrent.futures import ProcessPoolExecutor
+
         warnings.warn(
-            f"'mpservice.util.SpawnProcessPoolExecutor' is deprecated in 0.12.7 and will be removed in 0.14.0. Use 'mpservice.concurrent.futures.ProcessPoolExecutor' instead",
+            "'mpservice.util.SpawnProcessPoolExecutor' is deprecated in 0.12.7 and will be removed in 0.14.0. Use 'mpservice.concurrent.futures.ProcessPoolExecutor' instead",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -42,4 +56,3 @@ def __getattr__(name):
         stacklevel=2,
     )
     return o
-
