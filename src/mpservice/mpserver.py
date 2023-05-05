@@ -1429,7 +1429,7 @@ class Server:
 
         self._cancelled_event_manager = MP_SPAWN_CTX.Manager(
             cpu=self._main_cpus,
-            name=f"{self.__class__.__name__}-manager-cancelled-events"
+            name=f"{self.__class__.__name__}-manager-cancelled-events",
         )
 
         self._q_in = (
