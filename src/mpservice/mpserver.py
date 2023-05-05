@@ -1324,9 +1324,6 @@ class Server:
         """
         return MP_SPAWN_CTX
 
-    # TODO: how to track helper processes created by subclasses, so that
-    # the sys info log in ``_gather_output`` can include them?
-
     def __init__(
         self,
         servlet: Servlet,
@@ -1376,8 +1373,10 @@ class Server:
         assert capacity > 0
         self._capacity = capacity
         self._uid_to_futures = {}
-        # Size of this dict is capped at `self._backlog`.
+        # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
+        self._count_cancelled_in_backlog = True
+        self._n_cancelled = 0
 
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
@@ -1402,7 +1401,9 @@ class Server:
 
     @property
     def backlog(self) -> int:
-        return len(self._uid_to_futures)
+        if self._count_cancelled_in_backlog:
+            return len(self._uid_to_futures)
+        return len(self._uid_to_futures) - self._n_cancelled
 
     def full(self) -> bool:
         return self.backlog >= self._capacity
@@ -1463,6 +1464,12 @@ class Server:
         psutil.Process().cpu_affinity(cpus=[])
         self._started = False
 
+    def _cancel(self, fut):
+        if not fut.data['cancelled'].is_set():
+            fut.data['cancelled'].set()
+            fut.cancel()
+            self._n_cancelled += 1
+
     async def async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
     ):
@@ -1506,8 +1513,7 @@ class Server:
             return await self._async_wait_for_result(fut)
         except BaseException:  # mainly asyncio.CancelledError, TimeoutError, ServerBacklogFull
             if fut is not None:
-                fut.data['cancelled'].set()
-                fut.cancel()
+                self._cancel(fut)
             raise
 
     def call(self, x, /, *, timeout: int | float = 60):
@@ -1605,8 +1611,7 @@ class Server:
                     except (ValueError, TypeError):
                         pass
                     else:
-                        fut.data['cancelled'].set()
-                        fut.cancel()
+                        self._cancel(fut)
 
         tasks = queue.SimpleQueue()
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
@@ -1711,6 +1716,8 @@ class Server:
                 raise TimeoutError(
                     f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
                 )
+                # cancellation of `fut` is done in the caller function,
+                # `async_call`.
             await asyncio.sleep(delta)
         return fut.result()
         # This could raise an exception originating from RemoteException.
@@ -1763,8 +1770,7 @@ class Server:
             return fut.result(timeout=max(delta, deadline - perf_counter()))
             # this may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
-            fut.data['cancelled'].set()
-            fut.cancel()
+            self._cancel(fut)
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -1792,10 +1798,10 @@ class Server:
                 break
             print(z)
             (uid, cancelled), y = z
-            fut = futures.pop(uid, None)
-            if fut is None:
-                continue
-            if y == CANCELLED or fut.cancelled() or cancelled.is_set():
+            fut = futures.pop(uid)
+            if y == CANCELLED or cancelled.is_set():
+                self._n_cancelled -= 1
+                assert 0 <= self._n_cancelled <= len(self._uid_to_futures)
                 continue
             try:
                 if isinstance(y, RemoteException):
@@ -1807,7 +1813,12 @@ class Server:
                 fut.data["t2"] = perf_counter()
             except concurrent.futures.InvalidStateError:
                 if fut.cancelled():
-                    # Could have been cancelled due to TimeoutError.
+                    # Cancellation could have happened just in the duration
+                    # of the above try block.
+                    # There's only one place that does cancellation, which is in
+                    # method `._cancel`, and that is always accompanied by
+                    # incrementing `self._n_cancelled`.
+                    self._n_cancelled -= 1
                     pass
                 else:
                     # Unexpected situation; to be investigated.

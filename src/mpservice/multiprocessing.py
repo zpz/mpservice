@@ -460,9 +460,15 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     """A "server process" provides a server running in one process,
     to be called from other processes for shared data or functionalities.
 
-    This module corresponds to the standard
-    `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_ module
-    with simplified APIs for targeted use cases. The basic workflow is as follows.
+    The class ``ServerProcess`` is based on ``Manager`` in the standard ``multiprocessing``,
+    but is specifically for the use case where user needs to design and register a custom class
+    to be used in a "server process". The API of ``ServerProcess`` may continue to diverge
+    from that of ``Manager``.
+
+    If you don't need a custom class, but rather just need to use one of the standard classes,
+    for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
+    
+    The basic workflow is as follows.
 
     1. Register one or more classes with the :class:`ServerProcess` class::
 
@@ -532,18 +538,17 @@ class ServerProcess(multiprocessing.managers.SyncManager):
 
     will return 6. Inputs and output of the public method
     should all be pickle-able.
-
-    In each new thread or process, a proxy object will create a new
-    connection to the server process (see``multiprocessing.managers.Server.accepter``,
-    ...,
-    ``Server.accept_connection``,
-    and
-    ``BaseProxy._connect``;
-    all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
-    the server process then creates a new thread
-    to handle requests from this connection (see ``Server.serve_client``
-    also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
     """
+    # In each new thread or process, a proxy object will create a new
+    # connection to the server process (see``multiprocessing.managers.Server.accepter``,
+    # ...,
+    # ``Server.accept_connection``,
+    # and
+    # ``BaseProxy._connect``;
+    # all in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_);
+    # the server process then creates a new thread
+    # to handle requests from this connection (see ``Server.serve_client``
+    # also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
 
     @classmethod
     def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
@@ -652,7 +657,7 @@ class CpuAffinity:
 def __getattr__(name):
     if name == 'Manager':
         warnings.warn(
-            "`Manager` is deprecated in 0.12.7 and will be removed in 0.14.0. Use `ServerProcess` instead",
+            "'mpservice.multiprocessing.Manager' is deprecated in 0.12.7 and will be removed in 0.14.0. Use `mpservice.multiprocessing.ServerProcess` instead",
             DeprecationWarning,
             stacklevel=2,
         )
