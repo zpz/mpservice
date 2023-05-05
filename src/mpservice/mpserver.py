@@ -1380,6 +1380,7 @@ class Server:
         self._count_cancelled_in_backlog = True
         self._n_cancelled = 0
 
+        self._main_cpus = None
         if main_cpu is not None:
             # Pin this coordinating thread to the specified CPUs.
             if isinstance(main_cpu, int):
@@ -1387,6 +1388,7 @@ class Server:
             else:
                 assert isinstance(main_cpu, list)
                 cpus = main_cpu
+            self._main_cpus = cpus
             psutil.Process().cpu_affinity(cpus=cpus)
 
         if sys_info_log_cadence is not None:
@@ -1426,6 +1428,7 @@ class Server:
         # queue and puts them into `_q_in`, which could block.
 
         self._cancelled_event_manager = MP_SPAWN_CTX.Manager(
+            cpu=self._main_cpus,
             name=f"{self.__class__.__name__}-manager-cancelled-events"
         )
 

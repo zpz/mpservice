@@ -378,11 +378,15 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
     Process = SpawnProcess
 
-    def Manager(self, *, name: str = None):
-        # The standard lib does not have the parameter ``name``.
+    def Manager(self, *, name: str | None = None, cpu: int | list[int] | None = None):
+        '''
+        The counterpart in the standard lib does not have the parameters ``name`` and ``cpu``.
+        '''
         m = super().Manager()
         if name:
             m._process.name = name
+        if cpu is not None:
+            CpuAffinity(cpu).set(pid=m._process.pid)
         return m
 
     def get_context(self, method=None):
@@ -578,20 +582,20 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     def __init__(
         self,
         *,
-        process_cpu: int | list[int] | None = None,
-        process_name: str | None = None,
+        cpu: int | list[int] | None = None,
+        name: str | None = None,
     ):
         super().__init__(ctx=MP_SPAWN_CTX)
-        self._process_cpu = process_cpu
-        self._process_name = process_name
+        self._cpu = cpu
+        self._name = name
         # `self._ctx` is `MP_SPAWN_CTX`
 
     def start(self, *args, **kwargs):
         super().start(*args, **kwargs)
-        if self._process_cpu:
-            CpuAffinity(self._process_cpu).set(pid=self._process.pid)
-        if self._process_name:
-            self._process.name = self._process_name
+        if self._cpu is not None:
+            CpuAffinity(self._cpu).set(pid=self._process.pid)
+        if self._name:
+            self._process.name = self._name
 
 
 class CpuAffinity:

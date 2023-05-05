@@ -99,7 +99,7 @@ ServerProcess.register(Tripler)
 
 
 def test_manager():
-    with ServerProcess(process_cpu=1, process_name='test_server_process') as manager:
+    with ServerProcess(cpu=1, name='test_server_process') as manager:
         assert manager._process.name == 'test_server_process'
         assert CpuAffinity.get(pid=manager._process.pid) == [1]
 
@@ -121,7 +121,7 @@ def test_manager():
         assert doubler.get_mp() == tripler.get_mp()
         assert doubler.get_tr() == tripler.get_tr()
 
-        with ServerProcess(process_name='test_server_process_2') as manager2:
+        with ServerProcess(name='test_server_process_2') as manager2:
             doubler2 = manager2.Doubler('dd')
             print(doubler2.get_mp())
             assert doubler2.get_name() == 'dd'
@@ -148,7 +148,7 @@ def worker(sleeper, n):
 
 def test_concurrency():
     print('')
-    with ServerProcess(process_name='test_concurrency') as manager:
+    with ServerProcess(name='test_concurrency') as manager:
         d = manager.Doubler('d')
         t = manager.Tripler('t')
 
@@ -182,5 +182,4 @@ def test_concurrency():
             t1 = time.perf_counter()
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
-            time.sleep(0.1)  # give child process some time to shut down.
             assert len(active_children()) == 1
