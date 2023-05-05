@@ -21,6 +21,7 @@ def test_deprecated():
             Thread,
             SpawnProcessPoolExecutor,
         )
+
         assert True
 
     with pytest.warns(DeprecationWarning):
