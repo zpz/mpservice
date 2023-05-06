@@ -1424,13 +1424,6 @@ class Server:
 
         self._threads = []
 
-        self._input_buffer = queue.SimpleQueue()
-        # This has unlimited size; `put` never blocks (as long as
-        # memory is not blown up!). Input requests respect size limit
-        # of `_uid_to_futures`, but is not blocked when putting
-        # into this queue. A background thread takes data out of this
-        # queue and puts them into `_q_in`, which could block.
-
         self._cancelled_event_manager = MP_SPAWN_CTX.Manager(
             cpu=self._main_cpus,
             name=f"{self.__class__.__name__}-manager-cancelled-events",
@@ -1453,9 +1446,19 @@ class Server:
         )
         t.start()
         self._threads.append(t)
-        t = Thread(target=self._onboard_input)
-        t.start()
-        self._threads.append(t)
+
+        # self._input_buffer = queue.SimpleQueue()
+        # This has unlimited size; `put` never blocks (as long as
+        # memory is not blown up!). Input requests respect size limit
+        # of `_uid_to_futures`, but is not blocked when putting
+        # into this queue. A background thread takes data out of this
+        # queue and puts them into `_q_in`, which could block.
+
+        # t = Thread(target=self._onboard_input)
+        # t.start()
+        # self._threads.append(t)
+
+        self._input_buffer = self._q_in
 
         self._started = True
         return self
@@ -1605,6 +1608,9 @@ class Server:
                         if nretries >= 100:
                             raise ServerBacklogFull(
                                 self.backlog,
+                                self._capacity,
+                                len(self._uid_to_futures),
+                                self._n_cancelled,
                                 f"{perf_counter() - t0:.3f} seconds enqueue",
                             )
                         nretries += 1
@@ -1693,11 +1699,23 @@ class Server:
 
         while self.full():
             if backpressure:
-                raise ServerBacklogFull(self.backlog, "0 seconds enqueue")
+                raise ServerBacklogFull(
+                    self.backlog,
+                    self._capacity,
+                    len(self._uid_to_futures),
+                    self._n_cancelled,
+                    "0 seconds enqueue",
+                )
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(
+                    self.backlog,
+                    self._capacity,
+                    len(self._uid_to_futures),
+                    self._n_cancelled,
+                    f"{t - t0:.3f} seconds enqueue",
+                )
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             await asyncio.sleep(delta)
@@ -1784,7 +1802,13 @@ class Server:
 
         while self.full():
             if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(
+                    self.backlog,
+                    self._capacity,
+                    len(self._uid_to_futures),
+                    self._n_cancelled,
+                    f"{t - t0:.3f} seconds enqueue",
+                )
             sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
@@ -1816,17 +1840,17 @@ class Server:
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
 
-    def _onboard_input(self):
-        qin = self._input_buffer
-        qout = self._q_in
-        while True:
-            x = qin.get()
-            try:
-                qout.put(x)
-            except:
-                raise
-            if x == NOMOREDATA:
-                break
+    # def _onboard_input(self):
+    #     qin = self._input_buffer
+    #     qout = self._q_in
+    #     while True:
+    #         x = qin.get()
+    #         try:
+    #             qout.put(x)
+    #         except:
+    #             raise
+    #         if x == NOMOREDATA:
+    #             break
 
     def _gather_output(self):
         q_out = self._q_out
