@@ -27,7 +27,6 @@ __all__ = [
     'SocketServer',
     'SocketClient',
     'make_server',
-    'run_app',
 ]
 
 logger = logging.getLogger(__name__)
@@ -336,7 +335,7 @@ class SocketServer:
     def __str__(self):
         return self.__repr__()
 
-    async def run(self):
+    async def serve(self):
         """
         Start the server and let it stay up until shutdown conditions are met.
         """
@@ -453,15 +452,6 @@ class SocketServer:
 
 def make_server(app: SocketApplication, **kwargs):
     return SocketServer(app, **kwargs)
-
-
-def run_app(app, **kwargs):
-    """
-    End user typically calls this function to start the server.
-    The server will stay up until the client requests its shutdown.
-    """
-    server = make_server(app, **kwargs)
-    asyncio.run(server.run())
 
 
 class SocketClient:

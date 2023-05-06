@@ -7,11 +7,12 @@ the `ASGI specification <https://asgi.readthedocs.io/en/latest/>`_.
 
 This utility code is not directly connected to :class:`~mpservice.mpserver.Server`, because Server simply
 provides the method :meth:`~mpservice.mpserver.Server.async_call` that can be called from an HTTP
-request handler function. The connection is entirely generic; there is nothing special about ``uvicorn``, ``Server``,
-and the function call between them.
+request handler function. What the request handler needs do not need to be tied to the ``uvicorn.Server``.
 
-Here is one way to structure it::
+Below is one way to structure it.
+In this example, we use a global ``context`` object to arrange some connections.
 
+    import asyncio
     from types import SimpleNamespace
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse, JSONResponse
@@ -35,7 +36,7 @@ Here is one way to structure it::
     context = SimpleNamespace()
 
 
-    def main():
+    async def main():
         app = Starlette()
         app.add_route('/', handle_request, ['GET'])
         app.add_route('/stop', stop, ['POST])
@@ -46,11 +47,21 @@ Here is one way to structure it::
 
         with Server(...) as model:
             context.model = model
-            server.run()
 
+            # Start infinite loop
+            await server.serve()
 
     if __name__ == '__main__':
-        main()
+        asyncio.run(main())
+
+There is no async function calls exception for ``await server.serve()``,
+but the async ``main`` allows user to call other async functions such as
+setting up async context managers. If there is no such need, you can make
+``main`` a regular sync function and replace ``await server.serve`` by
+``server.run()``.
+
+If you want to use ``uviloop`` to start ``main``, check out the 
+`uviloop documentation <https://github.com/MagicStack/uvloop#using-uvloop>`_.
 """
 from __future__ import annotations
 
@@ -59,7 +70,7 @@ import logging
 import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 
-__all__ = ['make_server', 'run_app']
+__all__ = ['make_server']
 
 
 logger = logging.getLogger(__name__)
@@ -83,7 +94,6 @@ def make_server(
     host: str = "0.0.0.0",
     port: int = 8000,
     access_log: bool = False,
-    loop: str = "auto",
     backlog: int = 128,
     **kwargs,
 ) -> uvicorn.Server:
@@ -103,16 +113,6 @@ def make_server(
         Port.
     access_log
         Whether to let ``uvicorn`` emit access logs.
-    loop
-        If you encounter errors, esp if you need to use
-        the event loop before calling this function, use ``'none'``.
-
-        If you don't need to use the eventloop at all before
-        calling this function, then it's OK to pass in
-        ``loop='auto'``. In that case, ``uvicorn`` will use `uvloop <https://github.com/MagicStack/uvloop>`_
-        if that package is installed (w/o creating a new loop);
-        otherwise it will create a new AsyncIO native event loop
-        and set it as the default loop.
     backlog
         The default should be adequate. Don't make this large unless you know what you're doing.
 
@@ -135,7 +135,6 @@ def make_server(
         host=host,
         port=port,
         access_log=access_log,
-        loop=loop,
         workers=1,
         backlog=backlog,
         **kwargs,
@@ -144,11 +143,3 @@ def make_server(
     server = uvicorn.Server(config=config)
 
     return server
-
-
-def run_app(app, **kwargs):
-    """
-    ``app`` and all elements in ``**kwargs`` are passed on to ``make_server``.
-    """
-    server = make_server(app, **kwargs)
-    return server.run()

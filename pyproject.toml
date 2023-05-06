@@ -14,7 +14,6 @@ dependencies = [
     "psutil",
     "typing-extensions",
     "uvicorn[standard] >=0.15.0,<1.0",
-    "uvloop",
 ]
 requires-python = ">=3.8"
 readme = "README.rst"
