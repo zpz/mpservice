@@ -1383,7 +1383,6 @@ class Server:
         # A few places need to enforce this size limit.
         self._count_cancelled_in_backlog = True
         self._n_cancelled = 0
-        self._n_cancelled_lock = threading.Lock()
 
         self._main_cpus = None
         if main_cpu is not None:
@@ -1461,7 +1460,7 @@ class Server:
         self._started = True
         return self
 
-    def __exit__(self, *args, **kwargs):
+    def __exit__(self, *args):
         assert self._started
         # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
         # if msg:
@@ -1481,24 +1480,26 @@ class Server:
         self._started = False
 
     def _cancel(self, fut):
-        if not fut.data['cancelled'].is_set():
+        # Do we need to protect `self._n_cancelled` by a lock?
+        # Experiments suggested it's not necessary.
+        # TODO: if we guarantee this method is called on any one ``fut`` at most once,
+        # we can skip the call to ``fut.data['cancelled'].is_set``.
+        if not fut.done() and not fut.data['cancelled'].is_set():
             fut.data['cancelled'].set()
-            with self._n_cancelled_lock:
-                n = self._n_cancelled + 1
-                self._n_cancelled = n
-            if n < 0 or n > len(self._uid_to_futures):
-                raise RuntimeError(
-                    f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}"
+            self._n_cancelled = n = self._n_cancelled + 1
+            m = len(self._uid_to_futures)
+            if n < 0 or n > m:
+                warnings.warn(
+                    f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}"
                 )
 
     def _uncancel(self, fut):
         if fut.data['cancelled'].is_set():
-            with self._n_cancelled_lock:
-                n = self._n_cancelled - 1
-                self._n_cancelled = n
-            if n < 0 or n > len(self._uid_to_futures):
-                raise RuntimeError(
-                    f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}"
+            self._n_cancelled = n = self._n_cancelled - 1
+            m = len(self._uid_to_futures)
+            if n < 0 or n > m:
+                warnings.warn(
+                    f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}"
                 )
 
     async def async_call(
@@ -1528,7 +1529,8 @@ class Server:
             of an output queue. If result is not yet ready when the ``timeout`` period
             is over, the :class:`TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
-            in the "enqueue" step, that is, the timer starts upon receiving the request.
+            in the "enqueue" step, that is, the timer starts upon receiving the request
+            in ``async_call``.
         backpressure
             If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
             right away. If ``False``, wait on the input queue for as long as

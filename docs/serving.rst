@@ -33,7 +33,5 @@ Serving using sockets
 
 .. autofunction:: mpservice.socket.make_server
 
-.. autofunction:: mpservice.socket.run_app
-
 .. autoclass:: mpservice.socket.SocketClient
 

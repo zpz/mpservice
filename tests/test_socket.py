@@ -3,7 +3,7 @@ import multiprocessing
 import time
 
 from mpservice.mpserver import ProcessServlet, ProcessWorker, Server
-from mpservice.socket import SocketApplication, SocketClient, run_app
+from mpservice.socket import SocketApplication, SocketClient, make_server
 from zpz.logging import config_logger
 
 mp = multiprocessing.get_context('spawn')
@@ -17,7 +17,8 @@ def run_my_server():
     app = SocketApplication()
     app.add_route('/', double)
 
-    run_app(app, path='/tmp/sock_abc')
+    server = make_server(app, path='/tmp/sock_abc')
+    asyncio.run(server.serve())
 
 
 def test_simple():
@@ -52,7 +53,8 @@ def run_mp_server():
     app.add_route('/', model.async_call)
 
     config_logger(level='info')  # this is for the server running in another process
-    run_app(app, path='/tmp/sock_abc')
+    server = make_server(app, path='/tmp/sock_abc')
+    asyncio.run(server.serve())
 
 
 def test_mpserver():
