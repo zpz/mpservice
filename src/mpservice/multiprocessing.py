@@ -314,7 +314,8 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             return
         if exitcode == 1:
             raise self.__error__
-        assert exitcode < 0
+        if exitcode >= 0:
+            raise ValueError(f"expecting negative `exitcode` but got: {exitcode}")
         if exitcode == -errno.ENOTBLK:  # 15
             raise ChildProcessError(
                 f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination"

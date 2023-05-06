@@ -109,7 +109,8 @@ def encode(data, encoder):
         return pickle_dumps(data)
     if encoder == "utf8":
         return data.encode("utf8")
-    assert encoder == "none"
+    if encoder != "none":
+        raise ValueError(f"expecting 'none' but got: {encoder}")
     return data  # `data` must be bytes
 
 
@@ -741,7 +742,10 @@ class SocketClient:
                 if t.done():
                     if t.exception():
                         raise t.exception()
-                    assert self._to_shutdown.is_set()
+                    if not self._to_shutdown.is_set():
+                        raise ValueError(
+                            f"expecting `self._to_shutdown.is_set()` to be True but got: {self._to_shutdown.is_set()}"
+                        )
                     break
                 if self._to_shutdown.is_set():
                     break
