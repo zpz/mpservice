@@ -378,18 +378,19 @@ class Worker(ABC):
                 q_in.put(z)  # broadcast to one fellow worker
                 break
 
-            uid, x = z
+            u, x = z
+            uid, cancelled = u
             # Element in the input queue is always a 2-tuple, that is, ((ID, cancelled), value).
 
-            if x == CANCELLED or uid[1].is_set():
-                q_out.put((uid, CANCELLED))
+            if x == CANCELLED or cancelled.is_set():
+                q_out.put((u, CANCELLED))
                 continue
 
             # If it's an exception, short-circuit to output.
             if isinstance(x, BaseException):
                 x = RemoteException(x)
             if isinstance(x, RemoteException):
-                q_out.put((uid, x))
+                q_out.put((u, x))
                 continue
 
             try:
@@ -402,7 +403,7 @@ class Worker(ABC):
                 # and details later. Be brief on the logging here.
                 y = RemoteException(e)
 
-            q_out.put((uid, y))
+            q_out.put((u, y))
             # Element in the output queue is always a 2-tuple, that is, (ID, value).
 
     def _start_batch(self, *, q_in, q_out):
@@ -440,7 +441,7 @@ class Worker(ABC):
                     break
 
                 # The batch is a list of (ID, value) tuples.
-                uids = [v[0] for v in batch]
+                us = [v[0] for v in batch]
                 batch = [v[1] for v in batch]
                 n = len(batch)
 
@@ -448,10 +449,10 @@ class Worker(ABC):
                     results = self.call(batch)
                 except Exception as e:
                     err = RemoteException(e)
-                    for uid in uids:
-                        q_out.put((uid, err))
+                    for u in us:
+                        q_out.put((u, err))
                 else:
-                    for z in zip(uids, results):
+                    for z in zip(us, results):
                         q_out.put(z)
                 # Each element in the output queue is a (ID, value) tuple.
 
@@ -500,15 +501,16 @@ class Worker(ABC):
                             q_in.put(z)  # broadcast to fellow workers.
                             q_out.put(z)
                             return
-                        # Now `z` is a tuple like ((uid, cancelled), x).
-                        if z[1] == CANCELLED or z[0][1].is_set():
-                            q_out.put((z[0], CANCELLED))
-                        elif isinstance(z[1], BaseException):
-                            q_out.put((z[0], RemoteException(z[1])))
-                        elif isinstance(z[1], RemoteException):
-                            q_out.put(z)
+                        u, x = z
+                        uid, cancelled = u
+                        if isinstance(x, BaseException):
+                            q_out.put((u, RemoteException(x)))
+                        elif isinstance(x, RemoteException):
+                            q_out.put((u, x))
+                        elif x == CANCELLED or cancelled.is_set():
+                            q_out.put((u, CANCELLED))
                         else:
-                            buffer.put(z)
+                            buffer.put((u, x))
 
                         # If `q_in` currently has more data right there
                         # and `buffer` has not reached `batchsize` yet,
@@ -1065,29 +1067,30 @@ class EnsembleServlet(Servlet):
         catalog = self._uid_to_results
         nn = len(qins)
         while True:
-            v = qin.get()
-            if v == NOMOREDATA:  # sentinel for end of input
+            z = qin.get()
+            if z == NOMOREDATA:  # sentinel for end of input
                 for q in qins:
-                    q.put(v)  # send the same sentinel to each servlet
-                qout.put(v)
+                    q.put(z)  # send the same sentinel to each servlet
+                qout.put(z)
                 return
 
-            (uid, cancelled), x = v
+            u, x = z
+            uid, cancelled = u
             if x == CANCELLED or cancelled.is_set():
-                qout.put(((uid, cancelled), CANCELLED))
+                qout.put((u, CANCELLED))
                 continue
             if isinstance(x, BaseException):
                 x = RemoteException(x)
             if isinstance(x, RemoteException):
                 # short circuit exception to the output queue
-                qout.put(((uid, cancelled), x))
+                qout.put((u, x))
                 continue
             z = {"y": [None] * nn, "n": 0}
             # `y` is the list of outputs from the servlets, in order.
             # `n` is number of outputs already received.
             catalog[uid] = z
             for q in qins:
-                q.put(((uid, cancelled), x))
+                q.put((u, x))
                 # Element in the queue to each servlet is in the standard format,
                 # i.e. a (ID, value) tuple.
 
@@ -1113,7 +1116,8 @@ class EnsembleServlet(Servlet):
                     if v == NOMOREDATA:
                         qout.put(v)
                         return
-                    (uid, cancelled), y = v
+                    u, y = v
+                    uid, cancelled = u
                     # `y` can be an exception object or a regular result.
                     z = catalog.get(uid)
                     if z is None:
@@ -1122,7 +1126,7 @@ class EnsembleServlet(Servlet):
 
                     if y == CANCELLED or cancelled.is_set():
                         catalog.pop(uid)
-                        qout.put(((uid, cancelled), CANCELLED))
+                        qout.put((u, CANCELLED))
                         continue
 
                     if isinstance(y, BaseException):
@@ -1138,7 +1142,7 @@ class EnsembleServlet(Servlet):
                         try:
                             raise EnsembleError(z)
                         except Exception as e:
-                            qout.put(((uid, cancelled), RemoteException(e)))
+                            qout.put((u, RemoteException(e)))
                     elif z['n'] == nn:
                         # All results for this request have been collected.
                         # If the results contain any exception member, then
@@ -1153,7 +1157,7 @@ class EnsembleServlet(Servlet):
                                 y = RemoteException(e)
                         else:
                             y = z["y"]
-                        qout.put(((uid, cancelled), y))
+                        qout.put((u, y))
 
             if all_empty:
                 sleep(0.01)  # TODO: what is a good duration?
@@ -1379,6 +1383,7 @@ class Server:
         # A few places need to enforce this size limit.
         self._count_cancelled_in_backlog = True
         self._n_cancelled = 0
+        self._n_cancelled_lock = threading.Lock()
 
         self._main_cpus = None
         if main_cpu is not None:
@@ -1478,8 +1483,19 @@ class Server:
     def _cancel(self, fut):
         if not fut.data['cancelled'].is_set():
             fut.data['cancelled'].set()
-            fut.cancel()
-            self._n_cancelled += 1
+            with self._n_cancelled_lock:
+                n = self._n_cancelled + 1
+                self._n_cancelled = n
+            if n < 0 or n > len(self._uid_to_futures):
+                raise RuntimeError(f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}")
+
+    def _uncancel(self, fut):
+        if fut.data['cancelled'].is_set():
+            with self._n_cancelled_lock:
+                n = self._n_cancelled - 1
+                self._n_cancelled = n
+            if n < 0 or n > len(self._uid_to_futures):
+                raise RuntimeError(f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}")
 
     async def async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
@@ -1516,16 +1532,10 @@ class Server:
             there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
             in the server, where ``backlog`` is a parameter to :meth:`__init__`.
         """
-        fut = None
-        try:
-            fut = await self._async_enqueue(
-                x, timeout=timeout, backpressure=backpressure
-            )
-            return await self._async_wait_for_result(fut)
-        except BaseException:  # mainly asyncio.CancelledError, TimeoutError, ServerBacklogFull
-            if fut is not None:
-                self._cancel(fut)
-            raise
+        fut = await self._async_enqueue(
+            x, timeout=timeout, backpressure=backpressure
+        )
+        return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: int | float = 60):
         """
@@ -1712,24 +1722,40 @@ class Server:
             "cancelled": cancelled,
         }
         uid = id(fut)
-        self._uid_to_futures[uid] = fut
-        self._input_buffer.put(((uid, fut.data['cancelled']), x))
+        try:
+            self._uid_to_futures[uid] = fut
+        except asyncio.CancelledError:
+            self._uid_to_futures.pop(uid, None)
+            raise
+        try:
+            self._input_buffer.put(((uid, cancelled), x))
+        except asyncio.CancelledError:
+            # Not sure whether the item was placed in the queue.
+            # To ensure consistency with the expectation of `_gather_output`,
+            # put it in the queue again.
+            self._input_buffer.put(((uid, cancelled), x))
+            self._cancel(fut)
+            raise
         return fut
 
     async def _async_wait_for_result(self, fut):
-        t0 = fut.data["t0"]
-        timeout = fut.data['timeout']
-        delta = max(timeout * 0.01, 0.01)
-        deadline = t0 + timeout
-        while not fut.done():
-            timenow = perf_counter()
-            if timenow > deadline:
-                raise TimeoutError(
-                    f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
-                )
-                # cancellation of `fut` is done in the caller function,
-                # `async_call`.
-            await asyncio.sleep(delta)
+        try:
+            t0 = fut.data["t0"]
+            timeout = fut.data['timeout']
+            delta = max(timeout * 0.01, 0.01)
+            deadline = t0 + timeout
+            while not fut.done():
+                timenow = perf_counter()
+                if timenow > deadline:
+                    raise TimeoutError(
+                        f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
+                    )
+                    # cancellation of `fut` is done in the caller function,
+                    # `async_call`.
+                await asyncio.sleep(delta)
+        except BaseException:  # `TimeoutError`, `asyncio.CancelledError`
+            self._cancel(fut)
+            raise
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
@@ -1769,7 +1795,7 @@ class Server:
         }
         uid = id(fut)
         self._uid_to_futures[uid] = fut
-        self._input_buffer.put(((uid, fut.data['cancelled']), x))
+        self._input_buffer.put(((uid, cancelled), x))
         return fut
 
     def _wait_for_result(self, fut):
@@ -1807,28 +1833,14 @@ class Server:
             if z == NOMOREDATA:
                 break
             (uid, cancelled), y = z
-            fut = futures.pop(uid)
-            if y == CANCELLED or cancelled.is_set():
-                self._n_cancelled -= 1
-                assert 0 <= self._n_cancelled <= len(self._uid_to_futures)
+            fut = futures.pop(uid, None)
+            if fut is None:  # should be very rare
                 continue
-            try:
-                if isinstance(y, RemoteException):
-                    y = y.exc
-                if isinstance(y, BaseException):
-                    fut.set_exception(y)
-                else:
-                    fut.set_result(y)
-                fut.data["t2"] = perf_counter()
-            except concurrent.futures.InvalidStateError:
-                if fut.cancelled():
-                    # Cancellation could have happened just in the duration
-                    # of the above try block.
-                    # There's only one place that does cancellation, which is in
-                    # method `._cancel`, and that is always accompanied by
-                    # incrementing `self._n_cancelled`.
-                    self._n_cancelled -= 1
-                    assert 0 <= self._n_cancelled <= len(self._uid_to_futures)
-                else:
-                    # Unexpected situation; to be investigated.
-                    raise
+            if isinstance(y, RemoteException):
+                y = y.exc
+            if isinstance(y, BaseException):
+                fut.set_exception(y)
+            else:
+                fut.set_result(y)
+            fut.data["t2"] = perf_counter()
+            self._uncancel(fut)

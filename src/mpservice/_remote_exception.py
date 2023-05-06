@@ -403,7 +403,9 @@ Run it::
         elif isinstance(tb, TracebackType):
             tb = "".join(traceback.format_exception(type(exc), exc, tb))
         else:
-            assert tb is None
+            if tb is not None:
+                raise ValueError(f"expecting no traceback but got: {tb}")
+
             if exc.__traceback__ is not None:
                 # This is the most common use case---in an exception handler block:
                 #
