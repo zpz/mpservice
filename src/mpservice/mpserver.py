@@ -1487,14 +1487,18 @@ class Server:
             self._n_cancelled = n = self._n_cancelled + 1
             m = len(self._uid_to_futures)
             if n < 0 or n > m:
-                warnings.warn(f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}")
+                warnings.warn(
+                    f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}"
+                )
 
     def _uncancel(self, fut):
         if fut.data['cancelled'].is_set():
             self._n_cancelled = n = self._n_cancelled - 1
             m = len(self._uid_to_futures)
             if n < 0 or n > m:
-                warnings.warn(f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}")
+                warnings.warn(
+                    f"sanity check failure in thread '{threading.current_thread().name}': 0 <= {n} <= {m}"
+                )
 
     async def async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
