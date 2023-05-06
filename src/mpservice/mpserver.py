@@ -1482,6 +1482,8 @@ class Server:
     def _cancel(self, fut):
         # Do we need to protect `self._n_cancelled` by a lock?
         # Experiments suggested it's not necessary.
+        # TODO: if we guarantee this method is called on any one ``fut`` at most once,
+        # we can skip the call to ``fut.data['cancelled'].is_set``.
         if not fut.done() and not fut.data['cancelled'].is_set():
             fut.data['cancelled'].set()
             self._n_cancelled = n = self._n_cancelled + 1
