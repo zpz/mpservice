@@ -1604,7 +1604,7 @@ class Server:
                             t0 = perf_counter()
                         if nretries >= 100:
                             raise ServerBacklogFull(
-                                self.backlog,
+                                self.backlog, self._capacity, len(self._uid_to_futures), self._n_cancelled,
                                 f"{perf_counter() - t0:.3f} seconds enqueue",
                             )
                         nretries += 1
@@ -1693,11 +1693,11 @@ class Server:
 
         while self.full():
             if backpressure:
-                raise ServerBacklogFull(self.backlog, "0 seconds enqueue")
+                raise ServerBacklogFull(self.backlog, self._capacity, len(self._uid_to_futures), self._n_cancelled, "0 seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(self.backlog, self._capacity, len(self._uid_to_futures), self._n_cancelled, f"{t - t0:.3f} seconds enqueue")
                 # If this is behind a HTTP service, should return
                 # code 503 (Service Unavailable) to client.
             await asyncio.sleep(delta)
@@ -1784,7 +1784,7 @@ class Server:
 
         while self.full():
             if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(self.backlog, f"{t - t0:.3f} seconds enqueue")
+                raise ServerBacklogFull(self.backlog, self._capacity, len(self._uid_to_futures), self._n_cancelled, f"{t - t0:.3f} seconds enqueue")
             sleep(delta)
             # It's OK if this sleep is a little long,
             # because the pipe is full and busy.
