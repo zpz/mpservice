@@ -1601,7 +1601,9 @@ class ParmapperAsync(Iterable):
             # Do not cancel and wait for cancellation to finish one by one.
             # Instead, send cancel signal into all of them, then wait on them.
             if not stopped.is_set():
-                raise ValueError(f"expecting `stopped.is_set()` to be True but got: {stopped.is_set()}")
+                raise ValueError(
+                    f"expecting `stopped.is_set()` to be True but got: {stopped.is_set()}"
+                )
             cancelling = []
             while True:
                 v = await tasks.get()

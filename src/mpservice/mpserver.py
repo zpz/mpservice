@@ -1487,7 +1487,9 @@ class Server:
                 n = self._n_cancelled + 1
                 self._n_cancelled = n
             if n < 0 or n > len(self._uid_to_futures):
-                raise RuntimeError(f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}")
+                raise RuntimeError(
+                    f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}"
+                )
 
     def _uncancel(self, fut):
         if fut.data['cancelled'].is_set():
@@ -1495,7 +1497,9 @@ class Server:
                 n = self._n_cancelled - 1
                 self._n_cancelled = n
             if n < 0 or n > len(self._uid_to_futures):
-                raise RuntimeError(f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}")
+                raise RuntimeError(
+                    f"sanity check failure: 0 <= {n} <= {len(self._uid_to_futures)}"
+                )
 
     async def async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
@@ -1532,9 +1536,7 @@ class Server:
             there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
             in the server, where ``backlog`` is a parameter to :meth:`__init__`.
         """
-        fut = await self._async_enqueue(
-            x, timeout=timeout, backpressure=backpressure
-        )
+        fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
 
     def call(self, x, /, *, timeout: int | float = 60):

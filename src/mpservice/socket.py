@@ -743,7 +743,9 @@ class SocketClient:
                     if t.exception():
                         raise t.exception()
                     if not self._to_shutdown.is_set():
-                        raise ValueError(f"expecting `self._to_shutdown.is_set()` to be True but got: {self._to_shutdown.is_set()}")
+                        raise ValueError(
+                            f"expecting `self._to_shutdown.is_set()` to be True but got: {self._to_shutdown.is_set()}"
+                        )
                     break
                 if self._to_shutdown.is_set():
                     break
