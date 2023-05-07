@@ -540,11 +540,6 @@ class SocketClient:
         logger.info("client %s is ready", self)
         return self
 
-    # def __exit__(self, exc_type=None, exc_value=None, exc_traceback=None):
-    # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
-    # if msg:
-    #     logger.error(msg)
-
     def __exit__(self, *args, **kwargs):
         self._prepare_shutdown.set()
         t0 = perf_counter()

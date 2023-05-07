@@ -1447,29 +1447,13 @@ class Server:
         t.start()
         self._threads.append(t)
 
-        # self._input_buffer = queue.SimpleQueue()
-        # This has unlimited size; `put` never blocks (as long as
-        # memory is not blown up!). Input requests respect size limit
-        # of `_uid_to_futures`, but is not blocked when putting
-        # into this queue. A background thread takes data out of this
-        # queue and puts them into `_q_in`, which could block.
-
-        # t = Thread(target=self._onboard_input)
-        # t.start()
-        # self._threads.append(t)
-
-        self._input_buffer = self._q_in
-
         self._started = True
         return self
 
     def __exit__(self, *args):
         assert self._started
-        # msg = exit_err_msg(self, exc_type, exc_value, exc_traceback)
-        # if msg:
-        #     logger.error(msg)
 
-        self._input_buffer.put(NOMOREDATA)
+        self._q_in.put(NOMOREDATA)
 
         self.servlet.stop()
 
@@ -1750,12 +1734,12 @@ class Server:
             self._uid_to_futures.pop(uid, None)
             raise
         try:
-            self._input_buffer.put(((uid, cancelled), x))
+            self._q_in.put(((uid, cancelled), x))
         except asyncio.CancelledError:
             # Not sure whether the item was placed in the queue.
             # To ensure consistency with the expectation of `_gather_output`,
             # put it in the queue again.
-            self._input_buffer.put(((uid, cancelled), x))
+            self._q_in.put(((uid, cancelled), x))
             self._cancel(fut)
             raise
         return fut
@@ -1769,15 +1753,18 @@ class Server:
             while not fut.done():
                 timenow = perf_counter()
                 if timenow > deadline:
+                    self._cancel(fut)
                     raise TimeoutError(
                         f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
                     )
-                    # cancellation of `fut` is done in the caller function,
-                    # `async_call`.
                 await asyncio.sleep(delta)
-        except BaseException:  # `TimeoutError`, `asyncio.CancelledError`
+
+            # An alternative is to use ``asyncio.Future`` and ``asyncio.wait``.
+            # But tests suggested the alternative is much slower. I don't know why.
+        except asyncio.CancelledError:
             self._cancel(fut)
             raise
+
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
@@ -1823,7 +1810,7 @@ class Server:
         }
         uid = id(fut)
         self._uid_to_futures[uid] = fut
-        self._input_buffer.put(((uid, cancelled), x))
+        self._q_in.put(((uid, cancelled), x))
         return fut
 
     def _wait_for_result(self, fut):
@@ -1839,18 +1826,6 @@ class Server:
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
-
-    # def _onboard_input(self):
-    #     qin = self._input_buffer
-    #     qout = self._q_in
-    #     while True:
-    #         x = qin.get()
-    #         try:
-    #             qout.put(x)
-    #         except:
-    #             raise
-    #         if x == NOMOREDATA:
-    #             break
 
     def _gather_output(self):
         q_out = self._q_out

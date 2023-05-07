@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added capabilities to cancel a item submitted to ``mpserver.Server`` and halt its processing in the pipeline as soon as practical.
 - Made ``mpservice.multiprocessing`` more close to the standard ``multiprocessing`` in terms of what can be imported from it.
 - New parameter ``name`` to ``SpawnContext.Manager``.
+- ``SpawnProcess`` captures warnings to logging.
 
 
 ## [0.12.6] - 2023-04-28
