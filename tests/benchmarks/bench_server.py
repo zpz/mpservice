@@ -10,19 +10,19 @@ class Doubler(ProcessWorker):
     def call(self, x):
         time.sleep(random.uniform(0.001, 0.01))
         return x + x
-    
+
 
 class Tripler(ProcessWorker):
     def call(self, x):
         time.sleep(random.uniform(0.001, 0.01))
         return [v + v + v for v in x]
-    
+
 
 def main():
     server = Server(
         SequentialServlet(
             ProcessServlet(Doubler, cpus=[1]),
-            ProcessServlet(Tripler, cpus=[2], batch_size=100, batch_wait_time=0.01)
+            ProcessServlet(Tripler, cpus=[2], batch_size=100, batch_wait_time=0.01),
         ),
         capacity=256,
     )

@@ -42,7 +42,7 @@ if __name__ == '__main__':
 # WARNING:worker1:worker1 warning
 # WARNING:py.warnings:/home/docker-user/mpservice/tests/test_multiprocessing_logger.py:11: UserWarning: warning in worker1
 #   warnings.warn('warning in worker1')
-# 
+#
 # INFO:worker1:worker1 info
 # DEBUG:worker1:worker1 debug
 #

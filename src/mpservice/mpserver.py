@@ -1765,7 +1765,6 @@ class Server:
             self._cancel(fut)
             raise
 
-
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
