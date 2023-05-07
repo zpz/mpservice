@@ -252,6 +252,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 root.setLevel(logging.DEBUG)
                 qh = logging.handlers.QueueHandler(logger_queue)
                 root.addHandler(qh)
+                logging.captureWarnings(True)
             else:
                 # If logger is configured in this process, then do not start log forwarding,
                 # but this is usually not recommended.
