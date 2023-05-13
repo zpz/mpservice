@@ -269,6 +269,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 raise
             except BaseException as e:
+                print(f"{multiprocessing.current_process().name}: {repr(e)}")
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 raise
@@ -500,7 +501,7 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             server = ServerProcess()
             server.start()
 
-    You can also use a context manager::
+    A preferred way is to use a context manager::
 
             with ServerProcess() as server:
                 ...
@@ -659,17 +660,6 @@ class CpuAffinity:
     def get(self, *, pid=None) -> list[int]:
         """Return the current CPU affinity."""
         return psutil.Process(pid).cpu_affinity()
-
-
-def __getattr__(name):
-    if name == 'Manager':
-        warnings.warn(
-            "'mpservice.multiprocessing.Manager' is deprecated in 0.12.7 and will be removed in 0.14.0. Use `mpservice.multiprocessing.ServerProcess` instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return ServerProcess
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 _names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]

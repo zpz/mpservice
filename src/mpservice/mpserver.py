@@ -30,7 +30,7 @@ import queue
 import threading
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence, AsyncIterable, AsyncIterator
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal
@@ -1675,6 +1675,17 @@ class Server:
                         yield y
         finally:
             shutdown()
+
+    async def async_stream(
+        self,
+        data_stream: AsyncIterable,
+        /,
+        *,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        timeout: int | float = 60,
+    ) -> AsyncIterator:
+        raise NotImplementedError
 
     async def _async_enqueue(self, x, timeout, backpressure):
         t0 = perf_counter()
