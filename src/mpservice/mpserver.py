@@ -30,7 +30,7 @@ import queue
 import threading
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Sequence, AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal
