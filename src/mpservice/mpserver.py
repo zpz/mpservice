@@ -1821,6 +1821,8 @@ class Server:
         # Even using the standard multiprocessing, putting an ``Event`` in a ``SimpleQueue``
         # will get the same error.
         #
+        # Can not use ``MP_SPAWN_CTX.Value`` for the same reason.
+        #
         # Some references:
         #   https://superfastpython.com/multiprocessing-pool-event/
         #   https://stackoverflow.com/questions/69907453/lock-objects-should-only-be-shared-between-processes-through-inheritance

@@ -664,7 +664,7 @@ class CpuAffinity:
 
 _names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]
 globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
-# Names like `Process`, `Queue`, `Pool`, etc are directly import-able from this module.
+# Names like `Process`, `Queue`, `Pool`, `Event`, `Manager` etc are directly import-able from this module.
 # But they are not classes; rather they are bound methods of the context `MP_SPAWN_CTX`.
 # This is the same behavior as the standard `multiprocessing`.
 # With this, you can usually replace
