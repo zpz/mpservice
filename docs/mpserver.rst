@@ -142,9 +142,9 @@ Before continuing, can you review the setup and figure out what will be printed?
 Workers
 =======
 
-.. autoclass:: mpservice.mpserver._FastQueue
+.. autoclass:: mpservice.mpserver._SimpleProcessQueue
 
-.. autoclass:: mpservice.mpserver._SimpleQueue
+.. autoclass:: mpservice.mpserver._SimpleThreadQueue
 
 .. autoclass:: mpservice.mpserver.Worker
 

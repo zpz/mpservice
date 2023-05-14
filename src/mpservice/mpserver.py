@@ -62,9 +62,7 @@ __all__ = [
     'TimeoutError',
     'ServerBacklogFull',
     'Worker',
-    'ProcessWorker',
-    'ThreadWorker',
-    'make_threadworker',
+    'make_worker',
     'PassThrough',
     'Servlet',
     'ProcessServlet',
@@ -100,9 +98,9 @@ Will be removed in 0.13.0.
 """
 
 
-class _FastQueue(multiprocessing.queues.SimpleQueue):
+class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
     """
-    A customization of `multiprocessing.queue.SimpleQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.SimpleQueue>`_,
+    A customization of `multiprocessing.queue._SimpleThreadQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing._SimpleThreadQueue>`_,
     this class reduces some overhead in a particular use-case in this module,
     where one consumer of the queue greedily grabs elements out of the queue
     towards a batch-size limit.
@@ -113,7 +111,7 @@ class _FastQueue(multiprocessing.queues.SimpleQueue):
     This queue is meant to be used between two processes or between a process
     and a thread.
 
-    The main use case of this class is in :meth:`ProcessWorker._build_input_batches`.
+    The main use case of this class is in :meth:`Worker._build_input_batches`.
 
     Check out
     `os.read <https://docs.python.org/3/library/os.html#os.read>`_,
@@ -129,10 +127,10 @@ class _FastQueue(multiprocessing.queues.SimpleQueue):
         self._rlock = ctx.RLock()
 
 
-class _SimpleQueue(queue.SimpleQueue):
+class _SimpleThreadQueue(queue.SimpleQueue):
     """
-    A customization of `queue.SimpleQueue <https://docs.python.org/3/library/queue.html#queue.SimpleQueue>_`,
-    this class is analogous to :class:`_FastQueue` but is designed to be used between two threads.
+    A customization of `queue._SimpleThreadQueue <https://docs.python.org/3/library/queue.html#queue._SimpleThreadQueue>_`,
+    this class is analogous to :class:`_SimpleProcessQueue` but is designed to be used between two threads.
     """
 
     def __init__(self):
@@ -157,8 +155,8 @@ class Worker(ABC):
     def run(
         cls,
         *,
-        q_in: _FastQueue | _SimpleQueue,
-        q_out: _FastQueue | _SimpleQueue,
+        q_in: _SimpleProcessQueue | _SimpleThreadQueue,
+        q_out: _SimpleProcessQueue | _SimpleThreadQueue,
         **init_kwargs,
     ):
         """
@@ -174,13 +172,13 @@ class Worker(ABC):
         q_in
             A queue that carries input elements to be processed.
 
-            In the subclass :class:`ProcessWorker`, ``q_in`` is a :class:`_FastQueue`.
-            In the subclass :class:`ThreadWorker`, ``q_in`` is either a :class:`_FastQueue` or a :class:`_SimpleQueue`.
+            If used in a :class:`ProcessServlet`, ``q_in`` is a :class:`_SimpleProcessQueue`.
+            If used in a :class:`ThreadServlet`, ``q_in`` is either a :class:`_SimpleProcessQueue` or a :class:`_SimpleThreadQueue`.
         q_out
             A queue that carries output values.
 
-            In the subclass :class:`ProcessWorker`, ``q_out`` is a :class:`_FastQueue`.
-            In the subclass :class:`ThreadWorker`, ``q_out`` is either a :class:`_FastQueue` or a :class:`_SimpleQueue`.
+            If used in a :class:`ProcessServlet`, ``q_out`` is a :class:`_SimpleProcessQueue`.
+            If used in a :class:`ThreadServlet`, ``q_out`` is either a :class:`_SimpleProcessQueue` or a :class:`_SimpleThreadQueue`.
 
             The elements in ``q_out`` are results for each individual element in ``q_in``.
             "Batching" is an internal optimization for speed;
@@ -583,26 +581,9 @@ class Worker(ABC):
         return out
 
 
-# TODO: consider deprecate.
-class ProcessWorker(Worker):
+def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
     """
-    Use this class if the operation is CPU bound.
-    """
-
-
-# TODO: consider deprecate.
-class ThreadWorker(Worker):
-    """
-    Use this class if the operation is I/O bound (e.g. calling an external service
-    to get some info), and computation is very light compared to the I/O part.
-    Another use-case of this class is to perform some very simple and quick
-    pre-processing or post-processing.
-    """
-
-
-def make_threadworker(func: Callable[[Any], Any]) -> type[ThreadWorker]:
-    """
-    This function defines and returns a simple :class:`ThreadWorker` subclass
+    This function defines and returns a simple :class:`Worker` subclass
     for quick, "on-the-fly" use.
     This can be useful when we want to introduce simple servlets
     for pre-processing and post-processing.
@@ -613,38 +594,41 @@ def make_threadworker(func: Callable[[Any], Any]) -> type[ThreadWorker]:
         This function is what happens in the method :meth:`~Worker.call`.
     """
 
-    class MyThreadWorker(ThreadWorker):
+    class MyWorker(Worker):
         def call(self, x):
             return func(x)
 
-    MyThreadWorker.__name__ = f"ThreadWorker-{func.__name__}"
-    return MyThreadWorker
+    MyWorker.__name__ = f"Worker-{func.__name__}"
+    return MyWorker
 
 
-PassThrough = make_threadworker(lambda x: x)
-"""
-Example use of this class::
+class PassThrough(Worker):
+    """
+    Example use of this class::
 
-    def combine(x):
-        '''
-        Combine the ensemble elements depending on the results
-        as well as the original input.
-        '''
-        x, *y = x
-        assert len(y) == 3
-        if x < 100:
-            return sum(y) / len(y)
-        else:
-            return max(y)
+        def combine(x):
+            '''
+            Combine the ensemble elements depending on the results
+            as well as the original input.
+            '''
+            x, *y = x
+            assert len(y) == 3
+            if x < 100:
+                return sum(y) / len(y)
+            else:
+                return max(y)
 
-    s = EnsembleServlet(
-            ThreadServlet(PassThrough),
-            ProcessServlet(W1),
-            ProcessServlet(W2)
-            ProcessServlet(W3),
-        )
-    ss = SequentialServlet(s, ThreadServlet(make_threadworker(combine)))
-"""
+        s = EnsembleServlet(
+                ThreadServlet(PassThrough),
+                ProcessServlet(W1),
+                ProcessServlet(W2)
+                ProcessServlet(W3),
+            )
+        ss = SequentialServlet(s, ThreadServlet(make_worker(combine)))
+    """
+
+    def call(self, x):
+        return x
 
 
 class Servlet(ABC):
@@ -698,9 +682,13 @@ class Servlet(ABC):
 
 
 class ProcessServlet(Servlet):
+    """
+    Use this class if the operation is CPU bound.
+    """
+
     def __init__(
         self,
-        worker_cls: type[ProcessWorker],
+        worker_cls: type[Worker],
         *,
         cpus: None | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
         **kwargs,
@@ -709,7 +697,7 @@ class ProcessServlet(Servlet):
         Parameters
         ----------
         worker_cls
-            A subclass of :class:`ProcessWorker`.
+            A subclass of :class:`Worker`.
         cpus
             Specifies how many processes to create and how they are pinned
             to specific CPUs.
@@ -743,7 +731,6 @@ class ProcessServlet(Servlet):
         When the servlet has multiple processes, the output stream does not follow
         the order of the elements in the input stream.
         """
-        assert issubclass(worker_cls, ProcessWorker)
         self._worker_cls = worker_cls
         if cpus is None:
             self._cpus = [CpuAffinity(None)]
@@ -755,7 +742,7 @@ class ProcessServlet(Servlet):
         self._workers = []
         self._started = False
 
-    def start(self, q_in: _FastQueue, q_out: _FastQueue):
+    def start(self, q_in: _SimpleProcessQueue, q_out: _SimpleProcessQueue):
         """
         Create the requested number of processes, in each starting an instance
         of ``self._worker_cls``.
@@ -818,9 +805,16 @@ class ProcessServlet(Servlet):
 
 
 class ThreadServlet(Servlet):
+    """
+    Use this class if the operation is I/O bound (e.g. calling an external service
+    to get some info), and computation is very light compared to the I/O part.
+    Another use-case of this class is to perform some very simple and quick
+    pre-processing or post-processing.
+    """
+
     def __init__(
         self,
-        worker_cls: type[ThreadWorker],
+        worker_cls: type[Worker],
         *,
         num_threads: None | int = None,
         **kwargs,
@@ -829,7 +823,7 @@ class ThreadServlet(Servlet):
         Parameters
         ----------
         worker_cls
-            A subclass of :class:`ThreadWorker`
+            A subclass of :class:`Worker`
         num_threads
             The number of threads to create. Each thread will host and run
             an instance of ``worker_cls``.
@@ -841,14 +835,17 @@ class ThreadServlet(Servlet):
         When the servlet has multiple threads, the output stream does not follow
         the order of the elements in the input stream.
         """
-        assert issubclass(worker_cls, ThreadWorker)
         self._worker_cls = worker_cls
         self._num_threads = num_threads or 1
         self._init_kwargs = kwargs
         self._workers = []
         self._started = False
 
-    def start(self, q_in: _FastQueue | _SimpleQueue, q_out: _FastQueue | _SimpleQueue):
+    def start(
+        self,
+        q_in: _SimpleProcessQueue | _SimpleThreadQueue,
+        q_out: _SimpleProcessQueue | _SimpleThreadQueue,
+    ):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
@@ -861,11 +858,11 @@ class ThreadServlet(Servlet):
         q_out
             A queue for results.
 
-            ``q_in`` and ``q_out`` are either :class:`_FastQueue`\\s (for processes)
-            or :class:`_SimpleQueue`\\s (for threads). Because this servlet may be connected to
+            ``q_in`` and ``q_out`` are either :class:`_SimpleProcessQueue`\\s (for processes)
+            or :class:`_SimpleThreadQueue`\\s (for threads). Because this servlet may be connected to
             either :class:`ProcessServlet`\\s or :class:`ThreadServlet`\\s, either type of queues may
             be appropriate. In contrast, for :class:`ProcessServlet`, the input and output
-            queues are both :class:`_FastQueue`\\s.
+            queues are both :class:`_SimpleProcessQueue`\\s.
         """
         assert not self._started
         for ithread in range(self._num_threads):
@@ -948,7 +945,7 @@ class SequentialServlet(Servlet):
 
         The types of ``q_in`` and ``q_out`` are decided by the caller.
         The types of intermediate queues are decided within this function.
-        As a rule, use :class:`_SimpleQueue` between two threads; use :class:`_FastQueue`
+        As a rule, use :class:`_SimpleThreadQueue` between two threads; use :class:`_SimpleProcessQueue`
         between two processes or between a process and a thread.
         """
         assert not self._started
@@ -960,9 +957,9 @@ class SequentialServlet(Servlet):
                     s.output_queue_type == 'thread'
                     and self._servlets[i + 1].input_queue_type == 'thread'
                 ):
-                    q2 = _SimpleQueue()
+                    q2 = _SimpleThreadQueue()
                 else:
-                    q2 = _FastQueue()
+                    q2 = _SimpleProcessQueue()
                 self._qs.append(q2)
             else:
                 q2 = q_out
@@ -1039,7 +1036,7 @@ class EnsembleServlet(Servlet):
         on each input item.
 
         ``q_in`` and ``q_out`` contain inputs from and outputs to
-        the "outside world". Their types, either :class:`_FastQueue` or :class:`SimpleQueue`,
+        the "outside world". Their types, either :class:`_SimpleProcessQueue` or :class:`_SimpleThreadQueue`,
         are decided by the caller.
         """
         assert not self._started
@@ -1047,8 +1044,16 @@ class EnsembleServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
-            q2 = _SimpleQueue() if s.output_queue_type == 'thread' else _FastQueue()
+            q1 = (
+                _SimpleThreadQueue()
+                if s.input_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
+            q2 = (
+                _SimpleThreadQueue()
+                if s.output_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
@@ -1231,7 +1236,11 @@ class SwitchServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = _SimpleQueue() if s.input_queue_type == 'thread' else _FastQueue()
+            q1 = (
+                _SimpleThreadQueue()
+                if s.input_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
             s.start(q1, q_out)
             self._qins.append(q1)
         self._thread_enqueue = Thread(
@@ -1430,14 +1439,14 @@ class Server:
         )
 
         self._q_in = (
-            _SimpleQueue()
+            _SimpleThreadQueue()
             if self.servlet.input_queue_type == 'thread'
-            else _FastQueue()
+            else _SimpleProcessQueue()
         )
         self._q_out = (
-            _SimpleQueue()
+            _SimpleThreadQueue()
             if self.servlet.output_queue_type == 'thread'
-            else _FastQueue()
+            else _SimpleProcessQueue()
         )
         self.servlet.start(self._q_in, self._q_out)
 
@@ -1817,8 +1826,8 @@ class Server:
         # Using ``MP_SPAWN_CTX.Event`` will get
         #   RuntimeError('Condition objects should only be shared between processes through inheritance')
         # when putting the ``cancelled`` object (which contains a ``Condition`` object) into
-        # a ``_FastQueue``. This error is not specific to MP_SPAWN_CTX.
-        # Even using the standard multiprocessing, putting an ``Event`` in a ``SimpleQueue``
+        # a ``_SimpleProcessQueue``. This error is not specific to MP_SPAWN_CTX.
+        # Even using the standard multiprocessing, putting an ``Event`` in a ``_SimpleThreadQueue``
         # will get the same error.
         #
         # Can not use ``MP_SPAWN_CTX.Value`` for the same reason.
@@ -1955,3 +1964,22 @@ class Server:
                 fut.set_result(y)
             fut.data["t2"] = perf_counter()
             self._uncancel(fut)
+
+
+def __getattr__(name):
+    if name in ('ProcessWorker', 'ThreadWorker'):
+        warnings.warn(
+            f"'mpservice.mpserver.{name}' is deprecated in 0.12.8 and will be removed in 0.14.0. Use 'mpservice.mpserver.Worker' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Worker
+    if name == 'make_threadworker':
+        warnings.warn(
+            f"'mpservice.mpserver.{name}' is deprecated in 0.12.8 and will be removed in 0.14.0. Use 'mpservice.mpserver.make_worker' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return make_worker
+
+    raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")

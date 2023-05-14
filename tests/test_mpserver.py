@@ -8,25 +8,24 @@ from mpservice.mpserver import (
     EnsembleServlet,
     PassThrough,
     ProcessServlet,
-    ProcessWorker,
     SequentialServlet,
     Server,
     SwitchServlet,
     ThreadServlet,
-    ThreadWorker,
     TimeoutError,
-    make_threadworker,
+    Worker,
+    make_worker,
 )
 from mpservice.multiprocessing import RemoteException, is_remote_exception
 from mpservice.streamer import Stream
 
 
-class Double(ProcessWorker):
+class Double(Worker):
     def call(self, x):
         return x * 2
 
 
-class Shift(ProcessWorker):
+class Shift(Worker):
     def __init__(self, stepsize=3, **kwargs):
         super().__init__(**kwargs)
         self._stepsize = stepsize
@@ -37,7 +36,7 @@ class Shift(ProcessWorker):
         return [_ + self._stepsize for _ in x]
 
 
-class Square(ProcessWorker):
+class Square(Worker):
     def __init__(self, **kwargs):
         super().__init__(batch_size=4, **kwargs)
 
@@ -45,7 +44,7 @@ class Square(ProcessWorker):
         return [v * v for v in x]
 
 
-class Delay(ProcessWorker):
+class Delay(Worker):
     def call(self, x):
         time.sleep(x)
         return x
@@ -206,17 +205,17 @@ async def test_async_stream_early_quit():
                 break
 
 
-class GetHead(ProcessWorker):
+class GetHead(Worker):
     def call(self, x):
         return x[0]
 
 
-class GetTail(ProcessWorker):
+class GetTail(Worker):
     def call(self, x):
         return x[-1]
 
 
-class GetLen(ProcessWorker):
+class GetLen(Worker):
     def call(self, x):
         return len(x)
 
@@ -227,7 +226,7 @@ my_wide_server = SequentialServlet(
         ProcessServlet(GetTail, cpus=[3]),
         ProcessServlet(GetLen, cpus=[2]),
     ),
-    ThreadServlet(make_threadworker(lambda x: (x[0] + x[1]) * x[2])),
+    ThreadServlet(make_worker(lambda x: (x[0] + x[1]) * x[2])),
 )
 
 
@@ -253,12 +252,12 @@ def test_ensemble_server():
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
-class AddThree(ProcessWorker):
+class AddThree(Worker):
     def call(self, x):
         return x + 3
 
 
-class PostCombine(ThreadWorker):
+class PostCombine(Worker):
     def call(self, x):
         x, *y = x
         return x + y[0] + y[1]
@@ -294,7 +293,7 @@ his_wide_server = SequentialServlet(
         ProcessServlet(Shift, stepsize=5, cpus=[0, 3], batch_size=4),
         ProcessServlet(Shift, stepsize=7, cpus=[2]),
     ),
-    ThreadServlet(make_threadworker(lambda y: [min(y), max(y)])),
+    ThreadServlet(make_worker(lambda y: [min(y), max(y)])),
 )
 
 
@@ -308,19 +307,19 @@ def test_ensemble_stream():
         assert list(s) == [[v + 1, v + 7] for v in data]
 
 
-class AddOne(ThreadWorker):
+class AddOne(Worker):
     def call(self, x):
         time.sleep(0.3)
         return x + 1
 
 
-class AddFive(ThreadWorker):
+class AddFive(Worker):
     def call(self, x):
         time.sleep(0.1)
         return x + 5
 
 
-class TakeMean(ThreadWorker):
+class TakeMean(Worker):
     def call(self, x):
         return sum(x) / len(x)
 
@@ -356,35 +355,35 @@ class Error5(Exception):
     pass
 
 
-class Worker1(ProcessWorker):
+class Worker1(Worker):
     def call(self, x):
         if x == 1:
             raise Error1(x)
         return x
 
 
-class Worker2(ProcessWorker):
+class Worker2(Worker):
     def call(self, x):
         if x == 2:
             raise Error2(x)
         return x
 
 
-class Worker3(ProcessWorker):
+class Worker3(Worker):
     def call(self, x):
         if x == 3:
             raise Error3(x)
         return x
 
 
-class Worker4(ProcessWorker):
+class Worker4(Worker):
     def call(self, x):
         if x == 4:
             raise Error4(x)
         return x
 
 
-class Worker5(ProcessWorker):
+class Worker5(Worker):
     def call(self, x):
         if x == 5:
             raise Error5(x)
@@ -447,7 +446,7 @@ def test_ensemble_error():
 def test_ensemble_error2():
     s = EnsembleServlet(
         ProcessServlet(Double),
-        ThreadServlet(make_threadworker(lambda x: x + 1)),
+        ThreadServlet(make_worker(lambda x: x + 1)),
         ProcessServlet(Square, cpus=[1]),
     )
     with Server(s) as service:
@@ -501,7 +500,7 @@ def test_switch_servlet():
             service.call(3)
 
 
-class DelayedShift(ProcessWorker, ThreadWorker):
+class DelayedShift(Worker):
     def __init__(self, *, delay=1, shift=2, **kwargs):
         super().__init__(**kwargs)
         self._delay = delay

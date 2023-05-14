@@ -7,9 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.12.8] - in progress
 
-### Added
-
+- Removed ``mpserver.{ProcessWorker, ThreadWorker}``; just use ``Worker``.
+- Renamed ``mpserver.make_threadworker`` to ``mpserver.make_worker``.
 - ``mpserver.Server`` got new method ``async_stream``.
+
 
 
 ## [0.12.7] - 2023-05-07
