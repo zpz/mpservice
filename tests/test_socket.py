@@ -2,7 +2,7 @@ import asyncio
 import multiprocessing
 import time
 
-from mpservice.mpserver import ProcessServlet, ProcessWorker, Server
+from mpservice.mpserver import ProcessServlet, Worker, Server
 from mpservice.socket import SocketApplication, SocketClient, make_server
 from zpz.logging import config_logger
 
@@ -40,7 +40,7 @@ def test_simple():
     server.join()
 
 
-class Double(ProcessWorker):
+class Double(Worker):
     def call(self, x):
         time.sleep(0.01)
         return x * 2

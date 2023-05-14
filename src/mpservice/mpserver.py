@@ -602,7 +602,7 @@ def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
     return MyWorker
 
 
-class PassThrough:
+class PassThrough(Worker):
     """
     Example use of this class::
 
