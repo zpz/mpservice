@@ -1191,24 +1191,6 @@ class EnsembleServlet(Servlet):
         return 'thread'
 
 
-Sequential = SequentialServlet
-"""An alias to :class:`SequentialServlet` for backward compatibility.
-
-.. deprecated:: 0.11.8
-    Will be removed in 0.13.0.
-    Use ``SequentialSevlet`` instead.
-"""
-
-
-Ensemble = EnsembleServlet
-"""An alias to :class:`EnsembleServlet` for backward compatibility.
-
-.. deprecated:: 0.11.8
-    Will be removed in 0.13.0.
-    Use ``EnsembleSevlet`` instead.
-"""
-
-
 class SwitchServlet(Servlet):
     """
     SwitchServlet contains multiple member servlets (which are provided to :meth:`__init__`).
@@ -1981,5 +1963,21 @@ def __getattr__(name):
             stacklevel=2,
         )
         return make_worker
+
+    if name == 'Sequential':
+        warnings.warn(
+            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.SequentialServlet' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return SequentialServlet
+
+    if name == 'Ensemble':
+        warnings.warn(
+            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.EnsembleServlet' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return EnsembleServlet
 
     raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")
