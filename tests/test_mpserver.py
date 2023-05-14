@@ -156,6 +156,56 @@ def test_stream_early_quit():
                 break
 
 
+@pytest.mark.asyncio
+async def test_sequential_async_stream():
+    async def data():
+        for x in range(100):
+            yield x
+
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        ss = service.async_stream(data())
+        assert [v async for v in ss] == [v * v for v in range(100)]
+
+        s = Stream(data()).parmap(service.async_call, num_workers=50)
+        assert (await s.collect()) == [v * v for v in range(100)]
+
+        s = Stream(range(100)).parmap(service.call, executor='thread', num_workers=10)
+        assert list(s) == [v * v for v in range(100)]
+
+
+@pytest.mark.asyncio
+async def test_async_stream_error():
+    async def adata():
+        for x in range(30):
+            if x == 22:
+                yield 'a'
+            else:
+                yield x
+
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        data = list(range(30))
+        data[22] = 'a'
+        ss = service.async_stream(adata())
+        with pytest.raises(TypeError):
+            assert [v async for v in ss] == [v * v for v in data]
+
+
+@pytest.mark.asyncio
+async def test_async_stream_early_quit():
+    async def data():
+        for x in range(100):
+            yield x
+
+    with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
+        ss = service.async_stream(data(), return_x=True)
+        n = 0
+        async for x, y in ss:
+            assert y == x * x
+            n += 1
+            if n > 33:
+                break
+
+
 class GetHead(ProcessWorker):
     def call(self, x):
         return x[0]
