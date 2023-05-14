@@ -16,6 +16,7 @@ def worker():
     logging.getLogger('worker.debug').debug('worker debug')
     warnings.warn('warning in the child process')
 
+
 def main():
     logging.getLogger('main.error').error('main error')
     logging.getLogger('main.info').info('main info')

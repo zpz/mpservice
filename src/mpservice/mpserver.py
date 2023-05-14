@@ -1686,6 +1686,7 @@ class Server:
         '''
         Analogous to :meth:`stream`.
         '''
+
         async def _enqueue(tasks):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
@@ -1740,7 +1741,9 @@ class Server:
         tasks = asyncio.Queue()
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
         # The downstream should get results out of it as soon as possible.
-        t_enqueue = asyncio.create_task(_enqueue(tasks), name=f'{self.__class__.__name__}.async_stream._enqueue')
+        t_enqueue = asyncio.create_task(
+            _enqueue(tasks), name=f'{self.__class__.__name__}.async_stream._enqueue'
+        )
 
         _wait = self._async_wait_for_result
 
@@ -1777,7 +1780,9 @@ class Server:
         finally:
             await shutdown()
 
-    async def _async_enqueue(self, x, timeout: float, backpressure: bool) -> concurrent.futures.Future:
+    async def _async_enqueue(
+        self, x, timeout: float, backpressure: bool
+    ) -> concurrent.futures.Future:
         t0 = perf_counter()
         deadline = t0 + timeout
         delta = max(timeout * 0.01, 0.01)
