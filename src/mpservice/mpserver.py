@@ -626,6 +626,7 @@ class PassThrough:
             )
         ss = SequentialServlet(s, ThreadServlet(make_worker(combine)))
     """
+
     def call(self, x):
         return x
 
@@ -840,7 +841,11 @@ class ThreadServlet(Servlet):
         self._workers = []
         self._started = False
 
-    def start(self, q_in: _SimpleProcessQueue | _SimpleThreadQueue, q_out: _SimpleProcessQueue | _SimpleThreadQueue):
+    def start(
+        self,
+        q_in: _SimpleProcessQueue | _SimpleThreadQueue,
+        q_out: _SimpleProcessQueue | _SimpleThreadQueue,
+    ):
         """
         Create the requested number of threads, in each starting an instance
         of ``self._worker_cls``.
@@ -1039,8 +1044,16 @@ class EnsembleServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = _SimpleThreadQueue() if s.input_queue_type == 'thread' else _SimpleProcessQueue()
-            q2 = _SimpleThreadQueue() if s.output_queue_type == 'thread' else _SimpleProcessQueue()
+            q1 = (
+                _SimpleThreadQueue()
+                if s.input_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
+            q2 = (
+                _SimpleThreadQueue()
+                if s.output_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
@@ -1223,7 +1236,11 @@ class SwitchServlet(Servlet):
         self._qin = q_in
         self._qout = q_out
         for s in self._servlets:
-            q1 = _SimpleThreadQueue() if s.input_queue_type == 'thread' else _SimpleProcessQueue()
+            q1 = (
+                _SimpleThreadQueue()
+                if s.input_queue_type == 'thread'
+                else _SimpleProcessQueue()
+            )
             s.start(q1, q_out)
             self._qins.append(q1)
         self._thread_enqueue = Thread(
@@ -1949,7 +1966,6 @@ class Server:
             self._uncancel(fut)
 
 
-
 def __getattr__(name):
     if name in ('ProcessWorker', 'ThreadWorker'):
         warnings.warn(
@@ -1965,5 +1981,5 @@ def __getattr__(name):
             stacklevel=2,
         )
         return make_worker
-           
+
     raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")

@@ -6,7 +6,6 @@ import pytest
 from mpservice.mpserver import (
     EnsembleError,
     EnsembleServlet,
-    Worker,
     PassThrough,
     ProcessServlet,
     SequentialServlet,
@@ -14,6 +13,7 @@ from mpservice.mpserver import (
     SwitchServlet,
     ThreadServlet,
     TimeoutError,
+    Worker,
     make_worker,
 )
 from mpservice.multiprocessing import RemoteException, is_remote_exception
