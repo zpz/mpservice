@@ -91,13 +91,6 @@ class ServerBacklogFull(RuntimeError):
     pass
 
 
-PipelineFull = ServerBacklogFull
-"""
-Alias to :class:`ServerBacklogFull` for backward compatibility.
-Will be removed in 0.13.0.
-"""
-
-
 class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
     """
     A customization of `multiprocessing.queue._SimpleThreadQueue <https://docs.python.org/3/library/multiprocessing.html#multiprocessing._SimpleThreadQueue>`_,
@@ -1979,5 +1972,13 @@ def __getattr__(name):
             stacklevel=2,
         )
         return EnsembleServlet
+
+    if name == 'PipelineFull':
+        warnings.warn(
+            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.ServerBacklogFull' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ServerBacklogFull
 
     raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")
