@@ -1645,11 +1645,9 @@ class Server:
             while True:
                 z = tasks.get()
                 if z == NOMOREDATA:
-                    worker.join()
                     break
                 if z == CRASHED:
                     e = tasks.get()
-                    worker.join()
                     raise e
 
                 x, fut = z
@@ -1685,9 +1683,101 @@ class Server:
         return_exceptions: bool = False,
         timeout: int | float = 60,
     ) -> AsyncIterator:
-        raise NotImplementedError
+        '''
+        Analogous to :meth:`stream`.
+        '''
+        async def _enqueue(tasks):
+            # Putting input data in the queue does not need concurrency.
+            # The speed of sequential push is as fast as it can go.
+            _enq = self._async_enqueue
+            try:
+                async for x in data_stream:
+                    nretries = 0
+                    t0 = None
+                    while self.full():
+                        if t0 is None:
+                            t0 = perf_counter()
+                        if nretries >= 100:
+                            raise ServerBacklogFull(
+                                self.backlog,
+                                self._capacity,
+                                len(self._uid_to_futures),
+                                self._n_cancelled,
+                                f"{perf_counter() - t0:.3f} seconds enqueue",
+                            )
+                        nretries += 1
+                        await asyncio.sleep(0.1)
+                    fut = await _enq(x, timeout, backpressure=True)
+                    await tasks.put((x, fut))
+                # Exceptions in `fut` is covered by `return_exceptions`.
+                # Uncaught exceptions will propagate and cause the thread to exit in
+                # exception state. This exception is not covered by `return_exceptions`;
+                # it will be detected in the main thread.
+            except asyncio.CancelledError:
+                await tasks.put(NOMOREDATA)
+                raise
+            except Exception as e:
+                await tasks.put(CRASHED)
+                await tasks.put(e)
+            else:
+                await tasks.put(NOMOREDATA)
 
-    async def _async_enqueue(self, x, timeout, backpressure):
+        async def shutdown():
+            t_enqueue.cancel()
+            while True:
+                if t_enqueue.done():
+                    break
+                while not tasks.empty():
+                    v = tasks.get_nowait()
+                    try:
+                        x, fut = v
+                    except (ValueError, TypeError):
+                        pass
+                    else:
+                        self._cancel(fut)
+                await asyncio.sleep(0.5)
+
+        tasks = asyncio.Queue()
+        # `tasks` has no size limit. Its length is restricted by the speed of the service.
+        # The downstream should get results out of it as soon as possible.
+        t_enqueue = asyncio.create_task(_enqueue(tasks), name=f'{self.__class__.__name__}.async_stream._enqueue')
+
+        _wait = self._async_wait_for_result
+
+        try:
+            while True:
+                z = await tasks.get()
+                if z == NOMOREDATA:
+                    break
+                if z == CRASHED:
+                    e = await tasks.get()
+                    raise e
+
+                x, fut = z
+                try:
+                    y = await _wait(fut)
+                    # May raise TimeoutError or an exception out of RemoteException.
+                except Exception as e:
+                    if return_exceptions:
+                        if return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    else:
+                        logger.error("exception '%r' happened for input %r", e, x)
+                        raise
+                        # TODO: rethink the thread shutdown
+                else:
+                    if y == CANCELLED:
+                        continue
+                    if return_x:
+                        yield x, y
+                    else:
+                        yield y
+        finally:
+            await shutdown()
+
+    async def _async_enqueue(self, x, timeout: float, backpressure: bool) -> concurrent.futures.Future:
         t0 = perf_counter()
         deadline = t0 + timeout
         delta = max(timeout * 0.01, 0.01)
@@ -1755,7 +1845,7 @@ class Server:
             raise
         return fut
 
-    async def _async_wait_for_result(self, fut):
+    async def _async_wait_for_result(self, fut: concurrent.futures.Future):
         try:
             t0 = fut.data["t0"]
             timeout = fut.data['timeout']
@@ -1791,7 +1881,7 @@ class Server:
         #     # `wait_for` has already cancelled `fut`.
         #     raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
 
-    def _enqueue(self, x, timeout):
+    def _enqueue(self, x, timeout: float) -> concurrent.futures.Future:
         # This method is called by `call` or `stream`.
         # There are no concurrent calls to this method.
         t0 = perf_counter()
@@ -1824,7 +1914,7 @@ class Server:
         self._q_in.put(((uid, cancelled), x))
         return fut
 
-    def _wait_for_result(self, fut):
+    def _wait_for_result(self, fut: concurrent.futures.Future):
         t0 = fut.data["t0"]
         timeout = fut.data['timeout']
         deadline = t0 + timeout
@@ -1838,7 +1928,7 @@ class Server:
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
 
-    def _gather_output(self):
+    def _gather_output(self) -> None:
         q_out = self._q_out
         futures = self._uid_to_futures
 
