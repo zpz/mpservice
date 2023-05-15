@@ -551,7 +551,7 @@ class ServerProcess(multiprocessing.managers.BaseManager):
                 def do(self, x):
                     time.sleep(0.5)
                     return x + x
-                
+
             ServerProcess.register(Doubler)
 
             def main():
@@ -603,7 +603,7 @@ class ServerProcess(multiprocessing.managers.BaseManager):
         """
         ``worker`` is usually a class object (not an instance of the class).
         It can also be a function.
-    
+
         Suppose ``worker`` is a class ``Worker``, then registering ``Worker`` will add a method
         named "Worker" to the class ``ServerProcess``. Later on a running ServerProcess object
         ``server``, calling::

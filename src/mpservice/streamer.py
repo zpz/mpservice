@@ -832,7 +832,7 @@ class AsyncIterQueue(asyncio.Queue):
 
     def close_nowait(self):
         self.put_nowait(FINISHED)
-    
+
     async def __aiter__(self):
         while True:
             x = await self.get()

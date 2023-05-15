@@ -5,13 +5,12 @@ import time
 from mpservice.streamer import Stream
 
 
-
 class Doubler:
     def do(self, x):
         # time.sleep(0.5)
         # print(multiprocessing.current_process().name, threading.current_thread().name)
         return x + x
-    
+
 
 ServerProcess.register(Doubler)
 

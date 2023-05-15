@@ -4,7 +4,7 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import AsyncIter, Stream, SyncIter, IterQueue, AsyncIterQueue
+from mpservice.streamer import AsyncIter, AsyncIterQueue, IterQueue, Stream, SyncIter
 
 
 def test_iterqueue():
