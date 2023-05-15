@@ -541,9 +541,13 @@ class ServerProcess(multiprocessing.managers.BaseManager):
         will return 6. Inputs and output of the public method
         should all be pickle-able.
 
-        Each calling process or thread will establish a new thread to communicate
-        with the proxy; such method calls happen in that thread.
-        Calls from multiple threads will become multi-threaded concurrent calls.
+        Between the server process and the proxy object in a particular process/thread,
+        a connection is established, which starts a new thread in the server process
+        to handle all requests from that proxy object.
+        These "requests" include all methods of the proxy, not just one particular method.
+ 
+        Calls on a particular method of the proxy from multiple processes/threads
+        become multi-threaded concurrent calls in the server process.
         We can design a simple example to observe this effect::
 
 
@@ -568,8 +572,8 @@ class ServerProcess(multiprocessing.managers.BaseManager):
             if __name__ == '__main__':
                 main()
 
-        If the calls to ``double.do`` were sequential, the 100 calls would take take 50 seconds.
-        With concurrent calls in 50 threads as above, it took 1.05 seconds.
+        If the calls to ``double.do`` were sequential, then 100 calls would take 50 seconds.
+        With concurrent calls in 50 threads as above, it took 1.05 seconds in one experiment.
 
         As a consequence, if the method mutates some shared state, it needs to guard things by locks.
 
