@@ -545,7 +545,7 @@ class ServerProcess(multiprocessing.managers.BaseManager):
         a connection is established, which starts a new thread in the server process
         to handle all requests from that proxy object.
         These "requests" include all methods of the proxy, not just one particular method.
- 
+
         Calls on a particular method of the proxy from multiple processes/threads
         become multi-threaded concurrent calls in the server process.
         We can design a simple example to observe this effect::
