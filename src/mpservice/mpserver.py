@@ -574,56 +574,6 @@ class Worker(ABC):
         return out
 
 
-def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
-    """
-    This function defines and returns a simple :class:`Worker` subclass
-    for quick, "on-the-fly" use.
-    This can be useful when we want to introduce simple servlets
-    for pre-processing and post-processing.
-
-    Parameters
-    ----------
-    func
-        This function is what happens in the method :meth:`~Worker.call`.
-    """
-
-    class MyWorker(Worker):
-        def call(self, x):
-            return func(x)
-
-    MyWorker.__name__ = f"Worker-{func.__name__}"
-    return MyWorker
-
-
-class PassThrough(Worker):
-    """
-    Example use of this class::
-
-        def combine(x):
-            '''
-            Combine the ensemble elements depending on the results
-            as well as the original input.
-            '''
-            x, *y = x
-            assert len(y) == 3
-            if x < 100:
-                return sum(y) / len(y)
-            else:
-                return max(y)
-
-        s = EnsembleServlet(
-                ThreadServlet(PassThrough),
-                ProcessServlet(W1),
-                ProcessServlet(W2)
-                ProcessServlet(W3),
-            )
-        ss = SequentialServlet(s, ThreadServlet(make_worker(combine)))
-    """
-
-    def call(self, x):
-        return x
-
-
 class Servlet(ABC):
     @abstractmethod
     def start(self, q_in, q_out) -> None:
@@ -1939,6 +1889,56 @@ class Server:
                 fut.set_result(y)
             fut.data["t2"] = perf_counter()
             self._uncancel(fut)
+
+
+def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
+    """
+    This function defines and returns a simple :class:`Worker` subclass
+    for quick, "on-the-fly" use.
+    This can be useful when we want to introduce simple servlets
+    for pre-processing and post-processing.
+
+    Parameters
+    ----------
+    func
+        This function is what happens in the method :meth:`~Worker.call`.
+    """
+
+    class MyWorker(Worker):
+        def call(self, x):
+            return func(x)
+
+    MyWorker.__name__ = f"Worker-{func.__name__}"
+    return MyWorker
+
+
+class PassThrough(Worker):
+    """
+    Example use of this class::
+
+        def combine(x):
+            '''
+            Combine the ensemble elements depending on the results
+            as well as the original input.
+            '''
+            x, *y = x
+            assert len(y) == 3
+            if x < 100:
+                return sum(y) / len(y)
+            else:
+                return max(y)
+
+        s = EnsembleServlet(
+                ThreadServlet(PassThrough),
+                ProcessServlet(W1),
+                ProcessServlet(W2)
+                ProcessServlet(W3),
+            )
+        ss = SequentialServlet(s, ThreadServlet(make_worker(combine)))
+    """
+
+    def call(self, x):
+        return x
 
 
 def __getattr__(name):

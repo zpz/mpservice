@@ -814,6 +814,33 @@ class AsyncIter(AsyncIterable):
                 yield x
 
 
+class IterQueue(queue.Queue):
+    def close(self):
+        self.put(FINISHED)
+
+    def __iter__(self):
+        while True:
+            x = self.get()
+            if x == FINISHED:
+                break
+            yield x
+
+
+class AsyncIterQueue(asyncio.Queue):
+    async def close(self):
+        await self.put(FINISHED)
+
+    def close_nowait(self):
+        self.put_nowait(FINISHED)
+
+    async def __aiter__(self):
+        while True:
+            x = await self.get()
+            if x == FINISHED:
+                break
+            yield x
+
+
 class Mapper(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
         self._instream = instream

@@ -462,18 +462,10 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 
 
 # ``MP_SPAWN_CTX.Manager`` does not use this class.
-class ServerProcess(multiprocessing.managers.SyncManager):
-
-    """A "server process" provides a server running in one process,
+class ServerProcess(multiprocessing.managers.BaseManager):
+    """
+    A "server process" provides a server running in one process,
     to be called from other processes for shared data or functionalities.
-
-    The class ``ServerProcess`` is based on ``Manager`` in the standard ``multiprocessing``,
-    but is specifically for the use case where user needs to design and register a custom class
-    to be used in a "server process". The API of ``ServerProcess`` may continue to diverge
-    from that of ``Manager``.
-
-    If you don't need a custom class, but rather just need to use one of the standard classes,
-    for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
 
     The basic workflow is as follows.
 
@@ -496,55 +488,102 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             ServerProcess.register(Doubler)
             ServerProcess.register(Tripler)
 
-    2. Create a manager object and start it::
+    2. Create a "server process" object and start it::
 
             server = ServerProcess()
             server.start()
 
-    A preferred way is to use a context manager::
+        A preferred way is to use a context manager::
 
             with ServerProcess() as server:
                 ...
+
+        The context manager will call ``server.shutdown()`` at the end so that
+        you don't need to do it.
 
     3. Create one or more proxies::
 
             doubler = server.Doubler(...)
             tripler = server.Tripler(...)
 
-    The above causes corresponding class objects to be created
-    in the server process; the returned objects are "proxies"
-    for the real objects. These proxies can be passed to any other
-    processes and used there.
+        The above causes corresponding class objects to be created
+        in the server process; the returned objects are "proxies"
+        for the real objects. These proxies can be passed to any other
+        processes and used there.
 
-    The arguments in the above calls are passed to the server process
-    and used in the ``__init__`` methods of the corresponding classes.
-    For this reason, the parameters to ``__init__`` of a registered class
-    must all be pickle-able.
+        The arguments in the above calls are passed into the server process
+        and used in the ``__init__`` methods of the corresponding classes.
+        For this reason, the parameters to ``__init__`` of a registered class
+        must all be pickle-able.
 
-    Calling one registered class multiple times, like
+        Calling one registered class multiple times, like
 
-    ::
+        ::
 
-            prox1 = server.Doubler(...)
-            prox2 = server.Doubler(...)
+                prox1 = server.Doubler(...)
+                prox2 = server.Doubler(...)
 
-    will create independent objects in the server process.
+        will create independent objects in the server process.
 
-    Multiple ServerProcess objects will run their corresponding
-    server processes independently.
+        Multiple ServerProcess objects will run their corresponding
+        server processes independently.
 
     4. Pass the proxy objects to any process and use them there.
 
-    Public methods (minus "properties") defined by the registered classes
-    can be invoked on a proxy with the same parameters and get the expected
-    result. For example,
+        Public methods (minus "properties") defined by the registered classes
+        can be invoked on a proxy with the same parameters and get the expected
+        result. For example,
 
-    ::
+        ::
 
-            prox1.double(3)
+                prox1.double(3)
 
-    will return 6. Inputs and output of the public method
-    should all be pickle-able.
+        will return 6. Inputs and output of the public method
+        should all be pickle-able.
+
+        Between the server process and the proxy object in a particular process/thread,
+        a connection is established, which starts a new thread in the server process
+        to handle all requests from that proxy object.
+        These "requests" include all methods of the proxy, not just one particular method.
+
+        Calls on a particular method of the proxy from multiple processes/threads
+        become multi-threaded concurrent calls in the server process.
+        We can design a simple example to observe this effect::
+
+
+            class Doubler:
+                def do(self, x):
+                    time.sleep(0.5)
+                    return x + x
+
+            ServerProcess.register(Doubler)
+
+            def main():
+                with ServerProcess() as server:
+                    doubler = server.Doubler()
+
+                    ss = Stream(range(100)).parmap(doubler.do, executor='thread', num_workers=50)
+                    t0 = time.perf_counter()
+                    zz = list(ss)
+                    t1 = time.perf_counter()
+                    print(t1 - t0)
+                    assert zz == [x + x for x in range(100)]
+
+            if __name__ == '__main__':
+                main()
+
+        If the calls to ``double.do`` were sequential, then 100 calls would take 50 seconds.
+        With concurrent calls in 50 threads as above, it took 1.05 seconds in one experiment.
+
+        As a consequence, if the method mutates some shared state, it needs to guard things by locks.
+
+    The class ``ServerProcess`` is based on ``Manager`` in the standard ``multiprocessing``,
+    but is specifically for the use case where user needs to design and register a custom class
+    to be used in a "server process". The API of ``ServerProcess`` may continue to diverge
+    from that of ``Manager``.
+
+    If you don't need a custom class, but rather just need to use one of the standard classes,
+    for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
     """
 
     # In each new thread or process, a proxy object will create a new
@@ -558,29 +597,41 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     # to handle requests from this connection (see ``Server.serve_client``
     # also in `Lib/multiprocessing/managers.py <https://github.com/python/cpython/blob/main/Lib/multiprocessing/managers.py>`_).
 
+    # Overhead:
+    #
+    # I made a naive example, where the registered class just returns ``x + x``.
+    # I was able to finish 13K calls per second.
+
     @classmethod
-    def register(cls, typeid_or_callable: str | Callable, /, **kwargs):
+    def register(cls, worker: Callable, /, name: str = None):
         """
-        ``typeid_or_callable`` is usually a class object.
-        This method should be called before a :class:`ServerProcess` object is "started".
+        ``worker`` is usually a class object (not an instance of the class).
+        It can also be a function.
+
+        Suppose ``worker`` is a class ``Worker``, then registering ``Worker`` will add a method
+        named "Worker" to the class ``ServerProcess``. Later on a running ServerProcess object
+        ``server``, calling::
+
+            server.Worker(*args, **kwargs)
+
+        will run the callable ``worker`` inside the server process, taking ``args`` and ``kwargs``
+        as it normally would. The object resulted from that call will stay in the server process.
+        (In the case where ``worker`` is the class ``Worker``, the call ``Worker(...)`` will result
+        in an *instance* of the Worker class.)
+        The call ``server.Worker(...)`` returns a "proxy" to that object; the proxy is going to be used
+        from other processes or threads to communicate with the real object residing inside the server process.
+
+        .. note:: This method must be called before a :class:`ServerProcess` object is "started".
         """
-        if isinstance(typeid_or_callable, str):
-            # This form allows the full API of the base class.
-            # I have not encountered a need for this.
-            # This is allowed just in case for experiments and expansions.
-            # You almost always should use the other form.
-            typeid = typeid_or_callable
-            callable_ = kwargs.pop("callable", None)
-        else:
-            assert callable(typeid_or_callable)
-            # Usually, `typeid_or_callable` is a class object and the sole argument.
-            typeid = typeid_or_callable.__name__
-            callable_ = typeid_or_callable
+        if not callable(worker):
+            raise ValueError("`worker` must be a callable")
+        typeid = name or worker.__name__
+        callable_ = worker
         if typeid in cls._registry:
             warnings.warn(
                 '"%s" was registered; the existing registry is overwritten.' % typeid
             )
-        super().register(typeid, callable_, **kwargs)
+        super().register(typeid, callable_)
 
     def __init__(
         self,
@@ -588,6 +639,13 @@ class ServerProcess(multiprocessing.managers.SyncManager):
         cpu: int | list[int] | None = None,
         name: str | None = None,
     ):
+        '''
+        Parameters
+        ----------
+        name
+            Name of the process. If ``None``, a default will be used.
+        '''
+        # 3.11 got parameter `shutdown_timeout`, which may be useful.
         super().__init__(ctx=MP_SPAWN_CTX)
         self._cpu = cpu
         self._name = name
