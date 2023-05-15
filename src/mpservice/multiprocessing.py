@@ -621,7 +621,7 @@ class ServerProcess(multiprocessing.managers.BaseManager):
         The call ``server.Worker(...)`` returns a "proxy" to that object; the proxy is going to be used
         from other processes or threads to communicate with the real object residing inside the server process.
 
-        This method should be called before a :class:`ServerProcess` object is "started".
+        .. note:: This method must be called before a :class:`ServerProcess` object is "started".
         """
         if not callable(worker):
             raise ValueError("`worker` must be a callable")
