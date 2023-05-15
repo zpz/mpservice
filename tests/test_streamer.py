@@ -4,7 +4,25 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import AsyncIter, Stream, SyncIter
+from mpservice.streamer import AsyncIter, Stream, SyncIter, IterQueue, AsyncIterQueue
+
+
+def test_iterqueue():
+    q = IterQueue()
+    for x in range(30):
+        q.put(x)
+    q.close()
+    assert list(q) == list(range(30))
+
+
+@pytest.mark.asyncio
+async def test_asynciterqueue():
+    q = AsyncIterQueue()
+    for x in range(30):
+        await q.put(x)
+    await q.close()
+
+    assert [x async for x in q] == list(range(30))
 
 
 async def agen(n=10):
