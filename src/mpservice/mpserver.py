@@ -1595,7 +1595,8 @@ class Server:
                         else:
                             yield e
                     else:
-                        logger.error("exception '%r' happened for input %r", e, x)
+                        # logger.error("exception '%r' happened for input %r", e, x)
+                        logger.error(repr(e))
                         raise
                         # TODO: rethink the thread shutdown
                 else:
@@ -1701,7 +1702,8 @@ class Server:
                         else:
                             yield e
                     else:
-                        logger.error("exception '%r' happened for input %r", e, x)
+                        # logger.error("exception '%r' happened for input %r", e, x)
+                        logger.error(repr(e))
                         raise
                         # TODO: rethink the thread shutdown
                 else:

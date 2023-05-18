@@ -710,7 +710,8 @@ class SocketClient:
                         fut = Future()
                         fut.set_exception(e)
                     else:
-                        logger.error("exception '%r' happened for input '%s'", e, x)
+                        # logger.error("exception '%r' happened for input '%s'", e, x)
+                        logger.error(repr(e))
                         raise
                 t0 = perf_counter()
                 if not put_in_queue(tt, (x, fut, t0), to_shutdown):
@@ -748,7 +749,8 @@ class SocketClient:
                     else:
                         yield e
                 else:
-                    logger.error("exception '%r' happened for input '%s'", e, x)
+                    # logger.error("exception '%r' happened for input '%s'", e, x)
+                    logger.error(repr(e))
                     raise
             else:
                 if return_x:
