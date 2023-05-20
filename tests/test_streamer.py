@@ -5,8 +5,15 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import AsyncIter, AsyncIterQueue, IterQueue, Stream, SyncIter, tee
 from mpservice.concurrent.futures import ThreadPoolExecutor
+from mpservice.streamer import (
+    AsyncIter,
+    AsyncIterQueue,
+    IterQueue,
+    Stream,
+    SyncIter,
+    tee,
+)
 
 
 def test_iterqueue():
@@ -1025,6 +1032,7 @@ def test_tee():
         f1 = pool.submit(worker, t1, '**')
         f2 = pool.submit(worker, t2, '--    ')
         concurrent.futures.wait((f1, f2))
+
 
 if __name__ == '__main__':
     test_tee()

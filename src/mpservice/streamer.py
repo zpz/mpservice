@@ -61,7 +61,7 @@ import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import AsyncIterable, Iterable, Sequence, Iterator
+from collections.abc import AsyncIterable, Iterable, Iterator, Sequence
 from random import random
 from types import SimpleNamespace
 from typing import (
@@ -1844,7 +1844,14 @@ class TeeX:
 
 
 class Fork:
-    def __init__(self, instream: Iterator, n_forks: int, buffer: queue.Queue, head: SimpleNamespace, instream_lock: threading.Lock):
+    def __init__(
+        self,
+        instream: Iterator,
+        n_forks: int,
+        buffer: queue.Queue,
+        head: SimpleNamespace,
+        instream_lock: threading.Lock,
+    ):
         self.instream = instream
         self.n_forks = n_forks
         self.buffer = buffer
@@ -1908,4 +1915,3 @@ def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 1024) -> tuple[
     instream_lock = threading.Lock()
     forks = tuple(Fork(instream, n, buffer, head, instream_lock) for _ in range(n))
     return tuple(Stream(f) for f in forks)
-
