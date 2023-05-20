@@ -1,10 +1,12 @@
 import asyncio
+import concurrent.futures
 import math
 import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import AsyncIter, AsyncIterQueue, IterQueue, Stream, SyncIter
+from mpservice.streamer import AsyncIter, AsyncIterQueue, IterQueue, Stream, SyncIter, tee
+from mpservice.concurrent.futures import ThreadPoolExecutor
 
 
 def test_iterqueue():
@@ -1007,3 +1009,22 @@ async def test_async_switch():
     for y in s:  # `async for` would work too.
         assert y == x + 4
         x += 1
+
+
+def test_tee():
+    data = range(20)
+    t1, t2 = tee(data, buffer_size=4)
+    t1.map(lambda x: x + 2).parmap(lambda x: x + 2, executor='thread', num_workers=2)
+    t2.map(lambda x: x + 3).parmap(lambda x: x + 3, executor='thread', num_workers=2)
+
+    def worker(stream, prefix):
+        for x in stream:
+            print(prefix, '  ', x)
+
+    with ThreadPoolExecutor() as pool:
+        f1 = pool.submit(worker, t1, '**')
+        f2 = pool.submit(worker, t2, '--    ')
+        concurrent.futures.wait((f1, f2))
+
+if __name__ == '__main__':
+    test_tee()

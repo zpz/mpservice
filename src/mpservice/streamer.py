@@ -61,8 +61,9 @@ import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import AsyncIterable, Iterable, Sequence
+from collections.abc import AsyncIterable, Iterable, Sequence, Iterator
 from random import random
+from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
@@ -1825,3 +1826,86 @@ class AsyncParmapperAsync(AsyncIterable):
         #  https://snarky.ca/unravelling-async-for-loops/
         #  https://github.com/python/cpython/blob/3.11/Lib/asyncio/base_events.py#L539
         #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
+
+
+class TeeX:
+    # Tee element
+    __slots__ = ('value', 'next', 'n', 'lock')
+    # `n`` is count of the times this element has been "consumed".
+    # Once `n` is equal to the number of forks in the tee, this
+    # element can be discarded. In that situation, this element must
+    # be at the head of the queue.
+
+    def __init__(self, x, /):
+        self.value = x
+        self.next = None
+        self.n = 0
+        self.lock = threading.Lock()
+
+
+class Fork:
+    def __init__(self, instream: Iterator, n_forks: int, buffer: queue.Queue, head: SimpleNamespace, instream_lock: threading.Lock):
+        self.instream = instream
+        self.n_forks = n_forks
+        self.buffer = buffer
+        self.head = head
+        self.instream_lock = instream_lock
+        self.next: TeeX | None = None
+        self._empty = True
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.next is None:
+            if self.head.value is None:
+                with self.instream_lock:
+                    x = next(self.instream)
+                    box = TeeX(x)
+                    self.buffer.put(box)
+                    self.head.value = box
+                self.next = box
+                return self.__next__()
+            elif self._empty:
+                self.next = self.head.value
+                return self.__next__()
+            else:
+                raise StopIteration
+        else:
+            if self.next.next is None:
+                # Pre-fetch the next element.
+                with self.instream_lock:
+                    try:
+                        x = next(self.instream)
+                    except StopIteration:
+                        pass
+                    else:
+                        box = TeeX(x)
+                        self.buffer.put(box)
+                        self.next.next = box
+            # Check whether the buffer head should be popped:
+            box = self.next
+            to_pop = False
+            with box.lock:
+                box.n += 1
+                if box.n == self.n_forks:
+                    to_pop = True
+            if to_pop:
+                # No other fork would be accessing this TeeX "x" at this moment,
+                # and no other fork would be trying to pop the head of the buffer.
+                self.buffer.get()
+            self.next = box.next
+            self._empty = False
+            return box.value
+
+
+def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 1024) -> tuple[Stream]:
+    assert buffer_size > 1
+    buffer = queue.Queue(buffer_size)
+    instream = iter(instream)
+    head = SimpleNamespace()
+    head.value = None
+    instream_lock = threading.Lock()
+    forks = tuple(Fork(instream, n, buffer, head, instream_lock) for _ in range(n))
+    return tuple(Stream(f) for f in forks)
+
