@@ -91,7 +91,7 @@ from .multiprocessing import (
 )
 from .threading import MAX_THREADS, Thread
 
-__all__ = ['Stream']
+__all__ = ['Stream', 'tee']
 
 logger = logging.getLogger(__name__)
 
@@ -1997,6 +1997,8 @@ def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 256) -> tuple[S
                 t2 = pool.submit(stream_2.collect)
                 n = t1.result()
                 output = t2.result()
+
+    The opposite of ``tee`` is the built-in ``zip``.
     '''
     assert buffer_size >= 2
     # In practice, use a reasonably large value that is feasible for the application.
