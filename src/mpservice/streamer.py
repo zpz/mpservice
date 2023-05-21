@@ -56,13 +56,15 @@ import contextlib
 import functools
 import inspect
 import logging
+import multiprocessing.queues
 import os
 import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import AsyncIterable, Iterable, Sequence
+from collections.abc import AsyncIterable, Iterable, Iterator, Sequence
 from random import random
+from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
@@ -82,6 +84,7 @@ from .concurrent.futures import (
     get_shared_thread_pool,
 )
 from .multiprocessing import (
+    MP_SPAWN_CTX,
     Event,
     get_remote_traceback,
     is_remote_exception,
@@ -815,8 +818,11 @@ class AsyncIter(AsyncIterable):
 
 
 class IterQueue(queue.Queue):
-    def close(self):
-        self.put(FINISHED)
+    def close(self, *, timeout=None):
+        self.put(FINISHED, timeout=timeout)
+
+    def close_nowait(self):
+        self.put_nowait(FINISHED)
 
     def __iter__(self):
         while True:
@@ -836,6 +842,26 @@ class AsyncIterQueue(asyncio.Queue):
     async def __aiter__(self):
         while True:
             x = await self.get()
+            if x == FINISHED:
+                break
+            yield x
+
+
+class IterProcessQueue(multiprocessing.queues.Queue):
+    def __init__(self, maxsize=0, *, ctx=None):
+        if ctx is None or ctx == 'spawn':
+            ctx = MP_SPAWN_CTX
+        super().__init__(maxsize, ctx=ctx)
+
+    def close(self, *, timeout=None):
+        self.put(FINISHED, timeout=timeout)
+
+    def close_nowait(self):
+        self.put_nowait(FINISHED)
+
+    def __iter__(self):
+        while True:
+            x = self.get()
             if x == FINISHED:
                 break
             yield x
@@ -1825,3 +1851,166 @@ class AsyncParmapperAsync(AsyncIterable):
         #  https://snarky.ca/unravelling-async-for-loops/
         #  https://github.com/python/cpython/blob/3.11/Lib/asyncio/base_events.py#L539
         #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
+
+
+class TeeX:
+    # Tee element
+    __slots__ = ('value', 'next', 'n', 'lock')
+    # `n`` is count of the times this element has been "consumed".
+    # Once `n` is equal to the number of forks in the tee, this
+    # element can be discarded. In that situation, this element must
+    # be at the head of the queue.
+
+    def __init__(self, x, /):
+        self.value = x
+        self.next = None
+        self.n = 0
+        self.lock = threading.Lock()
+
+
+class Fork:
+    def __init__(
+        self,
+        instream: Iterator,
+        n_forks: int,
+        buffer: queue.Queue,
+        head: SimpleNamespace,
+        instream_lock: threading.Lock,
+        fork_idx,
+    ):
+        self.instream = instream
+        self.n_forks = n_forks
+        self.buffer = buffer
+        self.head = head
+        self.instream_lock = instream_lock
+        self.next: TeeX | None = None
+        self._state = 0
+        self._fork_idx = fork_idx
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.next is None:
+            if self.head.value is None:
+                with self.instream_lock:
+                    if self.head.value is None:
+                        # Get the very first data element out of `instream`
+                        # across all forks.
+                        # If this raises `StopIteration`, meaning `instream`
+                        # is empty, the exception will be propagated, halting
+                        # this fork. All the other forks will also get to this
+                        # point and exit the same way.
+                        x = next(self.instream)
+                        box = TeeX(x)
+                        self.buffer.put(box)
+                        self.head.value = box
+                self.next = self.head.value
+                return self.__next__()
+            elif self._state == 0:
+                # This fork is getting the first element.
+                # Some fork (possibly this fork itself in the block above)
+                # has obtained the element and assigned it to `self.head.value`.
+                self.next = self.head.value
+                return self.__next__()
+            else:
+                raise StopIteration
+        else:
+            while self.next.next is None:
+                # During this loop while waiting on the `instream_lock`,
+                # `self.next.next` may become not None thanks to another Fork's
+                # actions.
+
+                # Pre-fetch the next element because `self.next` points to
+                # the final data element in the buffer.
+                locked = self.instream_lock.acquire(timeout=0.1)
+                if locked:
+                    if self.next.next is None:
+                        try:
+                            x = next(self.instream)
+                        except StopIteration:
+                            # `instream` is exhausted.
+                            # `self.next.next` remains `None`.
+                            # The next call to `__next__` will land
+                            # in the first branch and raise `StopIteration`.
+                            pass
+                        else:
+                            box = TeeX(x)
+                            self.next.next = box  # IMPORTANT: this line goes before the next to avoid race.
+                            self.buffer.put(box)
+                    self.instream_lock.release()
+                    break
+
+            # Check whether the buffer head should be popped:
+            box = self.next
+            with box.lock:
+                box.n += 1
+                if box.n == self.n_forks:
+                    # No other fork would be accessing this TeeX "x" at this moment,
+                    # and no other fork would be trying to pop the head of the buffer
+                    # at this time, hence the it's OK to continue holding the lock.
+                    self.buffer.get()
+
+            self.next = box.next
+            self._state = 1
+            return box.value
+
+
+def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 256) -> tuple[Stream]:
+    '''
+    ``tee`` produces multiple (default 2) "copies" of the input data stream,
+    to be used in different ways.
+
+    Suppose we have a data stream, on which we want to apply two different lines of operations, conceptually
+    like this::
+
+        data = [...]
+        stream_1 = Stream(data).map(...).batch(...).parmap(...)...
+        stream_2 = stream(data).buffer(...).parmap(...).map(...)...
+
+    There are a few ways we can do this:
+
+        1. Revise the code to apply multiple operations on each data element, that is, "merging"
+           the two lines of operations. This likely make the code more complex. It could be even
+           hard.
+
+        2. Apply the first line of operations. Then re-walk the data stream to apply the second
+           line of operations. There's one scenario in which this approach is not good. In that scenario,
+           getting the data stream is expensive (for example, each element is obtained via an HTTP call).
+           There are also stituations where it's not possible to get the data stream a second time.
+
+        3. Use the current function. The setup is like this::
+
+            data = [...]
+            stream_1, stream_2 = teee(data, 2)
+            stream_1 = Stream(data).map(...).batch(...).parmap(...)...
+            stream_2 = stream(data).buffer(...).parmap(...).map(...)...
+
+          Upon this setup, we should start "consuming" the two streams at once, letting them run
+          concurrently, and they will also finish around the same time. The concurrent "trigger"
+          needs to be in different threads. Suppose ``stream_1`` is run for some side effect, hence
+          we can simply ``drain`` it; for ``stream_2``, on the other hand, we want its outcoming elements.
+          We may do this::
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                t1 = pool.submit(stream_1.drain)
+                t2 = pool.submit(stream_2.collect)
+                n = t1.result()
+                output = t2.result()
+    '''
+    assert buffer_size >= 2
+    # In practice, use a reasonably large value that is feasible for the application.
+
+    buffer = queue.Queue(buffer_size)
+
+    if not hasattr(instream, '__next__'):
+        instream = iter(instream)
+    instream_lock = threading.Lock()
+
+    head = SimpleNamespace()
+    head.value = None
+    # `head` holds the very first element of `instream`.
+    # Once assigned, `head` will not change.
+
+    forks = tuple(Fork(instream, n, buffer, head, instream_lock, i) for i in range(n))
+    return tuple(Stream(f) for f in forks)

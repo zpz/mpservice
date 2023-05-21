@@ -1,18 +1,29 @@
 import asyncio
+import concurrent.futures
 import math
 import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.streamer import AsyncIter, AsyncIterQueue, IterQueue, Stream, SyncIter
+from mpservice.concurrent.futures import ThreadPoolExecutor
+from mpservice.streamer import (
+    AsyncIter,
+    AsyncIterQueue,
+    IterProcessQueue,
+    IterQueue,
+    Stream,
+    SyncIter,
+    tee,
+)
 
 
 def test_iterqueue():
-    q = IterQueue()
-    for x in range(30):
-        q.put(x)
-    q.close()
-    assert list(q) == list(range(30))
+    for cls in (IterQueue, IterProcessQueue):
+        q = cls()
+        for x in range(30):
+            q.put(x)
+        q.close()
+        assert list(q) == list(range(30))
 
 
 @pytest.mark.asyncio
@@ -1007,3 +1018,40 @@ async def test_async_switch():
     for y in s:  # `async for` would work too.
         assert y == x + 4
         x += 1
+
+
+def delayed_shift(x, shift, sleep_cap):
+    sleep(random.uniform(0.0, sleep_cap))
+    return x + shift
+
+
+def test_tee():
+    data = range(20)
+    t1, t2 = tee(data, buffer_size=4)
+    t1.map(lambda x: x + 2).parmap(lambda x: x + 2, executor='thread', num_workers=2)
+    t2.map(lambda x: x + 3).parmap(lambda x: x + 3, executor='thread', num_workers=2)
+
+    def worker(stream, prefix):
+        for x in stream:
+            print(prefix, '  ', x)
+
+    with ThreadPoolExecutor() as pool:
+        f1 = pool.submit(worker, t1, '**')
+        f2 = pool.submit(worker, t2, '--    ')
+        concurrent.futures.wait((f1, f2))
+
+    data = range(256)
+    for buffer_size in (2,):  # 1024, 64, 2):
+        print('buffer size', buffer_size)
+        t1, t2 = tee(data, buffer_size=buffer_size)
+        t1.parmap(
+            delayed_shift, shift=2, sleep_cap=0.2, executor='thread', num_workers=8
+        )
+        t2.parmap(
+            delayed_shift, shift=3, sleep_cap=0.3, executor='process', num_workers=8
+        )
+        with ThreadPoolExecutor() as pool:
+            f1 = pool.submit(sum, t1)
+            f2 = pool.submit(sum, t2)
+            assert f1.result() == sum(x + 2 for x in data)
+            assert f2.result() == sum(x + 3 for x in data)
