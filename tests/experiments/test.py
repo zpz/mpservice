@@ -1,13 +1,10 @@
-import ctypes
-from mpservice.multiprocessing import SimpleQueue, Event, Value
+from mpservice.multiprocessing import Manager
 
 
 def main():
-    q = SimpleQueue()
-    e = Value(ctypes.c_bool)
-    print(e.value)
-    q.put(e)
-    print(q.get())
+    m = Manager()
+    e = m.Event()
+    m.shutdown()
 
 
 if __name__ == '__main__':

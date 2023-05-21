@@ -10,6 +10,7 @@ from mpservice.streamer import (
     AsyncIter,
     AsyncIterQueue,
     IterQueue,
+    IterProcessQueue,
     Stream,
     SyncIter,
     tee,
@@ -17,11 +18,12 @@ from mpservice.streamer import (
 
 
 def test_iterqueue():
-    q = IterQueue()
-    for x in range(30):
-        q.put(x)
-    q.close()
-    assert list(q) == list(range(30))
+    for cls in (IterQueue, IterProcessQueue):
+        q = cls()
+        for x in range(30):
+            q.put(x)
+        q.close()
+        assert list(q) == list(range(30))
 
 
 @pytest.mark.asyncio
@@ -1018,6 +1020,11 @@ async def test_async_switch():
         x += 1
 
 
+def delayed_shift(x, shift, sleep_cap):
+    sleep(random.uniform(0.0, sleep_cap))
+    return x + shift
+
+
 def test_tee():
     data = range(20)
     t1, t2 = tee(data, buffer_size=4)
@@ -1034,5 +1041,15 @@ def test_tee():
         concurrent.futures.wait((f1, f2))
 
 
-if __name__ == '__main__':
-    test_tee()
+    data = range(256)
+    for buffer_size in (2, ): #1024, 64, 2):
+        print('buffer size', buffer_size)
+        t1, t2 = tee(data, buffer_size=buffer_size)
+        t1.parmap(delayed_shift, shift=2, sleep_cap=0.2, executor='thread', num_workers=8)
+        t2.parmap(delayed_shift, shift=3, sleep_cap=0.3, executor='process', num_workers=8)
+        with ThreadPoolExecutor() as pool:
+            f1 = pool.submit(sum, t1)
+            f2 = pool.submit(sum, t2)
+            assert f1.result() == sum(x + 2 for x in data)
+            assert f2.result() == sum(x + 3 for x in data)
+

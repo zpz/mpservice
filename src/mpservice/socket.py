@@ -321,7 +321,7 @@ class SocketServer:
             self._path = None
             self._host = host
             self._port = int(port)
-        self._backlog = backlog or 512
+        self._backlog = backlog or 256
         self._encoder = "pickle"  # encoder when sending responses
         self._n_connections = 0
         self._shutdown_path = shutdown_path
