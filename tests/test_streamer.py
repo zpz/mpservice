@@ -9,8 +9,8 @@ from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     AsyncIter,
     AsyncIterQueue,
-    IterQueue,
     IterProcessQueue,
+    IterQueue,
     Stream,
     SyncIter,
     tee,
@@ -1040,16 +1040,18 @@ def test_tee():
         f2 = pool.submit(worker, t2, '--    ')
         concurrent.futures.wait((f1, f2))
 
-
     data = range(256)
-    for buffer_size in (2, ): #1024, 64, 2):
+    for buffer_size in (2,):  # 1024, 64, 2):
         print('buffer size', buffer_size)
         t1, t2 = tee(data, buffer_size=buffer_size)
-        t1.parmap(delayed_shift, shift=2, sleep_cap=0.2, executor='thread', num_workers=8)
-        t2.parmap(delayed_shift, shift=3, sleep_cap=0.3, executor='process', num_workers=8)
+        t1.parmap(
+            delayed_shift, shift=2, sleep_cap=0.2, executor='thread', num_workers=8
+        )
+        t2.parmap(
+            delayed_shift, shift=3, sleep_cap=0.3, executor='process', num_workers=8
+        )
         with ThreadPoolExecutor() as pool:
             f1 = pool.submit(sum, t1)
             f2 = pool.submit(sum, t2)
             assert f1.result() == sum(x + 2 for x in data)
             assert f2.result() == sum(x + 3 for x in data)
-

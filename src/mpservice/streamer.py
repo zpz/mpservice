@@ -84,10 +84,10 @@ from .concurrent.futures import (
     get_shared_thread_pool,
 )
 from .multiprocessing import (
+    MP_SPAWN_CTX,
     Event,
     get_remote_traceback,
     is_remote_exception,
-    MP_SPAWN_CTX,
 )
 from .threading import MAX_THREADS, Thread
 
@@ -1950,7 +1950,7 @@ class Fork:
                     # and no other fork would be trying to pop the head of the buffer
                     # at this time, hence the it's OK to continue holding the lock.
                     self.buffer.get()
-            
+
             self.next = box.next
             self._state = 1
             return box.value
@@ -2002,7 +2002,7 @@ def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 256) -> tuple[S
     # In practice, use a reasonably large value that is feasible for the application.
 
     buffer = queue.Queue(buffer_size)
-    
+
     if not hasattr(instream, '__next__'):
         instream = iter(instream)
     instream_lock = threading.Lock()
