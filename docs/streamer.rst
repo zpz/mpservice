@@ -232,5 +232,7 @@ API reference
 
 .. autoclass:: mpservice.streamer.Stream
 
+.. autofunction:: mpservice.streamer.tee
+
 
 Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
