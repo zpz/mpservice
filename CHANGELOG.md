@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - New function ``streamer.tee``.
 - New class ``streamer.IterProcessQueue``.
+- Bub fix in ``mpserver.EnsembleServlet`` related to a conflict between "fail_fast" and "cancelled".
+  This is a temporary fix; the "cancelled" mechanism is expected to be removed in the next release.
 
 
 ## [0.12.8] - 2023-05-17

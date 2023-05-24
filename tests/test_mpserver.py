@@ -1,5 +1,6 @@
 import asyncio
 import pickle
+import random
 import time
 
 import pytest
@@ -579,3 +580,35 @@ async def test_cancel():
         assert (
             server.backlog == 0
         )  # the ensemble servlet did not run because the item is already cancelled when the servlet receives it.
+
+
+class RandomDelayedShift(Worker):
+    def __init__(self, shift, sleep_cap=0.5, **kwargs):
+        super().__init__(**kwargs)
+        self._shift = shift
+        self._sleep_cap = sleep_cap
+        
+    def call(self, x):
+        time.sleep(random.random() * self._sleep_cap)
+        return x + self._shift
+
+
+@pytest.mark.asyncio
+async def test_ensemble_cancle():
+    server = Server(
+        EnsembleServlet(
+            ProcessServlet(RandomDelayedShift, shift=1, cpus=[0]),
+            ProcessServlet(RandomDelayedShift, shift=2, cpus=[1, 2]),
+            ProcessServlet(RandomDelayedShift, shift=3, cpus=[3]),
+        ))
+    with server:
+        tasks = [
+            asyncio.create_task(server.async_call(x, timeout=0.1))
+            for x in range(10000)
+        ]
+        done, pending = await asyncio.wait(tasks)
+        for d in done:
+            try:
+                d.result()
+            except:
+                pass

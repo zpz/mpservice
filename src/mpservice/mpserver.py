@@ -1046,7 +1046,11 @@ class EnsembleServlet(Servlet):
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
-        fail_fast = self._fail_fast
+        
+        fail_fast = False # self._fail_fast
+        # `fail_fast=True` has issues with the `cancelled` check.
+        # The `cancelled` check may be removed in the next release.
+
         nn = len(qouts)
         while True:
             all_empty = True
@@ -1072,10 +1076,10 @@ class EnsembleServlet(Servlet):
                         # The entry has been removed due to "fail fast"
                         continue
 
-                    if y == CANCELLED or cancelled.is_set():
-                        catalog.pop(uid)
-                        qout.put((u, CANCELLED))
-                        continue
+                    # if y == CANCELLED or cancelled.is_set():
+                    #     catalog.pop(uid)
+                    #     qout.put((u, CANCELLED))
+                    #     continue
 
                     if isinstance(y, BaseException):
                         y = RemoteException(y)
@@ -1103,6 +1107,8 @@ class EnsembleServlet(Servlet):
                                 raise EnsembleError(z)
                             except Exception as e:
                                 y = RemoteException(e)
+                        elif any(v == CANCELLED for v in z['y']):
+                            y = CANCELLED
                         else:
                             y = z["y"]
                         qout.put((u, y))
