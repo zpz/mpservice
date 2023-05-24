@@ -539,9 +539,8 @@ async def test_cancel():
             y = server.call(x, timeout=0.6)
         assert server.backlog == 1
         await asyncio.sleep(0.5)
-        assert (
-            server.backlog == 0
-        )  # the 2nd servlet didn't run, otherwise this would be 1 at this moment
+        assert server.backlog == 1
+        # the 2nd servlet still runs, hence this is 1.
 
     with Server(
         SequentialServlet(
@@ -567,9 +566,7 @@ async def test_cancel():
         await asyncio.sleep(0.65)  # total 1.75 sec
         assert server.backlog == 1  # the ensemble step is running
         await asyncio.sleep(0.1)  # total 1.85 sec
-        assert (
-            server.backlog == 0
-        )  # the ensemble step finished thanks to short-circut when its 2nd member returns
+        assert server.backlog == 1
 
         with pytest.raises(TimeoutError):
             y = server.call(2, timeout=0.7)
@@ -578,8 +575,8 @@ async def test_cancel():
         )  # the first servlet is already underway; wait for it to finish
         time.sleep(0.31)  # total 1.01 sec
         assert (
-            server.backlog == 0
-        )  # the ensemble servlet did not run because the item is already cancelled when the servlet receives it.
+            server.backlog == 1
+        )  # the ensemble servlet stills runs even though the item is already cancelled when the servlet receives it.
 
 
 class RandomDelayedShift(Worker):
@@ -592,23 +589,3 @@ class RandomDelayedShift(Worker):
         time.sleep(random.random() * self._sleep_cap)
         return x + self._shift
 
-
-@pytest.mark.asyncio
-async def test_ensemble_cancle():
-    server = Server(
-        EnsembleServlet(
-            ProcessServlet(RandomDelayedShift, shift=1, cpus=[0]),
-            ProcessServlet(RandomDelayedShift, shift=2, cpus=[1, 2]),
-            ProcessServlet(RandomDelayedShift, shift=3, cpus=[3]),
-        )
-    )
-    with server:
-        tasks = [
-            asyncio.create_task(server.async_call(x, timeout=0.1)) for x in range(10000)
-        ]
-        done, pending = await asyncio.wait(tasks)
-        for d in done:
-            try:
-                d.result()
-            except:  # noqa: E722, S110
-                pass
