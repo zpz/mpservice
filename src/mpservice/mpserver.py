@@ -1046,8 +1046,8 @@ class EnsembleServlet(Servlet):
         qout = self._qout
         qouts = self._qouts
         catalog = self._uid_to_results
-        
-        fail_fast = False # self._fail_fast
+
+        fail_fast = False  # self._fail_fast
         # `fail_fast=True` has issues with the `cancelled` check.
         # The `cancelled` check may be removed in the next release.
 
