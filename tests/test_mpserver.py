@@ -588,4 +588,3 @@ class RandomDelayedShift(Worker):
     def call(self, x):
         time.sleep(random.random() * self._sleep_cap)
         return x + self._shift
-
