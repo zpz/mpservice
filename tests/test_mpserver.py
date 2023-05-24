@@ -610,5 +610,5 @@ async def test_ensemble_cancle():
         for d in done:
             try:
                 d.result()
-            except:
+            except:  # noqa: E722, S110
                 pass
