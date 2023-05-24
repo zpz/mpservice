@@ -2,19 +2,16 @@ from mpservice.multiprocessing import Manager
 from mpservice.threading import Thread
 from mpservice.multiprocessing import Process
 from time import sleep
-
-def worker(e):
-    sleep(.1)
-    return e.is_set()
+import pickle
 
 
 def main():
     m = Manager()
     e = m.Event()
-    t = Process(target=worker, args=(e,))
-    t.start()
+    e = pickle.dumps(e)
+    sleep(0.1)
+    ee = pickle.loads(e)
 
-    t.join()
     m.shutdown()
     print('shut down')
 

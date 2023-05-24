@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.12.9] - in progress
+## [0.12.9] - 2023-05-23
 
 - New function ``streamer.tee``.
 - New class ``streamer.IterProcessQueue``.
+- Removed the "cancellation" "Event" mechanism in ``mpserver.Server`` that was introduced in 0.12.7.
+  There are two main reasons for the removal: (1) the ``multiprocessing.manager.Event`` that is checked
+  by every worker seems to have considerable overhead although I did not measure it; (2) there is
+  difficulty in maintaining a reference to the ``Event`` object in the event of cancellation to
+  ensure any worker that tries to access it will do so before it is gone in the manager process;
+  this issue manifests as ``KeyError`` during unpickling when the object is being retrieved from
+  a multiprocessing queue.
 
 
 ## [0.12.8] - 2023-05-17
