@@ -115,9 +115,8 @@ it has direct interactions with the :class:`SequentialServlet` only::
 
     from mpservice.mpserver import Server
 
-    server = Server(servlet, sys_info_log_cadence=None)
+    server = Server(servlet)
 
-(The ``sys_info_log_cadence=None`` turns off some logging.)
 All this code is in a script named "test.py".
 Here's the remaining content of the script::
 

@@ -80,7 +80,6 @@ logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 CRASHED = b"0daf930f-e823-4737-a011-9ee2145812a4"
-CANCELLED = b"873c5da7-0d9f-4f16-8ef6-81123c3e8682"
 
 
 class TimeoutError(Exception):
@@ -1230,6 +1229,7 @@ class SwitchServlet(Servlet):
 
 
 class Server:
+
     @classmethod
     def get_mp_context(cls):
         """
@@ -1248,7 +1248,6 @@ class Server:
         main_cpu: int = 0,
         backlog: int = None,
         capacity: int = 256,
-        sys_info_log_cadence: int = None,
     ):
         """
         Parameters
@@ -1275,8 +1274,12 @@ class Server:
             The result is returned to the requester.
             The ``backlog`` value is simply the size limit on this internal
             book-keeping dict.
-        sys_info_log_cadence
-            .. deprecated:: 0.12.1. Will be removed in 0.13.0.
+
+        .. versionchanged:: 0.13.0
+            To use :meth:`async_call` and :meth:`async_stream`, you must start the object
+            in an **async** context manager. To use :meth:`call` and :meth:`stream`,
+            you must start the object in a (sync) context manager. You can not use
+            both the sync and async methods on one ``Server`` object.
         """
         self.servlet = servlet
 
@@ -1304,14 +1307,6 @@ class Server:
             self._main_cpus = cpus
             psutil.Process().cpu_affinity(cpus=cpus)
 
-        if sys_info_log_cadence is not None:
-            warnings.warn(
-                "The parameter `sys_info_log_cadence` is deprecated in version 0.12.1 and will be removed in 0.13.0",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self._started = False
-
     @property
     def capacity(self) -> int:
         return self._capacity
@@ -1324,12 +1319,7 @@ class Server:
         return len(self._uid_to_futures) >= self._capacity
 
     def __enter__(self):
-        """
-        Start the servlet and get the server ready to take requests.
-        """
-        assert not self._started
-
-        self._threads = []
+        self._pipeline_notfull = threading.Condition()
 
         self._q_in = (
             _SimpleThreadQueue()
@@ -1343,30 +1333,256 @@ class Server:
         )
         self.servlet.start(self._q_in, self._q_out)
 
-        t = Thread(
+        self._gather_thread = Thread(
             target=self._gather_output, name=f"{self.__class__.__name__}._gather_output"
         )
-        t.start()
-        self._threads.append(t)
+        self._gather_thread.start()
 
-        self._started = True
+        self.call = self._call
+        self.stream = self._stream
+
         return self
 
     def __exit__(self, *args):
-        assert self._started
-
         self._q_in.put(NOMOREDATA)
-
         self.servlet.stop()
-
-        for t in self._threads:
-            _ = t.result()
-
-        # Reset CPU affinity.
+        self._gather_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
-        self._started = False
+        # Reset CPU affinity.
 
-    async def async_call(
+    def _call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
+        """
+        This is called in "embedded" mode for sporadic uses.
+        It is not designed to serve high load from multi-thread concurrent
+        calls. To process large amounts in embedded model, use :meth:`stream`.
+
+        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`async_call`.
+        """
+        fut = self._enqueue(x, timeout, backpressure)
+        return self._wait_for_result(fut)
+
+    def _enqueue(self, x, timeout: float, backpressure: bool) -> concurrent.futures.Future:
+        # This method is called by `call` or `stream`.
+        # This method is thread-safe.
+        t0 = perf_counter()
+        pipeline = self._uid_to_futures
+
+        fut = concurrent.futures.Future()
+        uid = id(fut)
+
+        with self._pipeline_notfull:
+            if len(pipeline) >= self._capacity:
+                if backpressure:
+                    raise ServerBacklogFull(
+                        len(pipeline),
+                        f"0 seconds enqueue with back-pressure",
+                    )                    
+                if not self._pipeline_notfull.wait(timeout * 0.99):
+                    raise ServerBacklogFull(
+                        len(pipeline),
+                        f"{perf_counter() - t0:.3f} seconds enqueue",
+                    )
+            pipeline[uid] = fut
+
+        fut.data = {
+            "t0": t0,
+            "t1": perf_counter(),  # end of enqueuing
+            'deadline': t0 + timeout,
+            'cancelled': False,
+        }
+        self._q_in.put((uid, x))
+        return fut
+
+    def _wait_for_result(self, fut: concurrent.futures.Future):
+        # This method is thread-safe.
+        try:
+            return fut.result(timeout=fut.data['deadline'] - perf_counter())
+            # If timeout is negative, it doesn't wait.
+            # This may raise an exception originating from RemoteException
+        except concurrent.futures.TimeoutError as e:
+            fut.data['cancelled'] = True
+            t0 = fut.data["t0"]
+            raise TimeoutError(
+                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
+            ) from e
+
+    def _gather_output(self) -> None:
+        q_out = self._q_out
+        pipeline = self._uid_to_futures
+        pipeline_notfull = self._pipeline_notfull
+
+        while True:
+            z = q_out.get()
+            if z == NOMOREDATA:
+                break
+            uid, y = z
+            with pipeline_notfull:
+                fut = pipeline.pop(uid)  # this must exist
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                # However, here we need to acquire the lock because we want to notify.
+                pipeline_notfull.notify()
+            if isinstance(y, RemoteException):
+                y = y.exc
+            if isinstance(y, BaseException):
+                fut.set_exception(y)
+            else:
+                fut.set_result(y)
+            fut.data["t2"] = perf_counter()
+
+    def _stream(
+        self,
+        data_stream: Iterable,
+        /,
+        *,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        timeout: int | float = 60,
+    ) -> Iterator:
+        """
+        Use this method for high-throughput processing of a long stream of
+        data elements. In theory, this method achieves the throughput upper-bound
+        of the server, as it saturates the pipeline.
+
+        The order of elements in the stream is preserved, i.e.,
+        elements in the output stream corresponds to elements
+        in the input stream in the same order.
+
+        This method is thread-safe, that is, multiple threads can call this concurrently
+        with their own input streams. In that case, you may want to use ``return_exceptions=True``
+        in each of them so that one's exception does not propagate and halt the others.
+
+        Parameters
+        ----------
+        data_stream
+            An iterable, possibly unlimited, of input data elements.
+        return_x
+            If ``True``, each output element is a length-two tuple
+            containing the input data and the result.
+            If ``False``, each output element is just the result.
+        return_exceptions
+            If ``True``, any Exception object will be produced in the output stream
+            in place of the would-be regular result.
+            If ``False``, exceptions will be propagated right away, crashing the program.
+        timeout
+            Interpreted the same as in :meth:`call` and :meth:`async_call`.
+
+            In a streaming task, "timeout" is usually not a concern compared
+            to overall throughput. You can usually leave it at the default value.
+        """
+
+        def _enqueue(tasks, stopped, timeout):
+            # Putting input data in the queue does not need concurrency.
+            # The speed of sequential push is as fast as it can go.
+            _enq = self._enqueue
+            try:
+                for x in data_stream:
+                    if stopped.is_set():
+                        break
+                        # If user prematurally aborts the stream, then it could end up
+                        # waiting for a while to exit, because `_enq` may wait up to
+                        # `timeout`.
+                    fut = _enq(x, timeout, False)  # This will not wait; it will succeed right away.
+                    tasks.put((x, fut))
+                # Exceptions in `fut` is covered by `return_exceptions`.
+                # Uncaught exceptions will propagate and cause the thread to exit in
+                # exception state. This exception is not covered by `return_exceptions`;
+                # it will be detected in the main thread.
+            except Exception as e:
+                tasks.put(CRASHED)
+                tasks.put(e)
+            else:
+                tasks.put(NOMOREDATA)
+
+        def shutdown():
+            stopped.set()
+            while True:
+                worker.join(timeout=0.1)
+                if not worker.is_alive():
+                    break
+                while not tasks.empty():
+                    v = tasks.get()
+                    if v == NOMOREDATA:
+                        break
+                    if v == CRASHED:
+                        v = tasks.get()
+                        break
+                    _, fut = v
+                    fut.data['cancelled'] = True
+
+        tasks = queue.SimpleQueue()
+        # `tasks` has no size limit. Its length is restricted by the speed of the service.
+        # The downstream should get results out of it as soon as possible.
+        stopped = threading.Event()
+        worker = Thread(
+            target=_enqueue,
+            args=(tasks, stopped, timeout),
+            name=f"{self.__class__.__name__}.stream._enqueue",
+        )
+        worker.start()
+
+        _wait = self._wait_for_result
+
+        try:
+            while True:
+                z = tasks.get()
+                if z == NOMOREDATA:
+                    break
+                if z == CRASHED:
+                    e = tasks.get()
+                    raise e
+
+                x, fut = z
+                try:
+                    y = _wait(fut)
+                    # May raise TimeoutError or an exception out of RemoteException.
+                except Exception as e:
+                    if return_exceptions:
+                        if return_x:
+                            yield x, e
+                        else:
+                            yield e
+                    else:
+                        raise
+                else:
+                    if return_x:
+                        yield x, y
+                    else:
+                        yield y
+        finally:
+            shutdown()
+
+    async def __aenter__(self):
+        self._pipeline_notfull = asyncio.Condition()
+
+        self._q_in = (
+            _SimpleThreadQueue()
+            if self.servlet.input_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self._q_out = (
+            _SimpleThreadQueue()
+            if self.servlet.output_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self.servlet.start(self._q_in, self._q_out)
+
+        self._gather_task = asyncio.create_task(self._async_gather_output(), 
+             name=f"{self.__class__.__name__}._async_gather_output"
+        )
+
+        self.call = self._async_call
+        self.stream = self._async_stream
+
+        return self
+
+    async def __aexit__(self, *args):
+        self._q_in.put(NOMOREDATA)
+        self.servlet.stop()
+        await self._gather_task
+        psutil.Process().cpu_affinity(cpus=[])
+        # Reset CPU affinity.
+
+    async def _async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True
     ):
         """
@@ -1405,151 +1621,103 @@ class Server:
         fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._async_wait_for_result(fut)
 
-    def call(self, x, /, *, timeout: int | float = 60):
-        """
-        This is called in "embedded" mode for sporadic uses.
-        It is not designed to serve high load from multi-thread concurrent
-        calls. To process large amounts in embedded model, use :meth:`stream`.
+    async def _async_enqueue(
+        self, x, timeout: float, backpressure: bool
+    ) -> asyncio.Future:
 
-        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`async_call`.
-        """
-        fut = self._enqueue(x, timeout)
-        return self._wait_for_result(fut)
+        t0 = perf_counter()
+        pipeline = self._uid_to_futures
 
-    def stream(
-        self,
-        data_stream: Iterable,
-        /,
-        *,
-        return_x: bool = False,
-        return_exceptions: bool = False,
-        timeout: int | float = 60,
-    ) -> Iterator:
-        """
-        Use this method for high-throughput processing of a long stream of
-        data elements. In theory, this method achieves the throughput upper-bound
-        of the server, as it saturates the pipeline.
+        fut = asyncio.get_running_loop().create_future()
+        uid = id(fut)
 
-        The order of elements in the stream is preserved, i.e.,
-        elements in the output stream corresponds to elements
-        in the input stream in the same order.
-
-        Parameters
-        ----------
-        data_stream
-            An iterable, possibly unlimited, of input data elements.
-        return_x
-            If ``True``, each output element is a length-two tuple
-            containing the input data and the result.
-            If ``False``, each output element is just the result.
-        return_exceptions
-            If ``True``, any Exception object will be produced in the output stream
-            in place of the would-be regular result.
-            If ``False``, exceptions will be propagated right away, crashing the program.
-        timeout
-            Interpreted the same as in :meth:`call` and :meth:`async_call`.
-
-            In a streaming task, "timeout" is usually not a concern compared
-            to overall throughput. You can usually leave it at the default value.
-        """
-
-        def _enqueue(tasks, stopped):
-            # Putting input data in the queue does not need concurrency.
-            # The speed of sequential push is as fast as it can go.
-            _enq = self._enqueue
-            try:
-                for x in data_stream:
-                    nretries = 0
-                    t0 = None
-                    while self.full():
-                        if stopped.is_set():
-                            break
-                        if t0 is None:
-                            t0 = perf_counter()
-                        if nretries >= 100:
-                            raise ServerBacklogFull(
-                                len(self._uid_to_futures),
-                                f"{perf_counter() - t0:.3f} seconds enqueue",
-                            )
-                        nretries += 1
-                        sleep(0.1)
-                    if stopped.is_set():
-                        break
-                    fut = _enq(x, timeout)
-                    tasks.put((x, fut))
-                # Exceptions in `fut` is covered by `return_exceptions`.
-                # Uncaught exceptions will propagate and cause the thread to exit in
-                # exception state. This exception is not covered by `return_exceptions`;
-                # it will be detected in the main thread.
-            except Exception as e:
-                tasks.put(CRASHED)
-                tasks.put(e)
-            else:
-                tasks.put(NOMOREDATA)
-
-        def shutdown():
-            stopped.set()
-            while True:
-                worker.join(timeout=0.5)
-                if not worker.is_alive():
-                    break
-                while not tasks.empty():
-                    v = tasks.get()
-                    try:
-                        x, fut = v
-                    except (ValueError, TypeError):
-                        pass
-                    else:
-                        fut.data['cancelled'] = True
-
-        tasks = queue.SimpleQueue()
-        # `tasks` has no size limit. Its length is restricted by the speed of the service.
-        # The downstream should get results out of it as soon as possible.
-        stopped = threading.Event()
-        worker = Thread(
-            target=_enqueue,
-            args=(tasks, stopped),
-            name=f"{self.__class__.__name__}.stream._enqueue",
-        )
-        worker.start()
-
-        _wait = self._wait_for_result
+        async with self._pipeline_notfull:
+            if len(pipeline) >= self._capacity:
+                if backpressure:
+                    raise ServerBacklogFull(
+                        len(pipeline),
+                        "0 seconds enqueue with back-pressure",
+                    )
+                    # If this is behind a HTTP service, should return
+                    # code 503 (Service Unavailable) to client.
+                try:
+                    await asyncio.wait_for(
+                        self._pipeline_notfull.wait(), timeout * 0.99
+                    )
+                except (asyncio.TimeoutError, TimeoutError):  # should be the first one, but official doc referrs to the second
+                    raise ServerBacklogFull(
+                        len(pipeline),
+                        f"{perf_counter() - t0:.3f} seconds enqueue",
+                    )
+            pipeline[uid] = fut  # this line is atomic; no need to worry about ``CancelledError`` here
 
         try:
-            while True:
-                z = tasks.get()
-                if z == NOMOREDATA:
-                    break
-                if z == CRASHED:
-                    e = tasks.get()
-                    raise e
+            fut.data = {
+                "t0": t0,
+                "t1": perf_counter(),  # end of enqueuing
+                'deadline': t0 + timeout,
+                'cancelled': False,
+            }
+        except asyncio.CancelledError:
+            pipeline.pop(uid, None)
+            raise
+        try:
+            self._q_in.put((uid, x))
+        except asyncio.CancelledError:
+            # Not sure whether the item was placed in the queue.
+            # To ensure consistency with the expectation of `_async_gather_output`,
+            # put it in the queue again. If two copies of `x` were put in the queue,
+            # both will be processed in the pipeline.
+            # In the meantime, ``fut`` remains in ``self._uid_to_futures`` to wait
+            # for the result.
+            self._q_in.put((uid, x))
+            fut.data['cancelled'] = True
+            raise
 
-                x, fut = z
-                try:
-                    y = _wait(fut)
-                    # May raise TimeoutError or an exception out of RemoteException.
-                except Exception as e:
-                    if return_exceptions:
-                        if return_x:
-                            yield x, e
-                        else:
-                            yield e
-                    else:
-                        # logger.error("exception '%r' happened for input %r", e, x)
-                        logger.error(repr(e))
-                        raise
-                        # TODO: rethink the thread shutdown
+        return fut
+
+    async def _async_wait_for_result(self, fut: asyncio.Future):
+        try:
+            await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
+        except (asyncio.TimeoutError, TimeoutError):
+            t0 = fut.data['t0']
+            raise TimeoutError(
+                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
+            )
+        # asyncio.CancelledError could also happen; let it propagate.
+
+        return fut.result()
+        # This could raise an exception originating from RemoteException.
+
+    async def _async_gather_output(self) -> None:
+        q_out = self._q_out
+        pipeline = self._uid_to_futures
+        pipeline_notfull = self._pipeline_notfull
+        loop = asyncio.get_running_loop()
+
+        while True:
+            z = await loop.run_in_executor(None, q_out.get)
+            if z == NOMOREDATA:
+                break
+            uid, y = z
+            async with pipeline_notfull:
+                fut = pipeline.pop(uid, None)  # This could be absent due to an exceptional situation in ``_async_enqueue``.
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                # However, here we need to acquire the lock because we want to notify.
+                if fut is not None:
+                    pipeline_notfull.notify()
                 else:
-                    if y == CANCELLED:
-                        continue
-                    if return_x:
-                        yield x, y
-                    else:
-                        yield y
-        finally:
-            shutdown()
+                    continue
+            if not fut.cancelled():
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if isinstance(y, BaseException):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
+            fut.data["t2"] = perf_counter()
 
-    async def async_stream(
+    async def _async_stream(
         self,
         data_stream: AsyncIterable,
         /,
@@ -1562,25 +1730,13 @@ class Server:
         Analogous to :meth:`stream`.
         '''
 
-        async def _enqueue(tasks):
+        async def _enqueue(tasks, timeout):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._async_enqueue
             try:
                 async for x in data_stream:
-                    nretries = 0
-                    t0 = None
-                    while self.full():
-                        if t0 is None:
-                            t0 = perf_counter()
-                        if nretries >= 100:
-                            raise ServerBacklogFull(
-                                len(self._uid_to_futures),
-                                f"{perf_counter() - t0:.3f} seconds enqueue",
-                            )
-                        nretries += 1
-                        await asyncio.sleep(0.1)
-                    fut = await _enq(x, timeout, backpressure=True)
+                    fut = await _enq(x, timeout, backpressure=False)
                     await tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
@@ -1602,20 +1758,20 @@ class Server:
                     break
                 while not tasks.empty():
                     v = tasks.get_nowait()
-                    try:
-                        x, fut = v
-                    except (ValueError, TypeError):
-                        pass
-                    else:
-                        fut.data['cancelled'] = True
-
-                await asyncio.sleep(0.5)
+                    if v == NOMOREDATA:
+                        break
+                    if v == CRASHED:
+                        await tasks.get()
+                        break
+                    x, fut = v
+                    fut.data['cancelled'] = True
+                await asyncio.sleep(0.1)
 
         tasks = asyncio.Queue()
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
         # The downstream should get results out of it as soon as possible.
         t_enqueue = asyncio.create_task(
-            _enqueue(tasks), name=f'{self.__class__.__name__}.async_stream._enqueue'
+            _enqueue(tasks, timeout), name=f'{self.__class__.__name__}.async_stream._enqueue'
         )
 
         _wait = self._async_wait_for_result
@@ -1640,168 +1796,14 @@ class Server:
                         else:
                             yield e
                     else:
-                        # logger.error("exception '%r' happened for input %r", e, x)
-                        logger.error(repr(e))
                         raise
-                        # TODO: rethink the thread shutdown
                 else:
-                    if y == CANCELLED:
-                        continue
                     if return_x:
                         yield x, y
                     else:
                         yield y
         finally:
             await shutdown()
-
-    async def _async_enqueue(
-        self, x, timeout: float, backpressure: bool
-    ) -> concurrent.futures.Future:
-        t0 = perf_counter()
-        deadline = t0 + timeout
-        delta = max(timeout * 0.01, 0.01)
-
-        while self.full():
-            if backpressure:
-                raise ServerBacklogFull(
-                    len(self._uid_to_futures),
-                    "0 seconds enqueue",
-                )
-                # If this is behind a HTTP service, should return
-                # code 503 (Service Unavailable) to client.
-            if (t := perf_counter()) > deadline - delta:
-                raise ServerBacklogFull(
-                    len(self._uid_to_futures),
-                    f"{t - t0:.3f} seconds enqueue",
-                )
-                # If this is behind a HTTP service, should return
-                # code 503 (Service Unavailable) to client.
-            await asyncio.sleep(delta)
-            # It's OK if this sleep is a little long,
-            # because the pipe is full and busy.
-
-        fut = concurrent.futures.Future()
-        fut.data = {
-            "t0": t0,
-            "t1": perf_counter(),
-            "timeout": timeout,
-            "cancelled": False,
-        }
-        uid = id(fut)
-        try:
-            self._uid_to_futures[uid] = fut
-        except asyncio.CancelledError:
-            self._uid_to_futures.pop(uid, None)
-            raise
-        try:
-            self._q_in.put((uid, x))
-        except asyncio.CancelledError:
-            # Not sure whether the item was placed in the queue.
-            # To ensure consistency with the expectation of `_gather_output`,
-            # put it in the queue again.
-            self._q_in.put((uid, x))
-            fut.data['cancelled'] = True
-            raise
-        return fut
-
-    async def _async_wait_for_result(self, fut: concurrent.futures.Future):
-        try:
-            t0 = fut.data["t0"]
-            timeout = fut.data['timeout']
-            delta = max(timeout * 0.01, 0.01)
-            deadline = t0 + timeout
-            while not fut.done():
-                timenow = perf_counter()
-                if timenow > deadline:
-                    fut.data['cancelled'] = True
-                    raise TimeoutError(
-                        f"{fut.data['t1'] - t0:.3f} seconds enqueue, {timenow - t0:.3f} seconds total"
-                    )
-                await asyncio.sleep(delta)
-
-            # An alternative is to use ``asyncio.Future`` and ``asyncio.wait``.
-            # But tests suggested the alternative is much slower. I don't know why.
-        except asyncio.CancelledError:
-            fut.data['cancelled'] = True
-            raise
-
-        return fut.result()
-        # This could raise an exception originating from RemoteException.
-
-        # TODO: I don't understand why the following (along with
-        # corresponding change in `_async_enqueue`) seems to work but
-        # is very, very slow.
-
-        # t0 = fut.data['t0']
-        # t2 = t0 + fut.data['timeout']
-        # try:
-        #     return await asyncio.wait_for(fut, timeout=max(0, t2 - perf_counter()))
-        # except asyncio.TimeoutError:
-        #     # `wait_for` has already cancelled `fut`.
-        #     raise TimeoutError(f"{perf_counter() - t0:.3f} seconds total")
-
-    def _enqueue(self, x, timeout: float) -> concurrent.futures.Future:
-        # This method is called by `call` or `stream`.
-        # There are no concurrent calls to this method.
-        t0 = perf_counter()
-        deadline = t0 + timeout
-        delta = max(timeout * 0.01, 0.01)
-
-        while self.full():
-            if (t := perf_counter()) >= deadline - delta:
-                raise ServerBacklogFull(
-                    len(self._uid_to_futures),
-                    f"{t - t0:.3f} seconds enqueue",
-                )
-            sleep(delta)
-            # It's OK if this sleep is a little long,
-            # because the pipe is full and busy.
-
-        fut = concurrent.futures.Future()
-        fut.data = {
-            "t0": t0,
-            "t1": perf_counter(),
-            "timeout": timeout,
-            'cancelled': False,
-        }
-        uid = id(fut)
-        self._uid_to_futures[uid] = fut
-        self._q_in.put((uid, x))
-        return fut
-
-    def _wait_for_result(self, fut: concurrent.futures.Future):
-        t0 = fut.data["t0"]
-        timeout = fut.data['timeout']
-        deadline = t0 + timeout
-        delta = max(timeout * 0.01, 0.01)
-        try:
-            return fut.result(timeout=max(delta, deadline - perf_counter()))
-            # this may raise an exception originating from RemoteException
-        except concurrent.futures.TimeoutError as e:
-            fut.data['cancelled'] = True
-            raise TimeoutError(
-                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
-            ) from e
-
-    def _gather_output(self) -> None:
-        q_out = self._q_out
-        futures = self._uid_to_futures
-
-        while True:
-            z = q_out.get()
-            if z == NOMOREDATA:
-                break
-            uid, y = z
-            fut = futures.pop(uid, None)
-            if fut is None:  # should be very rare
-                continue
-            if isinstance(y, RemoteException):
-                y = y.exc
-            if isinstance(y, BaseException):
-                fut.set_exception(y)
-            else:
-                fut.set_result(y)
-            fut.data["t2"] = perf_counter()
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
