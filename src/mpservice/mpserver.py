@@ -1229,7 +1229,6 @@ class SwitchServlet(Servlet):
 
 
 class Server:
-
     @classmethod
     def get_mp_context(cls):
         """
@@ -1361,7 +1360,9 @@ class Server:
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
 
-    def _enqueue(self, x, timeout: float, backpressure: bool) -> concurrent.futures.Future:
+    def _enqueue(
+        self, x, timeout: float, backpressure: bool
+    ) -> concurrent.futures.Future:
         # This method is called by `call` or `stream`.
         # This method is thread-safe.
         t0 = perf_counter()
@@ -1375,8 +1376,8 @@ class Server:
                 if backpressure:
                     raise ServerBacklogFull(
                         len(pipeline),
-                        f"0 seconds enqueue with back-pressure",
-                    )                    
+                        "0 seconds enqueue with back-pressure",
+                    )
                 if not self._pipeline_notfull.wait(timeout * 0.99):
                     raise ServerBacklogFull(
                         len(pipeline),
@@ -1481,7 +1482,9 @@ class Server:
                         # If user prematurally aborts the stream, then it could end up
                         # waiting for a while to exit, because `_enq` may wait up to
                         # `timeout`.
-                    fut = _enq(x, timeout, False)  # This will not wait; it will succeed right away.
+                    fut = _enq(
+                        x, timeout, False
+                    )  # This will not wait; it will succeed right away.
                     tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
@@ -1566,8 +1569,9 @@ class Server:
         )
         self.servlet.start(self._q_in, self._q_out)
 
-        self._gather_task = asyncio.create_task(self._async_gather_output(), 
-             name=f"{self.__class__.__name__}._async_gather_output"
+        self._gather_task = asyncio.create_task(
+            self._async_gather_output(),
+            name=f"{self.__class__.__name__}._async_gather_output",
         )
 
         self.call = self._async_call
@@ -1644,12 +1648,17 @@ class Server:
                     await asyncio.wait_for(
                         self._pipeline_notfull.wait(), timeout * 0.99
                     )
-                except (asyncio.TimeoutError, TimeoutError):  # should be the first one, but official doc referrs to the second
+                except (
+                    asyncio.TimeoutError,
+                    TimeoutError,
+                ):  # should be the first one, but official doc referrs to the second
                     raise ServerBacklogFull(
                         len(pipeline),
                         f"{perf_counter() - t0:.3f} seconds enqueue",
                     )
-            pipeline[uid] = fut  # this line is atomic; no need to worry about ``CancelledError`` here
+            pipeline[
+                uid
+            ] = fut  # this line is atomic; no need to worry about ``CancelledError`` here
 
         try:
             fut.data = {
@@ -1701,7 +1710,9 @@ class Server:
                 break
             uid, y = z
             async with pipeline_notfull:
-                fut = pipeline.pop(uid, None)  # This could be absent due to an exceptional situation in ``_async_enqueue``.
+                fut = pipeline.pop(
+                    uid, None
+                )  # This could be absent due to an exceptional situation in ``_async_enqueue``.
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
                 # However, here we need to acquire the lock because we want to notify.
                 if fut is not None:
@@ -1771,7 +1782,8 @@ class Server:
         # `tasks` has no size limit. Its length is restricted by the speed of the service.
         # The downstream should get results out of it as soon as possible.
         t_enqueue = asyncio.create_task(
-            _enqueue(tasks, timeout), name=f'{self.__class__.__name__}.async_stream._enqueue'
+            _enqueue(tasks, timeout),
+            name=f'{self.__class__.__name__}.async_stream._enqueue',
         )
 
         _wait = self._async_wait_for_result
