@@ -225,11 +225,11 @@ into a Server, which handles scheduling as well as interfacing with the outside
 world::
 
     server = Server(s)
-    with server:
+    async with server:
         y = server.call(38)
-        z = await server.async_call('abc')
+        z = await server.call('abc')
 
-        for x, y in server.stream(data, return_x=True):
+        async for x, y in server.stream(data, return_x=True):
             print(x, y)
 
 

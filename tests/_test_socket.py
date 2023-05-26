@@ -50,13 +50,14 @@ def run_mp_server():
 
     model = Server(ProcessServlet(Double))
     app = SocketApplication(on_startup=[model.__enter__], on_shutdown=[model.__exit__])
-    app.add_route('/', model.async_call)
+    app.add_route('/', model._call)
 
     config_logger(level='info')  # this is for the server running in another process
     server = make_server(app, path='/tmp/sock_abc')
     asyncio.run(server.serve())
 
 
+# TODO: make this work
 def test_mpserver():
     mp = multiprocessing.get_context('spawn')
     server = mp.Process(target=run_mp_server)

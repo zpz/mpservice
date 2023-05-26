@@ -1275,10 +1275,9 @@ class Server:
             book-keeping dict.
 
         .. versionchanged:: 0.13.0
-            To use :meth:`async_call` and :meth:`async_stream`, you must start the object
-            in an **async** context manager. To use :meth:`call` and :meth:`stream`,
-            you must start the object in a (sync) context manager. You can not use
-            both the sync and async methods on one ``Server`` object.
+            You must start the object in a **sync** (**async**) context manager
+            in order to use it in a sync (async) way. In both modes, the methods
+            are called ``call`` and ``stream``.
         """
         self.servlet = servlet
 
@@ -1305,6 +1304,8 @@ class Server:
                 cpus = main_cpu
             self._main_cpus = cpus
             psutil.Process().cpu_affinity(cpus=cpus)
+
+        self._async_mode = None
 
     @property
     def capacity(self) -> int:
@@ -1339,6 +1340,7 @@ class Server:
 
         self.call = self._call
         self.stream = self._stream
+        self._async_mode = False
 
         return self
 
@@ -1355,7 +1357,7 @@ class Server:
         It is not designed to serve high load from multi-thread concurrent
         calls. To process large amounts in embedded model, use :meth:`stream`.
 
-        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`async_call`.
+        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`_async_call`.
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1465,7 +1467,7 @@ class Server:
             in place of the would-be regular result.
             If ``False``, exceptions will be propagated right away, crashing the program.
         timeout
-            Interpreted the same as in :meth:`call` and :meth:`async_call`.
+            Interpreted the same as in :meth:`_call` and :meth:`_async_call`.
 
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value.
@@ -1576,6 +1578,7 @@ class Server:
 
         self.call = self._async_call
         self.stream = self._async_stream
+        self._async_mode = True
 
         return self
 
@@ -1614,7 +1617,7 @@ class Server:
             is over, the :class:`TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request
-            in ``async_call``.
+            in ``_async_call``.
         backpressure
             If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
             right away. If ``False``, wait on the input queue for as long as
