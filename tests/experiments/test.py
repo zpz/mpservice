@@ -1,20 +1,9 @@
-from mpservice.multiprocessing import Manager
-from mpservice.threading import Thread
-from mpservice.multiprocessing import Process
-from time import sleep
-import pickle
+import asyncio
 
-
-def main():
-    m = Manager()
-    e = m.Event()
-    e = pickle.dumps(e)
-    sleep(0.1)
-    ee = pickle.loads(e)
-
-    m.shutdown()
-    print('shut down')
+async def main():
+    loop = asyncio.get_running_loop()
+    print(loop.set_default_executor())
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

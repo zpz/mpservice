@@ -59,17 +59,17 @@ def test_basic():
 
 @pytest.mark.asyncio
 async def test_sequential_server_async():
-    with Server(
+    async with Server(
         SequentialServlet(
             ProcessServlet(Double, cpus=[1, 2]),
             ProcessServlet(Shift, cpus=[3]),
         )
     ) as service:
-        z = await service.async_call(3)
+        z = await service.call(3)
         assert z == 3 * 2 + 3
 
         x = list(range(10))
-        tasks = [service.async_call(v) for v in x]
+        tasks = [service.call(v) for v in x]
         y = await asyncio.gather(*tasks)
         assert y == [v * 2 + 3 for v in x]
 
@@ -104,7 +104,7 @@ def test_sequential_batch():
 def test_sequential_error():
     s1 = ProcessServlet(Double, cpus=[1, 2])
     s2 = ProcessServlet(Shift, cpus=[3], stepsize=4)
-    with Server(SequentialServlet(s1, s2), sys_info_log_cadence=None) as service:
+    with Server(SequentialServlet(s1, s2)) as service:
         z = service.call(3)
         assert z == 3 * 2 + 4
 
@@ -114,13 +114,13 @@ def test_sequential_error():
 
 @pytest.mark.asyncio
 async def test_sequential_timeout_async():
-    with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
+    async with Server(ProcessServlet(Delay)) as service:
         with pytest.raises(TimeoutError):
-            await service.async_call(2.2, timeout=1)
+            await service.call(2.2, timeout=1)
 
 
 def test_sequential_timeout():
-    with Server(ProcessServlet(Delay), sys_info_log_cadence=None) as service:
+    with Server(ProcessServlet(Delay)) as service:
         with pytest.raises(TimeoutError):
             service.call(2.2, timeout=1)
 
@@ -162,15 +162,12 @@ async def test_sequential_async_stream():
         for x in range(100):
             yield x
 
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
-        ss = service.async_stream(data())
+    async with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
 
-        s = Stream(data()).parmap(service.async_call, num_workers=50)
+        s = Stream(data()).parmap(service.call, num_workers=50)
         assert (await s.collect()) == [v * v for v in range(100)]
-
-        s = Stream(range(100)).parmap(service.call, executor='thread', num_workers=10)
-        assert list(s) == [v * v for v in range(100)]
 
 
 @pytest.mark.asyncio
@@ -182,10 +179,10 @@ async def test_async_stream_error():
             else:
                 yield x
 
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+    async with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = list(range(30))
         data[22] = 'a'
-        ss = service.async_stream(adata())
+        ss = service.stream(adata())
         with pytest.raises(TypeError):
             assert [v async for v in ss] == [v * v for v in data]
 
@@ -196,8 +193,8 @@ async def test_async_stream_early_quit():
         for x in range(100):
             yield x
 
-    with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
-        ss = service.async_stream(data(), return_x=True)
+    async with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
+        ss = service.stream(data(), return_x=True)
         n = 0
         async for x, y in ss:
             assert y == x * x
@@ -233,18 +230,18 @@ my_wide_server = SequentialServlet(
 
 @pytest.mark.asyncio
 async def test_ensemble_server_async():
-    with Server(my_wide_server, sys_info_log_cadence=None) as service:
-        z = await service.async_call('abcde')
+    async with Server(my_wide_server) as service:
+        z = await service.call('abcde')
         assert z == 'aeaeaeaeae'
 
         x = ['xyz', 'abc', 'jk', 'opqs']
-        tasks = [service.async_call(v) for v in x]
+        tasks = [service.call(v) for v in x]
         y = await asyncio.gather(*tasks)
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
 
 
 def test_ensemble_server():
-    with Server(my_wide_server, sys_info_log_cadence=None) as service:
+    with Server(my_wide_server) as service:
         z = service.call('abcde')
         assert z == 'aeaeaeaeae'
 
@@ -276,13 +273,13 @@ your_wide_server = SequentialServlet(
 
 @pytest.mark.asyncio
 async def test_ensemble_timeout_async():
-    with Server(your_wide_server, sys_info_log_cadence=None) as service:
+    async with Server(your_wide_server) as service:
         with pytest.raises(TimeoutError):
-            await service.async_call(8.2, timeout=1)
+            await service.call(8.2, timeout=1)
 
 
 def test_ensemble_timeout():
-    with Server(your_wide_server, sys_info_log_cadence=None) as service:
+    with Server(your_wide_server) as service:
         with pytest.raises(TimeoutError):
             service.call(8.2, timeout=1)
 
@@ -299,7 +296,7 @@ his_wide_server = SequentialServlet(
 
 
 def test_ensemble_stream():
-    with Server(his_wide_server, sys_info_log_cadence=None) as service:
+    with Server(his_wide_server) as service:
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
@@ -330,7 +327,7 @@ def test_thread():
     s2 = ThreadServlet(AddFive)
     s3 = ThreadServlet(TakeMean)
     s = SequentialServlet(EnsembleServlet(s1, s2), s3)
-    with Server(s, sys_info_log_cadence=None) as service:
+    with Server(s) as service:
         assert service.call(3) == 6
         for x, y in service.stream(range(100), return_x=True):
             assert y == x + 3
@@ -399,7 +396,7 @@ def test_exceptions():
         ProcessServlet(Worker4),
         ProcessServlet(Worker5),
     )
-    with Server(s, sys_info_log_cadence=None) as server:
+    with Server(s) as server:
         assert server.call(0) == 0
         with pytest.raises(Error1):
             server.call(1)
@@ -514,35 +511,35 @@ class DelayedShift(Worker):
 
 @pytest.mark.asyncio
 async def test_cancel():
-    with Server(
+    async with Server(
         SequentialServlet(
             ProcessServlet(DelayedShift, delay=1, shift=2),
             ProcessServlet(DelayedShift, delay=1, shift=3),
         )
     ) as server:
         x = 3
-        y = await server.async_call(x)
+        y = await server.call(x)
         assert y == x + 5
 
         try:
             y = await asyncio.wait_for(
-                server.async_call(x),
+                server.call(x),
                 0.5,
             )
         except asyncio.TimeoutError:
             pass
         assert server.backlog == 1
-        time.sleep(2)
+        await asyncio.sleep(2)
         assert server.backlog == 0
 
         with pytest.raises(TimeoutError):
-            y = server.call(x, timeout=0.6)
+            y = await server.call(x, timeout=0.6)
         assert server.backlog == 1
         await asyncio.sleep(0.5)
         assert server.backlog == 1
         # the 2nd servlet still runs, hence this is 1.
 
-    with Server(
+    async with Server(
         SequentialServlet(
             ProcessServlet(DelayedShift, delay=1, shift=2),
             EnsembleServlet(
@@ -552,12 +549,12 @@ async def test_cancel():
             ),
         )
     ) as server:
-        assert server.call(2) == [6, 7, 8]
+        assert await server.call(2) == [6, 7, 8]
         assert server.backlog == 0
 
         try:
             y = await asyncio.wait_for(
-                server.async_call(x),
+                server.call(x),
                 1.1,
             )
         except asyncio.TimeoutError:
@@ -569,7 +566,7 @@ async def test_cancel():
         assert server.backlog == 1
 
         with pytest.raises(TimeoutError):
-            y = server.call(2, timeout=0.7)
+            y = await server.call(2, timeout=0.7)
         assert (
             server.backlog == 1
         )  # the first servlet is already underway; wait for it to finish

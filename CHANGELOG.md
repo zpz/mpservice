@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.0] - in progress
+
+- Breaking changes to ``mpserver.Server`` API: if you want to use it in sync way, you must
+  start the object in a (sync) context manager, and the methods are ``call`` and ``stream``;
+  if you want to use it in async way, you must start the object in an async context manager,
+  and the methods are still called ``call`` and ``stream``.
+- Finetuned waiting and sleeping logic in ``mpserver.Server``; use ``Condition`` to replace sleeping.
+
+
 ## [0.12.9] - 2023-05-23
 
 - New function ``streamer.tee``.
