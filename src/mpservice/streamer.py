@@ -830,45 +830,48 @@ class IterQueue(queue.Queue):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._closed = False
+        self._closed_ = False
 
     def close(self, *, timeout=None):
         super().put(FINISHED, timeout=timeout)
-        self._closed = True
+        self._closed_ = True
 
     def close_nowait(self):
         super().put_nowait(FINISHED)
-        self._closed = True
+        self._closed_ = True
 
     def closed(self) -> bool:
-        return self._closed
+        return self._closed_
 
     def put(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_:
             raise self.Closed
         return super().put(*args, **kwargs)
 
     def put_nowait(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_:
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
 
     def get(self, *args, **kwargs):
-        if self._closed:
+        z = super().get(*args, **kwargs)
+        if z == FINISHED:
+            self.close()
             raise self.Closed
-        return super().get(*args, **kwargs)
+        return z
 
     def get_nowait(self, *args, **kwargs):
-        if self._closed:
+        z = super().get_nowait(*args, **kwargs)
+        if z == FINISHED:
+            self.close()
             raise self.Closed
-        return super().get_nowait(*args, **kwargs)
+        return z
 
     def __iter__(self):
         while True:
-            x = self.get()
-            if x == FINISHED:
-                self.close()
-                # In case other workers try to iter over this afterwards.
+            try:
+                x = self.get()
+            except self.Closed:
                 break
             yield x
 
@@ -879,44 +882,48 @@ class AsyncIterQueue(asyncio.Queue):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._closed = False
+        self._closed_ = False
 
     async def close(self):
         await super().put(FINISHED)
-        self._closed = True
+        self._closed_ = True
 
     def close_nowait(self):
         super().put_nowait(FINISHED)
-        self._closed = True
+        self._closed_ = True
 
     def closed(self) -> bool:
-        return self._closed
+        return self._closed_
 
     async def put(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_:
             raise self.Closed
         return await super().put(*args, **kwargs)
 
     def put_nowait(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_:
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
 
     async def get(self, *args, **kwargs):
-        if self._closed:
+        z = await super().get(*args, **kwargs)
+        if z == FINISHED:
+            await self.close()
             raise self.Closed
-        return await super().get(*args, **kwargs)
+        return z
 
     def get_nowait(self, *args, **kwargs):
-        if self._closed:
+        z = super().get_nowait(*args, **kwargs)
+        if z == FINISHED:
+            self.close_nowait()
             raise self.Closed
-        return super().get_nowait(*args, **kwargs)
+        return z
 
     async def __aiter__(self):
         while True:
-            x = await self.get()
-            if x == FINISHED:
-                await self.close()
+            try:
+                x = await self.get()
+            except self.Closed:
                 break
             yield x
 
@@ -929,44 +936,48 @@ class IterProcessQueue(multiprocessing.queues.Queue):
         if ctx is None or ctx == 'spawn':
             ctx = MP_SPAWN_CTX
         super().__init__(maxsize, ctx=ctx)
-        self._closed = ctx.Event()
+        self._closed_ = ctx.Event()
 
     def close(self, *, timeout=None):
         super().put(FINISHED, timeout=timeout)
-        self._closed.set()
+        self._closed_.set()
 
     def close_nowait(self):
         super().put_nowait(FINISHED)
-        self._closed.set()
+        self._closed_.set()
 
     def closed(self) -> bool:
-        return self._closed.is_set()
+        return self._closed_.is_set()
 
     def put(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_.is_set():
             raise self.Closed
         return super().put(*args, **kwargs)
 
     def put_nowait(self, *args, **kwargs):
-        if self._closed:
+        if self._closed_.is_set():
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
 
     def get(self, *args, **kwargs):
-        if self._closed:
+        z = super().get(*args, **kwargs)
+        if z == FINISHED:
+            self.close()
             raise self.Closed
-        return super().get(*args, **kwargs)
+        return z
 
     def get_nowait(self, *args, **kwargs):
-        if self._closed:
+        z = super().get_nowait(*args, **kwargs)
+        if z == FINISHED:
+            self.close()
             raise self.Closed
-        return super().get_nowait(*args, **kwargs)
+        return z
 
     def __iter__(self):
         while True:
-            x = self.get()
-            if x == FINISHED:
-                self.close()
+            try:
+                x = super().get()
+            except self.Closed:
                 break
             yield x
 
