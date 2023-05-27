@@ -1,12 +1,10 @@
 import asyncio
-import multiprocessing
 import time
 
 from mpservice.mpserver import ProcessServlet, Server, Worker
+from mpservice.multiprocessing import MP_SPAWN_CTX
 from mpservice.socket import SocketApplication, SocketClient, make_server
 from zpz.logging import config_logger
-
-mp = multiprocessing.get_context('spawn')
 
 
 def run_my_server():
@@ -22,7 +20,7 @@ def run_my_server():
 
 
 def test_simple():
-    server = mp.Process(target=run_my_server)
+    server = MP_SPAWN_CTX.Process(target=run_my_server)
     server.start()
     with SocketClient(path='/tmp/sock_abc') as client:
         assert client.request('/', 23) == 46
@@ -47,19 +45,22 @@ class Double(Worker):
 
 
 def run_mp_server():
+    async def main():
+        async with Server(ProcessServlet(Double)) as model:
+            app = SocketApplication()
+            app.add_route('/', model.call)
 
-    model = Server(ProcessServlet(Double))
-    app = SocketApplication(on_startup=[model.__enter__], on_shutdown=[model.__exit__])
-    app.add_route('/', model.async_call)
+            config_logger(
+                level='info'
+            )  # this is for the server running in another process
+            server = make_server(app, path='/tmp/sock_abc')
+            await server.serve()
 
-    config_logger(level='info')  # this is for the server running in another process
-    server = make_server(app, path='/tmp/sock_abc')
-    asyncio.run(server.serve())
+    asyncio.run(main())
 
 
 def test_mpserver():
-    mp = multiprocessing.get_context('spawn')
-    server = mp.Process(target=run_mp_server)
+    server = MP_SPAWN_CTX.Process(target=run_mp_server)
     server.start()
     with SocketClient(path='/tmp/sock_abc') as client:
         assert client.request('/', 23) == 46

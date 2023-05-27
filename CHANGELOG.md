@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   if you want to use it in async way, you must start the object in an async context manager,
   and the methods are still called ``call`` and ``stream``.
 - Finetuned waiting and sleeping logic in ``mpserver.Server``; use ``Condition`` to replace sleeping.
+- Made sure ``mpserver.Server.stream` is thread-safe.
+- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``separator``.
 
 
 ## [0.12.9] - 2023-05-23

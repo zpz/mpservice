@@ -6,7 +6,7 @@ In practice, you may choose any other Python HTTP server library as long as it i
 the `ASGI specification <https://asgi.readthedocs.io/en/latest/>`_.
 
 This utility code is not directly connected to :class:`~mpservice.mpserver.Server`, because Server simply
-provides the method :meth:`~mpservice.mpserver.Server.async_call` that can be called from an HTTP
+provides the method :meth:`~mpservice.mpserver.Server.call` that can be called from an HTTP
 request handler function. What the request handler needs do not need to be tied to the ``uvicorn.Server``.
 
 Below is one way to structure it.
@@ -23,7 +23,7 @@ In this example, we use a global ``context`` object to arrange some connections.
     async def handle_request(request):
         ...
         ...
-        result = await context.model.async_call(...)
+        result = await context.model.call(...)
         ...
         return JSONResponse(...)
 
@@ -45,7 +45,7 @@ In this example, we use a global ``context`` object to arrange some connections.
         context.app = app
         context.server = server
 
-        with Server(...) as model:
+        async with Server(...) as model:
             context.model = model
 
             # Start infinite loop

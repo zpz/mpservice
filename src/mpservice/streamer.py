@@ -369,6 +369,8 @@ class Stream:
         interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
+        prefix: str = '',
+        separator: str = ':  ',
     ) -> Self:
         """Take a peek at the data element *before* it continues in the stream.
 
@@ -418,6 +420,9 @@ class Stream:
             exc_types = ()
         elif type(exc_types) is type:  # a class
             exc_types = (exc_types,)
+        if prefix:
+            if not prefix.endswith(' ') and not prefix.endswith('\n'):
+                prefix += ' '
 
         class Peeker:
             def __init__(self):
@@ -426,6 +431,8 @@ class Stream:
                 self._interval = interval
                 self._exc_types = exc_types
                 self._with_trace = with_exc_tb
+                self._prefix = prefix
+                self._separator = separator
 
             def __call__(self, x):
                 self._idx += 1
@@ -446,7 +453,7 @@ class Stream:
                 if not should_print:
                     return x
                 if not isinstance(x, BaseException):
-                    self._print_func("#%d:  %r" % (self._idx, x))
+                    self._print_func(f"{self._prefix}#{self._idx}{self._separator}{x}")
                     return x
                 trace = ""
                 if self._with_trace:
@@ -457,10 +464,9 @@ class Stream:
                             trace = "".join(traceback.format_tb(x.__traceback__))
                         except AttributeError:
                             pass
+                self._print_func(f"{self._prefix}#{self._idx}{self._separator}{x}")
                 if trace:
-                    self._print_func("#%d:  %r\n%s" % (self._idx, x, trace))
-                else:
-                    self._print_func(f"#{self._idx}:  {x!r}")
+                    self._print_func(trace)
                 return x
 
         return self.map(Peeker())
@@ -656,6 +662,7 @@ class Stream:
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        _async: bool | None = None,
         **kwargs,
     ) -> Self:
         """Parallel, or concurrent, counterpart of :meth:`map`.
@@ -707,7 +714,7 @@ class Stream:
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
         """
-        if inspect.iscoroutinefunction(func):
+        if (_async is None and inspect.iscoroutinefunction(func)) or (_async is True):
             if hasattr(self.streamlets[-1], '__aiter__'):
                 # This method is called within an async environment.
                 # The operator runs in the current thread on the current asyncio event loop.
@@ -818,51 +825,148 @@ class AsyncIter(AsyncIterable):
 
 
 class IterQueue(queue.Queue):
+    class Closed(Exception):
+        pass
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._closed = False
+
     def close(self, *, timeout=None):
-        self.put(FINISHED, timeout=timeout)
+        super().put(FINISHED, timeout=timeout)
+        self._closed = True
 
     def close_nowait(self):
-        self.put_nowait(FINISHED)
+        super().put_nowait(FINISHED)
+        self._closed = True
+
+    def closed(self) -> bool:
+        return self._closed
+
+    def put(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().put(*args, **kwargs)
+
+    def put_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().put_nowait(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().get(*args, **kwargs)
+
+    def get_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().get_nowait(*args, **kwargs)
 
     def __iter__(self):
         while True:
             x = self.get()
             if x == FINISHED:
+                self.close()
+                # In case other workers try to iter over this afterwards.
                 break
             yield x
 
 
 class AsyncIterQueue(asyncio.Queue):
+    class Closed(Exception):
+        pass
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._closed = False
+
     async def close(self):
-        await self.put(FINISHED)
+        await super().put(FINISHED)
+        self._closed = True
 
     def close_nowait(self):
-        self.put_nowait(FINISHED)
+        super().put_nowait(FINISHED)
+        self._closed = True
+
+    def closed(self) -> bool:
+        return self._closed
+
+    async def put(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return await super().put(*args, **kwargs)
+
+    def put_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().put_nowait(*args, **kwargs)
+
+    async def get(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return await super().get(*args, **kwargs)
+
+    def get_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().get_nowait(*args, **kwargs)
 
     async def __aiter__(self):
         while True:
             x = await self.get()
             if x == FINISHED:
+                await self.close()
                 break
             yield x
 
 
 class IterProcessQueue(multiprocessing.queues.Queue):
+    class Closed(Exception):
+        pass
+
     def __init__(self, maxsize=0, *, ctx=None):
         if ctx is None or ctx == 'spawn':
             ctx = MP_SPAWN_CTX
         super().__init__(maxsize, ctx=ctx)
+        self._closed = ctx.Event()
 
     def close(self, *, timeout=None):
-        self.put(FINISHED, timeout=timeout)
+        super().put(FINISHED, timeout=timeout)
+        self._closed.set()
 
     def close_nowait(self):
-        self.put_nowait(FINISHED)
+        super().put_nowait(FINISHED)
+        self._closed.set()
+
+    def closed(self) -> bool:
+        return self._closed.is_set()
+
+    def put(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().put(*args, **kwargs)
+
+    def put_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().put_nowait(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().get(*args, **kwargs)
+
+    def get_nowait(self, *args, **kwargs):
+        if self._closed:
+            raise self.Closed
+        return super().get_nowait(*args, **kwargs)
 
     def __iter__(self):
         while True:
             x = self.get()
             if x == FINISHED:
+                self.close()
                 break
             yield x
 

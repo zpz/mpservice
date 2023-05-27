@@ -166,7 +166,7 @@ async def test_sequential_async_stream():
         ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
 
-        s = Stream(data()).parmap(service.call, num_workers=50)
+        s = Stream(data()).parmap(service.call, num_workers=50, _async=True)
         assert (await s.collect()) == [v * v for v in range(100)]
 
 
