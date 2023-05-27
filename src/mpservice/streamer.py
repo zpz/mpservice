@@ -825,161 +825,144 @@ class AsyncIter(AsyncIterable):
 
 
 class IterQueue(queue.Queue):
-    class Closed(Exception):
+    # In the implementations of ``queue.Queue`` and ``multiprocessing.queues.Queue``,
+    # ``put_nowait`` and ``get_nowait`` simply call ``put`` and ``get``.
+    # In the implementation of ``asyncio.queues.Queue``, however,
+    # ``put`` calls ``put_nowait``, and ``get`` calls ``get_nowait``.
+
+    class Finished(RuntimeError):
         pass
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._closed_ = False
+        self._finished_ = False
 
-    def close(self, *, timeout=None):
+    def finish(self, *, timeout=None):
+        '''
+        This is on the "putting" side, indicating all elements
+        have been placed in the queue and there will be no more.
+
+        The "getting" side can still get elements out of this
+        queue until the end, that is, until the element retrieved
+        is the special indicator that is put in the queue
+        by this method.
+
+        Calling :meth:`put` after this raises :class:`Finished`.
+
+        Calling this method multiple times is OK as long as
+        the queue's size limit is not a blocker.
+
+        Another possible name of this method could be "close",
+        but the multiprocessing Queue class has a method called
+        "close", hence we can't use it.
+        '''
         super().put(FINISHED, timeout=timeout)
-        self._closed_ = True
-
-    def close_nowait(self):
-        super().put_nowait(FINISHED)
-        self._closed_ = True
-
-    def closed(self) -> bool:
-        return self._closed_
+        self._finished_ = True
 
     def put(self, *args, **kwargs):
-        if self._closed_:
-            raise self.Closed
+        if self._finished_:
+            raise self.Finished
         return super().put(*args, **kwargs)
-
-    def put_nowait(self, *args, **kwargs):
-        if self._closed_:
-            raise self.Closed
-        return super().put_nowait(*args, **kwargs)
 
     def get(self, *args, **kwargs):
         z = super().get(*args, **kwargs)
         if z == FINISHED:
-            self.close()
-            raise self.Closed
-        return z
-
-    def get_nowait(self, *args, **kwargs):
-        z = super().get_nowait(*args, **kwargs)
-        if z == FINISHED:
-            self.close()
-            raise self.Closed
+            self.finish()
+            # Put another indicator in the queue so that
+            # the closing mark is always present.
+            raise self.Finished
         return z
 
     def __iter__(self):
         while True:
             try:
                 x = self.get()
-            except self.Closed:
-                break
-            yield x
-
-
-class AsyncIterQueue(asyncio.Queue):
-    class Closed(Exception):
-        pass
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._closed_ = False
-
-    async def close(self):
-        await super().put(FINISHED)
-        self._closed_ = True
-
-    def close_nowait(self):
-        super().put_nowait(FINISHED)
-        self._closed_ = True
-
-    def closed(self) -> bool:
-        return self._closed_
-
-    async def put(self, *args, **kwargs):
-        if self._closed_:
-            raise self.Closed
-        return await super().put(*args, **kwargs)
-
-    def put_nowait(self, *args, **kwargs):
-        if self._closed_:
-            raise self.Closed
-        return super().put_nowait(*args, **kwargs)
-
-    async def get(self, *args, **kwargs):
-        z = await super().get(*args, **kwargs)
-        if z == FINISHED:
-            await self.close()
-            raise self.Closed
-        return z
-
-    def get_nowait(self, *args, **kwargs):
-        z = super().get_nowait(*args, **kwargs)
-        if z == FINISHED:
-            self.close_nowait()
-            raise self.Closed
-        return z
-
-    async def __aiter__(self):
-        while True:
-            try:
-                x = await self.get()
-            except self.Closed:
+            except self.Finished:
                 break
             yield x
 
 
 class IterProcessQueue(multiprocessing.queues.Queue):
-    class Closed(Exception):
+    class Finished(Exception):
         pass
 
     def __init__(self, maxsize=0, *, ctx=None):
         if ctx is None or ctx == 'spawn':
             ctx = MP_SPAWN_CTX
         super().__init__(maxsize, ctx=ctx)
-        self._closed_ = ctx.Event()
+        self._finished_ = ctx.Event()
+        # Note: the parent class has an attribute
+        # ``_closed`` in its implementation.
 
-    def close(self, *, timeout=None):
+    def __getstate__(self):
+        return (super().__getstate__(), self._finished_)
+    
+    def __setstate__(self, data):
+        a, b = data
+        super().__setstate__(a)
+        self._finished_ = b
+
+    def finish(self, *, timeout=None):
         super().put(FINISHED, timeout=timeout)
-        self._closed_.set()
-
-    def close_nowait(self):
-        super().put_nowait(FINISHED)
-        self._closed_.set()
-
-    def closed(self) -> bool:
-        return self._closed_.is_set()
+        self._finished_.set()
 
     def put(self, *args, **kwargs):
-        if self._closed_.is_set():
-            raise self.Closed
+        if self._finished_.is_set():
+            raise self.Finished
         return super().put(*args, **kwargs)
-
-    def put_nowait(self, *args, **kwargs):
-        if self._closed_.is_set():
-            raise self.Closed
-        return super().put_nowait(*args, **kwargs)
 
     def get(self, *args, **kwargs):
         z = super().get(*args, **kwargs)
         if z == FINISHED:
-            self.close()
-            raise self.Closed
-        return z
-
-    def get_nowait(self, *args, **kwargs):
-        z = super().get_nowait(*args, **kwargs)
-        if z == FINISHED:
-            self.close()
-            raise self.Closed
+            self.finish()
+            raise self.Finished
         return z
 
     def __iter__(self):
         while True:
             try:
-                x = super().get()
-            except self.Closed:
+                x = self.get()
+            except self.Finished:
                 break
             yield x
+
+
+class AsyncIterQueue(asyncio.Queue):
+    class Finished(Exception):
+        pass
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._finished_ = False
+
+    async def finish(self):
+        await super().put(FINISHED)
+        self._finished_ = True
+
+    def finish_nowait(self):
+        super().put_nowait(FINISHED)
+        self._finished_ = True
+
+    def put_nowait(self, *args, **kwargs):
+        if self._finished_:
+            raise self.Finished
+        return super().put_nowait(*args, **kwargs)
+
+    def get_nowait(self, *args, **kwargs):
+        z = super().get_nowait(*args, **kwargs)
+        if z == FINISHED:
+            self.finish_nowait()
+            raise self.Finished
+        return z
+
+    async def __aiter__(self):
+        while True:
+            try:
+                x = await self.get()
+            except self.Finished:
+                break
+            yield x
+
 
 
 class Mapper(Iterable):

@@ -10,9 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Breaking changes to ``mpserver.Server`` API: if you want to use it in sync way, you must
   start the object in a (sync) context manager, and the methods are ``call`` and ``stream``;
   if you want to use it in async way, you must start the object in an async context manager,
-  and the methods are still called ``call`` and ``stream``.
+  and the methods are still called ``call`` and ``stream`` (which are now async).
+  Under the hood, the sync methods are ``_call`` and ``_stream``; the async ones are
+  ``_async_call`` and ``_async_stream``.
 - Finetuned waiting and sleeping logic in ``mpserver.Server``; use ``Condition`` to replace sleeping.
-- Made sure ``mpserver.Server.stream` is thread-safe.
+- Made sure (or confirmed) that ``mpserver.Server._call`` and ``mpserver.Server._stream` are thread-safe.
 - ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``separator``.
 
 

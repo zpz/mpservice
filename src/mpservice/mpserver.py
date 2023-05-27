@@ -1087,7 +1087,7 @@ class EnsembleServlet(Servlet):
                         qout.put((uid, y))
 
             if all_empty:
-                sleep(0.01)  # TODO: what is a good duration?
+                sleep(0.005)  # TODO: what is a good duration?
 
     def stop(self):
         # Caller is responsible to put a NOMOREDATA item in the input queue.
@@ -1402,6 +1402,9 @@ class Server:
         calls. To process large amounts in embedded model, use :meth:`stream`.
 
         The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`_async_call`.
+
+        This method is thread-safe, meaning it can be called from multiple threads
+        concurrently.
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1647,6 +1650,12 @@ class Server:
         pipeline = self._uid_to_futures
 
         fut = asyncio.get_running_loop().create_future()
+        fut.data = {
+            "t0": t0,
+            "t1": t0,  # end of enqueuing; to be updated
+            'deadline': t0 + timeout,
+            'cancelled': False,
+        }
         uid = id(fut)
 
         async with self._pipeline_notfull:
@@ -1670,33 +1679,11 @@ class Server:
                         len(pipeline),
                         f"{perf_counter() - t0:.3f} seconds enqueue",
                     )
-            pipeline[
-                uid
-            ] = fut  # this line is atomic; no need to worry about ``CancelledError`` here
+            pipeline[uid] = fut
+            # this line is atomic; no need to worry about ``CancelledError`` here
 
-        try:
-            fut.data = {
-                "t0": t0,
-                "t1": perf_counter(),  # end of enqueuing
-                'deadline': t0 + timeout,
-                'cancelled': False,
-            }
-        except asyncio.CancelledError:
-            pipeline.pop(uid, None)
-            raise
-        try:
-            self._q_in.put((uid, x))
-        except asyncio.CancelledError:
-            # Not sure whether the item was placed in the queue.
-            # To ensure consistency with the expectation of `_async_gather_output`,
-            # put it in the queue again. If two copies of `x` were put in the queue,
-            # both will be processed in the pipeline.
-            # In the meantime, ``fut`` remains in ``self._uid_to_futures`` to wait
-            # for the result.
-            self._q_in.put((uid, x))
-            fut.data['cancelled'] = True
-            raise
-
+        fut.data['t1'] = perf_counter()
+        self._q_in.put((uid, x))
         return fut
 
     async def _async_wait_for_result(self, fut: asyncio.Future):
@@ -1724,9 +1711,7 @@ class Server:
                 break
             uid, y = z
             async with pipeline_notfull:
-                fut = pipeline.pop(
-                    uid, None
-                )  # This could be absent due to an exceptional situation in ``_async_enqueue``.
+                fut = pipeline.pop(uid)  # this must exist
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
                 # However, here we need to acquire the lock because we want to notify.
                 if fut is not None:
