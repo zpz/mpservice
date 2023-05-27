@@ -369,6 +369,7 @@ class Stream:
         interval: int | float = 1,
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
+        prefix: str = '',
     ) -> Self:
         """Take a peek at the data element *before* it continues in the stream.
 
@@ -418,6 +419,9 @@ class Stream:
             exc_types = ()
         elif type(exc_types) is type:  # a class
             exc_types = (exc_types,)
+        if prefix:
+            if not prefix.endswith(' ') and not prefix.endswith('\n'):
+                prefix += ' '
 
         class Peeker:
             def __init__(self):
@@ -426,6 +430,7 @@ class Stream:
                 self._interval = interval
                 self._exc_types = exc_types
                 self._with_trace = with_exc_tb
+                self._prefix = prefix
 
             def __call__(self, x):
                 self._idx += 1
@@ -446,7 +451,8 @@ class Stream:
                 if not should_print:
                     return x
                 if not isinstance(x, BaseException):
-                    self._print_func("#%d:  %r" % (self._idx, x))
+                    self._print_func(f"{self._prefix}#{self._idx}:")
+                    self._print_func(x)
                     return x
                 trace = ""
                 if self._with_trace:
@@ -457,10 +463,10 @@ class Stream:
                             trace = "".join(traceback.format_tb(x.__traceback__))
                         except AttributeError:
                             pass
+                self._print_func(f"{self._prefix}#{self._idx}:")
+                self._print_func(x)
                 if trace:
-                    self._print_func("#%d:  %r\n%s" % (self._idx, x, trace))
-                else:
-                    self._print_func(f"#{self._idx}:  {x!r}")
+                    self._print_func(trace)
                 return x
 
         return self.map(Peeker())
