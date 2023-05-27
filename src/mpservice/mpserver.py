@@ -1275,9 +1275,10 @@ class Server:
             book-keeping dict.
 
         .. versionchanged:: 0.13.0
-            You must start the object in a **sync** (**async**) context manager
-            in order to use it in a sync (async) way. In both modes, the methods
-            are called ``call`` and ``stream``.
+            The Server object is used in either sync mode or async mode, but not both.
+            Start it in the sync context manager and use it in sync way;
+            start it in the async context manager and use it in async way.
+            In both modes, the main methods are :meth:`call` and :meth:`stream`.
         """
         self.servlet = servlet
 
@@ -1338,8 +1339,6 @@ class Server:
         )
         self._gather_thread.start()
 
-        self.call = self._call
-        self.stream = self._stream
         self._async_mode = False
 
         return self
@@ -1350,6 +1349,51 @@ class Server:
         self._gather_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
+
+    async def __aenter__(self):
+        self._pipeline_notfull = asyncio.Condition()
+
+        self._q_in = (
+            _SimpleThreadQueue()
+            if self.servlet.input_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self._q_out = (
+            _SimpleThreadQueue()
+            if self.servlet.output_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self.servlet.start(self._q_in, self._q_out)
+
+        self._gather_task = asyncio.create_task(
+            self._async_gather_output(),
+            name=f"{self.__class__.__name__}._async_gather_output",
+        )
+
+        self._async_mode = True
+
+        return self
+
+    async def __aexit__(self, *args):
+        self._q_in.put(NOMOREDATA)
+        self.servlet.stop()
+        await self._gather_task
+        psutil.Process().cpu_affinity(cpus=[])
+        # Reset CPU affinity.
+
+    def call(self, *args, **kwargs):
+        if self._async_mode is True:
+            return self._async_call(*args, **kwargs)
+        if self._async_mode is False:
+            return self._call(*args, **kwargs)
+        raise RuntimeError("the server is not running")
+
+    def stream(self, *args, **kwargs):
+        if self._async_mode is True:
+            return self._async_stream(*args, **kwargs)
+        if self._async_mode is False:
+            return self._stream(*args, **kwargs)
+        raise RuntimeError("the server is not running")
 
     def _call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
@@ -1555,39 +1599,6 @@ class Server:
                         yield y
         finally:
             shutdown()
-
-    async def __aenter__(self):
-        self._pipeline_notfull = asyncio.Condition()
-
-        self._q_in = (
-            _SimpleThreadQueue()
-            if self.servlet.input_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self._q_out = (
-            _SimpleThreadQueue()
-            if self.servlet.output_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self.servlet.start(self._q_in, self._q_out)
-
-        self._gather_task = asyncio.create_task(
-            self._async_gather_output(),
-            name=f"{self.__class__.__name__}._async_gather_output",
-        )
-
-        self.call = self._async_call
-        self.stream = self._async_stream
-        self._async_mode = True
-
-        return self
-
-    async def __aexit__(self, *args):
-        self._q_in.put(NOMOREDATA)
-        self.servlet.stop()
-        await self._gather_task
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
 
     async def _async_call(
         self, x, /, *, timeout: int | float = 60, backpressure: bool = True

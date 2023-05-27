@@ -239,17 +239,12 @@ class SocketApplication:
 
     This class is the intended interface between a socket server and a particular
     application (functions). Usually, user should not customize the class
-    SocketServer.
+    ``SocketServer``.
     """
 
     def __init__(
         self,
-        *,
-        on_startup: Sequence[Callable] | None = None,
-        on_shutdown: Sequence[Callable] | None = None,
     ):
-        self.on_startup = on_startup or []
-        self.on_shutdown = on_shutdown or []
         self._routes = {}
 
     def add_route(
@@ -347,11 +342,6 @@ class SocketServer:
             server_task = asyncio.create_task(
                 run_tcp_server(self._handle_connection, self._host, self._port)
             )
-        for f in self.app.on_startup:
-            if is_async(f):
-                await f()
-            else:
-                f()
         logger.info("server %s is ready", self)
         try:
             while True:
@@ -361,11 +351,6 @@ class SocketServer:
         except BaseException as e:
             # This should take care of keyboard interrupt and such.
             # To be verified.
-            for f in self.app.on_shutdown:
-                if is_async(f):
-                    await f()
-                else:
-                    f()
             server_task.cancel()
             if self._path:
                 os.unlink(self._path)
