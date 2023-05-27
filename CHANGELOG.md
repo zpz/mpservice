@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Finetuned waiting and sleeping logic in ``mpserver.Server``; use ``Condition`` to replace sleeping.
 - Made sure (or confirmed) that ``mpserver.Server._call`` and ``mpserver.Server._stream` are thread-safe.
 - ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``separator``.
+- Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
 
 
 ## [0.12.9] - 2023-05-23
