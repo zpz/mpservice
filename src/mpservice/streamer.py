@@ -896,7 +896,7 @@ class IterProcessQueue(multiprocessing.queues.Queue):
 
     def __getstate__(self):
         return (super().__getstate__(), self._finished_)
-    
+
     def __setstate__(self, data):
         a, b = data
         super().__setstate__(a)
@@ -962,7 +962,6 @@ class AsyncIterQueue(asyncio.Queue):
             except self.Finished:
                 break
             yield x
-
 
 
 class Mapper(Iterable):

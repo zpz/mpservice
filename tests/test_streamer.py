@@ -5,8 +5,7 @@ import random
 from time import perf_counter, sleep
 
 import pytest
-from mpservice.concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from mpservice.threading import Thread
+from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.multiprocessing import Process
 from mpservice.streamer import (
     AsyncIter,
@@ -17,6 +16,7 @@ from mpservice.streamer import (
     SyncIter,
     tee,
 )
+from mpservice.threading import Thread
 
 
 def _iterqueue_put(q):
