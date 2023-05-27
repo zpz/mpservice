@@ -11,7 +11,7 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from pickle import dumps as pickle_dumps
 from pickle import loads as pickle_loads
 from time import perf_counter

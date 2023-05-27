@@ -824,7 +824,6 @@ class AsyncIter(AsyncIterable):
                 yield x
 
 
-
 class IterQueue(queue.Queue):
     class Closed(Exception):
         pass
@@ -848,12 +847,12 @@ class IterQueue(queue.Queue):
         if self._closed:
             raise self.Closed
         return super().put(*args, **kwargs)
-    
+
     def put_nowait(self, *args, **kwargs):
         if self._closed:
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
-    
+
     def get(self, *args, **kwargs):
         if self._closed:
             raise self.Closed
@@ -897,12 +896,12 @@ class AsyncIterQueue(asyncio.Queue):
         if self._closed:
             raise self.Closed
         return await super().put(*args, **kwargs)
-    
+
     def put_nowait(self, *args, **kwargs):
         if self._closed:
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
-    
+
     async def get(self, *args, **kwargs):
         if self._closed:
             raise self.Closed
@@ -935,7 +934,7 @@ class IterProcessQueue(multiprocessing.queues.Queue):
     def close(self, *, timeout=None):
         super().put(FINISHED, timeout=timeout)
         self._closed.set()
-    
+
     def close_nowait(self):
         super().put_nowait(FINISHED)
         self._closed.set()
@@ -947,12 +946,12 @@ class IterProcessQueue(multiprocessing.queues.Queue):
         if self._closed:
             raise self.Closed
         return super().put(*args, **kwargs)
-    
+
     def put_nowait(self, *args, **kwargs):
         if self._closed:
             raise self.Closed
         return super().put_nowait(*args, **kwargs)
-    
+
     def get(self, *args, **kwargs):
         if self._closed:
             raise self.Closed

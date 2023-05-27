@@ -301,7 +301,9 @@ def test_peek():
     def foo(x):
         print(x)
 
-    assert Stream(data).peek(print_func=foo, interval=0.6, prefix='\n++++\n').drain() == 10
+    assert (
+        Stream(data).peek(print_func=foo, interval=0.6, prefix='\n++++\n').drain() == 10
+    )
     print('')
 
     exc = [0, 1, 2, ValueError(100), 4]
