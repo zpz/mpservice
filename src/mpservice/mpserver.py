@@ -1615,9 +1615,7 @@ class AsyncServer:
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
 
-    async def call(
-        self, x, /, *, timeout: int | float = 60, backpressure: bool = True
-    ):
+    async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
         When this is called, this server is usually backing a (http or other) service.
         Concurrent async calls to this object may happen.
@@ -1654,9 +1652,7 @@ class AsyncServer:
         fut = await self._enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._wait_for_result(fut)
 
-    async def _enqueue(
-        self, x, timeout: float, backpressure: bool
-    ) -> asyncio.Future:
+    async def _enqueue(self, x, timeout: float, backpressure: bool) -> asyncio.Future:
 
         t0 = perf_counter()
         pipeline = self._uid_to_futures

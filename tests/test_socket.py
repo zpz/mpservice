@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from mpservice.mpserver import ProcessServlet, Server, Worker, AsyncServer
+from mpservice.mpserver import AsyncServer, ProcessServlet, Worker
 from mpservice.multiprocessing import MP_SPAWN_CTX
 from mpservice.socket import SocketApplication, SocketClient, make_server
 from zpz.logging import config_logger

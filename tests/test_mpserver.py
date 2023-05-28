@@ -5,13 +5,13 @@ import time
 
 import pytest
 from mpservice.mpserver import (
+    AsyncServer,
     EnsembleError,
     EnsembleServlet,
     PassThrough,
     ProcessServlet,
     SequentialServlet,
     Server,
-    AsyncServer,
     SwitchServlet,
     ThreadServlet,
     TimeoutError,
@@ -194,7 +194,9 @@ async def test_async_stream_early_quit():
         for x in range(100):
             yield x
 
-    async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
+    async with AsyncServer(
+        ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10
+    ) as service:
         ss = service.stream(data(), return_x=True)
         n = 0
         async for x, y in ss:
