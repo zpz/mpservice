@@ -1228,6 +1228,32 @@ class SwitchServlet(Servlet):
         return [w for s in self._servlets for w in s.workers]
 
 
+def _init_server(
+    self,
+    servlet: Servlet,
+    *,
+    main_cpu: int = 0,
+    capacity: int = 256,
+):
+    self.servlet = servlet
+    assert capacity > 0
+    self._capacity = capacity
+    self._uid_to_futures = {}
+    # Size of this dict is capped at `self._capacity`.
+    # A few places need to enforce this size limit.
+
+    self._main_cpus = None
+    if main_cpu is not None:
+        # Pin this coordinating thread to the specified CPUs.
+        if isinstance(main_cpu, int):
+            cpus = [main_cpu]
+        else:
+            assert isinstance(main_cpu, list)
+            cpus = main_cpu
+        self._main_cpus = cpus
+        psutil.Process().cpu_affinity(cpus=cpus)
+
+
 class Server:
     @classmethod
     def get_mp_context(cls):
@@ -1280,31 +1306,7 @@ class Server:
             start it in the async context manager and use it in async way.
             In both modes, the main methods are :meth:`call` and :meth:`stream`.
         """
-        self.servlet = servlet
-
-        if backlog is not None:
-            warnings.warn(
-                "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capacity = backlog
-        assert capacity > 0
-        self._capacity = capacity
-        self._uid_to_futures = {}
-        # Size of this dict is capped at `self._capacity`.
-        # A few places need to enforce this size limit.
-
-        self._main_cpus = None
-        if main_cpu is not None:
-            # Pin this coordinating thread to the specified CPUs.
-            if isinstance(main_cpu, int):
-                cpus = [main_cpu]
-            else:
-                assert isinstance(main_cpu, list)
-                cpus = main_cpu
-            self._main_cpus = cpus
-            psutil.Process().cpu_affinity(cpus=cpus)
+        _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
 
     @property
     def capacity(self) -> int:
@@ -1560,23 +1562,7 @@ class AsyncServer:
         main_cpu: int = 0,
         capacity: int = 256,
     ):
-        self.servlet = servlet
-        assert capacity > 0
-        self._capacity = capacity
-        self._uid_to_futures = {}
-        # Size of this dict is capped at `self._capacity`.
-        # A few places need to enforce this size limit.
-
-        self._main_cpus = None
-        if main_cpu is not None:
-            # Pin this coordinating thread to the specified CPUs.
-            if isinstance(main_cpu, int):
-                cpus = [main_cpu]
-            else:
-                assert isinstance(main_cpu, list)
-                cpus = main_cpu
-            self._main_cpus = cpus
-            psutil.Process().cpu_affinity(cpus=cpus)
+        _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
 
     @property
     def capacity(self) -> int:
