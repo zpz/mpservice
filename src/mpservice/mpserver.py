@@ -1744,6 +1744,7 @@ class AsyncServer:
         (i.e. interleaved); multiple calls to :meth:`stream` can also happen
         at the same time by different "users" (in the same thread).
         '''
+
         async def _enqueue(tasks, timeout):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
