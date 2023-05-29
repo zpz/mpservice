@@ -363,7 +363,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__error__
 
 
-
 class CpuAffinity:
     """
     ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
@@ -538,7 +537,6 @@ class _SpawnManager(multiprocessing.managers.BaseManager):
         # 3.11 got parameter `shutdown_timeout`, which may be useful.
 
 
-
 class ServerProcess:
     """
     A "server process" provides a server running in one process,
@@ -684,7 +682,6 @@ class ServerProcess:
 
     _registry = set()
 
-
     @classmethod
     def register(cls, worker: Callable, /, name: str = None, proxytype=None):
         """
@@ -749,7 +746,9 @@ class ServerProcess:
         # The main method names are the names of the classes that have been reigstered.
         if name in self._registry:
             return getattr(self._manager, name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
 
 
 try:
@@ -757,6 +756,7 @@ try:
 except ImportError:
     pass
 else:
+
     class MemoryBlock:
         '''
         This class is used within the "server process" of a ``ServerProcess`` to
@@ -798,9 +798,7 @@ else:
             except OSError:
                 pass
 
-
     BaseProxy = multiprocessing.managers.BaseProxy
-
 
     def _rebuild_memory_block_proxy(func, args, name, size, mem):
         obj = func(*args)
@@ -817,15 +815,14 @@ else:
         obj._idset.add(obj._id)
         state = obj._manager and obj._manager._state
         obj._close = multiprocessing.util.Finalize(
-            obj, BaseProxy._decref,
-            args=(obj._token, obj._authkey, state,
-                  obj._tls, obj._idset, obj._Client),
-            exitpriority=10
-            )
-        
+            obj,
+            BaseProxy._decref,
+            args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
+            exitpriority=10,
+        )
+
         return obj
 
-    
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_info', 'list_memory_blocks')
 
@@ -873,7 +870,13 @@ else:
 
             func, args = super().__reduce__()
             args[-1]['incref'] = False  # do not inc ref again during unpickling.
-            return _rebuild_memory_block_proxy, (func, args, self._name, self._size, self._mem)
+            return _rebuild_memory_block_proxy, (
+                func,
+                args,
+                self._name,
+                self._size,
+                self._mem,
+            )
 
         @property
         def name(self):
@@ -894,7 +897,7 @@ else:
                 info = self._callmethod('_info')
                 self._name, self._size = info
             return self._size
-        
+
         @property
         def buf(self) -> memoryview:
             '''
@@ -911,7 +914,6 @@ else:
             proxy object.
             '''
             return self._callmethod('list_memory_blocks')
-
 
     ServerProcess.register(MemoryBlock, proxytype=MemoryBlockProxy)
 

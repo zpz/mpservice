@@ -4,7 +4,13 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import CpuAffinity, ServerProcess, SpawnProcess, Process, Queue
+from mpservice.multiprocessing import (
+    CpuAffinity,
+    Process,
+    Queue,
+    ServerProcess,
+    SpawnProcess,
+)
 from mpservice.threading import Thread
 
 
@@ -104,7 +110,7 @@ def test_manager():
         assert CpuAffinity.get(pid=manager._manager._process.pid) == [1]
 
         with pytest.raises(AttributeError):
-            q = manager.Queue()
+            manager.Queue()
 
         doubler = manager.Doubler('d')
         print(doubler.get_mp())
