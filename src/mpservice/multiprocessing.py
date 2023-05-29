@@ -662,7 +662,7 @@ class ServerProcess:
             # pass `mem` to other processes and use its `.buf` again for the content.
             # Since it's a "shared" block of memory, any process and modify the data
             # via the memoryview.
-    
+
     To release (or "destroy") the memory block, just make sure all references to ``mem``
     in this (the "creating") and worker (the "consuming") processes are cleared.
     """
