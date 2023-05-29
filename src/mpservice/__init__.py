@@ -18,4 +18,4 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
 """
 
 
-__version__ = "0.13.0b3"
+__version__ = "0.13.0b4"

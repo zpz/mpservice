@@ -4,7 +4,7 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import CpuAffinity, ServerProcess, SpawnProcess
+from mpservice.multiprocessing import CpuAffinity, ServerProcess, SpawnProcess, Process, Queue
 from mpservice.threading import Thread
 
 
@@ -100,8 +100,11 @@ ServerProcess.register(Tripler)
 
 def test_manager():
     with ServerProcess(cpu=1, name='test_server_process') as manager:
-        assert manager._process.name == 'test_server_process'
-        assert CpuAffinity.get(pid=manager._process.pid) == [1]
+        assert manager._manager._process.name == 'test_server_process'
+        assert CpuAffinity.get(pid=manager._manager._process.pid) == [1]
+
+        with pytest.raises(AttributeError):
+            q = manager.Queue()
 
         doubler = manager.Doubler('d')
         print(doubler.get_mp())
@@ -183,3 +186,41 @@ def test_concurrency():
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
             assert len(active_children()) == 1
+
+
+def inc_worker(q):
+    time.sleep(1)
+    mem = q.get()
+    assert mem.size == 10
+    buf = mem.buf
+    assert len(buf) == 10
+    assert buf[4] == 100
+    buf[4] += 1
+
+    blocks = mem.list_memory_blocks()
+    print('memory blocks in worker:', blocks)
+    assert len(blocks) == 1
+
+
+def test_shared_memory():
+    print('')
+    with ServerProcess() as manager:
+        mem = manager.MemoryBlock(10)
+        assert type(mem.buf) is memoryview
+        assert len(mem.buf) == 10
+        mem.buf[4] = 100
+
+        print('memory blocks in main:', manager.list_memory_blocks())
+        assert len(manager.list_memory_blocks()) == 1
+
+        q = Queue()
+        q.put(mem)
+        del mem
+
+        assert len(manager.list_memory_blocks()) == 1
+
+        p = Process(target=inc_worker, args=(q,))
+        p.start()
+        p.join()
+
+        assert len(manager.list_memory_blocks()) == 0

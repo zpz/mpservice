@@ -11,8 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - ``mpserver.Server.call`` got new parameter ``backpressure`` (previously only the async call has this parameter).
 - Finetuned waiting and sleeping logic in ``mpserver.{Server, AsyncServer}``; use ``Condition`` to replace sleeping.
 - Made sure (or confirmed) that ``mpserver.Server._call`` and ``mpserver.Server._stream` are thread-safe.
-- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``separator``.
+- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
 - Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
+- Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class; can only be used in a context manager.
+- New facilities for "shared memory" in the class ``multiprocessing.ServerProcess``.
 
 
 ## [0.12.9] - 2023-05-23
