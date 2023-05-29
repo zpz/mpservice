@@ -5,6 +5,7 @@ import time
 
 import pytest
 from mpservice.mpserver import (
+    AsyncServer,
     EnsembleError,
     EnsembleServlet,
     PassThrough,
@@ -59,7 +60,7 @@ def test_basic():
 
 @pytest.mark.asyncio
 async def test_sequential_server_async():
-    async with Server(
+    async with AsyncServer(
         SequentialServlet(
             ProcessServlet(Double, cpus=[1, 2]),
             ProcessServlet(Shift, cpus=[3]),
@@ -114,7 +115,7 @@ def test_sequential_error():
 
 @pytest.mark.asyncio
 async def test_sequential_timeout_async():
-    async with Server(ProcessServlet(Delay)) as service:
+    async with AsyncServer(ProcessServlet(Delay)) as service:
         with pytest.raises(TimeoutError):
             await service.call(2.2, timeout=1)
 
@@ -162,7 +163,7 @@ async def test_sequential_async_stream():
         for x in range(100):
             yield x
 
-    async with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+    async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
 
@@ -179,7 +180,7 @@ async def test_async_stream_error():
             else:
                 yield x
 
-    async with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+    async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = list(range(30))
         data[22] = 'a'
         ss = service.stream(adata())
@@ -193,7 +194,9 @@ async def test_async_stream_early_quit():
         for x in range(100):
             yield x
 
-    async with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
+    async with AsyncServer(
+        ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10
+    ) as service:
         ss = service.stream(data(), return_x=True)
         n = 0
         async for x, y in ss:
@@ -230,7 +233,7 @@ my_wide_server = SequentialServlet(
 
 @pytest.mark.asyncio
 async def test_ensemble_server_async():
-    async with Server(my_wide_server) as service:
+    async with AsyncServer(my_wide_server) as service:
         z = await service.call('abcde')
         assert z == 'aeaeaeaeae'
 
@@ -273,7 +276,7 @@ your_wide_server = SequentialServlet(
 
 @pytest.mark.asyncio
 async def test_ensemble_timeout_async():
-    async with Server(your_wide_server) as service:
+    async with AsyncServer(your_wide_server) as service:
         with pytest.raises(TimeoutError):
             await service.call(8.2, timeout=1)
 
@@ -511,7 +514,7 @@ class DelayedShift(Worker):
 
 @pytest.mark.asyncio
 async def test_cancel():
-    async with Server(
+    async with AsyncServer(
         SequentialServlet(
             ProcessServlet(DelayedShift, delay=1, shift=2),
             ProcessServlet(DelayedShift, delay=1, shift=3),
@@ -539,7 +542,7 @@ async def test_cancel():
         assert server.backlog == 1
         # the 2nd servlet still runs, hence this is 1.
 
-    async with Server(
+    async with AsyncServer(
         SequentialServlet(
             ProcessServlet(DelayedShift, delay=1, shift=2),
             EnsembleServlet(

@@ -7,16 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.13.0] - in progress
 
-- Breaking changes to ``mpserver.Server`` API: if you want to use it in sync way, you must
-  start the object in a (sync) context manager, and the methods are ``call`` and ``stream``;
-  if you want to use it in async way, you must start the object in an async context manager,
-  and the methods are still called ``call`` and ``stream`` (which are now async).
-  Under the hood, the sync methods are ``_call`` and ``_stream``; the async ones are
-  ``_async_call`` and ``_async_stream``.
-- Finetuned waiting and sleeping logic in ``mpserver.Server``; use ``Condition`` to replace sleeping.
+- Breaking changes to ``mpserver.Server`` API: the class is split into two classes: ``Server`` and ``AsyncServer``.
+- ``mpserver.Server.call`` got new parameter ``backpressure`` (previously only the async call has this parameter).
+- Finetuned waiting and sleeping logic in ``mpserver.{Server, AsyncServer}``; use ``Condition`` to replace sleeping.
 - Made sure (or confirmed) that ``mpserver.Server._call`` and ``mpserver.Server._stream` are thread-safe.
-- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``separator``.
+- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
 - Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
+- Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class; can only be used in a context manager.
+- New facilities for "shared memory" in the class ``multiprocessing.ServerProcess``.
 
 
 ## [0.12.9] - 2023-05-23

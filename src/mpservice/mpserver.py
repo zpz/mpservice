@@ -14,7 +14,7 @@ There are three levels of constructs.
    processes (threads). A more "advanced" form of Servlet arranges to executive multiple
    Servlets as a sequence or an ensemble.
 
-3. On the top level is :class:`Server`. A Server
+3. On the top level is :class:`Server` (or :class:`AsyncServer`). A Server
    handles interfacing with the outside world, while passing the "real work" to
    a :class:`Servlet` and relays the latter's result to the requester.
 """
@@ -1228,6 +1228,32 @@ class SwitchServlet(Servlet):
         return [w for s in self._servlets for w in s.workers]
 
 
+def _init_server(
+    self,
+    servlet: Servlet,
+    *,
+    main_cpu: int = 0,
+    capacity: int = 256,
+):
+    self.servlet = servlet
+    assert capacity > 0
+    self._capacity = capacity
+    self._uid_to_futures = {}
+    # Size of this dict is capped at `self._capacity`.
+    # A few places need to enforce this size limit.
+
+    self._main_cpus = None
+    if main_cpu is not None:
+        # Pin this coordinating thread to the specified CPUs.
+        if isinstance(main_cpu, int):
+            cpus = [main_cpu]
+        else:
+            assert isinstance(main_cpu, list)
+            cpus = main_cpu
+        self._main_cpus = cpus
+        psutil.Process().cpu_affinity(cpus=cpus)
+
+
 class Server:
     @classmethod
     def get_mp_context(cls):
@@ -1273,15 +1299,7 @@ class Server:
             The result is returned to the requester.
             The ``backlog`` value is simply the size limit on this internal
             book-keeping dict.
-
-        .. versionchanged:: 0.13.0
-            The Server object is used in either sync mode or async mode, but not both.
-            Start it in the sync context manager and use it in sync way;
-            start it in the async context manager and use it in async way.
-            In both modes, the main methods are :meth:`call` and :meth:`stream`.
         """
-        self.servlet = servlet
-
         if backlog is not None:
             warnings.warn(
                 "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
@@ -1289,24 +1307,7 @@ class Server:
                 stacklevel=2,
             )
             capacity = backlog
-        assert capacity > 0
-        self._capacity = capacity
-        self._uid_to_futures = {}
-        # Size of this dict is capped at `self._capacity`.
-        # A few places need to enforce this size limit.
-
-        self._main_cpus = None
-        if main_cpu is not None:
-            # Pin this coordinating thread to the specified CPUs.
-            if isinstance(main_cpu, int):
-                cpus = [main_cpu]
-            else:
-                assert isinstance(main_cpu, list)
-                cpus = main_cpu
-            self._main_cpus = cpus
-            psutil.Process().cpu_affinity(cpus=cpus)
-
-        self._async_mode = None
+        _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
 
     @property
     def capacity(self) -> int:
@@ -1315,9 +1316,6 @@ class Server:
     @property
     def backlog(self) -> int:
         return len(self._uid_to_futures)
-
-    def full(self) -> bool:
-        return len(self._uid_to_futures) >= self._capacity
 
     def __enter__(self):
         self._pipeline_notfull = threading.Condition()
@@ -1339,8 +1337,6 @@ class Server:
         )
         self._gather_thread.start()
 
-        self._async_mode = False
-
         return self
 
     def __exit__(self, *args):
@@ -1350,61 +1346,12 @@ class Server:
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
 
-    async def __aenter__(self):
-        self._pipeline_notfull = asyncio.Condition()
-
-        self._q_in = (
-            _SimpleThreadQueue()
-            if self.servlet.input_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self._q_out = (
-            _SimpleThreadQueue()
-            if self.servlet.output_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self.servlet.start(self._q_in, self._q_out)
-
-        self._gather_task = asyncio.create_task(
-            self._async_gather_output(),
-            name=f"{self.__class__.__name__}._async_gather_output",
-        )
-
-        self._async_mode = True
-
-        return self
-
-    async def __aexit__(self, *args):
-        self._q_in.put(NOMOREDATA)
-        self.servlet.stop()
-        await self._gather_task
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
-
-    def call(self, *args, **kwargs):
-        if self._async_mode is True:
-            return self._async_call(*args, **kwargs)
-        if self._async_mode is False:
-            return self._call(*args, **kwargs)
-        raise RuntimeError("the server is not running")
-
-    def stream(self, *args, **kwargs):
-        if self._async_mode is True:
-            return self._async_stream(*args, **kwargs)
-        if self._async_mode is False:
-            return self._stream(*args, **kwargs)
-        raise RuntimeError("the server is not running")
-
-    def _call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
+    def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
-        This is called in "embedded" mode for sporadic uses.
-        It is not designed to serve high load from multi-thread concurrent
-        calls. To process large amounts in embedded model, use :meth:`stream`.
-
-        The parameters ``x`` and ``timeout`` have the same meanings as in :meth:`_async_call`.
-
         This method is thread-safe, meaning it can be called from multiple threads
         concurrently.
+
+        .. seealso:: :meth:`AsyncServer.call`
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1479,7 +1426,7 @@ class Server:
                 fut.set_result(y)
             fut.data["t2"] = perf_counter()
 
-    def _stream(
+    def stream(
         self,
         data_stream: Iterable,
         /,
@@ -1501,6 +1448,8 @@ class Server:
         with their own input streams. In that case, you may want to use ``return_exceptions=True``
         in each of them so that one's exception does not propagate and halt the others.
 
+        It is also fine to have calls to :meth:`call` and :meth:`stream` concurrently.
+
         Parameters
         ----------
         data_stream
@@ -1514,7 +1463,7 @@ class Server:
             in place of the would-be regular result.
             If ``False``, exceptions will be propagated right away, crashing the program.
         timeout
-            Interpreted the same as in :meth:`_call` and :meth:`_async_call`.
+            Interpreted the same as in :meth:`call`.
 
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value.
@@ -1603,14 +1552,70 @@ class Server:
         finally:
             shutdown()
 
-    async def _async_call(
-        self, x, /, *, timeout: int | float = 60, backpressure: bool = True
+
+class AsyncServer:
+    @classmethod
+    def get_mp_context(cls):
+        return MP_SPAWN_CTX
+
+    def __init__(
+        self,
+        servlet: Servlet,
+        *,
+        backlog: int = None,
+        main_cpu: int = 0,
+        capacity: int = 256,
     ):
+        if backlog is not None:
+            warnings.warn(
+                "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            capacity = backlog
+        _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    @property
+    def backlog(self) -> int:
+        return len(self._uid_to_futures)
+
+    async def __aenter__(self):
+        self._pipeline_notfull = asyncio.Condition()
+
+        self._q_in = (
+            _SimpleThreadQueue()
+            if self.servlet.input_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self._q_out = (
+            _SimpleThreadQueue()
+            if self.servlet.output_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self.servlet.start(self._q_in, self._q_out)
+
+        self._gather_task = asyncio.create_task(
+            self._gather_output(),
+            name=f"{self.__class__.__name__}._gather_output",
+        )
+
+        return self
+
+    async def __aexit__(self, *args):
+        self._q_in.put(NOMOREDATA)
+        self.servlet.stop()
+        await self._gather_task
+        psutil.Process().cpu_affinity(cpus=[])
+        # Reset CPU affinity.
+
+    async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
         When this is called, this server is usually backing a (http or other) service.
         Concurrent async calls to this object may happen.
-        In such use cases, :meth:`call` and :meth:`stream` should not be called to this object
-        at the same time.
 
         Parameters
         ----------
@@ -1631,7 +1636,7 @@ class Server:
             is over, the :class:`TimeoutError` message will be ".. seconds total".
             This wait, as well as the error message, includes the time that has been spent
             in the "enqueue" step, that is, the timer starts upon receiving the request
-            in ``_async_call``.
+            in ``call``.
         backpressure
             If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
             right away. If ``False``, wait on the input queue for as long as
@@ -1639,12 +1644,10 @@ class Server:
             there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
             in the server, where ``backlog`` is a parameter to :meth:`__init__`.
         """
-        fut = await self._async_enqueue(x, timeout=timeout, backpressure=backpressure)
-        return await self._async_wait_for_result(fut)
+        fut = await self._enqueue(x, timeout=timeout, backpressure=backpressure)
+        return await self._wait_for_result(fut)
 
-    async def _async_enqueue(
-        self, x, timeout: float, backpressure: bool
-    ) -> asyncio.Future:
+    async def _enqueue(self, x, timeout: float, backpressure: bool) -> asyncio.Future:
 
         t0 = perf_counter()
         pipeline = self._uid_to_futures
@@ -1686,7 +1689,7 @@ class Server:
         self._q_in.put((uid, x))
         return fut
 
-    async def _async_wait_for_result(self, fut: asyncio.Future):
+    async def _wait_for_result(self, fut: asyncio.Future):
         try:
             await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
         except (asyncio.TimeoutError, TimeoutError):
@@ -1699,7 +1702,7 @@ class Server:
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
-    async def _async_gather_output(self) -> None:
+    async def _gather_output(self) -> None:
         q_out = self._q_out
         pipeline = self._uid_to_futures
         pipeline_notfull = self._pipeline_notfull
@@ -1727,7 +1730,7 @@ class Server:
                     fut.set_result(y)
             fut.data["t2"] = perf_counter()
 
-    async def _async_stream(
+    async def stream(
         self,
         data_stream: AsyncIterable,
         /,
@@ -1737,13 +1740,15 @@ class Server:
         timeout: int | float = 60,
     ) -> AsyncIterator:
         '''
-        Analogous to :meth:`stream`.
+        Calls to :meth:`stream` and :meth:`call` can happen at the same time
+        (i.e. interleaved); multiple calls to :meth:`stream` can also happen
+        at the same time by different "users" (in the same thread).
         '''
 
         async def _enqueue(tasks, timeout):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
-            _enq = self._async_enqueue
+            _enq = self._enqueue
             try:
                 async for x in data_stream:
                     fut = await _enq(x, timeout, backpressure=False)
@@ -1785,7 +1790,7 @@ class Server:
             name=f'{self.__class__.__name__}.async_stream._enqueue',
         )
 
-        _wait = self._async_wait_for_result
+        _wait = self._wait_for_result
 
         try:
             while True:

@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from mpservice.mpserver import ProcessServlet, Server, Worker
+from mpservice.mpserver import AsyncServer, ProcessServlet, Worker
 from mpservice.multiprocessing import MP_SPAWN_CTX
 from mpservice.socket import SocketApplication, SocketClient, make_server
 from zpz.logging import config_logger
@@ -46,7 +46,7 @@ class Double(Worker):
 
 def run_mp_server():
     async def main():
-        async with Server(ProcessServlet(Double)) as model:
+        async with AsyncServer(ProcessServlet(Double)) as model:
             app = SocketApplication()
             app.add_route('/', model.call)
 

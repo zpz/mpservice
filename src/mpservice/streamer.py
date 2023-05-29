@@ -370,7 +370,7 @@ class Stream:
         exc_types: Optional[Sequence[type[BaseException]]] = BaseException,
         with_exc_tb: bool = True,
         prefix: str = '',
-        separator: str = ':  ',
+        suffix: str = '',
     ) -> Self:
         """Take a peek at the data element *before* it continues in the stream.
 
@@ -422,7 +422,10 @@ class Stream:
             exc_types = (exc_types,)
         if prefix:
             if not prefix.endswith(' ') and not prefix.endswith('\n'):
-                prefix += ' '
+                prefix = prefix + ' '
+        if suffix:
+            if not suffix.startswith(' ') and not suffix.startswith('\n'):
+                suffix = ' ' + suffix
 
         class Peeker:
             def __init__(self):
@@ -432,7 +435,7 @@ class Stream:
                 self._exc_types = exc_types
                 self._with_trace = with_exc_tb
                 self._prefix = prefix
-                self._separator = separator
+                self._suffix = suffix
 
             def __call__(self, x):
                 self._idx += 1
@@ -453,7 +456,8 @@ class Stream:
                 if not should_print:
                     return x
                 if not isinstance(x, BaseException):
-                    self._print_func(f"{self._prefix}#{self._idx}{self._separator}{x}")
+                    self._print_func(f"{self._prefix}#{self._idx}:")
+                    self._print_func(f"{x}{self._suffix}")
                     return x
                 trace = ""
                 if self._with_trace:
@@ -464,9 +468,12 @@ class Stream:
                             trace = "".join(traceback.format_tb(x.__traceback__))
                         except AttributeError:
                             pass
-                self._print_func(f"{self._prefix}#{self._idx}{self._separator}{x}")
+                self._print_func(f"{self._prefix}#{self._idx}:")
                 if trace:
-                    self._print_func(trace)
+                    self._print_func(f"{x}")
+                    self._print_func(f"{trace}{self._suffix}")
+                else:
+                    self._print_func(f"{x}{self._suffix}")
                 return x
 
         return self.map(Peeker())

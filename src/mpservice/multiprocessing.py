@@ -363,6 +363,67 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.__error__
 
 
+class CpuAffinity:
+    """
+    ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
+
+    This operation is known as "pinning a process to certain CPUs"
+    or "setting the CPU/processor affinity of a process".
+
+    Setting and getting CPU affinity is done via |psutil.cpu_affinity|_.
+
+    .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
+    .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
+    .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
+    """
+
+    def __init__(self, target: int | list[int] | None = None, /):
+        """
+        Parameters
+        ----------
+        target
+            The CPUs to pin the current process to.
+
+            If ``None``, no pinning is done. This object is used only to query the current affinity.
+            (I believe all process starts in an un-pinned status.)
+
+            If an int, it is the zero-based index of the CPU. Valid values are 0, 1,...,
+            the number of CPUs minus 1. If a list, the elements are CPU indices.
+            Duplicate values will be removed. Invalid values will raise ``ValueError``.
+
+            If ``[]``, pin to all eligible CPUs.
+            On some systems such as Linux this may not necessarily mean all available logical
+            CPUs as in ``list(range(psutil.cpu_count()))``.
+        """
+        if target is not None:
+            if isinstance(target, int):
+                target = [target]
+            else:
+                assert all(isinstance(v, int) for v in target)
+                # `psutil` would truncate floats but I don't like that.
+        self.target = target
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.target})"
+
+    def __str__(self):
+        return self.__repr__()
+
+    def set(self, *, pid=None) -> None:
+        """
+        Set CPU affinity to the value passed into :meth:`__init__`.
+        If that value was ``None``, do nothing.
+        Use an empty list to cancel previous pin.
+        """
+        if self.target is not None:
+            psutil.Process(pid).cpu_affinity(self.target)
+
+    @classmethod
+    def get(self, *, pid=None) -> list[int]:
+        """Return the current CPU affinity."""
+        return psutil.Process(pid).cpu_affinity()
+
+
 class SpawnContext(multiprocessing.context.SpawnContext):
     '''
     We want to use :class:`SpawnProcess` as the process class when
@@ -461,8 +522,22 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 """
 
 
-# ``MP_SPAWN_CTX.Manager`` does not use this class.
-class ServerProcess(multiprocessing.managers.BaseManager):
+# Have this subclass to help debugging when needed.
+class _ProcessServer(multiprocessing.managers.Server):
+    pass
+
+
+# Have this subclass to help debugging when needed.
+class _SpawnManager(multiprocessing.managers.BaseManager):
+
+    _Server = _ProcessServer
+
+    def __init__(self):
+        super().__init__(ctx=MP_SPAWN_CTX)
+        # 3.11 got parameter `shutdown_timeout`, which may be useful.
+
+
+class ServerProcess:
     """
     A "server process" provides a server running in one process,
     to be called from other processes for shared data or functionalities.
@@ -471,35 +546,28 @@ class ServerProcess(multiprocessing.managers.BaseManager):
 
     1. Register one or more classes with the :class:`ServerProcess` class::
 
-            class Doubler:
-                def __init__(self, ...):
-                    ...
-
-                def double(self, x):
-                    return x * 2
-
-            class Tripler:
-                def __init__(self, ...):
-                    ...
-
-                def triple(self, x):
-                    return x * 3
-
-            ServerProcess.register(Doubler)
-            ServerProcess.register(Tripler)
-
-    2. Create a "server process" object and start it::
-
-            server = ServerProcess()
-            server.start()
-
-        A preferred way is to use a context manager::
-
-            with ServerProcess() as server:
+        class Doubler:
+            def __init__(self, ...):
                 ...
 
-        The context manager will call ``server.shutdown()`` at the end so that
-        you don't need to do it.
+            def double(self, x):
+                return x * 2
+
+        class Tripler:
+            def __init__(self, ...):
+                ...
+
+            def triple(self, x):
+                return x * 3
+
+        ServerProcess.register(Doubler)
+        ServerProcess.register(Tripler)
+
+    2. Start a "server process" object in a contextmanager::
+
+        with ServerProcess() as server:
+                ...
+
 
     3. Create one or more proxies::
 
@@ -577,13 +645,26 @@ class ServerProcess(multiprocessing.managers.BaseManager):
 
         As a consequence, if the method mutates some shared state, it needs to guard things by locks.
 
-    The class ``ServerProcess`` is based on ``Manager`` in the standard ``multiprocessing``,
+    The class ``ServerProcess`` delegates most work to ``Manager`` in the standard ``multiprocessing``,
     but is specifically for the use case where user needs to design and register a custom class
-    to be used in a "server process". The API of ``ServerProcess`` may continue to diverge
-    from that of ``Manager``.
-
+    to be used in a "server process".
     If you don't need a custom class, but rather just need to use one of the standard classes,
-    for example, ``Event``, you may prefer to use that via ``MP_SPAWN_CTX.Manager``.
+    for example, ``Event``, you can use that via ``MP_SPAWN_CTX.Manager``, or better, import
+    ``Manager`` from ``mpservice.multiprocessing``.
+
+    In an environment that supports shared memory, ``ServerProcess`` has two other methods:
+    :meth:`MemoryBlock` and :meth:`list_memory_blocks`. A simple example::
+
+        with ServerProcess() as server:
+            mem = server.MemoryBlock(size=1000)
+            buffer = mem.buf  # memoryview
+            # ... write data into `buffer`
+            # pass `mem` to other processes and use its `.buf` again for the content.
+            # Since it's a "shared" block of memory, any process and modify the data
+            # via the memoryview.
+
+    To release (or "destroy") the memory block, just make sure all references to ``mem``
+    in this (the "creating") and worker (the "consuming") processes are cleared.
     """
 
     # In each new thread or process, a proxy object will create a new
@@ -602,8 +683,10 @@ class ServerProcess(multiprocessing.managers.BaseManager):
     # I made a naive example, where the registered class just returns ``x + x``.
     # I was able to finish 13K calls per second.
 
+    _registry = set()
+
     @classmethod
-    def register(cls, worker: Callable, /, name: str = None):
+    def register(cls, worker: Callable, /, name: str = None, proxytype=None):
         """
         ``worker`` is usually a class object (not an instance of the class).
         It can also be a function.
@@ -631,7 +714,9 @@ class ServerProcess(multiprocessing.managers.BaseManager):
             warnings.warn(
                 '"%s" was registered; the existing registry is overwritten.' % typeid
             )
-        super().register(typeid, callable_)
+        else:
+            cls._registry.add(typeid)
+        _SpawnManager.register(typeid, callable_, proxytype=proxytype)
 
     def __init__(
         self,
@@ -645,79 +730,206 @@ class ServerProcess(multiprocessing.managers.BaseManager):
         name
             Name of the process. If ``None``, a default will be used.
         '''
-        # 3.11 got parameter `shutdown_timeout`, which may be useful.
-        super().__init__(ctx=MP_SPAWN_CTX)
+        self._manager = _SpawnManager()
         self._cpu = cpu
         self._name = name
-        # `self._ctx` is `MP_SPAWN_CTX`
 
-    def start(self, *args, **kwargs):
-        super().start(*args, **kwargs)
+    def __enter__(self):
+        self._manager.__enter__()
         if self._cpu is not None:
-            CpuAffinity(self._cpu).set(pid=self._process.pid)
+            CpuAffinity(self._cpu).set(pid=self._manager._process.pid)
         if self._name:
-            self._process.name = self._name
+            self._manager._process.name = self._name
+        return self
+
+    def __exit__(self, *args):
+        self._manager.__exit__(*args)
+
+    def __getattr__(self, name):
+        # The main method names are the names of the classes that have been reigstered.
+        if name in self._registry:
+            return getattr(self._manager, name)
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
 
 
-class CpuAffinity:
-    """
-    ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
+try:
+    from multiprocessing.shared_memory import SharedMemory
+except ImportError:
+    pass
+else:
 
-    This operation is known as "pinning a process to certain CPUs"
-    or "setting the CPU/processor affinity of a process".
+    class MemoryBlock:
+        '''
+        This class is used within the "server process" of a ``ServerProcess`` to
+        create and track shared memory blocks.
 
-    Setting and getting CPU affinity is done via |psutil.cpu_affinity|_.
+        The design of this class is largely dictated by the need of its corresponding "proxy" class.
+        '''
 
-    .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
-    .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
-    .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
-    """
+        _blocks_ = set()
 
-    def __init__(self, target: int | list[int] | None = None, /):
-        """
-        Parameters
-        ----------
-        target
-            The CPUs to pin the current process to.
+        def __init__(self, size: int):
+            self._mem = SharedMemory(create=True, size=size)
+            self.__class__._blocks_.add(self._mem.name)
 
-            If ``None``, no pinning is done. This object is used only to query the current affinity.
-            (I believe all process starts in an un-pinned status.)
+        def _info(self):
+            return self._mem.name, self._mem.size
 
-            If an int, it is the zero-based index of the CPU. Valid values are 0, 1,...,
-            the number of CPUs minus 1. If a list, the elements are CPU indices.
-            Duplicate values will be removed. Invalid values will raise ``ValueError``.
+        def list_memory_blocks(self):
+            return self._blocks_
 
-            If ``[]``, pin to all eligible CPUs.
-            On some systems such as Linux this may not necessarily mean all available logical
-            CPUs as in ``list(range(psutil.cpu_count()))``.
-        """
-        if target is not None:
-            if isinstance(target, int):
-                target = [target]
-            else:
-                assert all(isinstance(v, int) for v in target)
-                # `psutil` would truncate floats but I don't like that.
-        self.target = target
+        def __del__(self):
+            '''
+            The garbage collection of this object happens when its refcount
+            reaches 0, which in turn happens when all references to its
+            corresponding proxy object (outside of the server process) have been
+            removed.
 
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.target})"
+            According to the class ``multiprocessing.shared_memory.SharedMemory``,
+            all SharedMemory objects in the proxy objects have called :meth:`SharedMemory.close`.
 
-    def __str__(self):
-        return self.__repr__()
+            As a result, we assume that all uses of this particular memory block have finished
+            by this time, hence we destroy the memory block by calling ``unlink``.
+            '''
+            try:
+                name = self._mem.name
+                self._mem.close()
+                self._mem.unlink()
+                self.__class__._blocks_.remove(name)
+            except OSError:
+                pass
 
-    def set(self, *, pid=None) -> None:
-        """
-        Set CPU affinity to the value passed into :meth:`__init__`.
-        If that value was ``None``, do nothing.
-        Use an empty list to cancel previous pin.
-        """
-        if self.target is not None:
-            psutil.Process(pid).cpu_affinity(self.target)
+    BaseProxy = multiprocessing.managers.BaseProxy
 
-    @classmethod
-    def get(self, *, pid=None) -> list[int]:
-        """Return the current CPU affinity."""
-        return psutil.Process(pid).cpu_affinity()
+    def _rebuild_memory_block_proxy(func, args, name, size, mem):
+        obj = func(*args)
+        obj._name, obj._size, obj._mem = name, size, mem
+
+        # We have called ``incref`` for the ``MemoryBlock``
+        # when pickling, hence we don't call ``incref`` when
+        # reconstructing the proxy here during unpickling.
+        # However, we still need to set up calling of ``decref``
+        # when this reconstructed proxy is garbage collected.
+
+        # The code below is part of ``BaseProxy._incref``.
+
+        obj._idset.add(obj._id)
+        state = obj._manager and obj._manager._state
+        obj._close = multiprocessing.util.Finalize(
+            obj,
+            BaseProxy._decref,
+            args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
+            exitpriority=10,
+        )
+
+        return obj
+
+    class MemoryBlockProxy(BaseProxy):
+        _exposed_ = ('_info', 'list_memory_blocks')
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._name = None
+            self._size = None
+            self._mem = None
+
+        def __reduce__(self):
+            # The only sensible case of pickling this proxy object
+            # transfering this object between processes in a queue.
+            # (This proxy object is never pickled for storage.)
+            # It is possible that at some time the only "reference"
+            # to a certain shared memory block is in pickled form in
+            # a queue. For example,
+            #
+            #   # main process
+            #   with ServerProcess() as server:
+            #        q = Queue()
+            #        w = Process(target=..., args=(q, ))
+            #        w.start()
+            #
+            #        for _ in range(1000):
+            #           mem = server.MemoryBlock(100)
+            #           # ... computations ...
+            #           # ... write data into `mem` ...
+            #           q.put(mem)
+            #           ...
+            #
+            # During the loop, `mem` goes out of scope and only lives on in the queue.
+            # A main design goal is to prevent the ``MemoryBlock`` object in the server process
+            # from being garbage collected. This mean we need to do some ref-counting hacks.
+
+            # Inc ref here to represent the pickled object in the queue.
+            # When unpickling, we do not inc ref again. In effect, we move the call
+            # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
+            # for this object.
+
+            conn = self._Client(self._token.address, authkey=self._authkey)
+            multiprocessing.managers.dispatch(conn, None, 'incref', (self._id,))
+            # NOTE:
+            # calling ``self._incref()`` would not work because it adds another `_decref`;
+            # I don't totally understand that part.
+
+            func, args = super().__reduce__()
+            args[-1]['incref'] = False  # do not inc ref again during unpickling.
+            return _rebuild_memory_block_proxy, (
+                func,
+                args,
+                self._name,
+                self._size,
+                self._mem,
+            )
+
+        @property
+        def name(self):
+            '''
+            Return the name of the ``SharedMemory`` object.
+            '''
+            if self._name is None:
+                info = self._callmethod('_info')
+                self._name, self._size = info
+            return self._name
+
+        @property
+        def size(self) -> int:
+            '''
+            Return size of the memory block in bytes.
+            '''
+            if self._size is None:
+                info = self._callmethod('_info')
+                self._name, self._size = info
+            return self._size
+
+        @property
+        def buf(self) -> memoryview:
+            '''
+            Return a ``memoryview`` into the context of the memory block.
+            '''
+            if self._mem is None:
+                self._mem = SharedMemory(name=self.name, create=False)
+            return self._mem.buf
+
+        def list_memory_blocks(self) -> set[str]:
+            '''
+            Return the set of names of shared memory blocks being
+            tracked by the ``ServerProcess`` that "ownes" the current
+            proxy object.
+            '''
+            return self._callmethod('list_memory_blocks')
+
+    ServerProcess.register(MemoryBlock, proxytype=MemoryBlockProxy)
+
+    def list_memory_blocks(self):
+        '''
+        List names of MemoryBlock objects being tracked.
+        '''
+        m = self.MemoryBlock(1)
+        blocks = m.list_memory_blocks()
+        blocks.remove(m.name)
+        return blocks
+
+    ServerProcess.list_memory_blocks = list_memory_blocks
 
 
 _names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]

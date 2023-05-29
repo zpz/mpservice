@@ -213,20 +213,21 @@ Server
 ======
 
 
-The "interface" and "scheduling" code of :class:`Server` runs in the "main process".
+The "interface" and "scheduling" code of :class:`Server` and :class:`AsyncServer`
+runs in the "main process".
 Two usage patterns are supported, namely making (concurrent) individual
 calls to the service to get individual results, or flowing
 a potentially unlimited stream of data through the service
 to get a stream of results. The first usage supports a sync API and an async API.
 
 
-On the top level is :class:`Server`. Pass a :class:`Servlet`, or :class:`SequentialServlet` or :class:`EnsembleServlet`
-into a Server, which handles scheduling as well as interfacing with the outside
+On the top level is :class:`Server` and :class:`AsyncServer`. 
+Pass a :class:`Servlet`, or :class:`SequentialServlet` or :class:`EnsembleServlet`
+into a Server (or AsyncServer), which handles scheduling as well as interfacing with the outside
 world::
 
-    server = Server(s)
+    server = AsyncServer(s)
     async with server:
-        y = server.call(38)
         z = await server.call('abc')
 
         async for x, y in server.stream(data, return_x=True):
@@ -248,6 +249,8 @@ CPU allocations among workers to achieve best performance.
 .. autodata:: mpservice.mpserver.PipelineFull
 
 .. autoclass:: mpservice.mpserver.Server
+
+.. autoclass:: mpservice.mpserver.AsyncServer
 
 
 **Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
