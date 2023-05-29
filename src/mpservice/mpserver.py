@@ -33,7 +33,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from queue import Empty
 from time import perf_counter, sleep
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, final
 
 import psutil
 
@@ -216,6 +216,11 @@ class Worker(ABC):
             in the same Servlet and give them some different treatments,
             although they do essentially the same thing. For example,
             let each worker use one particular GPU.
+
+            This argument is provided in :meth:`Servlet.start` when starting
+            the worker. A subclass does not worry about providing this argument;
+            it simply uses it if needed. The parameter has a proper value
+            in ``__init__`` and continues to be available as an instance attribute.
 
         batch_size
             Max batch size; see :meth:`call`.
@@ -1255,6 +1260,7 @@ def _init_server(
 
 
 class Server:
+    @final
     @classmethod
     def get_mp_context(cls):
         """
@@ -1280,9 +1286,12 @@ class Server:
         servlet
             The servlet to run by this server.
 
+            The ``servlet`` has not "started". Its :meth:`~Servlet.start` will be called
+            in :meth:`__enter__`.
+
         main_cpu
             Specifies the cpu for the "main process",
-            i.e. the process in which this server objects resides.
+            i.e. the process in which this server object resides.
 
         backlog
             .. deprecated:: 0.12.7. Will be removed in 0.14.0. Use `capacity` instead.
@@ -1296,9 +1305,12 @@ class Server:
             Then this ID along with the input data enter the processing pipeline.
             Coming out of the pipeline is the ID along with the result.
             The book-keeping record is found by the ID, used, and removed from the dict.
-            The result is returned to the requester.
-            The ``backlog`` value is simply the size limit on this internal
+            Removal of finished requests from the book-keeping dict makes room
+            for new requests.
+            The ``capacity`` value is simply the size limit on this internal
             book-keeping dict.
+
+            .. seealso: documentation of the method :meth:`call`.
         """
         if backlog is not None:
             warnings.warn(
@@ -1348,10 +1360,42 @@ class Server:
 
     def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
+        Serve one request with input ``x``, return the result.
+
         This method is thread-safe, meaning it can be called from multiple threads
         concurrently.
 
-        .. seealso:: :meth:`AsyncServer.call`
+        If the operation failed due to :class:`ServerBacklogFull`, :class:`TimeoutError`,
+        or any exception in any parts of the server, the exception is propagated.
+
+        Parameters
+        ----------
+        x
+            Input data element.
+        timeout
+            In seconds. If result is not ready after this time, :class:`TimeoutError` is raised.
+
+            There are two situations where timeout happens.
+            At first, ``x`` is placed in an input queue for processing.
+            This step is called "enqueue".
+            If the queue is full for the moment, the code will wait (if ``backpressure`` is ``False``).
+            If a spot does not become available during the ``timeout`` period,
+            the :class:`ServerBacklogFull` error message will be "... seconds enqueue".
+
+            Effectively, the input queue is considered full if
+            there are ``capacity`` count of ongoing (i.e. received but not yet finished) requests
+            in the server in all stages combined, where ``capacity`` is a parameter to :meth:`__init__`.
+
+            Once ``x`` is placed in the input queue, code will wait for the result to come out
+            at the end of an output queue. If result is not yet ready when the ``timeout`` period
+            is over, the :class:`TimeoutError` message will be ".. seconds total".
+            This waitout period includes the time that has been spent
+            in the "enqueue" step, that is, the timer starts upon receiving the request,
+            i.e. at the beginning of the function ``call``.
+        backpressure
+            If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
+            right away. If ``False``, wait on the input queue for as long as
+            ``timeout`` seconds.
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1441,19 +1485,21 @@ class Server:
         of the server, as it saturates the pipeline.
 
         The order of elements in the stream is preserved, i.e.,
-        elements in the output stream corresponds to elements
+        elements in the output stream correspond to elements
         in the input stream in the same order.
 
-        This method is thread-safe, that is, multiple threads can call this concurrently
-        with their own input streams. In that case, you may want to use ``return_exceptions=True``
-        in each of them so that one's exception does not propagate and halt the others.
+        This method is thread-safe, that is, multiple threads can call this method concurrently
+        with their respective input streams. The server will serve the requests interleaved
+        as fast as it can. In that case, you may want to use ``return_exceptions=True``
+        in each of the calls so that one's exception does not propagate and halt the program.
 
-        It is also fine to have calls to :meth:`call` and :meth:`stream` concurrently.
+        It is also fine to have calls to :meth:`call` and :meth:`stream` concurrently
+        (from multiple threads, for example).
 
         Parameters
         ----------
         data_stream
-            An iterable, possibly unlimited, of input data elements.
+            An (possibly unlimited) iterable of input data elements.
         return_x
             If ``True``, each output element is a length-two tuple
             containing the input data and the result.
@@ -1466,7 +1512,8 @@ class Server:
             Interpreted the same as in :meth:`call`.
 
             In a streaming task, "timeout" is usually not a concern compared
-            to overall throughput. You can usually leave it at the default value.
+            to overall throughput. You can usually leave it at the default value or make it
+            even large as needed.
         """
 
         def _enqueue(tasks, stopped, timeout):
@@ -1554,6 +1601,13 @@ class Server:
 
 
 class AsyncServer:
+    '''
+    An ``AsyncServer`` object must be started in an async context manager.
+    The primary methods :meth:`call` and :meth:`stream` are async.
+
+    Most concepts and usage are analogous to :class:`Server`.
+    '''
+    @final
     @classmethod
     def get_mp_context(cls):
         return MP_SPAWN_CTX
@@ -1614,35 +1668,11 @@ class AsyncServer:
 
     async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
-        When this is called, this server is usually backing a (http or other) service.
-        Concurrent async calls to this object may happen.
+        When this is called, this server is usually backing a (http or other) service
+        using some async framework.
+        Concurrent async calls to this method may happen.
 
-        Parameters
-        ----------
-        x
-            Input data element.
-        timeout
-            In seconds. If result is not ready after this time, :class:`TimeoutError` is raised.
-
-            There are two situations where timeout happens.
-            At first, ``x`` is placed in an input queue for processing.
-            This step is called "enqueue".
-            If the queue is full for the moment, the code will wait.
-            If a spot does not become available during the ``timeout`` period,
-            the :class:`TimeoutError` message will be "... seconds enqueue".
-
-            Once ``x`` is placed in the input queue, code will wait for the result at the end
-            of an output queue. If result is not yet ready when the ``timeout`` period
-            is over, the :class:`TimeoutError` message will be ".. seconds total".
-            This wait, as well as the error message, includes the time that has been spent
-            in the "enqueue" step, that is, the timer starts upon receiving the request
-            in ``call``.
-        backpressure
-            If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
-            right away. If ``False``, wait on the input queue for as long as
-            ``timeout`` seconds. Effectively, the input queue is considered full if
-            there are ``backlog`` count of ongoing (i.e. received but not yet returned) requests
-            in the server, where ``backlog`` is a parameter to :meth:`__init__`.
+        .. seealso:: :meth:`Server.call`
         """
         fut = await self._enqueue(x, timeout=timeout, backpressure=backpressure)
         return await self._wait_for_result(fut)
