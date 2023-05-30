@@ -6,11 +6,11 @@ from multiprocessing import active_children
 import pytest
 from mpservice.multiprocessing import (
     CpuAffinity,
+    MemoryBlock,
     Process,
     Queue,
     ServerProcess,
     SpawnProcess,
-    MemoryBlock,
 )
 from mpservice.threading import Thread
 
@@ -236,14 +236,15 @@ def test_shared_memory():
 class MemoryWorker:
     def memory_block(self, size):
         return MemoryBlock(size)
-    
+
 
 def test_shared_memory_from_serverprocess():
-    ServerProcess.register(MemoryWorker, method_to_typeid={'memory_block': 'memory_block_in_server'})
-    with ServerProcess() as memory_server:
+    ServerProcess.register(
+        MemoryWorker, method_to_typeid={'memory_block': 'memory_block_in_server'}
+    )
+    with ServerProcess():
         with ServerProcess() as server:
             worker = server.MemoryWorker()
             mem = worker.memory_block(20)
             print(type(mem))
             del mem
-    

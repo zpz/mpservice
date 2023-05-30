@@ -686,7 +686,15 @@ class ServerProcess:
     _registry = set()
 
     @classmethod
-    def register(cls, worker: Callable, /, name: str = None, proxytype=None, method_to_typeid: dict[str, str]=None, create_method=True):
+    def register(
+        cls,
+        worker: Callable,
+        /,
+        name: str = None,
+        proxytype=None,
+        method_to_typeid: dict[str, str] = None,
+        create_method=True,
+    ):
         """
         ``worker`` is usually a class object (not an instance of the class).
         It can also be a function.
@@ -716,7 +724,13 @@ class ServerProcess:
             )
         else:
             cls._registry.add(typeid)
-        _SpawnManager.register(typeid, callable_, proxytype=proxytype, method_to_typeid=method_to_typeid, create_method=create_method)
+        _SpawnManager.register(
+            typeid,
+            callable_,
+            proxytype=proxytype,
+            method_to_typeid=method_to_typeid,
+            create_method=create_method,
+        )
 
     def __init__(
         self,
@@ -786,7 +800,7 @@ else:
 
         def name(self):
             return self._mem.name
-        
+
         def size(self):
             return self._mem.size
 
@@ -947,12 +961,12 @@ else:
 
     ServerProcess.list_memory_blocks = list_memory_blocks
 
-
     def memory_block_in_server(block: MemoryBlock):
         return block
 
-
-    ServerProcess.register(memory_block_in_server, proxytype=MemoryBlockProxy, create_method=False)
+    ServerProcess.register(
+        memory_block_in_server, proxytype=MemoryBlockProxy, create_method=False
+    )
 
 
 _names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]
