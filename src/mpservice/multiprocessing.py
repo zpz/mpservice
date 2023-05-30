@@ -686,7 +686,7 @@ class ServerProcess:
     _registry = set()
 
     @classmethod
-    def register(cls, worker: Callable, /, name: str = None, proxytype=None):
+    def register(cls, worker: Callable, /, name: str = None, proxytype=None, method_to_typeid: dict[str, str]=None, create_method=True):
         """
         ``worker`` is usually a class object (not an instance of the class).
         It can also be a function.
@@ -716,7 +716,7 @@ class ServerProcess:
             )
         else:
             cls._registry.add(typeid)
-        _SpawnManager.register(typeid, callable_, proxytype=proxytype)
+        _SpawnManager.register(typeid, callable_, proxytype=proxytype, method_to_typeid=method_to_typeid, create_method=create_method)
 
     def __init__(
         self,
@@ -735,15 +735,25 @@ class ServerProcess:
         self._name = name
 
     def __enter__(self):
+        self.start()
         self._manager.__enter__()
-        if self._cpu is not None:
-            CpuAffinity(self._cpu).set(pid=self._manager._process.pid)
-        if self._name:
-            self._manager._process.name = self._name
         return self
 
     def __exit__(self, *args):
         self._manager.__exit__(*args)
+
+    def start(self):
+        # :meth:`start` and :meth:`shutdown` are provided mainly for
+        # compatibility. It's recommended to use the context manager.
+
+        self._manager.start()
+        if self._cpu is not None:
+            CpuAffinity(self._cpu).set(pid=self._manager._process.pid)
+        if self._name:
+            self._manager._process.name = self._name
+
+    def shutdown(self):
+        self._manager.shutdown()
 
     def __getattr__(self, name):
         # The main method names are the names of the classes that have been reigstered.
@@ -773,6 +783,12 @@ else:
         def __init__(self, size: int):
             self._mem = SharedMemory(create=True, size=size)
             self.__class__._blocks_.add(self._mem.name)
+
+        def name(self):
+            return self._mem.name
+        
+        def size(self):
+            return self._mem.size
 
         def _info(self):
             return self._mem.name, self._mem.size
@@ -827,7 +843,7 @@ else:
         return obj
 
     class MemoryBlockProxy(BaseProxy):
-        _exposed_ = ('_info', 'list_memory_blocks')
+        _exposed_ = ('_info', 'list_memory_blocks', 'name')
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -887,8 +903,9 @@ else:
             Return the name of the ``SharedMemory`` object.
             '''
             if self._name is None:
-                info = self._callmethod('_info')
-                self._name, self._size = info
+                # info = self._callmethod('_info')
+                # self._name, self._size = info
+                self._name = self._callmethod('name')
             return self._name
 
         @property
@@ -896,10 +913,9 @@ else:
             '''
             Return size of the memory block in bytes.
             '''
-            if self._size is None:
-                info = self._callmethod('_info')
-                self._name, self._size = info
-            return self._size
+            if self._mem is None:
+                self._mem = SharedMemory(name=self.name, create=False)
+            return self._mem.size
 
         @property
         def buf(self) -> memoryview:
@@ -930,6 +946,13 @@ else:
         return blocks
 
     ServerProcess.list_memory_blocks = list_memory_blocks
+
+
+    def memory_block_in_server(block: MemoryBlock):
+        return block
+
+
+    ServerProcess.register(memory_block_in_server, proxytype=MemoryBlockProxy, create_method=False)
 
 
 _names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_')]

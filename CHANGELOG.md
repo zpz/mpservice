@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Made sure (or confirmed) that ``mpserver.Server._call`` and ``mpserver.Server._stream` are thread-safe.
 - ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
 - Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
-- Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class; can only be used in a context manager.
+- Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class.
 - New facilities for "shared memory" in the class ``multiprocessing.ServerProcess``.
 
 
