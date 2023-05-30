@@ -147,11 +147,7 @@ Workers
 
 .. autoclass:: mpservice.mpserver.Worker
 
-.. autoclass:: mpservice.mpserver.ProcessWorker
-
-.. autoclass:: mpservice.mpserver.ThreadWorker
-
-.. autofunction:: mpservice.mpserver.make_threadworker
+.. autofunction:: mpservice.mpserver.make_worker
 
 .. autodata:: mpservice.mpserver.PassThrough
 
@@ -204,10 +200,6 @@ then we may design such a workflow,
 
 .. autoclass:: mpservice.mpserver.SwitchServlet
 
-.. autodata:: mpservice.mpserver.Sequential
-
-.. autodata:: mpservice.mpserver.Ensemble
-
 
 Server
 ======
@@ -226,11 +218,11 @@ Pass a :class:`Servlet`, or :class:`SequentialServlet` or :class:`EnsembleServle
 into a Server (or AsyncServer), which handles scheduling as well as interfacing with the outside
 world::
 
-    server = AsyncServer(s)
-    async with server:
-        z = await server.call('abc')
+    server = Server(s)
+    with server:
+        z = server.call('abc')
 
-        async for x, y in server.stream(data, return_x=True):
+        for x, y in server.stream(data, return_x=True):
             print(x, y)
 
 
@@ -239,14 +231,13 @@ if it considers the situation to be non-recoverable, e.g. input is of wrong type
 The exceptions will be funneled through the pipelines and raised to the end-user
 with useful traceback info.
 
-
 The user's main work is implementing the operations in the "workers".
 Another task (of some trial and error) by the user is experimenting with
 CPU allocations among workers to achieve best performance.
 
 .. autoexception:: mpservice.mpserver.ServerBacklogFull
 
-.. autodata:: mpservice.mpserver.PipelineFull
+.. autoexception:: mpservice.mpserver.TimeoutError
 
 .. autoclass:: mpservice.mpserver.Server
 

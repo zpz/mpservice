@@ -1,22 +1,24 @@
 """
-The module ``mpservice.http`` provides simple utilities for serving :class:`mpservice.mpserver.Server` over HTTP
+The module ``mpservice.http`` provides simple utilities for serving :class:`mpservice.mpserver.AsyncServer` over HTTP
 using `uvicorn <https://www.uvicorn.org/>`_ and `starlette <https://www.starlette.io/>`_.
 
 In practice, you may choose any other Python HTTP server library as long as it implements
 the `ASGI specification <https://asgi.readthedocs.io/en/latest/>`_.
 
-This utility code is not directly connected to :class:`~mpservice.mpserver.Server`, because Server simply
-provides the method :meth:`~mpservice.mpserver.Server.call` that can be called from an HTTP
-request handler function. What the request handler needs do not need to be tied to the ``uvicorn.Server``.
+This utility code is not directly connected to :class:`~mpservice.mpserver.AsyncServer`, because AsyncServer simply
+provides the method :meth:`~mpservice.mpserver.AsyncServer.call` that can be called from an HTTP
+request handler function. There needs to be no particular ties between the request handler and ``uvicorn.Server``.
 
 Below is one way to structure it.
 In this example, we use a global ``context`` object to arrange some connections.
+
+::
 
     import asyncio
     from types import SimpleNamespace
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse, JSONResponse
-    from mpservice.mpserver import Server
+    from mpservice.mpserver import AsyncServer
     from mpservice.http import make_server
 
 
@@ -45,7 +47,7 @@ In this example, we use a global ``context`` object to arrange some connections.
         context.app = app
         context.server = server
 
-        async with Server(...) as model:
+        async with AsyncServer(...) as model:
             context.model = model
 
             # Start infinite loop
@@ -56,12 +58,10 @@ In this example, we use a global ``context`` object to arrange some connections.
 
 There is no async function calls exception for ``await server.serve()``,
 but the async ``main`` allows user to call other async functions such as
-setting up async context managers. If there is no such need, you can make
-``main`` a regular sync function and replace ``await server.serve`` by
-``server.run()``.
+setting up async context managers..
 
-If you want to use ``uviloop`` to start ``main``, check out the 
-`uviloop documentation <https://github.com/MagicStack/uvloop#using-uvloop>`_.
+If you want to use ``uvloop`` to start ``main``, check out the 
+`uvloop documentation <https://github.com/MagicStack/uvloop#using-uvloop>`_.
 """
 from __future__ import annotations
 
