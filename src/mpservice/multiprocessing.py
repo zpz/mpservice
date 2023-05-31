@@ -35,7 +35,10 @@ import multiprocessing.managers
 import multiprocessing.queues
 import multiprocessing.util
 import threading
+import traceback
 import warnings
+import weakref
+import sys
 from typing import Callable
 
 import psutil
@@ -521,13 +524,116 @@ takes a parameter ``mp_context``.
 You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
 
+import sys
+util = multiprocessing.util
+format_exc = multiprocessing.managers.format_exc
+Token = multiprocessing.managers.Token
 
-# Have this subclass to help debugging when needed.
+
 class _ProcessServer(multiprocessing.managers.Server):
-    pass
+
+    # This is the cpython code in versions 3.7-3.12.
+    # My fix is at the end labeled "FIX".
+    def serve_client(self, conn):
+        '''
+        Handle requests from the proxies in a particular process/thread
+        '''
+        util.debug('starting server thread to service %r',
+                   threading.current_thread().name)
+
+        recv = conn.recv
+        send = conn.send
+        id_to_obj = self.id_to_obj
+
+        while not self.stop_event.is_set():
+
+            try:
+                methodname = obj = None
+                request = recv()
+                ident, methodname, args, kwds = request
+
+                try:
+                    obj, exposed, gettypeid = id_to_obj[ident]
+                except KeyError as ke:
+                    try:
+                        obj, exposed, gettypeid = \
+                            self.id_to_local_proxy_obj[ident]
+                    except KeyError:
+                        raise ke
+
+                if methodname not in exposed:
+                    raise AttributeError(
+                        'method %r of %r object is not in exposed=%r' %
+                        (methodname, type(obj), exposed)
+                        )
+
+                function = getattr(obj, methodname)
+                # `function` carries a ref to ``obj``.
+
+                try:
+                    res = function(*args, **kwds)
+                except Exception as e:
+                    msg = ('#ERROR', e)
+                else:
+                    typeid = gettypeid and gettypeid.get(methodname, None)
+                    if typeid:
+
+                        rident, rexposed = self.create(conn, typeid, res)
+                        token = Token(typeid, self.address, rident)
+                        msg = ('#PROXY', (rexposed, token))
+
+                        # At this point,
+                        # 2 refs to `res` (MemoryBlock): the one in this scope, and the one in `self.id_to_obj`.
+                        # 3 refs to `obj` (MemoryWorker): one in this scope, on in `self.id_to_obj`, one in `function`
+                    else:
+                        msg = ('#RETURN', res)
+
+            except AttributeError:
+                if methodname is None:
+                    msg = ('#TRACEBACK', format_exc())
+                else:
+                    try:
+                        fallback_func = self.fallback_mapping[methodname]
+                        result = fallback_func(
+                            self, conn, ident, obj, *args, **kwds
+                            )
+                        msg = ('#RETURN', result)
+                    except Exception:
+                        msg = ('#TRACEBACK', format_exc())
+
+            except EOFError:
+                util.debug('got EOF -- exiting thread serving %r',
+                           threading.current_thread().name)
+                sys.exit(0)
+
+            except Exception:
+                msg = ('#TRACEBACK', format_exc())
+
+            try:
+                try:
+                    send(msg)
+                except Exception:
+                    send(('#UNSERIALIZABLE', format_exc()))
+            except Exception as e:
+                util.info('exception in thread serving %r',
+                        threading.current_thread().name)
+                util.info(' ... message was %r', msg)
+                util.info(' ... exception was %r', e)
+                conn.close()
+                sys.exit(1)
+
+            # FIX:
+            # If no more request is coming, then `function` and `res` will stay around.
+            # If `function` is a instance method of `obj`, then it carries a reference to `obj`.
+            # Also, `res` is a refernce to the object that has been tracked in `self.id_to_obj`
+            # and "returned" to the requester.
+            # The extra reference to `obj` and `res` lingering here have no use, and can cause
+            # sutble bugs.
+            del res
+            del function
+            del obj
 
 
-# Have this subclass to help debugging when needed.
 class _SpawnManager(multiprocessing.managers.BaseManager):
 
     _Server = _ProcessServer
@@ -535,6 +641,7 @@ class _SpawnManager(multiprocessing.managers.BaseManager):
     def __init__(self):
         super().__init__(ctx=MP_SPAWN_CTX)
         # 3.11 got parameter `shutdown_timeout`, which may be useful.
+        self._memoryblock_proxies = weakref.WeakValueDictionary()
 
 
 class ServerProcess:
@@ -747,27 +854,38 @@ class ServerProcess:
         self._manager = _SpawnManager()
         self._cpu = cpu
         self._name = name
+        self._memoryblock_proxies = weakref.WeakSet()
 
     def __enter__(self):
-        self.start()
         self._manager.__enter__()
-        return self
-
-    def __exit__(self, *args):
-        self._manager.__exit__(*args)
-
-    def start(self):
-        # :meth:`start` and :meth:`shutdown` are provided mainly for
-        # compatibility. It's recommended to use the context manager.
-
-        self._manager.start()
         if self._cpu is not None:
             CpuAffinity(self._cpu).set(pid=self._manager._process.pid)
         if self._name:
             self._manager._process.name = self._name
+        return self
+
+    def __exit__(self, *args):
+        # print('exiting', self._manager._memoryblock_proxies)
+        # for prox in self._manager._memoryblock_proxies.values(): # valuerefs():
+        #     print('del', prox)
+        #     print(sys.getrefcount(prox) - 1)
+        #     del prox
+
+        self._manager.__exit__(*args)
+
+    def __del__(self):
+        try:
+            self.__exit__(None, None, None)
+        except Exception:
+            traceback.print_exc()
+
+    def start(self):
+        # :meth:`start` and :meth:`shutdown` are provided mainly for
+        # compatibility. It's recommended to use the context manager.
+        self.__enter__()
 
     def shutdown(self):
-        self._manager.shutdown()
+        self.__exit__()
 
     def __getattr__(self, name):
         # The main method names are the names of the classes that have been reigstered.
@@ -825,6 +943,10 @@ else:
             self._mem.unlink()
             self.__class__._blocks_.remove(name)
 
+        def __repr__(self):
+            return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
+
+
     BaseProxy = multiprocessing.managers.BaseProxy
 
     def _rebuild_memory_block_proxy(func, args, name, size, mem):
@@ -850,14 +972,28 @@ else:
 
         return obj
 
+    
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('list_memory_blocks', 'name')
 
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+        def __init__(self, *args, incref=True, manager=None, **kwargs):
+            super().__init__(*args, incref=incref, manager=manager, **kwargs)
             self._name = None
             self._size = None
             self._mem = None
+
+            # if incref:
+            #     # This is being constructed out of the return of
+            #     # ServerProcess, not during unpickling.
+            #     if self._manager is not None:
+            #         self._manager._memoryblock_proxies[self._id] = self
+    
+        # def _callmethod(self, *args, **kwargs):
+        #     z = super()._callmethod(*args, **kwargs)
+        #     if isinstance(z, self.__class__):
+        #         if self._manager is not None:
+        #             self._manager._memoryblock_proxies[z._id] = z
+        #     return z
 
         def __reduce__(self):
             # The only sensible case of pickling this proxy object
@@ -940,7 +1076,14 @@ else:
             '''
             return self._callmethod('list_memory_blocks')
 
+        def __str__(self):
+            return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
+
+
     ServerProcess.register(MemoryBlock, proxytype=MemoryBlockProxy)
+
+    dispatch = multiprocessing.managers.dispatch
+
 
     def list_memory_blocks(self):
         '''
