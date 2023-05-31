@@ -2,7 +2,6 @@ import multiprocessing as mp
 import threading
 import time
 from multiprocessing import active_children
-import sys
 
 import pytest
 from mpservice.multiprocessing import (
@@ -250,5 +249,4 @@ def test_shared_memory_from_serverprocess():
         worker = server.MemoryWorker()
         mem = worker.memory_block(20)
         del mem
-        block = server.MemoryBlock(8)
-
+        server.MemoryBlock(8)

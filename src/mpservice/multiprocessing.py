@@ -34,11 +34,11 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
 import multiprocessing.util
+import sys
 import threading
 import traceback
 import warnings
 import weakref
-import sys
 from typing import Callable
 
 import psutil
@@ -525,6 +525,7 @@ You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will us
 """
 
 import sys
+
 util = multiprocessing.util
 format_exc = multiprocessing.managers.format_exc
 Token = multiprocessing.managers.Token
@@ -538,8 +539,9 @@ class _ProcessServer(multiprocessing.managers.Server):
         '''
         Handle requests from the proxies in a particular process/thread
         '''
-        util.debug('starting server thread to service %r',
-                   threading.current_thread().name)
+        util.debug(
+            'starting server thread to service %r', threading.current_thread().name
+        )
 
         recv = conn.recv
         send = conn.send
@@ -556,16 +558,15 @@ class _ProcessServer(multiprocessing.managers.Server):
                     obj, exposed, gettypeid = id_to_obj[ident]
                 except KeyError as ke:
                     try:
-                        obj, exposed, gettypeid = \
-                            self.id_to_local_proxy_obj[ident]
+                        obj, exposed, gettypeid = self.id_to_local_proxy_obj[ident]
                     except KeyError:
                         raise ke
 
                 if methodname not in exposed:
                     raise AttributeError(
-                        'method %r of %r object is not in exposed=%r' %
-                        (methodname, type(obj), exposed)
-                        )
+                        'method %r of %r object is not in exposed=%r'
+                        % (methodname, type(obj), exposed)
+                    )
 
                 function = getattr(obj, methodname)
                 # `function` carries a ref to ``obj``.
@@ -594,16 +595,16 @@ class _ProcessServer(multiprocessing.managers.Server):
                 else:
                     try:
                         fallback_func = self.fallback_mapping[methodname]
-                        result = fallback_func(
-                            self, conn, ident, obj, *args, **kwds
-                            )
+                        result = fallback_func(self, conn, ident, obj, *args, **kwds)
                         msg = ('#RETURN', result)
                     except Exception:
                         msg = ('#TRACEBACK', format_exc())
 
             except EOFError:
-                util.debug('got EOF -- exiting thread serving %r',
-                           threading.current_thread().name)
+                util.debug(
+                    'got EOF -- exiting thread serving %r',
+                    threading.current_thread().name,
+                )
                 sys.exit(0)
 
             except Exception:
@@ -615,8 +616,9 @@ class _ProcessServer(multiprocessing.managers.Server):
                 except Exception:
                     send(('#UNSERIALIZABLE', format_exc()))
             except Exception as e:
-                util.info('exception in thread serving %r',
-                        threading.current_thread().name)
+                util.info(
+                    'exception in thread serving %r', threading.current_thread().name
+                )
                 util.info(' ... message was %r', msg)
                 util.info(' ... exception was %r', e)
                 conn.close()
@@ -946,7 +948,6 @@ else:
         def __repr__(self):
             return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
 
-
     BaseProxy = multiprocessing.managers.BaseProxy
 
     def _rebuild_memory_block_proxy(func, args, name, size, mem):
@@ -972,7 +973,6 @@ else:
 
         return obj
 
-    
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('list_memory_blocks', 'name')
 
@@ -987,7 +987,7 @@ else:
             #     # ServerProcess, not during unpickling.
             #     if self._manager is not None:
             #         self._manager._memoryblock_proxies[self._id] = self
-    
+
         # def _callmethod(self, *args, **kwargs):
         #     z = super()._callmethod(*args, **kwargs)
         #     if isinstance(z, self.__class__):
@@ -1079,11 +1079,9 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-
     ServerProcess.register(MemoryBlock, proxytype=MemoryBlockProxy)
 
     dispatch = multiprocessing.managers.dispatch
-
 
     def list_memory_blocks(self):
         '''
