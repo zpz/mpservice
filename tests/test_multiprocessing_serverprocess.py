@@ -217,14 +217,16 @@ def test_shared_memory():
         assert len(mem.buf) == 10
         mem.buf[4] = 100
 
-        print('memory blocks in main:', manager.list_memory_blocks())
-        assert len(manager.list_memory_blocks()) == 1
+        blocks = manager.list_memory_blocks()
+        print('memory blocks in main:', blocks)
+        assert len(blocks) == 1
 
         q = Queue()
         q.put(mem)
         del mem
 
-        assert len(manager.list_memory_blocks()) == 1
+        blocks = manager.list_memory_blocks()
+        assert len(blocks) == 1
 
         p = Process(target=inc_worker, args=(q,))
         p.start()
@@ -243,6 +245,8 @@ def test_shared_memory_from_serverprocess():
         MemoryWorker, method_to_typeid={'memory_block': 'memory_block_in_server'}
     )
     with ServerProcess() as server:
+        print('')
         worker = server.MemoryWorker()
         mem = worker.memory_block(20)
-        print(type(mem))
+        del mem
+        server.MemoryBlock(8)
