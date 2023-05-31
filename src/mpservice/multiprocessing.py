@@ -40,6 +40,7 @@ import traceback
 import warnings
 import weakref
 from typing import Callable
+from traceback import format_exc
 
 import psutil
 
@@ -524,10 +525,7 @@ takes a parameter ``mp_context``.
 You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
 """
 
-import sys
-
 util = multiprocessing.util
-format_exc = multiprocessing.managers.format_exc
 Token = multiprocessing.managers.Token
 
 
