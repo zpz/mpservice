@@ -39,8 +39,8 @@ import threading
 import traceback
 import warnings
 import weakref
-from typing import Callable
 from traceback import format_exc
+from typing import Callable
 
 import psutil
 
