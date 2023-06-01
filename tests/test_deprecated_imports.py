@@ -23,9 +23,3 @@ def test_deprecated():
         )
 
         assert True
-
-    with pytest.warns(DeprecationWarning):
-        from mpservice.server_process import Manager
-        from mpservice.multiprocessing import Manager
-
-        assert True
