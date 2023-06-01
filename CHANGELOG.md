@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.1] - in progress
+
+- Finetune to ``multiprocessing.ServerProcess`` and its shared-memory facilities.
+
+
 ## [0.13.0] - 2023-05-31
 
 - Breaking changes to ``mpserver.Server`` API: the class is split into two classes: ``Server`` and ``AsyncServer``.
@@ -14,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
 - Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
 - Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class.
-- Initial for "shared memory" in the class ``multiprocessing.ServerProcess``.
+- Initial support for "shared memory" in the class ``multiprocessing.ServerProcess``.
 
 
 ## [0.12.9] - 2023-05-23
