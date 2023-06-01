@@ -16,28 +16,28 @@ We decided to use `multiprocessing`_ to speed thing up.
 First, define the few operations that will take place in separate processes::
 
     from time import sleep
-    from mpservice.mpserver import ProcessWorker, ProcessServlet, SequentialServlet, EnsembleServlet
+    from mpservice.mpserver import Worker, ProcessServlet, SequentialServlet, EnsembleServlet
 
 
-    class GetHead(ProcessWorker):
+    class GetHead(Worker):
         def call(self, x):
             sleep(0.01)
             return x[0]
 
 
-    class GetTail(ProcessWorker):
+    class GetTail(Worker):
         def call(self, x):
             sleep(0.011)
             return x[-1]
 
 
-    class GetLen(ProcessWorker):
+    class GetLen(Worker):
         def call(self, x):
             sleep(0.012)
             return len(x)
 
 
-    class Solute(ProcessWorker):
+    class Solute(Worker):
         def call(self, x):
             return f"Hello, {x}!"
 
@@ -52,7 +52,7 @@ In other words, define a flow that any input value will go through.
 
 ::
 
-    from mpservice.mpserver import ThreadServlet, make_threadworker
+    from mpservice.mpserver import ThreadServlet, make_worker
 
     servlet = SequentialServlet(
         EnsembleServlet(
@@ -60,7 +60,7 @@ In other words, define a flow that any input value will go through.
             ProcessServlet(GetTail, cpus=[0, 1]),
             ProcessServlet(GetLen, cpus=[1]),
             ),
-        ThreadServlet(make_threadworker(lambda x: (x[0] + x[1]) * x[2])),
+        ThreadServlet(make_worker(lambda x: (x[0] + x[1]) * x[2])),
         ProcessServlet(Solute),
         )
 
@@ -93,9 +93,8 @@ In words, given input ``x``, it goes through such a flow of operations:
    the first two elements and multiply the sum by the third element.
    This is a light-weight operation, so we do it in a thread instead of a process.
 
-   We could have defined a subclass of :class:`ThreadWorker` (similar to the :class:`ProcessWorker`
-   subclasses ``GetHead`` etc) and then wrap it in a :class:`ThreadServlet`.
-   For demonstration, we chose to use :func:`make_threadworker` to dynamically define and return such
+   We could have defined a subclass of :class:`Worker` and then wrap it in a :class:`ThreadServlet`.
+   For demonstration, we chose to use :func:`make_worker` to dynamically define and return such
    a class.
 
 4. The output of the ThreadServlet becomes the input to ``Solute``.
@@ -104,7 +103,7 @@ In words, given input ``x``, it goes through such a flow of operations:
 
    The output of ``Solute`` is the final result of the :class:`SequentialServlet`.
 
-All the :class:`ProcessWorker`, :class:`ThreadWorker`, :class:`ProcessServlet`, :class:`ThreadServlet`, :class:`EnsembleServlet`,
+All the :class:`Worker`, :class:`ProcessServlet`, :class:`ThreadServlet`, :class:`EnsembleServlet`,
 and :class:`SequentialServlet` are just "spec" of the flow. They do not run by themselves.
 There needs to be a "driver" that starts them, connects them to the "outside world", 
 passes input to them, and collects output from them.
