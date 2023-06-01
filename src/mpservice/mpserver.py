@@ -1919,28 +1919,4 @@ def __getattr__(name):
         )
         return make_worker
 
-    if name == 'Sequential':
-        warnings.warn(
-            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.SequentialServlet' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return SequentialServlet
-
-    if name == 'Ensemble':
-        warnings.warn(
-            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.EnsembleServlet' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return EnsembleServlet
-
-    if name == 'PipelineFull':
-        warnings.warn(
-            f"'mpservice.mpserver.{name}' is deprecated in 0.11.8 and will be removed in 0.13.0. Use 'mpservice.mpserver.ServerBacklogFull' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return ServerBacklogFull
-
     raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")

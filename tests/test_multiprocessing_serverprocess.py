@@ -5,7 +5,6 @@ from multiprocessing import active_children
 
 import pytest
 from mpservice.multiprocessing import (
-    CpuAffinity,
     MemoryBlock,
     Process,
     Queue,
@@ -101,17 +100,13 @@ class Tripler:
         return n
 
 
-ServerProcess.register(Doubler)
-ServerProcess.register(Tripler)
+ServerProcess.register('Doubler', Doubler)
+ServerProcess.register('Tripler', Tripler)
 
 
 def test_manager():
-    with ServerProcess(cpu=1, name='test_server_process') as manager:
+    with ServerProcess(name='test_server_process') as manager:
         assert manager._manager._process.name == 'test_server_process'
-        assert CpuAffinity.get(pid=manager._manager._process.pid) == [1]
-
-        with pytest.raises(AttributeError):
-            manager.Queue()
 
         doubler = manager.Doubler('d')
         print(doubler.get_mp())
@@ -147,7 +142,7 @@ def test_manager():
             assert doubler3.get_mp() == doubler2.get_mp()
 
     with pytest.warns(UserWarning):
-        ServerProcess.register(Doubler)  # this will trigger a warning log.
+        ServerProcess.register('Doubler', Doubler)  # this will trigger a warning log.
 
 
 def worker(sleeper, n):
@@ -242,11 +237,13 @@ class MemoryWorker:
 
 def test_shared_memory_from_serverprocess():
     ServerProcess.register(
-        MemoryWorker, method_to_typeid={'memory_block': 'memory_block_in_server'}
+        'MemoryWorker',
+        MemoryWorker,
+        method_to_typeid={'memory_block': 'memoryblock_in_server'},
     )
     with ServerProcess() as server:
-        print('')
         worker = server.MemoryWorker()
-        mem = worker.memory_block(20)
-        del mem
+        worker.memory_block(20)
         server.MemoryBlock(8)
+        # These two references to memory blocks will be
+        # taken care of when exiting the `server` context manager.
