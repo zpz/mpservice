@@ -33,19 +33,18 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
-from multiprocessing import util
 import queue
 import sys
 import threading
 import traceback
 import warnings
 import weakref
+from multiprocessing import util
 from traceback import format_exc
-from typing import Callable
 
 import psutil
-
 from deprecation import deprecated
+
 from ._remote_exception import (
     RemoteException,
     RemoteTraceback,
@@ -645,7 +644,7 @@ class _ProcessManager(multiprocessing.managers.BaseManager):
         return self
 
     def __exit__(self, *args):
-        for prox in self._memoryblock_proxies.values(): # valuerefs():
+        for prox in self._memoryblock_proxies.values():  # valuerefs():
             prox._close()
         # This takes care of dangling references to ``MemoryBlockProxy`` objects
         # in such situations (via ``ServerProcess``):
@@ -654,7 +653,7 @@ class _ProcessManager(multiprocessing.managers.BaseManager):
         #       mem = server.MemoryBlock(30)
         #       ...
         #       # the name ``mem`` is not "deleted" when exiting the context
-        # 
+        #
         # In this case, if the treatment above is not in place, we'll get such warning:
         #
         #   /usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
@@ -792,9 +791,9 @@ class ServerProcess:
 
     If you don't need a custom class, but rather just need to use one of the standard classes,
     for example, ``Event``, you can use that like this::
-         
+
         from mpservice.multiprocessing import Manager
-         
+
         with Manager() as manager:
             q = manager.Event()
             ...
@@ -872,13 +871,16 @@ class ServerProcess:
             assert not kwargs
             callable = typeid
             typeid = callable.__name__
-            warnings.warn("the signature of ``register`` has changed; now the first argument should be ``typeid``, which is a str",
-                          DeprecationWarning,
-                          stacklevel=2)
+            warnings.warn(
+                "the signature of ``register`` has changed; now the first argument should be ``typeid``, which is a str",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         if typeid in cls._registry:
             warnings.warn(
-                '"%s" is already registered; the existing registry is being overwritten.' % typeid
+                '"%s" is already registered; the existing registry is being overwritten.'
+                % typeid
             )
         else:
             cls._registry.add(typeid)
@@ -916,13 +918,21 @@ class ServerProcess:
         except Exception:
             traceback.print_exc()
 
-    @deprecated(deprecated_in='0.13.1', removed_in='0.13.5', details="Use context manager instead.")
+    @deprecated(
+        deprecated_in='0.13.1',
+        removed_in='0.13.5',
+        details="Use context manager instead.",
+    )
     def start(self):
         # :meth:`start` and :meth:`shutdown` are provided mainly for
         # compatibility. It's recommended to use the context manager.
         self.__enter__()
 
-    @deprecated(deprecated_in='0.13.1', removed_in='0.13.5', details="Use context manager instead.")
+    @deprecated(
+        deprecated_in='0.13.1',
+        removed_in='0.13.5',
+        details="Use context manager instead.",
+    )
     def shutdown(self):
         self.__exit__()
 
@@ -941,14 +951,27 @@ class ServerProcess:
 # If you need more that's not registered here, just register in your own code.
 
 ServerProcess.register('Queue', queue.Queue)
-ServerProcess.register('Event', threading.Event, proxytype=multiprocessing.managers.EventProxy)
-ServerProcess.register('Lock', threading.Lock, proxytype=multiprocessing.managers.AcquirerProxy)
-ServerProcess.register('RLock', threading.RLock, proxytype=multiprocessing.managers.AcquirerProxy)
-ServerProcess.register('Semaphore', threading.Semaphore, proxytype=multiprocessing.managers.AcquirerProxy)
-ServerProcess.register('Condition', threading.Condition, proxytype=multiprocessing.managers.ConditionProxy)
-ServerProcess.register('list', threading.Condition, proxytype=multiprocessing.managers.ListProxy)
-ServerProcess.register('dict', threading.Condition, proxytype=multiprocessing.managers.DictProxy)
-
+ServerProcess.register(
+    'Event', threading.Event, proxytype=multiprocessing.managers.EventProxy
+)
+ServerProcess.register(
+    'Lock', threading.Lock, proxytype=multiprocessing.managers.AcquirerProxy
+)
+ServerProcess.register(
+    'RLock', threading.RLock, proxytype=multiprocessing.managers.AcquirerProxy
+)
+ServerProcess.register(
+    'Semaphore', threading.Semaphore, proxytype=multiprocessing.managers.AcquirerProxy
+)
+ServerProcess.register(
+    'Condition', threading.Condition, proxytype=multiprocessing.managers.ConditionProxy
+)
+ServerProcess.register(
+    'list', threading.Condition, proxytype=multiprocessing.managers.ListProxy
+)
+ServerProcess.register(
+    'dict', threading.Condition, proxytype=multiprocessing.managers.DictProxy
+)
 
 
 try:
@@ -1006,7 +1029,7 @@ else:
             they have created have called ``.close``.
             At that point, ``self._mem``, residing in the server process, is the only
             reference to the shared memory block, and it is safe to "destroy" the memory block.
-        
+
             Therefore, this ``__del__`` destroys that memory block.
             '''
             name = self._mem.name
@@ -1019,7 +1042,6 @@ else:
 
     BaseProxy = multiprocessing.managers.BaseProxy
     dispatch = multiprocessing.managers.dispatch
-
 
     def _rebuild_memory_block_proxy(func, args, name, size, mem):
         obj = func(*args)
@@ -1152,7 +1174,6 @@ else:
 
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
 
-
     def list_memory_blocks(self):
         '''
         List names of MemoryBlock objects being tracked.
@@ -1181,7 +1202,10 @@ else:
         return block
 
     ServerProcess.register(
-        'memoryblock_in_server', memoryblock_in_server, proxytype=MemoryBlockProxy, create_method=False
+        'memoryblock_in_server',
+        memoryblock_in_server,
+        proxytype=MemoryBlockProxy,
+        create_method=False,
     )
 
 

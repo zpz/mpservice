@@ -5,7 +5,6 @@ from multiprocessing import active_children
 
 import pytest
 from mpservice.multiprocessing import (
-    CpuAffinity,
     MemoryBlock,
     Process,
     Queue,
@@ -238,11 +237,13 @@ class MemoryWorker:
 
 def test_shared_memory_from_serverprocess():
     ServerProcess.register(
-        'MemoryWorker', MemoryWorker, method_to_typeid={'memory_block': 'memoryblock_in_server'}
+        'MemoryWorker',
+        MemoryWorker,
+        method_to_typeid={'memory_block': 'memoryblock_in_server'},
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
-        mem = worker.memory_block(20)
-        m = server.MemoryBlock(8)
+        worker.memory_block(20)
+        server.MemoryBlock(8)
         # These two references to memory blocks will be
         # taken care of when exiting the `server` context manager.
