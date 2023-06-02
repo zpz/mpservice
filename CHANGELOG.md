@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.13.1] - in progress
 
 - Finetune to ``multiprocessing.ServerProcess`` and its shared-memory facilities.
+- Fix a bug in ``mpserver.{Server, AsyncServer}`` related to input buffer.
 
 
 ## [0.13.0] - 2023-05-31
