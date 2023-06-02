@@ -1283,7 +1283,7 @@ def _enter_server(self):
         # into this queue. A background thread takes data out of this
         # queue and puts them into `_q_in`, which could block due to socket
         # buffer size limit.
-  
+
         def _onboard_input():
             qin = self._input_buffer
             qout = self._q_in
@@ -1736,7 +1736,7 @@ class AsyncServer:
         # and never taken out.
         # But I don't thins this will ever happen, because these two lines of sync code
         # should not be interrupted by `asyncio.CancelledError`.
-        # 
+        #
         # However, if that is ever an issue or concern, there are two solutions:
         # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
         #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
