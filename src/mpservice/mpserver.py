@@ -1259,6 +1259,44 @@ def _init_server(
         psutil.Process().cpu_affinity(cpus=cpus)
 
 
+def _enter_server(self):
+    self._q_in = (
+        _SimpleThreadQueue()
+        if self.servlet.input_queue_type == 'thread'
+        else _SimpleProcessQueue()
+    )
+    self._q_out = (
+        _SimpleThreadQueue()
+        if self.servlet.output_queue_type == 'thread'
+        else _SimpleProcessQueue()
+    )
+    self.servlet.start(self._q_in, self._q_out)
+
+    if isinstance(self._q_in, _SimpleThreadQueue):
+        self._input_buffer = self._q_in
+        self._onboard_thread = None
+    else:
+        self._input_buffer = queue.SimpleQueue()
+        # This has unlimited size; `put` never blocks (as long as
+        # memory is not blown up!). Input requests respect size limit
+        # of `_uid_to_futures`, but is not blocked when putting
+        # into this queue. A background thread takes data out of this
+        # queue and puts them into `_q_in`, which could block due to socket
+        # buffer size limit.
+  
+        def _onboard_input():
+            qin = self._input_buffer
+            qout = self._q_in
+            while True:
+                x = qin.get()
+                qout.put(x)
+                if x == NOMOREDATA:
+                    break
+
+        self._onboard_thread = Thread(target=_onboard_input)
+        self._onboard_thread.start()
+
+
 class Server:
     @final
     @classmethod
@@ -1331,30 +1369,19 @@ class Server:
 
     def __enter__(self):
         self._pipeline_notfull = threading.Condition()
-
-        self._q_in = (
-            _SimpleThreadQueue()
-            if self.servlet.input_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self._q_out = (
-            _SimpleThreadQueue()
-            if self.servlet.output_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self.servlet.start(self._q_in, self._q_out)
-
+        _enter_server(self)
         self._gather_thread = Thread(
             target=self._gather_output, name=f"{self.__class__.__name__}._gather_output"
         )
         self._gather_thread.start()
-
         return self
 
     def __exit__(self, *args):
-        self._q_in.put(NOMOREDATA)
+        self._input_buffer.put(NOMOREDATA)
         self.servlet.stop()
         self._gather_thread.join()
+        if self._onboard_thread is not None:
+            self._onboard_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
 
@@ -1431,7 +1458,7 @@ class Server:
             'deadline': t0 + timeout,
             'cancelled': False,
         }
-        self._q_in.put((uid, x))
+        self._input_buffer.put((uid, x))
         return fut
 
     def _wait_for_result(self, fut: concurrent.futures.Future):
@@ -1640,30 +1667,19 @@ class AsyncServer:
 
     async def __aenter__(self):
         self._pipeline_notfull = asyncio.Condition()
-
-        self._q_in = (
-            _SimpleThreadQueue()
-            if self.servlet.input_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self._q_out = (
-            _SimpleThreadQueue()
-            if self.servlet.output_queue_type == 'thread'
-            else _SimpleProcessQueue()
-        )
-        self.servlet.start(self._q_in, self._q_out)
-
+        _enter_server(self)
         self._gather_task = asyncio.create_task(
             self._gather_output(),
             name=f"{self.__class__.__name__}._gather_output",
         )
-
         return self
 
     async def __aexit__(self, *args):
-        self._q_in.put(NOMOREDATA)
+        self._input_buffer.put(NOMOREDATA)
         self.servlet.stop()
         await self._gather_task
+        if self._onboard_thread is not None:
+            self._onboard_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
 
@@ -1714,10 +1730,20 @@ class AsyncServer:
                         f"{perf_counter() - t0:.3f} seconds enqueue",
                     )
             pipeline[uid] = fut
-            # this line is atomic; no need to worry about ``CancelledError`` here
+
+        # We can't accept situation that an entry is placed in `pipeline`
+        # but not in `_input_buffer`, for that entry would be stuck in `pipeline
+        # and never taken out.
+        # But I don't thins this will ever happen, because these two lines of sync code
+        # should not be interrupted by `asyncio.CancelledError`.
+        # 
+        # However, if that is ever an issue or concern, there are two solutions:
+        # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
+        #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
+        # (2) in `call`, protect the calll to `_enqueue` by an `asyncio.shield`.
 
         fut.data['t1'] = perf_counter()
-        self._q_in.put((uid, x))
+        self._input_buffer.put((uid, x))
         return fut
 
     async def _wait_for_result(self, fut: asyncio.Future):
@@ -1729,6 +1755,8 @@ class AsyncServer:
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
         # asyncio.CancelledError could also happen; let it propagate.
+
+        # If this call is cancelled by caller, then `fut` is also cancelled.
 
         return fut.result()
         # This could raise an exception originating from RemoteException.
@@ -1748,10 +1776,7 @@ class AsyncServer:
                 fut = pipeline.pop(uid)  # this must exist
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
                 # However, here we need to acquire the lock because we want to notify.
-                if fut is not None:
-                    pipeline_notfull.notify()
-                else:
-                    continue
+                pipeline_notfull.notify()
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
