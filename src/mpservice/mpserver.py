@@ -1507,7 +1507,7 @@ class Server:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 600,
+        timeout: int | float = 60,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1585,7 +1585,7 @@ class Server:
                     _, fut = v
                     fut.data['cancelled'] = True
 
-        tasks = queue.Queue(self.capacity)
+        tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
         worker = Thread(
             target=_enqueue,
@@ -1791,7 +1791,7 @@ class AsyncServer:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 600,
+        timeout: int | float = 60,
     ) -> AsyncIterator:
         '''
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
@@ -1836,7 +1836,7 @@ class AsyncServer:
                     fut.data['cancelled'] = True
                 await asyncio.sleep(0.1)
 
-        tasks = asyncio.Queue(self.capacity)
+        tasks = asyncio.Queue(max(1, self.capacity - 2))
         t_enqueue = asyncio.create_task(
             _enqueue(tasks, timeout),
             name=f'{self.__class__.__name__}.async_stream._enqueue',
