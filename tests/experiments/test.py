@@ -3,19 +3,25 @@ import asyncio
 # from mpservice.concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Queue
+from mpservice.threading import Thread
 
 
-def worker(q):
-    q.put(3)
+def worker(loop):
+    print('sleeping in worker')
+    asyncio.run_coroutine_threadsafe(asyncio.sleep(1), loop).result()
+    print('1 in worker')
+
 
 
 async def main():
-    q = Queue()
-    with ProcessPoolExecutor() as pool:
-        t = pool.submit(worker, q)
-        t.result()
+    loop = asyncio.get_running_loop()
 
-    assert q.get() == 3
+    w = Thread(target=worker, args=(loop,))
+    w.start()
+    print('a in main')
+    # await asyncio.sleep(1)
+    # print('b in main')
+    w.join()
 
 
 if __name__ == '__main__':

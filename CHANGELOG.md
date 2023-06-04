@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Finetune to ``multiprocessing.ServerProcess`` and its shared-memory facilities.
 - Fix a bug in ``mpserver.{Server, AsyncServer}`` related to input buffer.
+- Increases ``timeout`` parameter default to 600 in ``mpserver.{Server, AsyncServer}.stream``.
+- Finetune ``mpserver.{Server, AsyncServer}``, esp related to methods ``_gather_output`` and ``_enqueue``.
 
 
 ## [0.13.0] - 2023-05-31
