@@ -1297,11 +1297,11 @@ def _enter_server(self, gather_args: tuple = None):
         self._onboard_thread.start()
 
     self._gather_thread = Thread(
-        target=self._gather_output, name=f"{self.__class__.__name__}._gather_output",
+        target=self._gather_output,
+        name=f"{self.__class__.__name__}._gather_output",
         args=gather_args or (),
     )
     self._gather_thread.start()
-
 
 
 class Server:
@@ -1678,7 +1678,6 @@ class AsyncServer:
             self._onboard_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
         # Reset CPU affinity.
-
 
     async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
