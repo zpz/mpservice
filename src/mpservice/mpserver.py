@@ -1259,7 +1259,7 @@ def _init_server(
         psutil.Process().cpu_affinity(cpus=cpus)
 
 
-def _enter_server(self):
+def _enter_server(self, gather_args: tuple = None):
     self._q_in = (
         _SimpleThreadQueue()
         if self.servlet.input_queue_type == 'thread'
@@ -1295,6 +1295,13 @@ def _enter_server(self):
 
         self._onboard_thread = Thread(target=_onboard_input)
         self._onboard_thread.start()
+
+    self._gather_thread = Thread(
+        target=self._gather_output,
+        name=f"{self.__class__.__name__}._gather_output",
+        args=gather_args or (),
+    )
+    self._gather_thread.start()
 
 
 class Server:
@@ -1370,16 +1377,12 @@ class Server:
     def __enter__(self):
         self._pipeline_notfull = threading.Condition()
         _enter_server(self)
-        self._gather_thread = Thread(
-            target=self._gather_output, name=f"{self.__class__.__name__}._gather_output"
-        )
-        self._gather_thread.start()
         return self
 
     def __exit__(self, *args):
         self._input_buffer.put(NOMOREDATA)
-        self.servlet.stop()
         self._gather_thread.join()
+        self.servlet.stop()
         if self._onboard_thread is not None:
             self._onboard_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
@@ -1484,10 +1487,10 @@ class Server:
             if z == NOMOREDATA:
                 break
             uid, y = z
+            fut = pipeline.pop(uid)  # this must exist
+            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+            # However, here we need to acquire the lock because we want to notify.
             with pipeline_notfull:
-                fut = pipeline.pop(uid)  # this must exist
-                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                # However, here we need to acquire the lock because we want to notify.
                 pipeline_notfull.notify()
             if isinstance(y, RemoteException):
                 y = y.exc
@@ -1504,7 +1507,7 @@ class Server:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 60,
+        timeout: int | float = 600,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1554,9 +1557,7 @@ class Server:
                         # If user prematurally aborts the stream, then it could end up
                         # waiting for a while to exit, because `_enq` may wait up to
                         # `timeout`.
-                    fut = _enq(
-                        x, timeout, False
-                    )  # This will not wait; it will succeed right away.
+                    fut = _enq(x, timeout, False)
                     tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
@@ -1584,9 +1585,7 @@ class Server:
                     _, fut = v
                     fut.data['cancelled'] = True
 
-        tasks = queue.SimpleQueue()
-        # `tasks` has no size limit. Its length is restricted by the speed of the service.
-        # The downstream should get results out of it as soon as possible.
+        tasks = queue.Queue(self.capacity)
         stopped = threading.Event()
         worker = Thread(
             target=_enqueue,
@@ -1667,17 +1666,14 @@ class AsyncServer:
 
     async def __aenter__(self):
         self._pipeline_notfull = asyncio.Condition()
-        _enter_server(self)
-        self._gather_task = asyncio.create_task(
-            self._gather_output(),
-            name=f"{self.__class__.__name__}._gather_output",
-        )
+        _enter_server(self, (asyncio.get_running_loop(),))
         return self
 
     async def __aexit__(self, *args):
         self._input_buffer.put(NOMOREDATA)
+        while self._gather_thread.is_alive():
+            await asyncio.sleep(0.1)
         self.servlet.stop()
-        await self._gather_task
         if self._onboard_thread is not None:
             self._onboard_thread.join()
         psutil.Process().cpu_affinity(cpus=[])
@@ -1761,30 +1757,32 @@ class AsyncServer:
         return fut.result()
         # This could raise an exception originating from RemoteException.
 
-    async def _gather_output(self) -> None:
+    def _gather_output(self, loop) -> None:
         q_out = self._q_out
         pipeline = self._uid_to_futures
         pipeline_notfull = self._pipeline_notfull
-        loop = asyncio.get_running_loop()
+
+        async def notify():
+            async with pipeline_notfull:
+                pipeline_notfull.notify()
 
         while True:
-            z = await loop.run_in_executor(None, q_out.get)
+            z = q_out.get()
             if z == NOMOREDATA:
                 break
             uid, y = z
-            async with pipeline_notfull:
-                fut = pipeline.pop(uid)  # this must exist
-                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                # However, here we need to acquire the lock because we want to notify.
-                pipeline_notfull.notify()
+            fut = pipeline.pop(uid)  # this must exist
+            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+            # However, here we need to acquire the lock because we want to notify.
+            asyncio.run_coroutine_threadsafe(notify(), loop).result()  # wait to finish
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
                 if isinstance(y, BaseException):
-                    fut.set_exception(y)
+                    loop.call_soon_threadsafe(fut.set_exception, y)
                 else:
-                    fut.set_result(y)
-            fut.data["t2"] = perf_counter()
+                    loop.call_soon_threadsafe(fut.set_result, y)
+                fut.data["t2"] = perf_counter()
 
     async def stream(
         self,
@@ -1793,7 +1791,7 @@ class AsyncServer:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 60,
+        timeout: int | float = 600,
     ) -> AsyncIterator:
         '''
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
@@ -1838,9 +1836,7 @@ class AsyncServer:
                     fut.data['cancelled'] = True
                 await asyncio.sleep(0.1)
 
-        tasks = asyncio.Queue()
-        # `tasks` has no size limit. Its length is restricted by the speed of the service.
-        # The downstream should get results out of it as soon as possible.
+        tasks = asyncio.Queue(self.capacity)
         t_enqueue = asyncio.create_task(
             _enqueue(tasks, timeout),
             name=f'{self.__class__.__name__}.async_stream._enqueue',
