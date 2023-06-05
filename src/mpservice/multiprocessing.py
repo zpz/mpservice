@@ -945,6 +945,11 @@ class ServerProcess:
         )
 
 
+# In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
+# A workaround is described here:
+# https://stackoverflow.com/q/3649458/6178706
+
+
 # Register most commonly used classes.
 # I don't make ``ServerProcess`` subclass ``SyncManger`` because I don't want to
 # expose the full API of ``SyncManager`` or ``BaseManager``.
