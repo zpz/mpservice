@@ -1747,10 +1747,13 @@ class AsyncServer:
             await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
         except (asyncio.TimeoutError, TimeoutError):
             t0 = fut.data['t0']
+            fut.data['cancelled'] = True
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
-        # asyncio.CancelledError could also happen; let it propagate.
+        except asyncio.CancelledError:
+            fut.data['cancelled'] = True
+            raise
 
         # If this call is cancelled by caller, then `fut` is also cancelled.
 
@@ -1783,6 +1786,23 @@ class AsyncServer:
                 else:
                     loop.call_soon_threadsafe(fut.set_result, y)
                 fut.data["t2"] = perf_counter()
+
+    async def _debug_info(self) -> dict:
+        now = perf_counter()
+        futures = [
+            {
+                **fut.data,
+                'id': k,
+                'age': now - fut.data['t0'],
+                'is_done': fut.done(),
+                'is_cancelled': fut.cancelled(),
+            }
+            for k, fut in self._uid_to_futures.items()
+        ]
+        return {
+            'capacity': self.capacity,
+            'futures': futures,
+        }
 
     async def stream(
         self,
