@@ -1852,7 +1852,7 @@ class AsyncServer:
 
     def _debug_info(self) -> dict:
         return _server_debug_info(self)
-    
+
     async def stream(
         self,
         data_stream: AsyncIterable,
