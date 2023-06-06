@@ -616,6 +616,20 @@ class Servlet(ABC):
     def workers(self) -> list[Worker]:
         raise NotImplementedError
 
+    @property
+    @abstractmethod
+    def children(self) -> list:
+        raise NotImplementedError
+
+    def _debug_info(self):
+        return {
+            'type': self.__class__.__name__,
+            'workers': [
+                (w.name, 'is_alive' if w.is_alive() else 'not_alive')
+                for w in self.workers
+            ],
+        }
+
 
 class ProcessServlet(Servlet):
     """
@@ -739,6 +753,10 @@ class ProcessServlet(Servlet):
     def workers(self):
         return self._workers
 
+    @property
+    def children(self):
+        return self._workers
+
 
 class ThreadServlet(Servlet):
     """
@@ -845,6 +863,10 @@ class ThreadServlet(Servlet):
     def workers(self):
         return self._workers
 
+    @property
+    def children(self):
+        return self._workers
+
 
 class SequentialServlet(Servlet):
     """
@@ -918,6 +940,10 @@ class SequentialServlet(Servlet):
     @property
     def workers(self):
         return [w for s in self._servlets for w in s.workers]
+
+    @property
+    def children(self):
+        self._servlets
 
     @property
     def input_queue_type(self):
@@ -1110,6 +1136,10 @@ class EnsembleServlet(Servlet):
         return [w for s in self._servlets for w in s.workers]
 
     @property
+    def children(self):
+        return self._servlets
+
+    @property
     def input_queue_type(self):
         return 'thread'
 
@@ -1232,6 +1262,10 @@ class SwitchServlet(Servlet):
     def workers(self):
         return [w for s in self._servlets for w in s.workers]
 
+    @property
+    def children(self):
+        return self._servlets
+
 
 def _init_server(
     self,
@@ -1302,6 +1336,34 @@ def _enter_server(self, gather_args: tuple = None):
         args=gather_args or (),
     )
     self._gather_thread.start()
+
+
+def _server_debug_info(self):
+    now = perf_counter()
+    futures = [
+        {
+            **fut.data,
+            'id': k,
+            'age': now - fut.data['t0'],
+            'is_done': fut.done(),
+            'is_cancelled': fut.cancelled(),
+        }
+        for k, fut in self._uid_to_futures.items()
+    ]
+    if self._onboard_thread is None:
+        onboard_thread = None
+    else:
+        onboard_thread = 'is_alive' if self._onboard_thread.is_alive() else 'done'
+
+    return {
+        'capacity': self.capacity,
+        'active_processes': [str(v) for v in multiprocessing.active_children()],
+        'active_threads': [str(v) for v in threading.enumerate()],
+        'backlog': futures,
+        'servlet': self.servlet._debug_info(),
+        'onboard_thread': onboard_thread,
+        'gather_thread': 'is_alive' if self._gather_thread.is_alive() else 'done',
+    }
 
 
 class Server:
@@ -1459,7 +1521,6 @@ class Server:
             "t0": t0,
             "t1": perf_counter(),  # end of enqueuing
             'deadline': t0 + timeout,
-            'cancelled': False,
         }
         self._input_buffer.put((uid, x))
         return fut
@@ -1471,7 +1532,7 @@ class Server:
             # If timeout is negative, it doesn't wait.
             # This may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
-            fut.data['cancelled'] = True
+            fut.cancel()
             t0 = fut.data["t0"]
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
@@ -1494,11 +1555,15 @@ class Server:
                 pipeline_notfull.notify()
             if isinstance(y, RemoteException):
                 y = y.exc
-            if isinstance(y, BaseException):
-                fut.set_exception(y)
-            else:
-                fut.set_result(y)
+            if not fut.cancelled():
+                if isinstance(y, BaseException):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
             fut.data["t2"] = perf_counter()
+
+    def _debug_info(self):
+        return _server_debug_info(self)
 
     def stream(
         self,
@@ -1583,7 +1648,7 @@ class Server:
                         v = tasks.get()
                         break
                     _, fut = v
-                    fut.data['cancelled'] = True
+                    fut.cancel()
 
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
@@ -1700,7 +1765,6 @@ class AsyncServer:
             "t0": t0,
             "t1": t0,  # end of enqueuing; to be updated
             'deadline': t0 + timeout,
-            'cancelled': False,
         }
         uid = id(fut)
 
@@ -1747,12 +1811,11 @@ class AsyncServer:
             await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
         except (asyncio.TimeoutError, TimeoutError):
             t0 = fut.data['t0']
-            fut.data['cancelled'] = True
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
+            # `fut` is also cancelled; to confirm
         except asyncio.CancelledError:
-            fut.data['cancelled'] = True
             raise
 
         # If this call is cancelled by caller, then `fut` is also cancelled.
@@ -1787,23 +1850,9 @@ class AsyncServer:
                     loop.call_soon_threadsafe(fut.set_result, y)
                 fut.data["t2"] = perf_counter()
 
-    async def _debug_info(self) -> dict:
-        now = perf_counter()
-        futures = [
-            {
-                **fut.data,
-                'id': k,
-                'age': now - fut.data['t0'],
-                'is_done': fut.done(),
-                'is_cancelled': fut.cancelled(),
-            }
-            for k, fut in self._uid_to_futures.items()
-        ]
-        return {
-            'capacity': self.capacity,
-            'futures': futures,
-        }
-
+    def _debug_info(self) -> dict:
+        return _server_debug_info(self)
+    
     async def stream(
         self,
         data_stream: AsyncIterable,
@@ -1853,7 +1902,7 @@ class AsyncServer:
                         await tasks.get()
                         break
                     x, fut = v
-                    fut.data['cancelled'] = True
+                    fut.cancel()
                 await asyncio.sleep(0.1)
 
         tasks = asyncio.Queue(max(1, self.capacity - 2))

@@ -69,10 +69,13 @@ async def test_sequential_server_async():
         z = await service.call(3)
         assert z == 3 * 2 + 3
 
+        print('debug_info:', service._debug_info())
+
         x = list(range(10))
         tasks = [service.call(v) for v in x]
         y = await asyncio.gather(*tasks)
         assert y == [v * 2 + 3 for v in x]
+        print('debug_info:', service._debug_info())
 
 
 def test_sequential_server():
@@ -85,9 +88,12 @@ def test_sequential_server():
         z = service.call(3)
         assert z == 3 * 2 + 3
 
+        print('debug_info:', service._debug_info())
+
         x = list(range(10))
         y = [service.call(v) for v in x]
         assert y == [v * 2 + 3 for v in x]
+        print('debug_info:', service._debug_info())
 
 
 def test_sequential_batch():
@@ -109,6 +115,7 @@ def test_sequential_error():
         z = service.call(3)
         assert z == 3 * 2 + 4
 
+        print('debug_info:', service._debug_info())
         with pytest.raises(TypeError):
             z = service.call('a')
 
