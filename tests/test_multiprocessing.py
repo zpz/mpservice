@@ -6,12 +6,14 @@ from time import sleep
 from types import TracebackType
 
 import pytest
+import mpservice.multiprocessing
 from mpservice.multiprocessing import (
     Process,
     RemoteException,
     get_remote_traceback,
     is_remote_exception,
 )
+import mpservice.threading
 from mpservice.threading import Thread
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,7 @@ def _test_thread_process(cls, TimeoutError):
     sleep(0.1)
     assert not t.done()
     assert t.is_alive()
+    print('TimeoutError:', TimeoutError)
     with pytest.raises(TimeoutError):
         t.result(0.1)
     with pytest.raises(TimeoutError):
@@ -82,15 +85,11 @@ def _test_thread_process(cls, TimeoutError):
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
-    from mpservice.threading import TimeoutError
-
-    _test_thread_process(Thread, TimeoutError)
+    _test_thread_process(Thread, mpservice.threading.TimeoutError)
 
 
 def test_process():
-    from mpservice.multiprocessing import TimeoutError
-
-    _test_thread_process(Process, TimeoutError)
+    _test_thread_process(Process, mpservice.multiprocessing.TimeoutError)
 
 
 def goo(x, q):

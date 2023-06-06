@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.13.2] - in progress
 
+- Re-orged ``mpservice.multiprocessing`` into a sub-package as the module has grown considerably and may grow further.
+
+
 
 ## [0.13.1] - 2023-06-04
 

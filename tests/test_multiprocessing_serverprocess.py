@@ -4,13 +4,8 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import (
-    MemoryBlock,
-    Process,
-    Queue,
-    ServerProcess,
-    SpawnProcess,
-)
+from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
+from mpservice.multiprocessing._server_process import MemoryBlock, MemoryBlockProxy
 from mpservice.threading import Thread
 
 
@@ -236,10 +231,11 @@ class MemoryWorker:
 
 
 def test_shared_memory_from_serverprocess():
+    ServerProcess.register('MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy)
     ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
-        method_to_typeid={'memory_block': 'memoryblock_in_server'},
+        method_to_typeid={'memory_block': 'MemoryBlock_in_server'},
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()

@@ -38,7 +38,7 @@ the processing of the input stream.
 For this purpose, we add a :meth:`~Stream.parmap` (or "parallel map") operator to the stream:
 
 >>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
-<mpservice.streamer.Stream object at 0x7...>
+<mpservice._streamer.Stream object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -94,9 +94,9 @@ This is quick and easy; we decide do it "in-line" by :meth:`~Stream.map`:
 
 >>> data_stream = Stream(range(20))
 >>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
-<mpservice.streamer.Stream object at 0x7...>
+<mpservice._streamer.Stream object at 0x7...>
 >>> data_stream.map(shift, amount=0.8)  # doctest: +SKIP
-<mpservice.streamer.Stream object at 0x7...>
+<mpservice._streamer.Stream object at 0x7...>
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP

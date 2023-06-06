@@ -7,15 +7,8 @@ from time import perf_counter, sleep
 import pytest
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.multiprocessing import Process
-from mpservice.streamer import (
-    AsyncIter,
-    AsyncIterQueue,
-    IterProcessQueue,
-    IterQueue,
-    Stream,
-    SyncIter,
-    tee,
-)
+from mpservice.streamer import Stream, tee, IterQueue, IterProcessQueue, AsyncIterQueue
+from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.threading import Thread
 
 

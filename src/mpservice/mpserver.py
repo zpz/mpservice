@@ -38,7 +38,7 @@ from typing import Any, Callable, Literal, final
 import psutil
 
 from ._queues import SingleLane
-from ._remote_exception import EnsembleError
+from .multiprocessing._remote_exception import EnsembleError
 from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
