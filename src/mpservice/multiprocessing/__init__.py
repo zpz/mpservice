@@ -25,7 +25,7 @@ the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.
 
 from ._remote_exception import RemoteException, RemoteTraceback, get_remote_traceback, is_remote_exception
 from ._multiprocessing import TimeoutError, SpawnProcess, SpawnContext, MP_SPAWN_CTX, CpuAffinity
-from ._server_process import ServerProcess
+from ._server_process import ServerProcess, ProxyDictValue, MemoryBlock, MemoryBlockProxy
 
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     'MP_SPAWN_CTX',
     'ServerProcess',
     'CpuAffinity',
+    'MemoryBlock', 'MemoryBlockProxy', 'ProxyDictValue',
 ]
 
 
