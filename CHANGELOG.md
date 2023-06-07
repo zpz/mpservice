@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.2] - in progress
+
+- Re-orged ``mpservice.multiprocessing`` into a sub-package as the module has grown considerably and may grow further.
+- ``mpserver.{Server, AsyncServer}`` bug related to "gather-output" and "notify" requesters.
+- Enhancements to ``mpserver.multiprocessing.ServerProcess``.
+
+
 ## [0.13.1] - 2023-06-04
 
 - Finetune to ``multiprocessing.ServerProcess`` and its shared-memory facilities.
 - Fix a bug in ``mpserver.{Server, AsyncServer}`` related to input buffer.
-- Increases ``timeout`` parameter default to 600 in ``mpserver.{Server, AsyncServer}.stream``.
 - Finetune ``mpserver.{Server, AsyncServer}`` internals.
 
 

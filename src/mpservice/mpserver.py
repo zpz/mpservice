@@ -31,6 +31,7 @@ import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
+from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
@@ -38,13 +39,13 @@ from typing import Any, Callable, Literal, final
 import psutil
 
 from ._queues import SingleLane
-from ._remote_exception import EnsembleError
 from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
     Process,
     RemoteException,
 )
+from .multiprocessing._remote_exception import EnsembleError
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
@@ -616,6 +617,20 @@ class Servlet(ABC):
     def workers(self) -> list[Worker]:
         raise NotImplementedError
 
+    @property
+    @abstractmethod
+    def children(self) -> list:
+        raise NotImplementedError
+
+    def _debug_info(self):
+        return {
+            'type': self.__class__.__name__,
+            'workers': [
+                (w.name, 'is_alive' if w.is_alive() else 'not_alive')
+                for w in self.workers
+            ],
+        }
+
 
 class ProcessServlet(Servlet):
     """
@@ -739,6 +754,10 @@ class ProcessServlet(Servlet):
     def workers(self):
         return self._workers
 
+    @property
+    def children(self):
+        return self._workers
+
 
 class ThreadServlet(Servlet):
     """
@@ -845,6 +864,10 @@ class ThreadServlet(Servlet):
     def workers(self):
         return self._workers
 
+    @property
+    def children(self):
+        return self._workers
+
 
 class SequentialServlet(Servlet):
     """
@@ -918,6 +941,10 @@ class SequentialServlet(Servlet):
     @property
     def workers(self):
         return [w for s in self._servlets for w in s.workers]
+
+    @property
+    def children(self):
+        self._servlets
 
     @property
     def input_queue_type(self):
@@ -1110,6 +1137,10 @@ class EnsembleServlet(Servlet):
         return [w for s in self._servlets for w in s.workers]
 
     @property
+    def children(self):
+        return self._servlets
+
+    @property
     def input_queue_type(self):
         return 'thread'
 
@@ -1232,6 +1263,10 @@ class SwitchServlet(Servlet):
     def workers(self):
         return [w for s in self._servlets for w in s.workers]
 
+    @property
+    def children(self):
+        return self._servlets
+
 
 def _init_server(
     self,
@@ -1293,7 +1328,9 @@ def _enter_server(self, gather_args: tuple = None):
                 if x == NOMOREDATA:
                     break
 
-        self._onboard_thread = Thread(target=_onboard_input)
+        self._onboard_thread = Thread(
+            target=_onboard_input, name=f"{self.__class__.__name__}._onboard_input"
+        )
         self._onboard_thread.start()
 
     self._gather_thread = Thread(
@@ -1302,6 +1339,36 @@ def _enter_server(self, gather_args: tuple = None):
         args=gather_args or (),
     )
     self._gather_thread.start()
+
+
+def _server_debug_info(self):
+    now = perf_counter()
+    futures = [
+        {
+            **fut.data,
+            'id': k,
+            'age': now - fut.data['t0'],
+            'is_done': fut.done(),
+            'is_cancelled': fut.cancelled(),
+        }
+        for k, fut in self._uid_to_futures.items()
+    ]
+    if self._onboard_thread is None:
+        onboard_thread = None
+    else:
+        onboard_thread = 'is_alive' if self._onboard_thread.is_alive() else 'done'
+
+    return {
+        'datetime': str(datetime.utcnow()),
+        'perf_counter': now,
+        'capacity': self.capacity,
+        'active_processes': [str(v) for v in multiprocessing.active_children()],
+        'active_threads': [str(v) for v in threading.enumerate()],
+        'backlog': futures,
+        'servlet': self.servlet._debug_info(),
+        'onboard_thread': onboard_thread,
+        'gather_thread': 'is_alive' if self._gather_thread.is_alive() else 'done',
+    }
 
 
 class Server:
@@ -1459,7 +1526,6 @@ class Server:
             "t0": t0,
             "t1": perf_counter(),  # end of enqueuing
             'deadline': t0 + timeout,
-            'cancelled': False,
         }
         self._input_buffer.put((uid, x))
         return fut
@@ -1471,7 +1537,7 @@ class Server:
             # If timeout is negative, it doesn't wait.
             # This may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
-            fut.data['cancelled'] = True
+            fut.cancel()
             t0 = fut.data["t0"]
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
@@ -1480,25 +1546,44 @@ class Server:
     def _gather_output(self) -> None:
         q_out = self._q_out
         pipeline = self._uid_to_futures
-        pipeline_notfull = self._pipeline_notfull
+
+        q_notify = queue.SimpleQueue()
+
+        def notify():
+            q = q_notify
+            pipeline_notfull = self._pipeline_notfull
+            while True:
+                z = q.get()
+                if z == NOMOREDATA:
+                    break
+                with pipeline_notfull:
+                    pipeline_notfull.notify()
+
+        notification_thread = Thread(target=notify)
+        notification_thread.start()
 
         while True:
             z = q_out.get()
             if z == NOMOREDATA:
+                q_notify.put(NOMOREDATA)
+                notification_thread.join()
                 break
             uid, y = z
             fut = pipeline.pop(uid)  # this must exist
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
             # However, here we need to acquire the lock because we want to notify.
-            with pipeline_notfull:
-                pipeline_notfull.notify()
             if isinstance(y, RemoteException):
                 y = y.exc
-            if isinstance(y, BaseException):
-                fut.set_exception(y)
-            else:
-                fut.set_result(y)
+            if not fut.cancelled():
+                if isinstance(y, BaseException):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
             fut.data["t2"] = perf_counter()
+            q_notify.put(1)
+
+    def debug_info(self):
+        return _server_debug_info(self)
 
     def stream(
         self,
@@ -1583,7 +1668,7 @@ class Server:
                         v = tasks.get()
                         break
                     _, fut = v
-                    fut.data['cancelled'] = True
+                    fut.cancel()
 
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
@@ -1700,7 +1785,6 @@ class AsyncServer:
             "t0": t0,
             "t1": t0,  # end of enqueuing; to be updated
             'deadline': t0 + timeout,
-            'cancelled': False,
         }
         uid = id(fut)
 
@@ -1750,7 +1834,9 @@ class AsyncServer:
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
-        # asyncio.CancelledError could also happen; let it propagate.
+            # `fut` is also cancelled; to confirm
+        except asyncio.CancelledError:
+            raise
 
         # If this call is cancelled by caller, then `fut` is also cancelled.
 
@@ -1766,6 +1852,8 @@ class AsyncServer:
             async with pipeline_notfull:
                 pipeline_notfull.notify()
 
+        notifications = {}
+
         while True:
             z = q_out.get()
             if z == NOMOREDATA:
@@ -1773,8 +1861,6 @@ class AsyncServer:
             uid, y = z
             fut = pipeline.pop(uid)  # this must exist
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-            # However, here we need to acquire the lock because we want to notify.
-            asyncio.run_coroutine_threadsafe(notify(), loop).result()  # wait to finish
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
@@ -1783,6 +1869,13 @@ class AsyncServer:
                 else:
                     loop.call_soon_threadsafe(fut.set_result, y)
                 fut.data["t2"] = perf_counter()
+
+            f = asyncio.run_coroutine_threadsafe(notify(), loop)
+            notifications[id(f)] = f
+            f.add_done_callback(lambda fut: notifications.pop(id(fut)))
+
+    def debug_info(self) -> dict:
+        return _server_debug_info(self)
 
     async def stream(
         self,
@@ -1833,7 +1926,7 @@ class AsyncServer:
                         await tasks.get()
                         break
                     x, fut = v
-                    fut.data['cancelled'] = True
+                    fut.cancel()
                 await asyncio.sleep(0.1)
 
         tasks = asyncio.Queue(max(1, self.capacity - 2))

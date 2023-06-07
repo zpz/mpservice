@@ -8,14 +8,17 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
    One use case is machine learning model serving, although the code is generic
    and not restricted to this particular use case.
 
-   A :class:`mpservice.mpserver.Server` object could be used either in "embedded" mode or to back a service.
+   A :class:`mpservice.mpserver.Server` or :class:`mpservice.mpserver.AsyncServer`
+   object could be used either in "embedded" mode or to back a service.
    Utilities are provided in :mod:`mpservice.http`, :mod:`mpservice.socket`, and :mod:`mpservice.pipe`
    for the latter use case.
 2. Stream processing, i.e. processing a long, possibly infinite stream
    of input data, with multiple operators in the pipeline. A main use case
    is that one or more of the operators is I/O bound or CPU bound,
    hence can benefit from concurrency.
+3. Utilities in ``mpservice.multiprocessing`` to enhance or customize Python's standard
+   ``multiprocessing`` module.
 """
 
 
-__version__ = "0.13.1"
+__version__ = "0.13.2b4"

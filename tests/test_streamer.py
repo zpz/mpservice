@@ -5,17 +5,10 @@ import random
 from time import perf_counter, sleep
 
 import pytest
+from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.multiprocessing import Process
-from mpservice.streamer import (
-    AsyncIter,
-    AsyncIterQueue,
-    IterProcessQueue,
-    IterQueue,
-    Stream,
-    SyncIter,
-    tee,
-)
+from mpservice.streamer import AsyncIterQueue, IterProcessQueue, IterQueue, Stream, tee
 from mpservice.threading import Thread
 
 

@@ -4,12 +4,11 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import (
+from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
+from mpservice.multiprocessing._server_process import (
     MemoryBlock,
-    Process,
-    Queue,
-    ServerProcess,
-    SpawnProcess,
+    MemoryBlockProxy,
+    ProxyDictValue,
 )
 from mpservice.threading import Thread
 
@@ -234,12 +233,32 @@ class MemoryWorker:
     def memory_block(self, size):
         return MemoryBlock(size)
 
+    def make_data(self, size):
+        mem = MemoryBlock(size)
+        mem.buf[3] = 26
+
+        return {
+            'size': size,
+            'block': ProxyDictValue(mem),
+        }
+
+
+def memworker(data):
+    buf = data['block'].buf
+    buf[3] = 66
+
 
 def test_shared_memory_from_serverprocess():
     ServerProcess.register(
+        'MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy
+    )
+    ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
-        method_to_typeid={'memory_block': 'memoryblock_in_server'},
+        method_to_typeid={
+            'memory_block': 'MemoryBlock_in_server',
+            'make_data': 'ProxyDict',
+        },
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
@@ -247,3 +266,14 @@ def test_shared_memory_from_serverprocess():
         server.MemoryBlock(8)
         # These two references to memory blocks will be
         # taken care of when exiting the `server` context manager.
+
+        data = worker.make_data(64)
+        assert data['size'] == 64
+        assert data['block'].size == 64
+        assert data['block'].buf[3] == 26
+
+        p = Process(target=memworker, args=(data,))
+        p.start()
+        p.join()
+
+        assert data['block'].buf[3] == 66
