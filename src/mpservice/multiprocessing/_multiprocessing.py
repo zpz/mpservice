@@ -13,8 +13,8 @@ from multiprocessing import util
 
 import psutil
 
-from ._remote_exception import RemoteException
 from ..threading import Thread
+from ._remote_exception import RemoteException
 
 
 class TimeoutError(Exception):

@@ -5,7 +5,11 @@ from multiprocessing import active_children
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
-from mpservice.multiprocessing._server_process import MemoryBlock, MemoryBlockProxy, ProxyDictValue
+from mpservice.multiprocessing._server_process import (
+    MemoryBlock,
+    MemoryBlockProxy,
+    ProxyDictValue,
+)
 from mpservice.threading import Thread
 
 
@@ -245,11 +249,16 @@ def memworker(data):
 
 
 def test_shared_memory_from_serverprocess():
-    ServerProcess.register('MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy)
+    ServerProcess.register(
+        'MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy
+    )
     ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
-        method_to_typeid={'memory_block': 'MemoryBlock_in_server', 'make_data': 'ProxyDict'},
+        method_to_typeid={
+            'memory_block': 'MemoryBlock_in_server',
+            'make_data': 'ProxyDict',
+        },
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
@@ -262,10 +271,9 @@ def test_shared_memory_from_serverprocess():
         assert data['size'] == 64
         assert data['block'].size == 64
         assert data['block'].buf[3] == 26
-    
+
         p = Process(target=memworker, args=(data,))
         p.start()
         p.join()
 
         assert data['block'].buf[3] == 66
-

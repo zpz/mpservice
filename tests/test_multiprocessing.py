@@ -5,15 +5,15 @@ import sys
 from time import sleep
 from types import TracebackType
 
-import pytest
 import mpservice.multiprocessing
+import mpservice.threading
+import pytest
 from mpservice.multiprocessing import (
     Process,
     RemoteException,
     get_remote_traceback,
     is_remote_exception,
 )
-import mpservice.threading
 from mpservice.threading import Thread
 
 logger = logging.getLogger(__name__)

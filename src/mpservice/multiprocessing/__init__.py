@@ -23,10 +23,25 @@ instead we send it to the main or another process to be investigated when/where 
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
 
-from ._remote_exception import RemoteException, RemoteTraceback, get_remote_traceback, is_remote_exception
-from ._multiprocessing import TimeoutError, SpawnProcess, SpawnContext, MP_SPAWN_CTX, CpuAffinity
-from ._server_process import ServerProcess, ProxyDictValue, MemoryBlock, MemoryBlockProxy
-
+from ._multiprocessing import (
+    MP_SPAWN_CTX,
+    CpuAffinity,
+    SpawnContext,
+    SpawnProcess,
+    TimeoutError,
+)
+from ._remote_exception import (
+    RemoteException,
+    RemoteTraceback,
+    get_remote_traceback,
+    is_remote_exception,
+)
+from ._server_process import (
+    MemoryBlock,
+    MemoryBlockProxy,
+    ProxyDictValue,
+    ServerProcess,
+)
 
 __all__ = [
     'RemoteException',
@@ -39,11 +54,15 @@ __all__ = [
     'MP_SPAWN_CTX',
     'ServerProcess',
     'CpuAffinity',
-    'MemoryBlock', 'MemoryBlockProxy', 'ProxyDictValue',
+    'MemoryBlock',
+    'MemoryBlockProxy',
+    'ProxyDictValue',
 ]
 
 
-_names_ = [x for x in dir(MP_SPAWN_CTX) if not x.startswith('_') and x != 'TimeoutError']
+_names_ = [
+    x for x in dir(MP_SPAWN_CTX) if not x.startswith('_') and x != 'TimeoutError'
+]
 globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
 # Names like `Process`, `Queue`, `Pool`, `Event`, `Manager` etc are directly import-able from this module.
 # But they are not classes; rather they are bound methods of the context `MP_SPAWN_CTX`.

@@ -248,14 +248,19 @@ import threading
 import traceback
 import warnings
 import weakref
-from multiprocessing.managers import BaseProxy, BaseManager, convert_to_error, Token, dispatch
 from multiprocessing import util
+from multiprocessing.managers import (
+    BaseManager,
+    BaseProxy,
+    Token,
+    convert_to_error,
+    dispatch,
+)
 from traceback import format_exc
 
 from deprecation import deprecated
 
 from ._multiprocessing import MP_SPAWN_CTX
-
 
 # In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
 # A workaround is described here:
@@ -272,8 +277,10 @@ def _callmethod(self, methodname, args=(), kwds={}):
             try:
                 conn = self._tls.connection
             except AttributeError:
-                util.debug('thread %r does not own a connection',
-                            threading.current_thread().name)
+                util.debug(
+                    'thread %r does not own a connection',
+                    threading.current_thread().name,
+                )
                 self._connect()
                 conn = self._tls.connection
 
@@ -295,20 +302,23 @@ def _callmethod(self, methodname, args=(), kwds={}):
         exposed, token = result
         if token.typeid == 'ProxyDict':
             return ProxyDictProxy(
-                address=self._token.address, 
-                serializer=self._serializer, 
+                address=self._token.address,
+                serializer=self._serializer,
                 manager=self._manager,
-                conn=self._Client(self._token.address, authkey=self._authkey), 
-                authkey=self._authkey, 
-                data=exposed
-                )
-   
+                conn=self._Client(self._token.address, authkey=self._authkey),
+                authkey=self._authkey,
+                data=exposed,
+            )
+
         proxytype = self._manager._registry[token.typeid][-1]
         token.address = self._token.address
         proxy = proxytype(
-            token, self._serializer, manager=self._manager,
-            authkey=self._authkey, exposed=exposed
-            )
+            token,
+            self._serializer,
+            manager=self._manager,
+            authkey=self._authkey,
+            exposed=exposed,
+        )
         conn = self._Client(token.address, authkey=self._authkey)
         dispatch(conn, None, 'decref', (token.id,))
         return proxy
@@ -323,16 +333,17 @@ class ProxyDictValue:
         self.value = value
 
 
-def ProxyDictProxy(*, address, serializer, manager, conn, authkey=None, data: dict) -> dict:
+def ProxyDictProxy(
+    *, address, serializer, manager, conn, authkey=None, data: dict
+) -> dict:
     for k, v in data.items():
         if isinstance(v, ProxyDictValue):
             typeid, ident, exposed = v.value
             tok = Token(typeid, address, ident)
             proxytype = manager._registry[typeid][-1]
             proxy = proxytype(
-                tok, serializer, manager=manager,
-                authkey=authkey, exposed=exposed
-                )
+                tok, serializer, manager=manager, authkey=authkey, exposed=exposed
+            )
             dispatch(conn, None, 'decref', (ident,))
             data[k] = proxy
     return data
@@ -477,7 +488,10 @@ class _ProcessServer(multiprocessing.managers.Server):
                 typeid = v.__class__.__name__
                 typeid_nocall = f"{typeid}-nocall"
                 if typeid_nocall not in self.registry:
-                    self.registry[typeid_nocall] = (None, *self.registry[typeid][1:])  # replace `callable` by `None`
+                    self.registry[typeid_nocall] = (
+                        None,
+                        *self.registry[typeid][1:],
+                    )  # replace `callable` by `None`
                 ident, exposed = super().create(c, typeid_nocall, v)
 
                 data[k] = ProxyDictValue((typeid, ident, exposed))
@@ -489,7 +503,7 @@ class _ProcessServer(multiprocessing.managers.Server):
         assert n_prox > 0
         return 0, data
         # The first value, `0`, is in the spot of ``ident`` but is just a placeholder.
-        # The second value, `data`, is the actual data and takes the spot of ``exposed``. 
+        # The second value, `data`, is the actual data and takes the spot of ``exposed``.
         # Refer to ``Server.serve_client``.
         # This data is received by ``BaseProxy._call_method``.
 
@@ -661,7 +675,9 @@ class ServerProcess:
         )
 
 
-ServerProcess.register('ProxyDict', callable=None, proxytype=ProxyDictProxy, create_method=False)
+ServerProcess.register(
+    'ProxyDict', callable=None, proxytype=ProxyDictProxy, create_method=False
+)
 
 
 # Register most commonly used classes.

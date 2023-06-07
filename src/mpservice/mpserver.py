@@ -39,13 +39,13 @@ from typing import Any, Callable, Literal, final
 import psutil
 
 from ._queues import SingleLane
-from .multiprocessing._remote_exception import EnsembleError
 from .multiprocessing import (
     MP_SPAWN_CTX,
     CpuAffinity,
     Process,
     RemoteException,
 )
+from .multiprocessing._remote_exception import EnsembleError
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
@@ -1328,7 +1328,9 @@ def _enter_server(self, gather_args: tuple = None):
                 if x == NOMOREDATA:
                     break
 
-        self._onboard_thread = Thread(target=_onboard_input, name=f"{self.__class__.__name__}._onboard_input")
+        self._onboard_thread = Thread(
+            target=_onboard_input, name=f"{self.__class__.__name__}._onboard_input"
+        )
         self._onboard_thread.start()
 
     self._gather_thread = Thread(
