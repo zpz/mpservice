@@ -31,6 +31,7 @@ import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
+from datetime import datetime
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
@@ -1327,7 +1328,7 @@ def _enter_server(self, gather_args: tuple = None):
                 if x == NOMOREDATA:
                     break
 
-        self._onboard_thread = Thread(target=_onboard_input)
+        self._onboard_thread = Thread(target=_onboard_input, name=f"{self.__class__.__name__}._onboard_input")
         self._onboard_thread.start()
 
     self._gather_thread = Thread(
@@ -1356,6 +1357,8 @@ def _server_debug_info(self):
         onboard_thread = 'is_alive' if self._onboard_thread.is_alive() else 'done'
 
     return {
+        'datetime': str(datetime.utcnow()),
+        'perf_counter': now,
         'capacity': self.capacity,
         'active_processes': [str(v) for v in multiprocessing.active_children()],
         'active_threads': [str(v) for v in threading.enumerate()],
@@ -1541,18 +1544,32 @@ class Server:
     def _gather_output(self) -> None:
         q_out = self._q_out
         pipeline = self._uid_to_futures
-        pipeline_notfull = self._pipeline_notfull
+
+        q_notify = queue.SimpleQueue()
+
+        def notify():
+            q = q_notify
+            pipeline_notfull = self._pipeline_notfull
+            while True:
+                z = q.get()
+                if z == NOMOREDATA:
+                    break
+                with pipeline_notfull:
+                    pipeline_notfull.notify()
+
+        notification_thread = Thread(target=notify)
+        notification_thread.start()
 
         while True:
             z = q_out.get()
             if z == NOMOREDATA:
+                q_notify.put(NOMOREDATA)
+                notification_thread.join()
                 break
             uid, y = z
             fut = pipeline.pop(uid)  # this must exist
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
             # However, here we need to acquire the lock because we want to notify.
-            with pipeline_notfull:
-                pipeline_notfull.notify()
             if isinstance(y, RemoteException):
                 y = y.exc
             if not fut.cancelled():
@@ -1561,8 +1578,9 @@ class Server:
                 else:
                     fut.set_result(y)
             fut.data["t2"] = perf_counter()
+            q_notify.put(1)
 
-    def _debug_info(self):
+    def debug_info(self):
         return _server_debug_info(self)
 
     def stream(
@@ -1832,6 +1850,8 @@ class AsyncServer:
             async with pipeline_notfull:
                 pipeline_notfull.notify()
 
+        notifications = {}
+
         while True:
             z = q_out.get()
             if z == NOMOREDATA:
@@ -1839,8 +1859,6 @@ class AsyncServer:
             uid, y = z
             fut = pipeline.pop(uid)  # this must exist
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-            # However, here we need to acquire the lock because we want to notify.
-            asyncio.run_coroutine_threadsafe(notify(), loop).result()  # wait to finish
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
@@ -1850,7 +1868,11 @@ class AsyncServer:
                     loop.call_soon_threadsafe(fut.set_result, y)
                 fut.data["t2"] = perf_counter()
 
-    def _debug_info(self) -> dict:
+            f = asyncio.run_coroutine_threadsafe(notify(), loop)
+            notifications[id(f)] = f
+            f.add_done_callback(lambda fut: notifications.pop(id(fut)))
+
+    def debug_info(self) -> dict:
         return _server_debug_info(self)
 
     async def stream(

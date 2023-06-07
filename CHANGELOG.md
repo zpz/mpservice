@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.13.2] - in progress
 
+- ``mpserver.{Server, AsyncServer}`` bug related to "gather-output" and "notify" requesters.
+
 
 ## [0.13.1] - 2023-06-04
 
