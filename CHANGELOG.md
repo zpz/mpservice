@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.13.2] - in progress
+## [0.13.2] - 2023-06-07
 
 - Re-orged ``mpservice.multiprocessing`` into a sub-package as the module has grown considerably and may grow further.
 - ``mpserver.{Server, AsyncServer}`` bug related to "gather-output" and "notify" requesters.
-- Enhancements to ``mpserver.multiprocessing.ServerProcess``.
+- Enhancements to ``mpserver.multiprocessing.ServerProcess`` (in progress).
 
 
 ## [0.13.1] - 2023-06-04

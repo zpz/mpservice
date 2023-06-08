@@ -178,12 +178,13 @@ Usually, methods of a hosted object simply returns regular data.
 The data obviously goes through pickling coming out of the server process into the user process.
 The server process does not keep of copy of or reference to the data; it's sent out and gone.
 
-If a method needs to return the *proxy* of an object, for example,
+A method may want to create an object, let it stay within the server process, and return a proxy to it.
+For example,
 
 ::
 
     class MyClass:
-        def make_memory(self, size) -> MemoryBlock:
+        def make_memory(self, size):
             ...
             mem = MemoryBlock(size)
             ... # write data into the memory block
@@ -193,47 +194,37 @@ If we simply return the ``MemoryBlock`` object,
 it is tricky to manage the lifetime and release of this memory block.
 Instead, this module provides facilities to manage this within the server process.
 To make use of that, we need to keep the original ``MemoryBlock`` object in the server process,
-and return a proxy of it. This is achieved by additional instructions during registration::
+and return a proxy of it. This is achieved by wrapping the returned object in ``hosted``::
 
-    ServerProcess.register('MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy)
+    class MyClass:
+        def make_memory(self, size):
+            ...
+            mem = MemoryBlock(size)
+            ... # write data into the memory block
+            return hosted(mem)
+
+Correspondingly, the class registration needs to be revised::
+
+            
     ServerProcess.register(
         'MyClass',
         MyClass,
-        method_to_typeid={'make_memory': 'MemoryBlock_in_server'},
+        method_to_typeid={'make_memory': 'hosted'},
     )
 
-This is still quite limited in that the method must return a proxed data type.
-If we make some changes to the returned content, we may have to define a new class and wire up its proxy type.
-We may have a primary component (like a shared-memory block) that is suitable to proxy, along with
-auxiliary info. It could become too much work defining new data types and their proxy types just to take care
-of the combination of primary data and auxiliary info.
-
-This module allows a method (of a hosted object) to return a dict, of which some element values need proxy.
-This works like this:
+It is quite limited if we could only return a proxy object.
+In this example, we may prefer to return a dict that contains a ``MemoryBlock``, along with
+a few other elements of auxiliary info.
+Not a problem. We can do something like this::
 
     class MyClass:
-        def make_data(self):
+        def make_memory(self, size):
             ...
-            return {
-                'name': 'image',
-                'size': '256',
-                'buffer': ProxyDictValue(MemoryBlock(256)),
-            }
+            mem = MemoryBlock(size)
+            ... # write data into the memory block
+            return {'size': size, 'user': 'Tom', 'block': hosted(mem)}
 
-Note that a proxied element of the dict is wrapped in :class:`ProxyDictValue`.
-This class is registered this way::
-
-    ServerProcess.register('MyClass', MyClass, method_to_typeid={'make_data': 'ProxyDict'})
-
-Then this class can be used like this::
-
-    with ServerProcess() as sp:
-        myobj = sp.MyClass()
-        ... # may pass `myobj` to other processes that use it there
-
-        data = myobj.make_data()
-        mem = data['buffer']  # This is a `MemoryBlockProxy` object
-        ... # use `mem`, including in other processes
+The class registration is the same as above.
 '''
 from __future__ import annotations
 
@@ -286,11 +277,13 @@ def _callmethod(self, methodname, args=(), kwds={}):
 
             conn.send((self._id, methodname, args, kwds))
             break
-        except BrokenPipeError:
+        except BrokenPipeError as e:
             if tries == 0:
                 addr = self._token.address
                 if addr in self._address_to_local:
                     del self._address_to_local[addr][0].connection
+                    traceback.print_exc()
+                    print(f'Retry once on "{e!r}"')
                     continue
             raise
 
@@ -300,8 +293,8 @@ def _callmethod(self, methodname, args=(), kwds={}):
         return result
     elif kind == '#PROXY':
         exposed, token = result
-        if token.typeid == 'ProxyDict':
-            return ProxyDictProxy(
+        if token.typeid == 'hosted':
+            return HostedProxy(
                 address=self._token.address,
                 serializer=self._serializer,
                 manager=self._manager,
@@ -328,25 +321,131 @@ def _callmethod(self, methodname, args=(), kwds={}):
 BaseProxy._callmethod = _callmethod
 
 
-class ProxyDictValue:
-    def __init__(self, value, /):
+class PickleThroughProxy(BaseProxy):
+    '''
+    With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
+    on the hosted object in the server process. Once the refcount of the hosted object
+    drops to 0, the object is discarded.
+
+    If a proxy object is put in a queue and is removed from the code scope, then this proxy
+    object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
+    of course does not contain a reference to the proxy object. This can lead to gabage collection
+    of the object hosted in the server process.
+
+    In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
+    This proxy classs is designed for this use case. It makes pickled data count as one reference
+    to the server-process-hosted object.
+    '''
+    def __reduce__(self):
+        # The only sensible case of pickling this proxy object is for
+        # transfering this object between processes in a queue.
+        # (This proxy object is never pickled for storage.)
+        #
+        # Using ``MemoryBlock`` for example,
+        # it is possible that at some time the only "reference"
+        # to a certain shared memory block is in pickled form in
+        # a queue. For example,
+        #
+        #   # main process
+        #   with ServerProcess() as server:
+        #        q = server.Queue()
+        #        w = Process(target=..., args=(q, ))
+        #        w.start()
+        #
+        #        for _ in range(1000):
+        #           mem = server.MemoryBlock(100)
+        #           # ... computations ...
+        #           # ... write data into `mem` ...
+        #           q.put(mem)
+        #           ...
+        #
+        # During the loop, `mem` goes out of scope and only lives on in the queue.
+        # A main design goal is to prevent the ``MemoryBlock`` object in the server process
+        # from being garbage collected. This means we need to do some ref-counting hacks.
+
+        # Inc ref here to represent the pickled object in the queue.
+        # When unpickling, we do not inc ref again. In effect, we move the call
+        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
+        # for this object.
+
+        conn = self._Client(self._token.address, authkey=self._authkey)
+        dispatch(conn, None, 'incref', (self._id,))
+        # NOTE:
+        # calling ``self._incref()`` would not work because it adds another `_decref`;
+        # I don't totally understand that part.
+
+        func, args = super().__reduce__()
+        args[-1]['incref'] = False  # do not inc ref again during unpickling.
+        return RebuildPickleThroughProxy, (func, args)
+
+
+def RebuildPickleThroughProxy(func, args):
+    obj = func(*args)
+
+    # We have called ``incref`` in ``PickleThroughProxy.__reduce__``,
+    # i.e. prior to pickling,
+    # hence we don't call ``incref`` when
+    # reconstructing the proxy here during unpickling.
+    # However, we still need to set up calling of ``decref``
+    # when this reconstructed proxy is garbage collected.
+
+    # The code below is part of ``BaseProxy._incref``.
+    # ``BaseProxy.__init__`` does not do this.
+
+    obj._idset.add(obj._id)
+    state = obj._manager and obj._manager._state
+    obj._close = util.Finalize(
+        obj,
+        BaseProxy._decref,
+        args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
+        exitpriority=10,
+    )
+
+    return obj
+
+
+def HostedProxy(
+    *, address, serializer, manager, conn, authkey=None, data
+):
+    def make_hosted(value: hosted):
+        ident, exposed = value.value
+        typeid = value.typeid
+
+        tok = Token(typeid, address, ident)
+        proxytype = manager._registry[typeid][-1]
+        proxy = proxytype(
+            tok, serializer, manager=manager, authkey=authkey, exposed=exposed
+        )
+        dispatch(conn, None, 'decref', (ident,))
+        return proxy
+
+    def make_one(value):
+        if isinstance(value, hosted):
+            return make_hosted(value)
+        if isinstance(value, list):
+            return make_list(value)
+        if isinstance(value, dict):
+            return make_dict(value)
+        if isinstance(value, tuple):
+            return make_tuple(value)
+        return value
+
+    def make_list(value: list):
+        return [make_one(v) for v in value]
+    
+    def make_dict(value: dict):
+        return {k: make_one(v) for k, v in value.items()}
+    
+    def make_tuple(value: tuple):
+        return tuple(make_one(v) for v in value)
+
+    return make_one(data)
+
+
+class hosted:
+    def __init__(self, value, typeid: str = None):
         self.value = value
-
-
-def ProxyDictProxy(
-    *, address, serializer, manager, conn, authkey=None, data: dict
-) -> dict:
-    for k, v in data.items():
-        if isinstance(v, ProxyDictValue):
-            typeid, ident, exposed = v.value
-            tok = Token(typeid, address, ident)
-            proxytype = manager._registry[typeid][-1]
-            proxy = proxytype(
-                tok, serializer, manager=manager, authkey=authkey, exposed=exposed
-            )
-            dispatch(conn, None, 'decref', (ident,))
-            data[k] = proxy
-    return data
+        self.typeid = typeid or type(value).__name__
 
 
 class _ProcessServer(multiprocessing.managers.Server):
@@ -393,18 +492,20 @@ class _ProcessServer(multiprocessing.managers.Server):
 
                 try:
                     res = function(*args, **kwds)
+                    del function  # HACK
                 except Exception as e:
                     msg = ('#ERROR', e)
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if typeid:
-
                         rident, rexposed = self.create(conn, typeid, res)
                         token = Token(typeid, self.address, rident)
                         msg = ('#PROXY', (rexposed, token))
                     else:
                         msg = ('#RETURN', res)
 
+                del obj  # HACK
+                del res
             except AttributeError:
                 if methodname is None:
                     msg = ('#TRACEBACK', format_exc())
@@ -413,6 +514,8 @@ class _ProcessServer(multiprocessing.managers.Server):
                         fallback_func = self.fallback_mapping[methodname]
                         result = fallback_func(self, conn, ident, obj, *args, **kwds)
                         msg = ('#RETURN', result)
+
+                        del obj  # HACK
                     except Exception:
                         msg = ('#TRACEBACK', format_exc())
 
@@ -447,71 +550,57 @@ class _ProcessServer(multiprocessing.managers.Server):
             # and "returned" to the requester.
             # The extra reference to `obj` and `res` lingering here have no use, yet can cause
             # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``..
-            del res
-            del function
-            del obj
 
-    def _create_proxydict(self, c, data: dict):
-        '''
-        Use case: a method of a hosted object returns a dict; the dict is a regular one---that is,
-        it will not be represented by a proxy---but one or more of its values should be hosted
-        in the server process and represented by a proxy to the client process. (On the other hand,
-        all the keys of the dict are regular values, for example, strings.)
+    def _create_hosted(self, c, data):
+        super_create = super().create
 
-        Any value in the dict (the "top-level" value; no deep-diving and nesting) that needs be hosted
-        should be wrapped in a ``ProxyDictValue``. The value itself should be of a class that has been
-        ``register``\\ed.
+        def convert_hosted(value):
+            value, typeid = value.value, value.typeid
+            typeid_nocall = f"{typeid}-nocall"
+            if typeid_nocall not in self.registry:
+                self.registry[typeid_nocall] = (
+                    None,
+                    *self.registry[typeid][1:],
+                )  # replace `callable` by `None`
+                print(self.registry[typeid_nocall])
 
-        Suppose the class and the relevant method are like this::
+            ident, exposed = super_create(c, typeid_nocall, value)
+            # By now `value` has been referenced in ``self._id_to_obj``.
+            # print('id: %x' % id(value))
+            # print('ident:', ident, 'exposed:', exposed)
+            return hosted((ident, exposed), typeid)
 
-            class MyClass:
-                def make_data(self):
-                    ...
-                    return {
-                        'name': 'image',
-                        'size': '256',
-                        'buffer': ProxyDictValue(MemoryBlock(256)),
-                    }
+        def convert_one(value):
+            if isinstance(value, hosted):
+                return convert_hosted(value)
+            if isinstance(value, list):
+                return convert_list(value)
+            if isinstance(value, dict):
+                return convert_dict(value)
+            if isinstance(value, tuple):
+                return convert_tuple(value)
+            return value  # any other type is returned as is, not hosted
 
-        The class along with the method of interest should be registered this way::
+        def convert_list(value):
+            return [convert_one(v) for v in value]
+        
+        def convert_dict(value):
+            return {k: convert_one(v) for k, v in value.items()}
+        
+        def convert_tuple(value):
+            return tuple(convert_one(v) for v in value)
 
-            ServerProcess.register('MyClass', MyClass, method_to_typeid={'make_data': 'ProxyDict'})
-
-        This methods constructs the object that will be returned to the client process.
-        The dict itself and non-hosted elements will remain as is; hosted values will be created
-        and hosted in the server process properly, and have their proxy info taking their spot in the dict.
-        '''
-        n_prox = 0
-        for k, v in data.items():
-            if isinstance(v, ProxyDictValue):
-                v = v.value
-                typeid = v.__class__.__name__
-                typeid_nocall = f"{typeid}-nocall"
-                if typeid_nocall not in self.registry:
-                    self.registry[typeid_nocall] = (
-                        None,
-                        *self.registry[typeid][1:],
-                    )  # replace `callable` by `None`
-                ident, exposed = super().create(c, typeid_nocall, v)
-
-                data[k] = ProxyDictValue((typeid, ident, exposed))
-                # By now `v` has been referenced in ``self._id_to_obj``.
-                # `data[k]` is a second reference to it.
-                # But this dict `data` is not hosted, hence not referenced in ``self._id_to_obj``,
-                # hence `v` will have only a single reference in the server process.
-                n_prox += 1
-        assert n_prox > 0
-        return 0, data
+        return 0, convert_one(data)
         # The first value, `0`, is in the spot of ``ident`` but is just a placeholder.
-        # The second value, `data`, is the actual data and takes the spot of ``exposed``.
+        # The second value is the actual data and takes the spot of ``exposed``.
         # Refer to ``Server.serve_client``.
         # This data is received by ``BaseProxy._call_method``.
 
     def create(self, c, typeid, /, *args, **kwds):
-        if typeid == 'ProxyDict':
+        if typeid == 'hosted':
             assert not kwds
             assert len(args) == 1
-            return self._create_proxydict(c, args[0])
+            return self._create_hosted(c, args[0])
         return super().create(c, typeid, *args, **kwds)
 
 
@@ -676,7 +765,7 @@ class ServerProcess:
 
 
 ServerProcess.register(
-    'ProxyDict', callable=None, proxytype=ProxyDictProxy, create_method=False
+    'hosted', callable=None, proxytype=HostedProxy, create_method=False
 )
 
 
@@ -779,30 +868,9 @@ else:
         def __repr__(self):
             return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
 
-    def _rebuild_memory_block_proxy(func, args, name, size, mem):
-        obj = func(*args)
-        obj._name, obj._size, obj._mem = name, size, mem
 
-        # We have called ``incref`` for the ``MemoryBlock``
-        # when pickling, hence we don't call ``incref`` when
-        # reconstructing the proxy here during unpickling.
-        # However, we still need to set up calling of ``decref``
-        # when this reconstructed proxy is garbage collected.
 
-        # The code below is part of ``BaseProxy._incref``.
-
-        obj._idset.add(obj._id)
-        state = obj._manager and obj._manager._state
-        obj._close = util.Finalize(
-            obj,
-            BaseProxy._decref,
-            args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
-            exitpriority=10,
-        )
-
-        return obj
-
-    class MemoryBlockProxy(BaseProxy):
+    class MemoryBlockProxy(PickleThroughProxy):
         _exposed_ = ('list_memory_blocks', 'name')
 
         def __init__(self, *args, incref=True, manager=None, **kwargs):
@@ -825,43 +893,7 @@ else:
                     self._manager._memoryblock_proxies[self._id] = self
 
         def __reduce__(self):
-            # The only sensible case of pickling this proxy object
-            # transfering this object between processes in a queue.
-            # (This proxy object is never pickled for storage.)
-            # It is possible that at some time the only "reference"
-            # to a certain shared memory block is in pickled form in
-            # a queue. For example,
-            #
-            #   # main process
-            #   with ServerProcess() as server:
-            #        q = server.Queue()
-            #        w = Process(target=..., args=(q, ))
-            #        w.start()
-            #
-            #        for _ in range(1000):
-            #           mem = server.MemoryBlock(100)
-            #           # ... computations ...
-            #           # ... write data into `mem` ...
-            #           q.put(mem)
-            #           ...
-            #
-            # During the loop, `mem` goes out of scope and only lives on in the queue.
-            # A main design goal is to prevent the ``MemoryBlock`` object in the server process
-            # from being garbage collected. This mean we need to do some ref-counting hacks.
-
-            # Inc ref here to represent the pickled object in the queue.
-            # When unpickling, we do not inc ref again. In effect, we move the call
-            # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
-            # for this object.
-
-            conn = self._Client(self._token.address, authkey=self._authkey)
-            dispatch(conn, None, 'incref', (self._id,))
-            # NOTE:
-            # calling ``self._incref()`` would not work because it adds another `_decref`;
-            # I don't totally understand that part.
-
             func, args = super().__reduce__()
-            args[-1]['incref'] = False  # do not inc ref again during unpickling.
             return _rebuild_memory_block_proxy, (
                 func,
                 args,
@@ -907,6 +939,13 @@ else:
 
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
+
+
+    def _rebuild_memory_block_proxy(func, args, name, size, mem):
+        obj = func(*args)
+        obj._name, obj._size, obj._mem = name, size, mem
+        return obj
+    
 
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
 

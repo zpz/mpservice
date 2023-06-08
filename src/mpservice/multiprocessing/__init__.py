@@ -37,10 +37,7 @@ from ._remote_exception import (
     is_remote_exception,
 )
 from ._server_process import (
-    MemoryBlock,
-    MemoryBlockProxy,
-    ProxyDictValue,
-    ServerProcess,
+    ServerProcess, hosted,
 )
 
 __all__ = [
@@ -54,9 +51,7 @@ __all__ = [
     'MP_SPAWN_CTX',
     'ServerProcess',
     'CpuAffinity',
-    'MemoryBlock',
-    'MemoryBlockProxy',
-    'ProxyDictValue',
+    'hosted',
 ]
 
 

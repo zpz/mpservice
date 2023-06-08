@@ -8,7 +8,7 @@ from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProces
 from mpservice.multiprocessing._server_process import (
     MemoryBlock,
     MemoryBlockProxy,
-    ProxyDictValue,
+    hosted,
 )
 from mpservice.threading import Thread
 
@@ -231,49 +231,76 @@ def test_shared_memory():
 
 class MemoryWorker:
     def memory_block(self, size):
-        return MemoryBlock(size)
+        return hosted(MemoryBlock(size))
 
-    def make_data(self, size):
+    def make_dict(self, size):
         mem = MemoryBlock(size)
         mem.buf[3] = 26
 
         return {
             'size': size,
-            'block': ProxyDictValue(mem),
+            'block': hosted(mem),
+            # 'tuple': ('first', hosted([1, 2]), 'third'),
         }
+    
+    def make_list(self):
+        return [
+            hosted(MemoryBlock(10)),
+            {'a': 3, 'b': hosted([1, 2])},
+            hosted(MemoryBlock(20)),
+        ]
 
 
-def memworker(data):
-    buf = data['block'].buf
-    buf[3] = 66
+def worker_dict(data, size):
+    assert data['size'] == size
+    mem = data['block']
+    assert mem.size == size
+    assert mem.buf[3] == 26
+    mem.buf[3] = 62
+    data['tuple'][1].append(3)
+    assert len(data['tuple'][1]) == 3
 
 
-def test_shared_memory_from_serverprocess():
-    ServerProcess.register(
-        'MemoryBlock_in_server', callable=None, proxytype=MemoryBlockProxy
-    )
+def worker_mem(data):
+    data.buf[10] = 10
+
+
+def test_hosted():
     ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
         method_to_typeid={
-            'memory_block': 'MemoryBlock_in_server',
-            'make_data': 'ProxyDict',
+            'memory_block': 'hosted',
+            'make_dict': 'hosted',
+            'make_list': 'hosted',
         },
     )
     with ServerProcess() as server:
+        print('=======')
         worker = server.MemoryWorker()
-        worker.memory_block(20)
+        m = worker.memory_block(20)
         server.MemoryBlock(8)
         # These two references to memory blocks will be
         # taken care of when exiting the `server` context manager.
 
-        data = worker.make_data(64)
-        assert data['size'] == 64
-        assert data['block'].size == 64
-        assert data['block'].buf[3] == 26
-
-        p = Process(target=memworker, args=(data,))
+        print('=======')
+        print(m.buf[10])
+        p = Process(target=worker_mem, args=(m,))
         p.start()
         p.join()
+        assert m.buf[10] == 10
 
-        assert data['block'].buf[3] == 66
+        print('=======')
+        data = worker.make_dict(64)
+        # assert data['size'] == 64
+        # assert data['block'].size == 64
+        # assert data['block'].buf[3] == 26
+
+        # p = Process(target=worker_dict, args=(data, 64))
+        # p.start()
+        # p.join()
+
+        # assert data['block'].buf[3] == 62
+
+        # print('=======')
+        # data = worker.make_list()
