@@ -7,7 +7,6 @@ import pytest
 from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
 from mpservice.multiprocessing._server_process import (
     MemoryBlock,
-    MemoryBlockProxy,
     hosted,
 )
 from mpservice.threading import Thread
@@ -242,7 +241,7 @@ class MemoryWorker:
             'block': hosted(mem),
             # 'tuple': ('first', hosted([1, 2]), 'third'),
         }
-    
+
     def make_list(self):
         return [
             hosted(MemoryBlock(10)),
@@ -291,7 +290,7 @@ def test_hosted():
         assert m.buf[10] == 10
 
         print('=======')
-        data = worker.make_dict(64)
+        worker.make_dict(64)
         # assert data['size'] == 64
         # assert data['block'].size == 64
         # assert data['block'].buf[3] == 26

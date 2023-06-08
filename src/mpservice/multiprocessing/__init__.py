@@ -37,7 +37,8 @@ from ._remote_exception import (
     is_remote_exception,
 )
 from ._server_process import (
-    ServerProcess, hosted,
+    ServerProcess,
+    hosted,
 )
 
 __all__ = [

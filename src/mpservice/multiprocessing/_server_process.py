@@ -336,6 +336,7 @@ class PickleThroughProxy(BaseProxy):
     This proxy classs is designed for this use case. It makes pickled data count as one reference
     to the server-process-hosted object.
     '''
+
     def __reduce__(self):
         # The only sensible case of pickling this proxy object is for
         # transfering this object between processes in a queue.
@@ -404,9 +405,7 @@ def RebuildPickleThroughProxy(func, args):
     return obj
 
 
-def HostedProxy(
-    *, address, serializer, manager, conn, authkey=None, data
-):
+def HostedProxy(*, address, serializer, manager, conn, authkey=None, data):
     def make_hosted(value: hosted):
         ident, exposed = value.value
         typeid = value.typeid
@@ -432,10 +431,10 @@ def HostedProxy(
 
     def make_list(value: list):
         return [make_one(v) for v in value]
-    
+
     def make_dict(value: dict):
         return {k: make_one(v) for k, v in value.items()}
-    
+
     def make_tuple(value: tuple):
         return tuple(make_one(v) for v in value)
 
@@ -583,10 +582,10 @@ class _ProcessServer(multiprocessing.managers.Server):
 
         def convert_list(value):
             return [convert_one(v) for v in value]
-        
+
         def convert_dict(value):
             return {k: convert_one(v) for k, v in value.items()}
-        
+
         def convert_tuple(value):
             return tuple(convert_one(v) for v in value)
 
@@ -868,8 +867,6 @@ else:
         def __repr__(self):
             return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
 
-
-
     class MemoryBlockProxy(PickleThroughProxy):
         _exposed_ = ('list_memory_blocks', 'name')
 
@@ -940,12 +937,10 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-
     def _rebuild_memory_block_proxy(func, args, name, size, mem):
         obj = func(*args)
         obj._name, obj._size, obj._mem = name, size, mem
         return obj
-    
 
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
 
