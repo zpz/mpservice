@@ -8,6 +8,8 @@ import threading
 # threads with a trivial worker function:
 #   20000 took 1 sec.
 
+# https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
+
 
 __all__ = ['TimeoutError', 'MAX_THREADS', 'Thread']
 

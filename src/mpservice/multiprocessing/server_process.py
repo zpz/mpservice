@@ -251,7 +251,7 @@ from traceback import format_exc
 
 from deprecation import deprecated
 
-from ._multiprocessing import MP_SPAWN_CTX
+from .process import MP_SPAWN_CTX
 
 # In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
 # A workaround is described here:
@@ -561,12 +561,9 @@ class _ProcessServer(multiprocessing.managers.Server):
                     None,
                     *self.registry[typeid][1:],
                 )  # replace `callable` by `None`
-                print(self.registry[typeid_nocall])
 
             ident, exposed = super_create(c, typeid_nocall, value)
             # By now `value` has been referenced in ``self._id_to_obj``.
-            # print('id: %x' % id(value))
-            # print('ident:', ident, 'exposed:', exposed)
             return hosted((ident, exposed), typeid)
 
         def convert_one(value):

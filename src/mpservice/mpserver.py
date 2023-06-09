@@ -39,13 +39,9 @@ from typing import Any, Callable, Literal, final
 import psutil
 
 from ._queues import SingleLane
-from .multiprocessing import (
-    MP_SPAWN_CTX,
-    CpuAffinity,
-    Process,
-    RemoteException,
-)
-from .multiprocessing._remote_exception import EnsembleError
+from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
+from .multiprocessing.process import CpuAffinity
+from .multiprocessing.remote_exception import EnsembleError
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.

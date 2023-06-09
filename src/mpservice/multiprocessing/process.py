@@ -14,7 +14,7 @@ from multiprocessing import util
 import psutil
 
 from ..threading import Thread
-from ._remote_exception import RemoteException
+from .remote_exception import RemoteException
 
 
 class TimeoutError(Exception):
