@@ -73,17 +73,21 @@ def __getattr__(name):
             stacklevel=2,
         )
         import mpservice.multiprocessing.process
+
         o = getattr(mpservice.multiprocessing.process, name)
         return o
 
-    if name in ('RemoteTraceback', ):
+    if name in ('RemoteTraceback',):
         warnings.warn(
             f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.remote_exception' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
         import mpservice.multiprocessing.remote_exception
+
         o = getattr(mpservice.multiprocessing.remote_exception, name)
         return o
 
-    raise AttributeError(f"module 'mpservice.multiprocessing' has no attribute '{name}'")
+    raise AttributeError(
+        f"module 'mpservice.multiprocessing' has no attribute '{name}'"
+    )
