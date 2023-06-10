@@ -22,37 +22,27 @@ Last but not least, if exception happens in a child process and we don't want th
 instead we send it to the main or another process to be investigated when/where we are ready to,
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
+import warnings
 
-from ._multiprocessing import (
-    MP_SPAWN_CTX,
-    CpuAffinity,
-    SpawnContext,
-    SpawnProcess,
-    TimeoutError,
-)
-from ._remote_exception import (
+from .context import MP_SPAWN_CTX, SpawnProcess
+from .process import TimeoutError
+from .remote_exception import (
     RemoteException,
-    RemoteTraceback,
     get_remote_traceback,
     is_remote_exception,
 )
-from ._server_process import (
+from .server_process import (
     ServerProcess,
-    hosted,
 )
 
 __all__ = [
+    'SpawnProcess',
     'RemoteException',
-    'RemoteTraceback',
     'get_remote_traceback',
     'is_remote_exception',
     'TimeoutError',
-    'SpawnProcess',
-    'SpawnContext',
     'MP_SPAWN_CTX',
     'ServerProcess',
-    'CpuAffinity',
-    'hosted',
 ]
 
 
@@ -70,3 +60,42 @@ globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
 # by
 #
 #    from mpservice.multiprocessing import ...
+
+
+def __getattr__(name):
+    if name in ('CpuAffinity',):
+        warnings.warn(
+            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.process' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import mpservice.multiprocessing.process
+
+        o = getattr(mpservice.multiprocessing.process, name)
+        return o
+
+    if name in ('SpawnContext',):
+        warnings.warn(
+            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.context' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import mpservice.multiprocessing.context
+
+        o = getattr(mpservice.multiprocessing.context, name)
+        return o
+
+    if name in ('RemoteTraceback',):
+        warnings.warn(
+            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.remote_exception' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import mpservice.multiprocessing.remote_exception
+
+        o = getattr(mpservice.multiprocessing.remote_exception, name)
+        return o
+
+    raise AttributeError(
+        f"module 'mpservice.multiprocessing' has no attribute '{name}'"
+    )

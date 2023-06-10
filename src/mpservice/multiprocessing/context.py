@@ -9,16 +9,12 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
 import threading
+import warnings
 from multiprocessing import util
 
-import psutil
-
 from ..threading import Thread
-from ._remote_exception import RemoteException
-
-
-class TimeoutError(Exception):
-    pass
+from .process import CpuAffinity, TimeoutError
+from .remote_exception import RemoteException
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -273,18 +269,18 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise self.__error__
         if exitcode >= 0:
             raise ValueError(f"expecting negative `exitcode` but got: {exitcode}")
-        if exitcode == -errno.ENOTBLK:  # 15
-            raise ChildProcessError(
-                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination"
+        exitcode = -exitcode
+        if exitcode == errno.ENOTBLK:  # 15
+            warnings.warn(
+                f"process exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination",
+                stacklevel=2,
             )
             # For example, ``self.terminate()`` was called. That's a code smell.
             # ``signal.Signals.SIGTERM`` is 15.
             # ``signal.Signals.SIGKILL`` is 9.
             # ``signal.Signals.SIGINT`` is 2.
         else:
-            raise ChildProcessError(
-                f"exitcode {-exitcode}, {errno.errorcode[-exitcode]}"
-            )
+            raise ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 
@@ -316,67 +312,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise TimeoutError
         self._get_result()
         return self.__error__
-
-
-class CpuAffinity:
-    """
-    ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.
-
-    This operation is known as "pinning a process to certain CPUs"
-    or "setting the CPU/processor affinity of a process".
-
-    Setting and getting CPU affinity is done via |psutil.cpu_affinity|_.
-
-    .. |psutil.cpu_affinity| replace:: ``psutil.Process().cpu_affinity``
-    .. _psutil.cpu_affinity: https://psutil.readthedocs.io/en/latest/#psutil.Process.cpu_affinity
-    .. see https://jwodder.github.io/kbits/posts/rst-hyperlinks/
-    """
-
-    def __init__(self, target: int | list[int] | None = None, /):
-        """
-        Parameters
-        ----------
-        target
-            The CPUs to pin the current process to.
-
-            If ``None``, no pinning is done. This object is used only to query the current affinity.
-            (I believe all process starts in an un-pinned status.)
-
-            If an int, it is the zero-based index of the CPU. Valid values are 0, 1,...,
-            the number of CPUs minus 1. If a list, the elements are CPU indices.
-            Duplicate values will be removed. Invalid values will raise ``ValueError``.
-
-            If ``[]``, pin to all eligible CPUs.
-            On some systems such as Linux this may not necessarily mean all available logical
-            CPUs as in ``list(range(psutil.cpu_count()))``.
-        """
-        if target is not None:
-            if isinstance(target, int):
-                target = [target]
-            else:
-                assert all(isinstance(v, int) for v in target)
-                # `psutil` would truncate floats but I don't like that.
-        self.target = target
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.target})"
-
-    def __str__(self):
-        return self.__repr__()
-
-    def set(self, *, pid=None) -> None:
-        """
-        Set CPU affinity to the value passed into :meth:`__init__`.
-        If that value was ``None``, do nothing.
-        Use an empty list to cancel previous pin.
-        """
-        if self.target is not None:
-            psutil.Process(pid).cpu_affinity(self.target)
-
-    @classmethod
-    def get(self, *, pid=None) -> list[int]:
-        """Return the current CPU affinity."""
-        return psutil.Process(pid).cpu_affinity()
 
 
 class SpawnContext(multiprocessing.context.SpawnContext):

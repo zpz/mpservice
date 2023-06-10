@@ -5,10 +5,7 @@ from multiprocessing import active_children
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
-from mpservice.multiprocessing._server_process import (
-    MemoryBlock,
-    hosted,
-)
+from mpservice.multiprocessing.server_process import MemoryBlock, hosted
 from mpservice.threading import Thread
 
 
@@ -239,7 +236,8 @@ class MemoryWorker:
         return {
             'size': size,
             'block': hosted(mem),
-            # 'tuple': ('first', hosted([1, 2]), 'third'),
+            'list': hosted([1, 2]),
+            'tuple': ('first', hosted([1, 2]), 'third'),
         }
 
     def make_list(self):
@@ -256,8 +254,14 @@ def worker_dict(data, size):
     assert mem.size == size
     assert mem.buf[3] == 26
     mem.buf[3] = 62
-    data['tuple'][1].append(3)
+    data['tuple'][1].append(30)
     assert len(data['tuple'][1]) == 3
+
+
+def worker_list(data):
+    data[0].buf[5] = 27
+    data[2].buf[8] = 88
+    data[1]['b'].remove(2)
 
 
 def worker_mem(data):
@@ -275,31 +279,35 @@ def test_hosted():
         },
     )
     with ServerProcess() as server:
-        print('=======')
         worker = server.MemoryWorker()
         m = worker.memory_block(20)
         server.MemoryBlock(8)
         # These two references to memory blocks will be
         # taken care of when exiting the `server` context manager.
 
-        print('=======')
         print(m.buf[10])
         p = Process(target=worker_mem, args=(m,))
         p.start()
         p.join()
         assert m.buf[10] == 10
 
-        print('=======')
-        worker.make_dict(64)
-        # assert data['size'] == 64
-        # assert data['block'].size == 64
-        # assert data['block'].buf[3] == 26
+        data = worker.make_dict(64)
+        assert data['size'] == 64
+        assert data['block'].size == 64
+        assert data['block'].buf[3] == 26
+        assert len(data['tuple'][1]) == 2
+        p = Process(target=worker_dict, args=(data, 64))
+        p.start()
+        p.join()
+        assert data['block'].buf[3] == 62
+        assert len(data['tuple'][1]) == 3
+        assert data['tuple'][1][2] == 30
 
-        # p = Process(target=worker_dict, args=(data, 64))
-        # p.start()
-        # p.join()
-
-        # assert data['block'].buf[3] == 62
-
-        # print('=======')
-        # data = worker.make_list()
+        data = worker.make_list()
+        p = Process(target=worker_list, args=(data,))
+        p.start()
+        p.join()
+        assert data[0].buf[5] == 27
+        assert data[2].buf[8] == 88
+        assert len(data[1]['b']) == 1
+        assert data[1]['b'][0] == 1
