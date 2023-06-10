@@ -5,7 +5,7 @@ import ctypes
 import os
 import threading
 from collections.abc import Iterator, Sequence
-from concurrent.futures import ALL_COMPLETED
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 from typing import Type
 
 # Overhead of Thread:
@@ -16,7 +16,7 @@ from typing import Type
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
 
 
-__all__ = ['TimeoutError', 'InvalidStateError', 'MAX_THREADS', 'Thread']
+__all__ = ['TimeoutError', 'InvalidStateError', 'MAX_THREADS', 'Thread', 'FIRST_COMPLETED', 'FIRST_EXCEPTION']
 
 
 class TimeoutError(Exception):
