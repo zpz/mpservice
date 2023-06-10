@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import concurrent.futures
 import ctypes
 import os
 import threading
+from collections.abc import Iterator, Sequence
+from concurrent.futures import ALL_COMPLETED
 from typing import Type
-from collections.abc import Sequence, Iterator
-from concurrent.futures import Future, FIRST_COMPLETED, FIRST_EXCEPTION, ALL_COMPLETED
-import concurrent.futures
 
 # Overhead of Thread:
 # sequentially creating/running/joining
@@ -138,7 +138,9 @@ class Thread(threading.Thread):
             raise InvalidStateError("The thread is not running")
 
         tid = self.ident
-        ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(exc))
+        ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_ulong(tid), ctypes.py_object(exc)
+        )
         if ret == 0:
             raise ValueError(f"Invalid thread ID {tid}")
         elif ret > 1:
@@ -160,12 +162,16 @@ class Thread(threading.Thread):
         self.join()
 
 
-def wait(threads: Sequence[Thread], timeout=None, return_when=ALL_COMPLETED) -> tuple[set[Thread], set[Thread]]:
+def wait(
+    threads: Sequence[Thread], timeout=None, return_when=ALL_COMPLETED
+) -> tuple[set[Thread], set[Thread]]:
     # See ``concurrent.futures.wait``.
 
     futures = [t._future_ for t in threads]
     future_to_thread = {id(t._future_): t for t in threads}
-    done, not_done = concurrent.futures.wait(futures, timeout=timeout, return_when=return_when)
+    done, not_done = concurrent.futures.wait(
+        futures, timeout=timeout, return_when=return_when
+    )
     if done:
         done = set(future_to_thread[id(f)] for f in done)
     if not_done:

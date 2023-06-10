@@ -1,7 +1,13 @@
-from mpservice.threading import Thread, InvalidStateError, wait, as_completed, FIRST_EXCEPTION
 from time import sleep
 
 import pytest
+from mpservice.threading import (
+    FIRST_EXCEPTION,
+    InvalidStateError,
+    Thread,
+    as_completed,
+    wait,
+)
 
 
 def worker(sleep_seconds):
@@ -38,32 +44,23 @@ def test_terminate():
 
 
 def test_wait():
-    threads = [
-        Thread(target=worker, args=(x,))
-        for x in (3, 2, 4)
-    ]
+    threads = [Thread(target=worker, args=(x,)) for x in (3, 2, 4)]
     for t in threads:
         t.start()
     done, notdone = wait(threads, timeout=2.2)
     assert len(done) == 1
     assert done.pop() is threads[1]
 
+
 def test_wait_exc():
-    threads = [
-        Thread(target=worker, args=(x,))
-        for x in (3, 2, 13)
-    ]
+    threads = [Thread(target=worker, args=(x,)) for x in (3, 2, 13)]
     for t in threads:
         t.start()
     done, notdone = wait(threads, return_when=FIRST_EXCEPTION)
     assert len(done) == 1
     assert done.pop() is threads[2]
 
-
-    threads = [
-        Thread(target=worker, args=(x,))
-        for x in (3, 2, 25)
-    ]
+    threads = [Thread(target=worker, args=(x,)) for x in (3, 2, 25)]
     for t in threads:
         t.start()
     done, notdone = wait(threads, return_when=FIRST_EXCEPTION)
@@ -72,10 +69,7 @@ def test_wait_exc():
 
 
 def test_as_completed():
-    threads = [
-        Thread(target=worker, args=(x,))
-        for x in (3, 2, 4)
-    ]
+    threads = [Thread(target=worker, args=(x,)) for x in (3, 2, 4)]
     for t in threads:
         t.start()
     k = 0

@@ -12,10 +12,9 @@ import threading
 import warnings
 from multiprocessing import util
 
-
 from ..threading import Thread
+from .process import CpuAffinity, TimeoutError
 from .remote_exception import RemoteException
-from .process import TimeoutError, CpuAffinity
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -281,9 +280,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             # ``signal.Signals.SIGKILL`` is 9.
             # ``signal.Signals.SIGINT`` is 2.
         else:
-            raise ChildProcessError(
-                f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
-            )
+            raise ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 

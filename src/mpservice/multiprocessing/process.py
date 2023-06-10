@@ -64,4 +64,3 @@ class CpuAffinity:
     def get(self, *, pid=None) -> list[int]:
         """Return the current CPU affinity."""
         return psutil.Process(pid).cpu_affinity()
-

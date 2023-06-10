@@ -24,8 +24,8 @@ the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.
 """
 import warnings
 
-from .process import TimeoutError
 from .context import MP_SPAWN_CTX, SpawnProcess
+from .process import TimeoutError
 from .remote_exception import (
     RemoteException,
     get_remote_traceback,
@@ -63,7 +63,7 @@ globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
 
 
 def __getattr__(name):
-    if name in ('CpuAffinity', ):
+    if name in ('CpuAffinity',):
         warnings.warn(
             f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.process' instead.",
             DeprecationWarning,
@@ -74,7 +74,7 @@ def __getattr__(name):
         o = getattr(mpservice.multiprocessing.process, name)
         return o
 
-    if name in ('SpawnContext', ):
+    if name in ('SpawnContext',):
         warnings.warn(
             f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.context' instead.",
             DeprecationWarning,
