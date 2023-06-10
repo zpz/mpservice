@@ -16,7 +16,14 @@ from typing import Type
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
 
 
-__all__ = ['TimeoutError', 'InvalidStateError', 'MAX_THREADS', 'Thread', 'FIRST_COMPLETED', 'FIRST_EXCEPTION']
+__all__ = [
+    'TimeoutError',
+    'InvalidStateError',
+    'MAX_THREADS',
+    'Thread',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
+]
 
 
 class TimeoutError(Exception):
