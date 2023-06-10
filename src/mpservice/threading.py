@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import threading
+from typing import Type
+from collections.abc import Sequence, Iterator
+from concurrent.futures import Future, FIRST_COMPLETED, FIRST_EXCEPTION, ALL_COMPLETED
+import concurrent.futures
 
 # Overhead of Thread:
 # sequentially creating/running/joining
@@ -11,10 +16,14 @@ import threading
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
 
 
-__all__ = ['TimeoutError', 'MAX_THREADS', 'Thread']
+__all__ = ['TimeoutError', 'InvalidStateError', 'MAX_THREADS', 'Thread']
 
 
 class TimeoutError(Exception):
+    pass
+
+
+class InvalidStateError(RuntimeError):
     pass
 
 
@@ -41,19 +50,27 @@ class Thread(threading.Thread):
         super().__init__(*args, **kwargs)
         self._result_ = None
         self._exception_ = None
+        self._future_: concurrent.futures.Future = None
 
     def run(self):
         """
         This method represents the thread's activity.
         """
+        self._future_ = concurrent.futures.Future()
         try:
             if self._target is not None:
                 self._result_ = self._target(*self._args, **self._kwargs)
+                self._future_.set_result(self._result_)
+            else:
+                self._future_.set_result(None)
         except SystemExit:
             # TODO: what if `e.code` is not 0?
-            raise
+            # TODO: what if the code has created other threads?
+            self._future_.set_result(None)
+            return
         except BaseException as e:
             self._exception_ = e
+            self._future_.set_exception(e)
             # Sometimes somehow error is not visible (maybe it's a `pytest` issue?).
             # Just make it more visible:
             print(f"{threading.current_thread().name}: {repr(e)}")
@@ -104,3 +121,62 @@ class Thread(threading.Thread):
         if self.is_alive():
             raise TimeoutError
         return self._exception_
+
+    def raise_exc(self, exc: BaseException | Type[BaseException]) -> None:
+        '''
+        Raise exception ``exc`` inside the thread.
+
+        Do not use this unless you know what you're doing.
+        A main intended user is :meth:`terminate`.
+        '''
+        # References:
+        #  https://gist.github.com/liuw/2407154
+        #  https://docs.python.org/3/c-api/init.html#c.PyThreadState_SetAsyncExc
+        #  https://stackoverflow.com/a/65090035/6178706
+
+        if not self.is_alive():
+            raise InvalidStateError("The thread is not running")
+
+        tid = self.ident
+        ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(exc))
+        if ret == 0:
+            raise ValueError(f"Invalid thread ID {tid}")
+        elif ret > 1:
+            # Huh? Why would we notify more than one threads?
+            # Because we punch a hole into C level interpreter.
+            # So it is better to clean up the mess.
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, 0)
+            raise SystemError("PyThreadState_SetAsyncExc failed")
+
+    def terminate(self) -> None:
+        '''
+        There are many pitfalls in terminating a thread from outside.
+        Use extra caution if the thread code is complex, e.g. if it creates
+        more threads.
+        '''
+        if not self.is_alive():
+            return
+        self.raise_exc(SystemExit)
+        self.join()
+
+
+def wait(threads: Sequence[Thread], timeout=None, return_when=ALL_COMPLETED) -> tuple[set[Thread], set[Thread]]:
+    # See ``concurrent.futures.wait``.
+
+    futures = [t._future_ for t in threads]
+    future_to_thread = {id(t._future_): t for t in threads}
+    done, not_done = concurrent.futures.wait(futures, timeout=timeout, return_when=return_when)
+    if done:
+        done = set(future_to_thread[id(f)] for f in done)
+    if not_done:
+        not_done = set(future_to_thread[id(f)] for f in not_done)
+    return done, not_done
+
+
+def as_completed(threads, timeout=None) -> Iterator[Thread]:
+    # See ``concurrent.futures.as_completed``.
+
+    futures = [t._future_ for t in threads]
+    future_to_thread = {id(t._future_): t for t in threads}
+    for f in concurrent.futures.as_completed(futures, timeout=timeout):
+        yield future_to_thread[id(f)]

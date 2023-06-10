@@ -251,7 +251,7 @@ from traceback import format_exc
 
 from deprecation import deprecated
 
-from .process import MP_SPAWN_CTX
+from .context import MP_SPAWN_CTX
 
 # In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
 # A workaround is described here:
@@ -298,7 +298,8 @@ def _callmethod(self, methodname, args=(), kwds={}):
                 address=self._token.address,
                 serializer=self._serializer,
                 manager=self._manager,
-                conn=self._Client(self._token.address, authkey=self._authkey),
+                # conn=self._Client(self._token.address, authkey=self._authkey),
+                Client=self._Client,
                 authkey=self._authkey,
                 data=exposed,
             )
@@ -405,7 +406,7 @@ def RebuildPickleThroughProxy(func, args):
     return obj
 
 
-def HostedProxy(*, address, serializer, manager, conn, authkey=None, data):
+def HostedProxy(*, address, serializer, manager, Client, authkey=None, data):
     def make_hosted(value: hosted):
         ident, exposed = value.value
         typeid = value.typeid
@@ -415,6 +416,7 @@ def HostedProxy(*, address, serializer, manager, conn, authkey=None, data):
         proxy = proxytype(
             tok, serializer, manager=manager, authkey=authkey, exposed=exposed
         )
+        conn = Client(address, authkey=authkey)
         dispatch(conn, None, 'decref', (ident,))
         return proxy
 
@@ -551,8 +553,6 @@ class _ProcessServer(multiprocessing.managers.Server):
             # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``..
 
     def _create_hosted(self, c, data):
-        super_create = super().create
-
         def convert_hosted(value):
             value, typeid = value.value, value.typeid
             typeid_nocall = f"{typeid}-nocall"
@@ -562,7 +562,7 @@ class _ProcessServer(multiprocessing.managers.Server):
                     *self.registry[typeid][1:],
                 )  # replace `callable` by `None`
 
-            ident, exposed = super_create(c, typeid_nocall, value)
+            ident, exposed = self.create(c, typeid_nocall, value)
             # By now `value` has been referenced in ``self._id_to_obj``.
             return hosted((ident, exposed), typeid)
 
