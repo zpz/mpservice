@@ -300,8 +300,8 @@ import multiprocessing
 import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
-import multiprocessing.queues
 import multiprocessing.pool
+import multiprocessing.queues
 import sys
 import threading
 import traceback
@@ -319,7 +319,10 @@ from traceback import format_exc
 from .context import MP_SPAWN_CTX
 
 __all__ = [
-    'ServerProcess', 'MemoryBlock', 'MemoryBlockProxy', 'hosted',
+    'ServerProcess',
+    'MemoryBlock',
+    'MemoryBlockProxy',
+    'hosted',
 ]
 
 
@@ -619,7 +622,6 @@ class _ProcessServer(multiprocessing.managers.Server):
                 util.info(' ... exception was %r', e)
                 conn.close()
                 sys.exit(1)
-
 
     def _create_hosted(self, c, data):
         # Construct the return value of a method that has been registered in

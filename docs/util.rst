@@ -24,6 +24,9 @@ Multiprocessing
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
+.. autoclass:: mpservice.multiprocessing.process.CpuAffinity
+
+
 Server Process
 ==============
 
@@ -45,6 +48,10 @@ Threading
 =========
 
 .. autoclass:: mpservice.threading.Thread
+
+.. autofunction:: mpservice.threading.wait
+
+.. autofunction:: mpservice.threading.as_completed
 
 
 Concurrent Futures
