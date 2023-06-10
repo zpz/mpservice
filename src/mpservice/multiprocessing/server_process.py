@@ -281,6 +281,8 @@ as long as that value is a ``register``ed class. This goes recursively to any de
 The search will stop at any value that is not a tuple, list, or dict; such a value will simply be pickled.
 For example,
 
+::
+
     data = {
         'a': [1, 2, [3, hosted(MemoryBlock)], ClassA()],
         'b': {'x': ['sfo', ('y', hosted([1, 2]))]},

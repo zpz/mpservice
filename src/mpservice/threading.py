@@ -173,7 +173,7 @@ class Thread(threading.Thread):
 def wait(
     threads: Sequence[Thread], timeout=None, return_when=ALL_COMPLETED
 ) -> tuple[set[Thread], set[Thread]]:
-    # See ``concurrent.futures.wait``.
+    '''See ``concurrent.futures.wait``.'''
 
     futures = [t._future_ for t in threads]
     future_to_thread = {id(t._future_): t for t in threads}
@@ -188,7 +188,7 @@ def wait(
 
 
 def as_completed(threads, timeout=None) -> Iterator[Thread]:
-    # See ``concurrent.futures.as_completed``.
+    '''See ``concurrent.futures.as_completed``.'''
 
     futures = [t._future_ for t in threads]
     future_to_thread = {id(t._future_): t for t in threads}
