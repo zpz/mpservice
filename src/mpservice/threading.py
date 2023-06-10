@@ -163,10 +163,11 @@ class Thread(threading.Thread):
         Use extra caution if the thread code is complex, e.g. if it creates
         more threads.
         '''
-        if not self.is_alive():
-            return
-        self.raise_exc(SystemExit)
-        self.join()
+        # There's a chance that the exception is missed in the thread.
+        # I read about it but now can't find the reference.
+        while self.is_alive():
+            self.raise_exc(SystemExit)
+            super().join(0.01)
 
 
 def wait(
