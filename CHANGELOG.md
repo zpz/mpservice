@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - New methods ``threading.Thread.{raise_exc, terminate}``.
 - New functions ``threading.{wait, as_completed}``.
 - Enhancements to ``multiprocessing.server_process`` esp regarding "hosted" data.
+- Do not raise exception if a ``multiprocessing.context.SpawnProcess`` was terminated by ``.terminate()``.
+  The previous behavior tends to raise exception when a ``ServerProcess`` shuts down.
 
 
 ## [0.13.2] - 2023-06-07

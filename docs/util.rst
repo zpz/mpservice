@@ -24,7 +24,21 @@ Multiprocessing
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
-.. autoclass:: mpservice.multiprocessing.ServerProcess
+Server Process
+==============
+
+.. automodule:: mpservice.multiprocessing.server_process
+    :no-members:
+    :no-special-members:
+    :no-undoc-members:
+
+.. autoclass:: mpservice.multiprocessing.server_process.ServerProcess
+
+.. autoclass:: mpservice.multiprocessing.server_process.MemoryBlock
+
+.. autoclass:: mpservice.multiprocessing.server_process.MemoryBlockProxy
+
+.. autoclass:: mpservice.multiprocessing.server_process.hosted
 
 
 Threading

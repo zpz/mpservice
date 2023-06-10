@@ -101,7 +101,7 @@ ServerProcess.register('Tripler', Tripler)
 
 def test_manager():
     with ServerProcess(name='test_server_process') as manager:
-        assert manager._manager._process.name == 'test_server_process'
+        assert manager._process.name == 'test_server_process'
 
         doubler = manager.Doubler('d')
         print(doubler.get_mp())
@@ -194,7 +194,7 @@ def inc_worker(q):
     assert buf[4] == 100
     buf[4] += 1
 
-    blocks = mem.list_memory_blocks()
+    blocks = mem._list_memory_blocks()
     print('memory blocks in worker:', blocks)
     assert len(blocks) == 1
 
@@ -284,6 +284,8 @@ def test_hosted():
         server.MemoryBlock(8)
         # These two references to memory blocks will be
         # taken care of when exiting the `server` context manager.
+
+        print(m)
 
         print(m.buf[10])
         p = Process(target=worker_mem, args=(m,))

@@ -1,22 +1,30 @@
 '''
-The :class:`Manager` in ``multiprocessing`` provides a mechanism interactively
+The :class:`Manager` in ``multiprocessing`` provides a mechanism to interactively
 communicate with a "server" that runs in another process.
-In contrast, a :class:`Queue` is used in a streaming fashion, that is, we retrieve
-the next data element from a queue if it exists. We can not use it "interactively" like:
-request certain data and wait for the response.
 
-The interactivity is achieved by a "proxy": an object is created in a "server process";
+The keyword is "interactively"---just like a client to a HTTP server, the client process
+can make a request to a "proxy" that is returned by the "manager" and wait for the response.
+There may be multiple types of data to be requested, just like calling multiple "end-points" 
+of a HTTP server.
+
+The other inter-process data sharing facilities, e.g. a :class:`Queue`, work more in a passive fashion.
+The client code checks the next data element in the queue, and obtaines whatever is there.
+
+The interactivity is achieved by a "proxy": an object is created and *hosted* in a "server process";
 the hosted object is represented by a "proxy", which is passed to and used in other processes
 to communicate with the hosted object. The backbone of the communication is ``multiprocessing.connection.Connection``
 with its ``send`` and ``recv`` methods.
 
-This module provides :class:`ServerProcess`, which contains some customization to the standard
-``Manager``. There are several scenarios in its use.
+The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerProcess`,
+with mainly two enhancements to the standard ``Manager``:
+one concerns "shared memory",
+and the other concerns returning a mix of hosted and non-hosted data from a proxy.
+
 
 Basic workflow
 ==============
 
-1. First, we need to register one or more classes with the :class:`ServerProcess` class::
+1. First, register one or more classes with the :class:`ServerProcess` class::
 
     class Doubler:
         def __init__(self, ...):
@@ -40,67 +48,73 @@ Basic workflow
     with ServerProcess() as server:
             ...
 
+   By now, ``server`` has started a "server process". We interact with things
+   running in the server process via methods that have been "registered" on ``server``.
 
 3. Instances of the registered classes can be created within the server process::
 
         doubler = server.Doubler(...)
         tripler = server.Tripler(...)
 
-    This causes corresponding class objects to be created
-    in the server process; the returned objects are "proxies"
-    for the real objects. These proxies can be passed to any other
-    processes and used there.
+   This causes corresponding class objects to be created
+   in the server process; the returned objects are "proxies"
+   for the real objects. These proxies can be passed to any other
+   processes and used there.
 
-    The arguments in the above calls are passed into the server process
-    and used in the ``__init__`` methods of the corresponding classes.
-    For this reason, the parameters to ``__init__`` of a registered class
-    must all be pickle-able.
+   The arguments in the above calls are passed into the server process
+   and used in the ``__init__`` methods of the corresponding classes.
+   For this reason, the parameters to ``__init__`` of a registered class
+   must all be pickle-able.
 
-    Calling one registered class multiple times, like
+   Calling a registered class multiple times, like
 
-    ::
+   ::
 
-            prox1 = server.Doubler(...)
-            prox2 = server.Doubler(...)
+        prox1 = server.Doubler(...)
+        prox2 = server.Doubler(...)
 
-    will create independent objects in the server process.
+   will create independent objects in the server process.
 
-    Multiple ``ServerProcess`` objects will run their corresponding
-    server processes independently.
+   Multiple ``ServerProcess`` objects will run their corresponding
+   server processes independently.
 
 4. Pass the proxy objects to any process and use them there.
 
-    By default, public methods (minus "properties") defined by the registered classes
-    can be invoked on a proxy and will return the expected
-    result. For example,
+   By default, public methods (minus "properties") defined by the registered classes
+   can be invoked on a proxy and will return the expected
+   result. For example,
 
-    ::
+   ::
 
-            prox1.double(3)
+        prox1.double(3)
 
-    will return 6. Inputs and output of the method ``Doubler.double``
-    must all be pickle-able.
+   will return 6. Inputs and output of the method ``Doubler.double``
+   must all be pickle-able.
 
-    Between the server process and the proxy object in a particular process or thread,
-    a connection is established, which starts a new thread in the server process
-    to handle all requests from that proxy object.
-    These "requests" include calling all methods of the proxy, not just one particular method.
+   The computation of the proxy's methods happens in the server process.
+   The proxy object only handles the communication and input/output transport.
 
-    For example,
+   Between the server process and the proxy object in a particular client process or thread,
+   a connection is established, which starts a new thread in the server process
+   to handle all requests from that proxy object (in said client process or thread).
+   These "requests" include calling all methods of the proxy, not just one particular method.
 
-    ::
+   For example,
+
+   ::
 
         th = Thread(target=foo, args=(prox1,))
         th.start()
         ...
 
-    Suppose in function ``foo`` the first parameter is called ``p`` (which is ``prox1`` passed in),
-    then ``p`` will communicate with the ``Doubler`` object (which runs in the server process)
-    via its own, new thread in the server process, separate from the connection thread for ``prox1``.
+   Suppose in function ``foo`` the first parameter is called ``p`` (which is ``prox1`` passed in),
+   then ``p`` will communicate with the ``Doubler`` object (which runs in the server process)
+   via its new dedicated thread in the server process, separate from the connection thread for ``prox1``
+   in the "current" thread.
 
-    Consequently, calls on a particular method of the proxy from multiple processes or threads
-    become multi-threaded concurrent calls in the server process.
-    We can design a simple example to observe this effect::
+   Consequently, calls on a particular method of the proxy from multiple processes or threads
+   become multi-threaded concurrent calls in the server process.
+   We can design a simple example to observe this effect::
 
 
         class Doubler:
@@ -124,18 +138,15 @@ Basic workflow
         if __name__ == '__main__':
             main()
 
-    If the calls to ``doubler.do`` were sequential, then 100 calls would take 50 seconds.
-    With concurrent calls in 50 threads as above, it took 1.05 seconds in one experiment.
+   If the calls to ``doubler.do`` were sequential, then 100 calls would take 50 seconds.
+   With concurrent calls in 50 threads as above, it took 1.05 seconds in an experiment.
 
-    It follows that, if the method mutates some shared state, it needs to guard things by locks.
+   It follows that, if the method mutates some shared state, you may need to use locks to guard things.
 
-The class ``ServerProcess`` delegates most work to :class:`multiprocessing.managers.BaseManager``,
-but is dedicated to the use case where user needs to design and register a custom class
-to be used in a "server process" on the same machine. The interface of ``ServerProcess``
-intends to stay simpler than the standard ``BaseManager``.
-
-If you don't need a custom class, but rather just need to use one of the standard classes,
-for example, ``Event``, you can use that like this::
+:class:`ServerProcess` inherits from the standard :class:`multiprocessing.managers.SyncManager`.
+If you don't need the enhancements (except for using :class:`mpservice.multiprocessing.SpawnProcess`
+in place of the standard :class:`multiprocessing.process.BaseProcess`), you can import ``Manager`` from
+``mpservice.multiprocessing`` like this::
 
     from mpservice.multiprocessing import Manager
 
@@ -147,8 +158,9 @@ for example, ``Event``, you can use that like this::
 Shared memory
 =============
 
-In an environment that supports shared memory, ``ServerProcess`` has two other methods:
-:meth:`MemoryBlock` and :meth:`list_memory_blocks`. A simple example::
+"Shared memory", introduced in Python 3.8, provides a way to use a block of memory across processes
+with zero-copy. ``ServerProcess`` has a method :meth:`~mpservice.multiprocessing.server_process.ServerProcess.MemoryBlock`
+that returns a :class:`~mpservice.multiprocessing.server_process.MemoryBlockProxy` object::
 
     with ServerProcess() as server:
         mem = server.MemoryBlock(1000)
@@ -158,73 +170,129 @@ In an environment that supports shared memory, ``ServerProcess`` has two other m
         # Since it's a "shared" block of memory, any process can modify the data
         # via the memoryview.
 
-        del mem
+Usually you will use the three methods 
+:meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.name`,
+:meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.size`,
+and
+:meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.buf`,
+of :class:`~mpservice.multiprocessing.server_process.MemoryBlockProxy`.
+The property ``buf`` returns a ``memoryview`` of the shared memory.
 
-To release (or "destroy") the memory block, just make sure all references to ``mem``
-in this "originating" and other "consuming" processes are cleared.
-In the originating process (where the ServerProcess object is started), the ``del mem``
-in the example above can be omitted.
+The block of shared memory is released/destroyed once all references to the ``MemoryBlockProxy``
+object have been garbage collected.
+There are two special considerations to be aware of. First, in the "original" process
+in the code block above, if ``mem`` is not deleted, it will be when ``server.__exit__``
+executes.
 
-See :class:`MemoryBlock`, :class:`MemoryBlockProxy`, :func:`list_memory_blocks` for more
-details.
+Regarding the second consideration, suppose ``mem`` is placed in a Queue to be picked up
+in another process; further suppose that the reference ``mem`` is gone after it has been placed
+in the Queue. This happens, for example, ``mem` is a temporary reference in a loop.
+In the standard behavior, the pickled data does not contain a reference to the ``MemoryBlockProxy``,
+therefore there may very well be a moment when there is no reference to the shared memory outside
+of the server process. However, the intention is clearly to use the shared memory once
+the pickled ``MemoryBlockProxy`` is taken out of the Queue in another process.
+For this reason, ``MemoryBlockProxy`` does some trick to count as a reference in pickled form.
+
 
 Nested proxies
 ==============
 
-Return proxies from hosted objects
-==================================
-
-Usually, methods of a hosted object simply returns regular data.
-The data obviously goes through pickling coming out of the server process into the user process.
-The server process does not keep of copy of or reference to the data; it's sent out and gone.
-
-A method may want to create an object, let it stay within the server process, and return a proxy to it.
+The standard ``Manager`` allows "nested proxies" in a client process (not the "server process").
 For example,
 
 ::
 
-    class MyClass:
-        def make_memory(self, size):
-            ...
-            mem = MemoryBlock(size)
-            ... # write data into the memory block
-            return mem
+    with ServerProcess() as server:
+        lst = server.list()
+        dct = server.dict()
+        dct['a'] = 3
+        dct['b'] = 4
+        lst.append(dct)
 
-If we simply return the ``MemoryBlock`` object,
-it is tricky to manage the lifetime and release of this memory block.
-Instead, this module provides facilities to manage this within the server process.
-To make use of that, we need to keep the original ``MemoryBlock`` object in the server process,
-and return a proxy of it. This is achieved by wrapping the returned object in ``hosted``::
+Now, the first element of ``lst`` is a dict proxy. You may pass ``lst`` to a nother process
+and manipulate its first element; the changes are reflected in the dict that resides in the server process.
 
-    class MyClass:
-        def make_memory(self, size):
-            ...
-            mem = MemoryBlock(size)
-            ... # write data into the memory block
-            return hosted(mem)
 
-Correspondingly, the class registration needs to be revised::
+Return proxies from methods of hosted objects
+=============================================
 
-            
-    ServerProcess.register(
-        'MyClass',
-        MyClass,
-        method_to_typeid={'make_memory': 'hosted'},
-    )
+By default, when you call a method of a proxy, the returned value is plain old data passed from
+the server process to the caller in the client process via pickling.
+Once received, that value has no relation to the server process.
 
-It is quite limited if we could only return a proxy object.
-In this example, we may prefer to return a dict that contains a ``MemoryBlock``, along with
-a few other elements of auxiliary info.
-Not a problem. We can do something like this::
+The standard ``Manager`` allows a method of a registered class to return a proxy
+by instructions via the parameter ``method_to_typeid`` of :meth:`~mpservice.multiprocessing.server_process.ServerProcess.register`.
+However, the set up can be inconvenient, and the capability is limited.
 
-    class MyClass:
-        def make_memory(self, size):
-            ...
-            mem = MemoryBlock(size)
-            ... # write data into the memory block
-            return {'size': size, 'user': 'Tom', 'block': hosted(mem)}
+:class:`~mpservice.multiprocessing.server_process.ServerProcess` supports returning
+a mix of proxy and non-proxy data elements in convenient and powerful ways.
+Suppose we have a class ``Worker``, which we will run in a server process;
+further, a method of ``Worker`` will return a dict that are plain data in some parts and
+proxies in some others. We can do something like this::
 
-The class registration is the same as above.
+    from mpservice.multiprocessing.server_process import hosted, MemoryBlock, ServerProcess
+
+    class Worker:
+        def make_data(self):
+            return {
+                'name': 'tom',
+                'hobbies': ['soccor', 'swim'],
+                'mem': hosted(MemoryBlock(100)),
+                'jobs': ('IBM', 'APPLE', {'UK': hosted(['ARM', 'Shell'])}),
+            }
+
+        def get_memory(self, size):
+            return hosted(MemoryBlock(size))
+
+    ServerProcess.register('Worker', Worker, method_to_typeid={'make_data': 'hosted'})
+
+Then we may use it like so::
+
+    from mpservice.multiprocessing import Process
+
+    def agent(data):
+        assert data['name'] == 'tom'
+        data['hobbies'].append('tennis')
+        data['mem'].buf[3] = 8
+        data['jobs][2]['UK'].append('BP')
+
+    with ServerProcess() as server_process:
+        worker = server_process.Worker()
+        data = worker.make_data()
+        p = Process(target=agent, args=(data, ))
+        p.start()
+        p.join()
+
+        # data['hobbis'] is not hosted; it's modification in one process
+        # will not be reflected in other processes.
+        assert len(data['hobbies]) == 2
+
+        assert data['mem'].buf[3] == 8
+        assert data['jobs'][2]['UK'][2] == 'BP'
+
+        mem = worker.get_memory(80)
+        assert isinstance(mem, MomeryBlockProxy)
+        assert mem.size == 80
+
+Any value that is wrapped by ``hosted`` must be a registered class, e.g. the return of ``Worker.get_memory``.
+When the entire return value is not wrapped by ``hosted``, the value must be a tuple, list, or dict.
+Any element of a tuple or a list, or a value (not a key) in a dict, can be ``hosted``,
+as long as that value is a ``register``ed class. This goes recursively to any depth.
+The search will stop at any value that is not a tuple, list, or dict; such a value will simply be pickled.
+For example,
+
+    data = {
+        'a': [1, 2, [3, hosted(MemoryBlock)], ClassA()],
+        'b': {'x': ['sfo', ('y', hosted([1, 2]))]},
+    }
+    return data
+
+In this example, ``data['a'][2]`` is a list, hence we check each of its elements,
+and find ``data['a'][2][1]`` to be a ``hosted`` object, but ``data['a'][2][2]``
+is not a tuple, list, or dict, and not ``hosted``, hence it is returned as is.
+Similarly, ``data['b']['x'][0]`` is a string and returned as is.
+On the other hand, ``data['b']['x'][1]`` is a tuple, hence each of its elements is examined,
+and it is found that it contains a plain string and a ``hosted`` list.
 '''
 from __future__ import annotations
 
@@ -233,7 +301,7 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
-import queue
+import multiprocessing.pool
 import sys
 import threading
 import traceback
@@ -241,7 +309,6 @@ import warnings
 import weakref
 from multiprocessing import util
 from multiprocessing.managers import (
-    BaseManager,
     BaseProxy,
     Token,
     convert_to_error,
@@ -249,13 +316,11 @@ from multiprocessing.managers import (
 )
 from traceback import format_exc
 
-from deprecation import deprecated
-
 from .context import MP_SPAWN_CTX
 
-# In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
-# A workaround is described here:
-# https://stackoverflow.com/q/3649458/6178706
+__all__ = [
+    'ServerProcess', 'MemoryBlock', 'MemoryBlockProxy', 'hosted',
+]
 
 
 # This is based on the 3.10 version.
@@ -278,6 +343,10 @@ def _callmethod(self, methodname, args=(), kwds={}):
             conn.send((self._id, methodname, args, kwds))
             break
         except BrokenPipeError as e:
+            # In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
+            # A workaround is described here:
+            # https://stackoverflow.com/q/3649458/6178706
+
             if tries == 0:
                 addr = self._token.address
                 if addr in self._address_to_local:
@@ -298,7 +367,6 @@ def _callmethod(self, methodname, args=(), kwds={}):
                 address=self._token.address,
                 serializer=self._serializer,
                 manager=self._manager,
-                # conn=self._Client(self._token.address, authkey=self._authkey),
                 Client=self._Client,
                 authkey=self._authkey,
                 data=exposed,
@@ -452,7 +520,7 @@ class hosted:
 class _ProcessServer(multiprocessing.managers.Server):
 
     # This is the cpython code in versions 3.7-3.12.
-    # My fix is at the end labeled "FIX".
+    # My fix is labeled "FIX".
     def serve_client(self, conn):
         '''
         Handle requests from the proxies in a particular process/thread
@@ -493,7 +561,6 @@ class _ProcessServer(multiprocessing.managers.Server):
 
                 try:
                     res = function(*args, **kwds)
-                    del function  # HACK
                 except Exception as e:
                     msg = ('#ERROR', e)
                 else:
@@ -505,8 +572,17 @@ class _ProcessServer(multiprocessing.managers.Server):
                     else:
                         msg = ('#RETURN', res)
 
-                del obj  # HACK
+                # FIX:
+                # If no more request is coming, then `function` and `res` will stay around.
+                # If `function` is a instance method of `obj`, then it carries a reference to `obj`.
+                # Also, `res` is a refernce to the object that has been tracked in `self.id_to_obj`
+                # and "returned" to the requester.
+                # The extra reference to `obj` and `res` lingering here have no use, yet can cause
+                # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``..
+                del function
+                del obj
                 del res
+
             except AttributeError:
                 if methodname is None:
                     msg = ('#TRACEBACK', format_exc())
@@ -544,15 +620,11 @@ class _ProcessServer(multiprocessing.managers.Server):
                 conn.close()
                 sys.exit(1)
 
-            # FIX:
-            # If no more request is coming, then `function` and `res` will stay around.
-            # If `function` is a instance method of `obj`, then it carries a reference to `obj`.
-            # Also, `res` is a refernce to the object that has been tracked in `self.id_to_obj`
-            # and "returned" to the requester.
-            # The extra reference to `obj` and `res` lingering here have no use, yet can cause
-            # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``..
 
     def _create_hosted(self, c, data):
+        # Construct the return value of a method that has been registered in
+        # `method_to_typeid` as 'hosted'.
+
         def convert_hosted(value):
             value, typeid = value.value, value.typeid
             typeid_nocall = f"{typeid}-nocall"
@@ -600,41 +672,7 @@ class _ProcessServer(multiprocessing.managers.Server):
         return super().create(c, typeid, *args, **kwds)
 
 
-class _ProcessManager(BaseManager):
-
-    _Server = _ProcessServer
-
-    def __init__(self):
-        super().__init__(ctx=MP_SPAWN_CTX)
-        # 3.11 got parameter `shutdown_timeout`, which may be useful.
-
-    def __enter__(self):
-        super().__enter__()
-        self._memoryblock_proxies = weakref.WeakValueDictionary()
-        return self
-
-    def __exit__(self, *args):
-        for prox in self._memoryblock_proxies.values():  # valuerefs():
-            prox._close()
-        # This takes care of dangling references to ``MemoryBlockProxy`` objects
-        # in such situations (via ``ServerProcess``):
-        #
-        #   with ServerProcess() as server:
-        #       mem = server.MemoryBlock(30)
-        #       ...
-        #       # the name ``mem`` is not "deleted" when exiting the context
-        #
-        # In this case, if the treatment above is not in place, we'll get such warning:
-        #
-        #   /usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
-        #
-        # See ``MemoryBlockProxy.__init__()`` for how the object is registered in
-        # ``self._memoryblock_proxies``.
-
-        super().__exit__(*args)
-
-
-class ServerProcess:
+class ServerProcess(multiprocessing.managers.SyncManager):
     # In each new thread or process, a proxy object will create a new
     # connection to the server process (see``multiprocessing.managers.Server.accepter``,
     # ...,
@@ -651,7 +689,7 @@ class ServerProcess:
     # I made a naive example, where the registered class just returns ``x + x``.
     # I was able to finish 13K calls per second.
 
-    _registry = set()
+    _Server = _ProcessServer
 
     @classmethod
     def register(
@@ -697,15 +735,14 @@ class ServerProcess:
                 '"%s" is already registered; the existing registry is being overwritten.'
                 % typeid
             )
-        else:
-            cls._registry.add(typeid)
-        _ProcessManager.register(typeid=typeid, callable=callable, **kwargs)
+        super().register(typeid=typeid, callable=callable, **kwargs)
 
     def __init__(
         self,
         *,
         cpu: int | list[int] | None = None,
         name: str | None = None,
+        **kwargs,
     ):
         '''
         Parameters
@@ -715,82 +752,39 @@ class ServerProcess:
         cpu
             Ignored in 0.13.1; will be removed soon.
         '''
-        self._manager = _ProcessManager()
+        super().__init__(ctx=MP_SPAWN_CTX, **kwargs)
         self._name = name
 
     def __enter__(self):
-        self._manager.__enter__()
+        super().__enter__()
         if self._name:
-            self._manager._process.name = self._name
+            self._process.name = self._name
+        self._memoryblock_proxies = weakref.WeakValueDictionary()
         return self
 
     def __exit__(self, *args):
-        self._manager.__exit__(*args)
+        for prox in self._memoryblock_proxies.values():  # valuerefs():
+            prox._close()
+        # This takes care of dangling references to ``MemoryBlockProxy`` objects
+        # in such situations (via ``ServerProcess``):
+        #
+        #   with ServerProcess() as server:
+        #       mem = server.MemoryBlock(30)
+        #       ...
+        #       # the name ``mem`` is not "deleted" when exiting the context
+        #
+        # In this case, if the treatment above is not in place, we'll get such warning:
+        #
+        #   /usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+        #
+        # See ``MemoryBlockProxy.__init__()`` for how the object is registered in
+        # ``self._memoryblock_proxies``.
 
-    def __del__(self):
-        try:
-            self.__exit__(None, None, None)
-        except Exception:
-            traceback.print_exc()
-
-    @deprecated(
-        deprecated_in='0.13.1',
-        removed_in='0.13.5',
-        details="Use context manager instead.",
-    )
-    def start(self):
-        # :meth:`start` and :meth:`shutdown` are provided mainly for
-        # compatibility. It's recommended to use the context manager.
-        self.__enter__()
-
-    @deprecated(
-        deprecated_in='0.13.1',
-        removed_in='0.13.5',
-        details="Use context manager instead.",
-    )
-    def shutdown(self):
-        self.__exit__()
-
-    def __getattr__(self, name):
-        # The main method names are the names of the classes that have been reigstered.
-        if name in self._registry:
-            return getattr(self._manager, name)
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
+        super().__exit__(*args)
 
 
 ServerProcess.register(
     'hosted', callable=None, proxytype=HostedProxy, create_method=False
-)
-
-
-# Register most commonly used classes.
-# I don't make ``ServerProcess`` subclass ``SyncManger`` because I don't want to
-# expose the full API of ``SyncManager`` or ``BaseManager``.
-# If you need more that's not registered here, just register in your own code.
-
-ServerProcess.register('Queue', queue.Queue)
-ServerProcess.register(
-    'Event', threading.Event, proxytype=multiprocessing.managers.EventProxy
-)
-ServerProcess.register(
-    'Lock', threading.Lock, proxytype=multiprocessing.managers.AcquirerProxy
-)
-ServerProcess.register(
-    'RLock', threading.RLock, proxytype=multiprocessing.managers.AcquirerProxy
-)
-ServerProcess.register(
-    'Semaphore', threading.Semaphore, proxytype=multiprocessing.managers.AcquirerProxy
-)
-ServerProcess.register(
-    'Condition', threading.Condition, proxytype=multiprocessing.managers.ConditionProxy
-)
-ServerProcess.register(
-    'list', threading.Condition, proxytype=multiprocessing.managers.ListProxy
-)
-ServerProcess.register(
-    'dict', threading.Condition, proxytype=multiprocessing.managers.DictProxy
 )
 
 
@@ -804,19 +798,24 @@ else:
         '''
         This class is used within the "server process" of a ``ServerProcess`` to
         create and track shared memory blocks.
-
-        The design of this class is largely dictated by the need of its corresponding "proxy" class.
         '''
 
         _blocks_ = set()
 
         def __init__(self, size: int):
+            assert size > 0
             self._mem = SharedMemory(create=True, size=size)
             self.__class__._blocks_.add(self._mem.name)
 
+        def _name(self):
+            # This is for use by ``MemoryBlockProxy``.
+            return self._mem.name
+
+        @property
         def name(self):
             return self._mem.name
 
+        @property
         def size(self):
             # This could be slightly larger than the ``size`` passed in to :meth:`__init__`.
             return self._mem.size
@@ -825,14 +824,18 @@ else:
         def buf(self):
             return self._mem.buf
 
-        def list_memory_blocks(self):
+        def _list_memory_blocks(self):
             '''
             Return a list of the names of the shared memory blocks
             created and tracked by this class.
             This list includes the memory block created by the current
             ``MemoryBlock`` instance; in other words, the list
             includes ``self.name``.
+
+            This is for use by ``MemoryBlockProxy``.
+            This is mainly for debugging purposes.
             '''
+
             return list(self._blocks_)
 
         def __del__(self):
@@ -865,7 +868,7 @@ else:
             return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
 
     class MemoryBlockProxy(PickleThroughProxy):
-        _exposed_ = ('list_memory_blocks', 'name')
+        _exposed_ = ('_list_memory_blocks', '_name')
 
         def __init__(self, *args, incref=True, manager=None, **kwargs):
             super().__init__(*args, incref=incref, manager=manager, **kwargs)
@@ -877,7 +880,7 @@ else:
                 # Since ``incref`` is ``True``,
                 # ``self`` is being constructed out of the return of either
                 # ``ServerProcess.MemoryBlock`` or a method of some proxy (
-                # for some object running within a server process).
+                # and the method's return value contains a ``MemoryBlock``).
                 # ``self`` is not being constructed due to unpickling.
                 #
                 # We only place such objects under this tracking, and don't place
@@ -902,7 +905,7 @@ else:
             Return the name of the ``SharedMemory`` object.
             '''
             if self._name is None:
-                self._name = self._callmethod('name')
+                self._name = self._callmethod('_name')
             return self._name
 
         @property
@@ -923,13 +926,13 @@ else:
                 self._mem = SharedMemory(name=self.name, create=False)
             return self._mem.buf
 
-        def list_memory_blocks(self) -> list[str]:
+        def _list_memory_blocks(self) -> list[str]:
             '''
             Return names of shared memory blocks being
             tracked by the ``ServerProcess`` that "ownes" the current
             proxy object.
             '''
-            return self._callmethod('list_memory_blocks')
+            return self._callmethod('_list_memory_blocks')
 
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
@@ -943,10 +946,10 @@ else:
 
     def list_memory_blocks(self):
         '''
-        List names of MemoryBlock objects being tracked.
+        List names of MemoryBlock objects being tracked in the server process.
         '''
         m = self.MemoryBlock(1)
-        blocks = m.list_memory_blocks()
+        blocks = m._list_memory_blocks()
         blocks.remove(m.name)
         return blocks
 
