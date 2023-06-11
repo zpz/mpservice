@@ -11,6 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Enhancements to ``multiprocessing.server_process`` esp regarding "hosted" data.
 - Do not raise exception if a ``multiprocessing.context.SpawnProcess`` was terminated by ``.terminate()``.
   The previous behavior tends to raise exception when a ``ServerProcess`` shuts down.
+- ``mpserver.Worker`` adds support for ``preprocess``.
+- Revised implementation of ``multiprocessing.context.SpawnProcess`` to use a Future to supper ``wait`` and ``as_completed``.
+- New functions ``multiprocessing.{wait, as_completed}``.
 
 
 ## [0.13.2] - 2023-06-07

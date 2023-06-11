@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import errno
 import logging
 import logging.handlers
@@ -8,13 +9,17 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
-import threading
+import time
 import warnings
 from multiprocessing import util
 
 from ..threading import Thread
-from .process import CpuAffinity, TimeoutError
 from .remote_exception import RemoteException
+from .util import CpuAffinity
+
+
+class TimeoutError(Exception):
+    pass
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -139,6 +144,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.__logger_queue__ = logger_queue
         assert not hasattr(self, '__logger_thread__')
         self.__logger_thread__ = None
+        self.__collector_thread__ = None
         assert not hasattr(self, '__finalize__')
         self.__finalize__ = None
 
@@ -146,9 +152,12 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().start()
 
         # The following must be *after* ``super().start``, otherwise will get error
-        # "cannot pickle '_thread.lock' object" because `self`
+        # "cannot pickle '_thread.Lock' object" or "cannot pickle '_thread.RLock" because `self`
         # will be passed to the other process in ``super().start()``,
         # going through pickling.
+
+        self._future_ = concurrent.futures.Future()
+
         self.__logger_thread__ = Thread(
             target=self._run_logger_thread,
             args=(self.__logger_queue__,),
@@ -156,10 +165,17 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             daemon=True,
         )
         self.__logger_thread__.start()
+
+        self.__collector_thread__ = Thread(
+            target=self._run_collector_thread,
+            name="ProcessCollectorThread",
+        )
+        self.__collector_thread__.start()
+
         self.__finalize__ = util.Finalize(
             self,
-            type(self)._finalize_logger_thread,
-            (self.__logger_thread__, self.__logger_queue__),
+            type(self)._finalize_threads,
+            (self.__logger_thread__, self.__logger_queue__, self.__collector_thread__),
             exitpriority=5,
         )
 
@@ -173,10 +189,33 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             if record.levelno >= logger.getEffectiveLevel():
                 logger.handle(record)
 
+    def _run_collector_thread(self):
+        result, error = None, None
+        try:
+            result = self.__result_and_error__.recv()
+            error = self.__result_and_error__.recv()
+        except EOFError:
+            # the process has been terminated by calling ``self.terminate()``
+            while self.exitcode is None:
+                time.sleep(0.001)
+            assert self.exitcode == -15, f"exitcode is {self.exitcode}"
+
+        self.__result_and_error__.close()
+        self.__result_and_error__ = None
+        if error is not None:
+            self._future_.set_exception(error)
+        else:
+            self._future_.set_result(result)
+        self.__logger_queue__.put(None)
+        self.__logger_thread__.join()
+
     @staticmethod
-    def _finalize_logger_thread(t: threading.Thread, q: multiprocessing.queues.Queue):
+    def _finalize_threads(
+        t_logger: Thread, q: multiprocessing.queues.Queue, t_collector: Thread
+    ):
         q.put(None)
-        t.join()
+        t_logger.join()
+        t_collector.join()
 
     def run(self):
         """
@@ -218,7 +257,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 # TODO: what if `e.code` is not 0?
                 result_and_error.send(None)
                 result_and_error.send(None)
-                raise
+                raise  # should it raise or stay silent?
             except BaseException as e:
                 print(f"{multiprocessing.current_process().name}: {repr(e)}")
                 result_and_error.send(None)
@@ -237,20 +276,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.close()
 
-    def _get_result(self):
-        # Error could happen below if the process has terminated in some
-        # unusual ways.
-        if not hasattr(self, '__result__'):
-            self.__result__ = self.__result_and_error__.recv()
-            self.__error__ = self.__result_and_error__.recv()
-            self.__result_and_error__.close()
-            self.__result_and_error__ = None
-
-        finalize = self.__finalize__
-        if finalize:
-            self.__finalize__ = None
-            finalize()
-
     def join(self, timeout=None):
         '''
         Same behavior as the standard lib, except that if the process
@@ -261,18 +286,18 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode is None:
             # Not terminated. Timed out.
             return
-        self._get_result()
+        self.__collector_thread__.join()
         if exitcode == 0:
             # Terminated w/o error.
             return
         if exitcode == 1:
-            raise self.__error__
+            raise self._future_.exception()
         if exitcode >= 0:
             raise ValueError(f"expecting negative `exitcode` but got: {exitcode}")
         exitcode = -exitcode
         if exitcode == errno.ENOTBLK:  # 15
             warnings.warn(
-                f"process exitcode {-exitcode}, {errno.errorcode[-exitcode]}; likely due to a forced termination",
+                f"process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`",
                 stacklevel=2,
             )
             # For example, ``self.terminate()`` was called. That's a code smell.
@@ -298,10 +323,8 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().join(timeout)
         if not self.done():
             raise TimeoutError
-        self._get_result()
-        if self.__error__ is not None:
-            raise self.__error__
-        return self.__result__
+        self.__collector_thread__.join()
+        return self._future_.result()
 
     def exception(self, timeout: float | int | None = None):
         '''
@@ -310,8 +333,8 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().join(timeout)
         if not self.done():
             raise TimeoutError
-        self._get_result()
-        return self.__error__
+        self.__collector_thread__.join()
+        return self._future_.exception()
 
 
 class SpawnContext(multiprocessing.context.SpawnContext):

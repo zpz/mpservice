@@ -40,8 +40,8 @@ import psutil
 
 from ._queues import SingleLane
 from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
-from .multiprocessing.process import CpuAffinity
 from .multiprocessing.remote_exception import EnsembleError
+from .multiprocessing.util import CpuAffinity
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
@@ -299,6 +299,24 @@ class Worker(ABC):
         self.batch_wait_time = batch_wait_time
         self.name = f"{multiprocessing.current_process().name}-{threading.current_thread().name}"
 
+        self.preprocess: Callable[[Any], Any]
+        '''
+        If a subclass has a method ``preprocess`` or an attribute ``preprocess`` that is a free-standing
+        function, this method or function must take one data element (not a batch) as the sole, positional
+        argument. This processes/transforms the data, and the output is used in :meth:`call`. If this function
+        raises an exception, this element is not sent to :meth:`call`; instead, the exception is short-circuited
+        to the output queue.
+
+        When ``self.batch_size > 1``, if :meth:`call` needs to take care of an element of the batch that
+        might fail a pre-condition, it is tetious to properly assemble the "good" and "bad" elements to further processing
+        or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
+
+        When a subclass is designed to do non-batching work, this attribute is not needed, because the same
+        concern can be handled in :meth:class: directly.
+
+        When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
+        '''
+
     @abstractmethod
     def call(self, x):
         """
@@ -363,6 +381,7 @@ class Worker(ABC):
 
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
+        preprocess = getattr(self, 'preprocess', None)
         while True:
             z = q_in.get()
             if z == NOMOREDATA:
@@ -372,8 +391,14 @@ class Worker(ABC):
 
             uid, x = z
 
+            if preprocess is not None:
+                try:
+                    x = preprocess(x)
+                except Exception as e:
+                    x = e
+
             # If it's an exception, short-circuit to output.
-            if isinstance(x, BaseException):
+            if isinstance(x, Exception):
                 x = RemoteException(x)
             if isinstance(x, RemoteException):
                 q_out.put((uid, x))
@@ -454,6 +479,8 @@ class Worker(ABC):
                         n_batches = 0
         finally:
             if batch_size_log_cadence and n_batches:
+                # Finally, log this if `batch_size_log_cadence` is "truthy"
+                # and there has been any unlogged batch.
                 print_batching_info()
             _ = collector_thread.result()
 
@@ -465,6 +492,7 @@ class Worker(ABC):
 
         buffer = self._batch_buffer
         batchsize = self.batch_size
+        preprocess = getattr(self, 'preprocess', None)
 
         while True:
             if buffer.full():
@@ -488,7 +516,14 @@ class Worker(ABC):
                             q_out.put(z)
                             return
                         uid, x = z
-                        if isinstance(x, BaseException):
+
+                        if preprocess is not None:
+                            try:
+                                x = preprocess(x)
+                            except Exception as e:
+                                x = e
+
+                        if isinstance(x, Exception):
                             q_out.put((uid, RemoteException(x)))
                         elif isinstance(x, RemoteException):
                             q_out.put((uid, x))

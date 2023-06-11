@@ -24,7 +24,7 @@ Multiprocessing
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
-.. autoclass:: mpservice.multiprocessing.process.CpuAffinity
+.. autoclass:: mpservice.multiprocessing.util.CpuAffinity
 
 
 Server Process
