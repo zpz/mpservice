@@ -9,14 +9,13 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
-import threading
 import time
 import warnings
 from multiprocessing import util
 
 from ..threading import Thread
-from .util import CpuAffinity
 from .remote_exception import RemoteException
+from .util import CpuAffinity
 
 
 class TimeoutError(Exception):
@@ -211,7 +210,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self.__logger_thread__.join()
 
     @staticmethod
-    def _finalize_threads(t_logger: Thread, q: multiprocessing.queues.Queue, t_collector: Thread):
+    def _finalize_threads(
+        t_logger: Thread, q: multiprocessing.queues.Queue, t_collector: Thread
+    ):
         q.put(None)
         t_logger.join()
         t_collector.join()

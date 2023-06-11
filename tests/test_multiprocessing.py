@@ -9,12 +9,13 @@ import mpservice.multiprocessing
 import mpservice.threading
 import pytest
 from mpservice.multiprocessing import (
+    FIRST_EXCEPTION,
     Process,
     RemoteException,
+    as_completed,
     get_remote_traceback,
     is_remote_exception,
-    wait, as_completed,
-    FIRST_COMPLETED, FIRST_EXCEPTION,
+    wait,
 )
 from mpservice.threading import Thread
 
@@ -174,7 +175,6 @@ def test_remote_exception():
         err = RemoteException(x)
 
 
-
 def sleeper(sleep_seconds):
     if sleep_seconds > 10:
         sleep(sleep_seconds * 0.1)
@@ -192,7 +192,9 @@ def test_terminate():
 
 
 def test_wait():
-    workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [Thread(target=sleeper, args=(4, ))]
+    workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [
+        Thread(target=sleeper, args=(4,))
+    ]
     for t in workers:
         t.start()
     done, notdone = wait(workers, timeout=2.2)
@@ -208,7 +210,9 @@ def test_wait_exc():
     assert len(done) == 1
     assert done.pop() is workers[2]
 
-    workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [Thread(target=sleeper, args=(25,))]
+    workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [
+        Thread(target=sleeper, args=(25,))
+    ]
     for t in workers:
         t.start()
     done, notdone = wait(workers, return_when=FIRST_EXCEPTION)
@@ -217,7 +221,9 @@ def test_wait_exc():
 
 
 def test_as_completed():
-    workers = [Process(target=sleeper, args=(3,))] + [Process(target=sleeper, args=(x,)) for x in (2, 4)]
+    workers = [Process(target=sleeper, args=(3,))] + [
+        Process(target=sleeper, args=(x,)) for x in (2, 4)
+    ]
     for t in workers:
         t.start()
     k = 0

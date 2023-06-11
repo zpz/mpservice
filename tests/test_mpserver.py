@@ -601,21 +601,19 @@ class WorkerWithPreprocess(Worker):
         if x > 100:
             raise ValueError(x)
         return x
-    
+
     def call(self, x):
         if self.batch_size:
             return [v + 3 for v in x]
         return x + 3
-    
+
 
 def test_preprocess():
-    server = Server(
-        ProcessServlet(WorkerWithPreprocess)
-    )
+    server = Server(ProcessServlet(WorkerWithPreprocess))
     with server:
         assert server.call(8) == 11
         with pytest.raises(ValueError):
-            z = server.call(123)
+            server.call(123)
 
     server = Server(
         ProcessServlet(WorkerWithPreprocess, batch_size=10, batch_wait_time=0.1)

@@ -22,9 +22,9 @@ Last but not least, if exception happens in a child process and we don't want th
 instead we send it to the main or another process to be investigated when/where we are ready to,
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
+import concurrent.futures
 import warnings
 from collections.abc import Iterator, Sequence
-import concurrent.futures
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
 from mpservice.threading import Thread
@@ -68,7 +68,7 @@ globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
 
 def wait(
     workers: Sequence[Thread | SpawnProcess], /, timeout=None, return_when=ALL_COMPLETED
-) -> tuple[set[Thread|SpawnProcess], set[Thread|SpawnProcess]]:
+) -> tuple[set[Thread | SpawnProcess], set[Thread | SpawnProcess]]:
     '''
     ``workers`` is a sequence of ``Thread`` or ``SpawnProcess`` that have been started.
     It can be a mix of the two types.
@@ -79,7 +79,9 @@ def wait(
     futures = [t._future_ for t in workers]
     future_to_thread = {id(t._future_): t for t in workers}
     done, not_done = concurrent.futures.wait(
-        futures, timeout=timeout, return_when=return_when.upper(),
+        futures,
+        timeout=timeout,
+        return_when=return_when.upper(),
     )
     if done:
         done = set(future_to_thread[id(f)] for f in done)
@@ -88,7 +90,9 @@ def wait(
     return done, not_done
 
 
-def as_completed(workers: Sequence[Thread | SpawnProcess], /, timeout=None) -> Iterator[Thread|SpawnProcess]:
+def as_completed(
+    workers: Sequence[Thread | SpawnProcess], /, timeout=None
+) -> Iterator[Thread | SpawnProcess]:
     '''See ``concurrent.futures.as_completed``.'''
 
     futures = [t._future_ for t in workers]

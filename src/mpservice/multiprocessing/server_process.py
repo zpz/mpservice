@@ -321,7 +321,6 @@ from traceback import format_exc
 from .context import MP_SPAWN_CTX
 from .util import CpuAffinity
 
-
 __all__ = [
     'ServerProcess',
     'MemoryBlock',
