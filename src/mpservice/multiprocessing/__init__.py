@@ -23,9 +23,13 @@ instead we send it to the main or another process to be investigated when/where 
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
 import warnings
+from collections.abc import Iterator, Sequence
+import concurrent.futures
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
-from .context import MP_SPAWN_CTX, SpawnProcess
-from .process import TimeoutError
+from mpservice.threading import Thread
+
+from .context import MP_SPAWN_CTX, SpawnProcess, TimeoutError
 from .remote_exception import (
     RemoteException,
     get_remote_traceback,
@@ -62,16 +66,47 @@ globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
 #    from mpservice.multiprocessing import ...
 
 
+def wait(
+    workers: Sequence[Thread | SpawnProcess], /, timeout=None, return_when=ALL_COMPLETED
+) -> tuple[set[Thread|SpawnProcess], set[Thread|SpawnProcess]]:
+    '''
+    ``workers`` is a sequence of ``Thread`` or ``SpawnProcess`` that have been started.
+    It can be a mix of the two types.
+
+    See ``concurrent.futures.wait``.
+    '''
+
+    futures = [t._future_ for t in workers]
+    future_to_thread = {id(t._future_): t for t in workers}
+    done, not_done = concurrent.futures.wait(
+        futures, timeout=timeout, return_when=return_when.upper(),
+    )
+    if done:
+        done = set(future_to_thread[id(f)] for f in done)
+    if not_done:
+        not_done = set(future_to_thread[id(f)] for f in not_done)
+    return done, not_done
+
+
+def as_completed(workers: Sequence[Thread | SpawnProcess], /, timeout=None) -> Iterator[Thread|SpawnProcess]:
+    '''See ``concurrent.futures.as_completed``.'''
+
+    futures = [t._future_ for t in workers]
+    future_to_thread = {id(t._future_): t for t in workers}
+    for f in concurrent.futures.as_completed(futures, timeout=timeout):
+        yield future_to_thread[id(f)]
+
+
 def __getattr__(name):
     if name in ('CpuAffinity',):
         warnings.warn(
-            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.process' instead.",
+            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.util' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        import mpservice.multiprocessing.process
+        import mpservice.multiprocessing.util
 
-        o = getattr(mpservice.multiprocessing.process, name)
+        o = getattr(mpservice.multiprocessing.util, name)
         return o
 
     if name in ('SpawnContext',):

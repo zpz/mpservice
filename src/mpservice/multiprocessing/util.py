@@ -1,10 +1,6 @@
 import psutil
 
 
-class TimeoutError(Exception):
-    pass
-
-
 class CpuAffinity:
     """
     ``CpuAffinity`` specifies which CPUs (or cores) a process should run on.

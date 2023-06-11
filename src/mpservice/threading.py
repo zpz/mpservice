@@ -178,7 +178,7 @@ def wait(
     futures = [t._future_ for t in threads]
     future_to_thread = {id(t._future_): t for t in threads}
     done, not_done = concurrent.futures.wait(
-        futures, timeout=timeout, return_when=return_when
+        futures, timeout=timeout, return_when=return_when.upper()
     )
     if done:
         done = set(future_to_thread[id(f)] for f in done)
@@ -187,7 +187,7 @@ def wait(
     return done, not_done
 
 
-def as_completed(threads, timeout=None) -> Iterator[Thread]:
+def as_completed(threads: Sequence[Thread], timeout=None) -> Iterator[Thread]:
     '''See ``concurrent.futures.as_completed``.'''
 
     futures = [t._future_ for t in threads]

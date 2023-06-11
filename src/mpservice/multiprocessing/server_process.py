@@ -319,6 +319,8 @@ from multiprocessing.managers import (
 from traceback import format_exc
 
 from .context import MP_SPAWN_CTX
+from .util import CpuAffinity
+
 
 __all__ = [
     'ServerProcess',
@@ -754,15 +756,20 @@ class ServerProcess(multiprocessing.managers.SyncManager):
         name
             Name of the server process. If ``None``, a default name will be created.
         cpu
-            Ignored in 0.13.1; will be removed soon.
+            Specify CPU pinning for the server process.
         '''
         super().__init__(ctx=MP_SPAWN_CTX, **kwargs)
         self._name = name
+        self._cpu = cpu
 
     def __enter__(self):
         super().__enter__()
         if self._name:
             self._process.name = self._name
+
+        if self._cpu is not None:
+            CpuAffinity(self._cpu).set(pid=self._process.pid)
+
         self._memoryblock_proxies = weakref.WeakValueDictionary()
         return self
 
