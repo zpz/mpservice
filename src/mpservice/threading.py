@@ -12,22 +12,16 @@ from typing import Type
 # sequentially creating/running/joining
 # threads with a trivial worker function:
 #   20000 took 1 sec.
-
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
-
+from mpservice import TimeoutError
 
 __all__ = [
-    'TimeoutError',
     'InvalidStateError',
     'MAX_THREADS',
     'Thread',
     'FIRST_COMPLETED',
     'FIRST_EXCEPTION',
 ]
-
-
-class TimeoutError(Exception):
-    pass
 
 
 class InvalidStateError(RuntimeError):
@@ -55,8 +49,6 @@ class Thread(threading.Thread):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._result_ = None
-        self._exception_ = None
         self._future_: concurrent.futures.Future = None
 
     def run(self):
@@ -66,8 +58,8 @@ class Thread(threading.Thread):
         self._future_ = concurrent.futures.Future()
         try:
             if self._target is not None:
-                self._result_ = self._target(*self._args, **self._kwargs)
-                self._future_.set_result(self._result_)
+                z = self._target(*self._args, **self._kwargs)
+                self._future_.set_result(z)
             else:
                 self._future_.set_result(None)
         except SystemExit:
@@ -76,7 +68,6 @@ class Thread(threading.Thread):
             self._future_.set_result(None)
             return
         except BaseException as e:
-            self._exception_ = e
             self._future_.set_exception(e)
             # Sometimes somehow error is not visible (maybe it's a `pytest` issue?).
             # Just make it more visible:
@@ -96,8 +87,8 @@ class Thread(threading.Thread):
         if self.is_alive():
             # Timed out
             return
-        if self._exception_ is not None:
-            raise self._exception_
+        if self._future_.exception():
+            raise self._future_.exception()
 
     def done(self) -> bool:
         '''
@@ -116,9 +107,7 @@ class Thread(threading.Thread):
         super().join(timeout)
         if self.is_alive():
             raise TimeoutError
-        if self._exception_ is not None:
-            raise self._exception_
-        return self._result_
+        return self._future_.result()
 
     def exception(self, timeout=None):
         '''
@@ -127,7 +116,7 @@ class Thread(threading.Thread):
         super().join(timeout)
         if self.is_alive():
             raise TimeoutError
-        return self._exception_
+        return self._future_.exception()
 
     def raise_exc(self, exc: BaseException | Type[BaseException]) -> None:
         '''

@@ -4,6 +4,7 @@ import random
 import time
 
 import pytest
+from mpservice import TimeoutError
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
@@ -14,7 +15,6 @@ from mpservice.mpserver import (
     Server,
     SwitchServlet,
     ThreadServlet,
-    TimeoutError,
     Worker,
     make_worker,
 )

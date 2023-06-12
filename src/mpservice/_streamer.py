@@ -38,13 +38,14 @@ import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import AsyncIterable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from random import random
 from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
     Callable,
+    Generic,
     Literal,
     Optional,
     TypeVar,
@@ -77,9 +78,10 @@ NOTSET = object()
 
 T = TypeVar("T")  # indicates input data element
 TT = TypeVar("TT")  # indicates output after an op on `T`
+Elem = TypeVar('Elem')
 
 
-class Stream:
+class Stream(Generic[Elem]):
     """
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
@@ -132,13 +134,13 @@ class Stream:
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
         return self
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Elem]:
         # Usually between ``__iter__`` and ``__aiter__`` only
         # one is available, dependending on the type of
         # ``self.streamlets[-1]``.
         return self.streamlets[-1].__iter__()
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[Elem]:
         return self.streamlets[-1].__aiter__()
 
     def drain(self) -> int:
@@ -170,7 +172,7 @@ class Stream:
 
         return main()
 
-    def collect(self) -> list:
+    def collect(self) -> list[Elem]:
         """If ``self`` is sync, return all the elements in a list.
         If ``self`` is async, return an awaitable that will do what the sync version does.
 
@@ -224,8 +226,8 @@ class Stream:
             (which do not have to differ from the original) form the new stream going
             forward.
 
-            .. note:: This function must be sync. If you have to use an async function, then use it with
-            :meth:`parmap`.
+            .. note:: This function must be sync. If you have to use an async function, then use it with :meth:`parmap`.
+
         *kwargs
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
@@ -805,7 +807,7 @@ class AsyncIter(AsyncIterable):
                 yield x
 
 
-class IterQueue(queue.Queue):
+class IterableQueue(queue.Queue):
     # In the implementations of ``queue.Queue`` and ``multiprocessing.queues.Queue``,
     # ``put_nowait`` and ``get_nowait`` simply call ``put`` and ``get``.
     # In the implementation of ``asyncio.queues.Queue``, however,
@@ -837,8 +839,12 @@ class IterQueue(queue.Queue):
         but the multiprocessing Queue class has a method called
         "close", hence we can't use it.
         '''
-        super().put(FINISHED, timeout=timeout)
         self._finished_ = True
+        # NOTE: this must preceed the next line to prevent another call to `self.put`.
+        # In effect, after one call to ``self.finish``, no more ``self.put``
+        # will go through; more calls to ``self.finish`` will go through.
+        # See :meth:`get`.
+        super().put(FINISHED, timeout=timeout)
 
     def put(self, *args, **kwargs):
         if self._finished_:
@@ -848,6 +854,10 @@ class IterQueue(queue.Queue):
     def get(self, *args, **kwargs):
         z = super().get(*args, **kwargs)
         if z == FINISHED:
+            # The queue either is empty now or has more ``FINISHED`` indicators.
+            # If another thread is trying to ``get`` now, it will either get
+            # a remaining ``FINISHED`` or (if the queue is empty) wait for
+            # the following ``self.finish()`` to put a ``FINISHED`` in the queue.
             self.finish()
             # Put another indicator in the queue so that
             # the closing mark is always present.
@@ -855,6 +865,9 @@ class IterQueue(queue.Queue):
         return z
 
     def __iter__(self):
+        # This method is thread-safe, meaning multiple threads can
+        # collectively iter over an ``IterableQueue``, each getting some
+        # elements from it.
         while True:
             try:
                 x = self.get()
@@ -863,17 +876,19 @@ class IterQueue(queue.Queue):
             yield x
 
 
-class IterProcessQueue(multiprocessing.queues.Queue):
-    class Finished(Exception):
+class IterableProcessQueue(multiprocessing.queues.Queue):
+    class Finished(RuntimeError):
         pass
 
     def __init__(self, maxsize=0, *, ctx=None):
-        if ctx is None or ctx == 'spawn':
+        if ctx is None:
             ctx = MP_SPAWN_CTX
         super().__init__(maxsize, ctx=ctx)
         self._finished_ = ctx.Event()
         # Note: the parent class has an attribute
-        # ``_closed`` in its implementation.
+        # ``_closed`` in its implementation, otherwise
+        # we might have used the name '_closed' in place
+        # of '_finished_'.
 
     def __getstate__(self):
         return (super().__getstate__(), self._finished_)
@@ -884,8 +899,8 @@ class IterProcessQueue(multiprocessing.queues.Queue):
         self._finished_ = b
 
     def finish(self, *, timeout=None):
-        super().put(FINISHED, timeout=timeout)
         self._finished_.set()
+        super().put(FINISHED, timeout=timeout)
 
     def put(self, *args, **kwargs):
         if self._finished_.is_set():
@@ -900,6 +915,9 @@ class IterProcessQueue(multiprocessing.queues.Queue):
         return z
 
     def __iter__(self):
+        # This method is process-safe, meaning multiple processes can
+        # collectively iter over an ``IterableProcessQueue``, each getting some
+        # elements from it.
         while True:
             try:
                 x = self.get()
@@ -908,8 +926,8 @@ class IterProcessQueue(multiprocessing.queues.Queue):
             yield x
 
 
-class AsyncIterQueue(asyncio.Queue):
-    class Finished(Exception):
+class AsyncIterableQueue(asyncio.Queue):
+    class Finished(RuntimeError):
         pass
 
     def __init__(self, *args, **kwargs):
@@ -917,19 +935,28 @@ class AsyncIterQueue(asyncio.Queue):
         self._finished_ = False
 
     async def finish(self):
-        await super().put(FINISHED)
         self._finished_ = True
+        while True:
+            try:
+                super().put_nowait(FINISHED)
+                break
+            except asyncio.QueueFull:
+                await asyncio.sleep(0.001)
+        # can't use ``super().put(FINISHED)``, which would call ``self.put_nowait``
+        # and raise ``self.Finished``.
 
     def finish_nowait(self):
-        super().put_nowait(FINISHED)
         self._finished_ = True
+        super().put_nowait(FINISHED)
 
     def put_nowait(self, *args, **kwargs):
+        # `put` uses `put_nowait`.
         if self._finished_:
             raise self.Finished
         return super().put_nowait(*args, **kwargs)
 
     def get_nowait(self, *args, **kwargs):
+        # `get` uses `get_nowait`.
         z = super().get_nowait(*args, **kwargs)
         if z == FINISHED:
             self.finish_nowait()
@@ -937,6 +964,9 @@ class AsyncIterQueue(asyncio.Queue):
         return z
 
     async def __aiter__(self):
+        # Multiple async tasks can
+        # collectively iter over an ``AsyncIterableQueue``, each getting some
+        # elements from it.
         while True:
             try:
                 x = await self.get()
@@ -2034,7 +2064,9 @@ class Fork:
             return box.value
 
 
-def tee(instream: Iterable, n: int = 2, /, *, buffer_size: int = 256) -> tuple[Stream]:
+def tee(
+    instream: Iterable[Elem], n: int = 2, /, *, buffer_size: int = 256
+) -> tuple[Stream[Elem], ...]:
     '''
     ``tee`` produces multiple (default 2) "copies" of the input data stream,
     to be used in different ways.

@@ -21,4 +21,11 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
 """
 
 
-__version__ = "0.13.3b3"
+__version__ = "0.13.3"
+
+
+import builtins
+
+
+class TimeoutError(builtins.TimeoutError):
+    pass

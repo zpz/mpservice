@@ -26,6 +26,10 @@ Multiprocessing
 
 .. autoclass:: mpservice.multiprocessing.util.CpuAffinity
 
+.. autofunction:: mpservice.multiprocessing.wait
+
+.. autofunction:: mpservice.multiprocessing.as_completed
+
 
 Server Process
 ==============

@@ -5,9 +5,8 @@ import sys
 from time import sleep
 from types import TracebackType
 
-import mpservice.multiprocessing
-import mpservice.threading
 import pytest
+from mpservice import TimeoutError
 from mpservice.multiprocessing import (
     FIRST_EXCEPTION,
     Process,
@@ -33,7 +32,7 @@ def delay_double(x, delay=2):
     raise SystemExit()
 
 
-def _test_thread_process(cls, TimeoutError):
+def _test_thread_process(cls):
     # No exception
     t = cls(target=delay_double, args=(3,))
     t.start()
@@ -88,11 +87,11 @@ def _test_thread_process(cls, TimeoutError):
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_thread():
-    _test_thread_process(Thread, mpservice.threading.TimeoutError)
+    _test_thread_process(Thread)
 
 
 def test_process():
-    _test_thread_process(Process, mpservice.multiprocessing.TimeoutError)
+    _test_thread_process(Process)
 
 
 def goo(x, q):

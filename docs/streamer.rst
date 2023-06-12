@@ -234,5 +234,12 @@ API reference
 
 .. autofunction:: mpservice.streamer.tee
 
+.. autoclass:: mpservice.streamer.IterableQueue
 
-Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
+.. autoclass:: mpservice.streamer.IterableProcessQueue
+
+.. autoclass:: mpservice.streamer.AsyncIterableQueue
+
+
+
+.. Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/
