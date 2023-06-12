@@ -20,6 +20,18 @@ of streamlets or operators.
 Both sync and async programming modes are supported. For the most part,
 the usage of Stream is one and the same in both modes.
 """
-from ._streamer import AsyncIterableQueue, IterableProcessQueue, IterableQueue, Stream, tee
+from ._streamer import (
+    AsyncIterableQueue,
+    IterableProcessQueue,
+    IterableQueue,
+    Stream,
+    tee,
+)
 
-__all__ = ['Stream', 'tee', 'IterableQueue', 'IterableProcessQueue', 'AsyncIterableQueue']
+__all__ = [
+    'Stream',
+    'tee',
+    'IterableQueue',
+    'IterableProcessQueue',
+    'AsyncIterableQueue',
+]

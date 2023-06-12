@@ -4,6 +4,7 @@ import random
 import time
 
 import pytest
+from mpservice import TimeoutError
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
@@ -17,7 +18,6 @@ from mpservice.mpserver import (
     Worker,
     make_worker,
 )
-from mpservice import TimeoutError
 from mpservice.multiprocessing import RemoteException, is_remote_exception
 from mpservice.streamer import Stream
 

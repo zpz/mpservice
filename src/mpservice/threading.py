@@ -12,12 +12,8 @@ from typing import Type
 # sequentially creating/running/joining
 # threads with a trivial worker function:
 #   20000 took 1 sec.
-
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
-
-
 from mpservice import TimeoutError
-
 
 __all__ = [
     'InvalidStateError',

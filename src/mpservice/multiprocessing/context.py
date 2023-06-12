@@ -13,10 +13,11 @@ import time
 import warnings
 from multiprocessing import util
 
+from mpservice import TimeoutError
+
 from ..threading import Thread
 from .remote_exception import RemoteException
 from .util import CpuAffinity
-from mpservice import TimeoutError
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):

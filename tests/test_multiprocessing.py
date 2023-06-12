@@ -5,9 +5,8 @@ import sys
 from time import sleep
 from types import TracebackType
 
-import mpservice.multiprocessing
-import mpservice.threading
 import pytest
+from mpservice import TimeoutError
 from mpservice.multiprocessing import (
     FIRST_EXCEPTION,
     Process,
@@ -18,8 +17,6 @@ from mpservice.multiprocessing import (
     wait,
 )
 from mpservice.threading import Thread
-from mpservice import TimeoutError
-
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,13 @@ import pytest
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.multiprocessing import Process
-from mpservice.streamer import AsyncIterableQueue, IterableProcessQueue, IterableQueue, Stream, tee
+from mpservice.streamer import (
+    AsyncIterableQueue,
+    IterableProcessQueue,
+    IterableQueue,
+    Stream,
+    tee,
+)
 from mpservice.threading import Thread
 
 

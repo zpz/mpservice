@@ -38,17 +38,17 @@ import queue
 import threading
 import traceback
 from collections import deque
-from collections.abc import AsyncIterable, Iterable, Iterator, Sequence, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from random import random
 from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
     Callable,
+    Generic,
     Literal,
     Optional,
     TypeVar,
-    Generic,
 )
 
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -856,7 +856,7 @@ class IterableQueue(queue.Queue):
         if z == FINISHED:
             # The queue either is empty now or has more ``FINISHED`` indicators.
             # If another thread is trying to ``get`` now, it will either get
-            # a remaining ``FINISHED`` or (if the queue is empty) wait for 
+            # a remaining ``FINISHED`` or (if the queue is empty) wait for
             # the following ``self.finish()`` to put a ``FINISHED`` in the queue.
             self.finish()
             # Put another indicator in the queue so that
@@ -2064,7 +2064,9 @@ class Fork:
             return box.value
 
 
-def tee(instream: Iterable[Elem], n: int = 2, /, *, buffer_size: int = 256) -> tuple[Stream[Elem],...]:
+def tee(
+    instream: Iterable[Elem], n: int = 2, /, *, buffer_size: int = 256
+) -> tuple[Stream[Elem], ...]:
     '''
     ``tee`` produces multiple (default 2) "copies" of the input data stream,
     to be used in different ways.

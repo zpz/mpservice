@@ -38,13 +38,13 @@ from typing import Any, Callable, Literal, final
 
 import psutil
 
+from mpservice import TimeoutError
+
 from ._queues import SingleLane
 from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
 from .multiprocessing.remote_exception import EnsembleError
 from .multiprocessing.util import CpuAffinity
 from .threading import Thread
-from mpservice import TimeoutError
-
 
 # This modules uses the 'spawn' method to create processes.
 
