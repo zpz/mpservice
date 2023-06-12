@@ -154,7 +154,6 @@ in place of the standard :class:`multiprocessing.process.BaseProcess`), you can 
         q = manager.Event()
         ...
 
-        
 Shared memory
 =============
 
@@ -193,7 +192,6 @@ of the server process. However, the intention is clearly to use the shared memor
 the pickled ``MemoryBlockProxy`` is taken out of the Queue in another process.
 For this reason, ``MemoryBlockProxy`` does some trick to count as a reference in pickled form.
 
-
 Nested proxies
 ==============
 
@@ -211,7 +209,6 @@ For example,
 
 Now, the first element of ``lst`` is a dict proxy. You may pass ``lst`` to a nother process
 and manipulate its first element; the changes are reflected in the dict that resides in the server process.
-
 
 Return proxies from methods of hosted objects
 =============================================

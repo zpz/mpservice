@@ -187,8 +187,6 @@ then we may design such a workflow,
 
 .. autoclass:: mpservice.mpserver.Servlet
 
-.. autoclass:: mpservice.mpserver.CpuAffinity
-
 .. autoclass:: mpservice.mpserver.ProcessServlet
 
 .. autoclass:: mpservice.mpserver.ThreadServlet
@@ -236,15 +234,13 @@ CPU allocations among workers to achieve best performance.
 
 .. autoexception:: mpservice.mpserver.ServerBacklogFull
 
-.. autoexception:: mpservice.mpserver.TimeoutError
-
 .. autoclass:: mpservice.mpserver.Server
 
 .. autoclass:: mpservice.mpserver.AsyncServer
 
 
-**Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
-This article describes roughly version 0.7.2. Things have evolved a lot.
+.. **Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
+.. This article describes roughly version 0.7.2. Things have evolved a lot.
 
 **Answer to the Example challenge**: when we run the script, this is the printout::
 

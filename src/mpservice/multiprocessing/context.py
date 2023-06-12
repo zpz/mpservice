@@ -16,10 +16,7 @@ from multiprocessing import util
 from ..threading import Thread
 from .remote_exception import RemoteException
 from .util import CpuAffinity
-
-
-class TimeoutError(Exception):
-    pass
+from mpservice import TimeoutError
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -128,25 +125,25 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         else:
             kwargs = dict(kwargs)
 
-        assert "__result_and_error__" not in kwargs
+        assert "_result_and_error_" not in kwargs
+        assert "_logger_queue_" not in kwargs
         reader, writer = multiprocessing.connection.Pipe(duplex=False)
-        kwargs["__result_and_error__"] = writer
-
-        assert "__logger_queue__" not in kwargs
+        kwargs["_result_and_error_"] = writer
         logger_queue = MP_SPAWN_CTX.Queue()
-        kwargs['__logger_queue__'] = logger_queue
+        kwargs['_logger_queue_'] = logger_queue
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
-        assert not hasattr(self, "__result_and_error__")
-        self.__result_and_error__ = reader
-        assert not hasattr(self, "__logger_queue__")
-        self.__logger_queue__ = logger_queue
-        assert not hasattr(self, '__logger_thread__')
-        self.__logger_thread__ = None
-        self.__collector_thread__ = None
-        assert not hasattr(self, '__finalize__')
-        self.__finalize__ = None
+        assert not hasattr(self, "_result_and_error_")
+        assert not hasattr(self, "_logger_queue_")
+        assert not hasattr(self, '_logger_thread_')
+        assert not hasattr(self, '_collector_thread_')
+        assert not hasattr(self, '_finalize_')
+        self._result_and_error_ = reader
+        self._logger_queue_ = logger_queue
+        self._logger_thread_ = None
+        self._collector_thread_ = None
+        self._finalize_ = None
 
     def start(self):
         super().start()
@@ -158,24 +155,24 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         self._future_ = concurrent.futures.Future()
 
-        self.__logger_thread__ = Thread(
+        self._logger_thread_ = Thread(
             target=self._run_logger_thread,
-            args=(self.__logger_queue__,),
+            args=(self._logger_queue_,),
             name="ProcessLoggerThread",
             daemon=True,
         )
-        self.__logger_thread__.start()
+        self._logger_thread_.start()
 
-        self.__collector_thread__ = Thread(
+        self._collector_thread_ = Thread(
             target=self._run_collector_thread,
             name="ProcessCollectorThread",
         )
-        self.__collector_thread__.start()
+        self._collector_thread_.start()
 
-        self.__finalize__ = util.Finalize(
+        self._finalize_ = util.Finalize(
             self,
             type(self)._finalize_threads,
-            (self.__logger_thread__, self.__logger_queue__, self.__collector_thread__),
+            (self._logger_thread_, self._logger_queue_, self._collector_thread_),
             exitpriority=5,
         )
 
@@ -192,22 +189,22 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     def _run_collector_thread(self):
         result, error = None, None
         try:
-            result = self.__result_and_error__.recv()
-            error = self.__result_and_error__.recv()
+            result = self._result_and_error_.recv()
+            error = self._result_and_error_.recv()
         except EOFError:
             # the process has been terminated by calling ``self.terminate()``
             while self.exitcode is None:
                 time.sleep(0.001)
             assert self.exitcode == -15, f"exitcode is {self.exitcode}"
 
-        self.__result_and_error__.close()
-        self.__result_and_error__ = None
+        self._result_and_error_.close()
+        self._result_and_error_ = None
         if error is not None:
             self._future_.set_exception(error)
         else:
             self._future_.set_result(result)
-        self.__logger_queue__.put(None)
-        self.__logger_thread__.join()
+        self._logger_queue_.put(None)
+        self._logger_thread_.join()
 
     @staticmethod
     def _finalize_threads(
@@ -223,12 +220,12 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         ``start`` arranges for this to be run in a child process.
         """
-        result_and_error = self._kwargs.pop("__result_and_error__")
+        result_and_error = self._kwargs.pop("_result_and_error_")
 
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
         if self._target:
-            logger_queue = self._kwargs.pop("__logger_queue__")
+            logger_queue = self._kwargs.pop("_logger_queue_")
 
             if not logging.getLogger().hasHandlers():
                 # Set up putting all log messages
@@ -286,7 +283,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode is None:
             # Not terminated. Timed out.
             return
-        self.__collector_thread__.join()
+        self._collector_thread_.join()
         if exitcode == 0:
             # Terminated w/o error.
             return
@@ -323,7 +320,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().join(timeout)
         if not self.done():
             raise TimeoutError
-        self.__collector_thread__.join()
         return self._future_.result()
 
     def exception(self, timeout: float | int | None = None):
@@ -333,7 +329,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().join(timeout)
         if not self.done():
             raise TimeoutError
-        self.__collector_thread__.join()
         return self._future_.exception()
 
 

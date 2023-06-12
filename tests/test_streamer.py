@@ -8,7 +8,7 @@ import pytest
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.multiprocessing import Process
-from mpservice.streamer import AsyncIterQueue, IterProcessQueue, IterQueue, Stream, tee
+from mpservice.streamer import AsyncIterableQueue, IterableProcessQueue, IterableQueue, Stream, tee
 from mpservice.threading import Thread
 
 
@@ -22,7 +22,7 @@ def _iterqueue_get(q):
 
 
 def test_iterqueue():
-    for cls in (IterQueue, IterProcessQueue):
+    for cls in (IterableQueue, IterableProcessQueue):
         print(cls)
         q = cls()
         for x in range(30):
@@ -36,7 +36,7 @@ def test_iterqueue():
         with pytest.raises(cls.Finished):
             _ = q.get()
 
-        if cls is IterQueue:
+        if cls is IterableQueue:
             Pool = Thread
         else:
             Pool = Process
@@ -56,17 +56,17 @@ def test_iterqueue():
 
 @pytest.mark.asyncio
 async def test_asynciterqueue():
-    q = AsyncIterQueue()
+    q = AsyncIterableQueue()
     for x in range(30):
         await q.put(x)
     await q.finish()
 
     assert [x async for x in q] == list(range(30))
 
-    with pytest.raises(AsyncIterQueue.Finished):
+    with pytest.raises(AsyncIterableQueue.Finished):
         await q.put(8)
 
-    with pytest.raises(AsyncIterQueue.Finished):
+    with pytest.raises(AsyncIterableQueue.Finished):
         await q.get()
 
 

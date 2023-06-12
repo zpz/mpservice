@@ -43,6 +43,8 @@ from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
 from .multiprocessing.remote_exception import EnsembleError
 from .multiprocessing.util import CpuAffinity
 from .threading import Thread
+from mpservice import TimeoutError
+
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -56,7 +58,6 @@ from .threading import Thread
 # will come out as a RemoteException unchanged.
 
 __all__ = [
-    'TimeoutError',
     'ServerBacklogFull',
     'Worker',
     'make_worker',
@@ -77,10 +78,6 @@ logger = logging.getLogger(__name__)
 
 NOMOREDATA = b"c7160a52-f8ed-40e4-8a38-ec6b84c2cd87"
 CRASHED = b"0daf930f-e823-4737-a011-9ee2145812a4"
-
-
-class TimeoutError(Exception):
-    pass
 
 
 class ServerBacklogFull(RuntimeError):

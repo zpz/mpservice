@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.13.3] - in progress
+## [0.13.3] - 2023-06-11
 
 - New methods ``threading.Thread.{raise_exc, terminate}``.
 - New functions ``threading.{wait, as_completed}``.
@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - ``mpserver.Worker`` adds support for ``preprocess``.
 - Revised implementation of ``multiprocessing.context.SpawnProcess`` to use a Future to supper ``wait`` and ``as_completed``.
 - New functions ``multiprocessing.{wait, as_completed}``.
+- Renamed ``_streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}`` to ``{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
+- Finetune implementation of ``_stramer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
+- Made ``_streamer.Stream`` generic to allow type-annotating ``Stream[T]``.
 
 
 ## [0.13.2] - 2023-06-07
