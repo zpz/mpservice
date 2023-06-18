@@ -807,7 +807,7 @@ class AsyncIter(AsyncIterable):
                 yield x
 
 
-class IterableQueue(queue.Queue):
+class IterableQueue(queue.Queue, Generic[Elem]):
     # In the implementations of ``queue.Queue`` and ``multiprocessing.queues.Queue``,
     # ``put_nowait`` and ``get_nowait`` simply call ``put`` and ``get``.
     # In the implementation of ``asyncio.queues.Queue``, however,
@@ -864,7 +864,7 @@ class IterableQueue(queue.Queue):
             raise self.Finished
         return z
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Elem]:
         # This method is thread-safe, meaning multiple threads can
         # collectively iter over an ``IterableQueue``, each getting some
         # elements from it.
@@ -876,7 +876,7 @@ class IterableQueue(queue.Queue):
             yield x
 
 
-class IterableProcessQueue(multiprocessing.queues.Queue):
+class IterableProcessQueue(multiprocessing.queues.Queue, Generic[Elem]):
     class Finished(RuntimeError):
         pass
 
@@ -914,7 +914,7 @@ class IterableProcessQueue(multiprocessing.queues.Queue):
             raise self.Finished
         return z
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Elem]:
         # This method is process-safe, meaning multiple processes can
         # collectively iter over an ``IterableProcessQueue``, each getting some
         # elements from it.
@@ -926,7 +926,7 @@ class IterableProcessQueue(multiprocessing.queues.Queue):
             yield x
 
 
-class AsyncIterableQueue(asyncio.Queue):
+class AsyncIterableQueue(asyncio.Queue, Generic[Elem]):
     class Finished(RuntimeError):
         pass
 
@@ -963,7 +963,7 @@ class AsyncIterableQueue(asyncio.Queue):
             raise self.Finished
         return z
 
-    async def __aiter__(self):
+    async def __aiter__(self) -> AsyncIterator[Elem]:
         # Multiple async tasks can
         # collectively iter over an ``AsyncIterableQueue``, each getting some
         # elements from it.

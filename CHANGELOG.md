@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.4] - in progress
+
+- ``IterableQueue``, ``IterableProcessQueue``, ``AsyncIterableQueue`` became generic with an element type parameter.
+
+
 ## [0.13.3] - 2023-06-11
 
 - New methods ``threading.Thread.{raise_exc, terminate}``.
