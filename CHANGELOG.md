@@ -4,7 +4,8 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.13.4] - in progress
+
+## [0.13.4] - 2023-06-18
 
 - ``IterableQueue``, ``IterableProcessQueue``, ``AsyncIterableQueue`` became generic with an element type parameter.
 - Parameter ``cpus`` to ``ProcessServlet.__init__`` now accepts an int, indicating number of unpinned processes.
