@@ -81,6 +81,22 @@ TT = TypeVar("TT")  # indicates output after an op on `T`
 Elem = TypeVar('Elem')
 
 
+def isiterable(x):
+    try:
+        iter(x)
+        return True
+    except (TypeError, AttributeError):
+        return False
+
+
+def isasynciterable(x):
+    try:
+        aiter(x)
+        return True
+    except (TypeError, AttributeError):
+        return False
+
+
 class Stream(Generic[Elem]):
     """
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
@@ -122,7 +138,7 @@ class Stream(Generic[Elem]):
         '''
         Make the stream "sync" iterable only.
         '''
-        if hasattr(self.streamlets[-1], '__aiter__'):
+        if isasynciterable(self):
             self.streamlets.append(SyncIter(self.streamlets[-1]))
         return self
 
@@ -130,7 +146,7 @@ class Stream(Generic[Elem]):
         '''
         Make the stream "async" iterable only.
         '''
-        if hasattr(self.streamlets[-1], '__iter__'):
+        if isiterable(self):
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
         return self
 
@@ -158,7 +174,7 @@ class Stream(Generic[Elem]):
         then don't use this method. Instead, iterate the streamer yourself
         and do whatever you need to do.
         """
-        if hasattr(self.streamlets[-1], '__iter__'):
+        if isiterable(self):
             n = 0
             for _ in self:
                 n += 1
@@ -178,7 +194,7 @@ class Stream(Generic[Elem]):
 
         .. warning:: Do not call this method on "big data".
         """
-        if hasattr(self.streamlets[-1], '__iter__'):
+        if isiterable(self):
             return list(self)
 
         async def main():
@@ -187,7 +203,7 @@ class Stream(Generic[Elem]):
         return main()
 
     def _choose_by_mode(self, sync_choice, async_choice):
-        if hasattr(self.streamlets[-1], '__iter__'):
+        if isiterable(self):
             return sync_choice
         return async_choice
 
@@ -698,7 +714,7 @@ class Stream(Generic[Elem]):
             exceptions raised by ``func`` only.
         """
         if (_async is None and inspect.iscoroutinefunction(func)) or (_async is True):
-            if hasattr(self.streamlets[-1], '__aiter__'):
+            if isasynciterable(self):
                 # This method is called within an async environment.
                 # The operator runs in the current thread on the current asyncio event loop.
                 cls = AsyncParmapperAsync
@@ -707,7 +723,7 @@ class Stream(Generic[Elem]):
                 # The operator uses a worker thread to run the async ``func``.
                 cls = ParmapperAsync
         else:
-            if hasattr(self.streamlets[-1], '__aiter__'):
+            if isasynciterable(self):
                 cls = AsyncParmapper
             else:
                 cls = Parmapper
@@ -768,7 +784,7 @@ class SyncIter(Iterable):
         self._stopped = None
 
     def __iter__(self):
-        if hasattr(self._instream, '__iter__'):
+        if isiterable(self._instream):
             yield from self._instream
         else:
             self._start()
@@ -790,7 +806,7 @@ class AsyncIter(AsyncIterable):
         self._instream = instream
 
     async def __aiter__(self):
-        if hasattr(self._instream, '__aiter__'):
+        if isasynciterable(self._instream):
             async for x in self._instream:
                 yield x
         else:
@@ -1197,7 +1213,7 @@ class AsyncUnbatcher(AsyncIterable):
 
     async def __aiter__(self):
         async for x in self._instream:
-            if hasattr(x, '__iter__'):
+            if isiterable(x):
                 for y in x:
                     yield y
             else:

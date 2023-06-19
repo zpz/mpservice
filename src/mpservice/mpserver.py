@@ -669,7 +669,7 @@ class ProcessServlet(Servlet):
         self,
         worker_cls: type[Worker],
         *,
-        cpus: None | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
+        cpus: None | int | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
         **kwargs,
     ):
         """
@@ -682,6 +682,8 @@ class ProcessServlet(Servlet):
             to specific CPUs.
 
             The default is ``None``, indicating a single unpinned process.
+
+            If an int, indicating number of (unpinned) processes.
 
             Otherwise, a list of :class:`CpuAffinity` objects.
             For convenience, values of primitive types are also accepted;
@@ -714,6 +716,8 @@ class ProcessServlet(Servlet):
         if cpus is None:
             self._cpus = [CpuAffinity(None)]
         else:
+            if isinstance(cpus, int):
+                cpus = [None for _ in range(cpus)]
             self._cpus = [
                 v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus
             ]

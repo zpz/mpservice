@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.13.4] - in progress
 
 - ``IterableQueue``, ``IterableProcessQueue``, ``AsyncIterableQueue`` became generic with an element type parameter.
+- Parameter ``cpus`` to ``ProcessServlet.__init__`` now accepts an int, indicating number of unpinned processes.
+- Use more reliable way to infer whether a ``Stream`` object is sync or async iterable.
 
 
 ## [0.13.3] - 2023-06-11
