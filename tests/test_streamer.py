@@ -18,7 +18,7 @@ from mpservice.streamer import (
 from mpservice.threading import Thread
 
 
-def _iterqueue_put(q):
+def _iterqueue_put(q: IterableQueue[int] | IterableProcessQueue[int]):
     q.put(100)
     return 100
 
