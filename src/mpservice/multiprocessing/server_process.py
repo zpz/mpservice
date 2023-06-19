@@ -274,7 +274,7 @@ Then we may use it like so::
 Any value that is wrapped by ``hosted`` must be a registered class, e.g. the return of ``Worker.get_memory``.
 When the entire return value is not wrapped by ``hosted``, the value must be a tuple, list, or dict.
 Any element of a tuple or a list, or a value (not a key) in a dict, can be ``hosted``,
-as long as that value is a ``register``ed class. This goes recursively to any depth.
+as long as that value is a ``register``\ed class. This goes recursively to any depth.
 The search will stop at any value that is not a tuple, list, or dict; such a value will simply be pickled.
 For example,
 

@@ -31,6 +31,7 @@ To install, do ``python3 -m pip install mpservice``.
    mpserver
    serving
    streamer
+   mp_util
    util
 
 
