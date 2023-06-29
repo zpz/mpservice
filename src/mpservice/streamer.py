@@ -22,10 +22,12 @@ the usage of Stream is one and the same in both modes.
 """
 from ._streamer import (
     AsyncIterableQueue,
+    Batcher,
+    Buffer,
     IterableProcessQueue,
     IterableQueue,
     Stream,
-    Batcher, Unbatcher, Buffer,
+    Unbatcher,
     tee,
 )
 
