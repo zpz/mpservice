@@ -25,6 +25,7 @@ from ._streamer import (
     IterableProcessQueue,
     IterableQueue,
     Stream,
+    Batcher, Unbatcher, Buffer,
     tee,
 )
 
@@ -34,4 +35,7 @@ __all__ = [
     'IterableQueue',
     'IterableProcessQueue',
     'AsyncIterableQueue',
+    'Batcher',
+    'Unbatcher',
+    'Buffer',
 ]

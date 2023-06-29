@@ -691,6 +691,12 @@ class ServerProcess(multiprocessing.managers.SyncManager):
     # I made a naive example, where the registered class just returns ``x + x``.
     # I was able to finish 13K calls per second.
 
+    # Restrictions:
+    # ``ServerProcess`` instances can't be pickled, hence can't be passed to other processes.
+    # As a result, if you pass a proxy object to another process and call its methods in the other process,
+    # the methods can't be ones that return proxy objects, because proxy objects would need a reference to
+    # the "manager", while a proxy object does not carry its "manager" attribute during pickling.
+
     _Server = _ProcessServer
 
     @classmethod

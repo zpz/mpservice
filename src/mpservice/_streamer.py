@@ -1189,6 +1189,7 @@ class AsyncBatcher(AsyncIterable):
             yield batch
 
 
+# This is comparable to ``itertools.chain.from_iterable``.
 class Unbatcher(Iterable):
     def __init__(self, instream: Iterable, /):
         """
