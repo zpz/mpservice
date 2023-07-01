@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.5] - in progress
+
+- ``mpservice._streamer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}`` were moved into
+  ``mpservice.queue``, ``mpservice.multiprocessing.queues``, ``mpservice.asyncio`` respectively and all renamed to ``IterableQueue``.
+- A few utility classes in ``mpservice._streamer`` are not exposed in ``mpservice.streamer``, including ``Batcher``, ``Unbatcher``, ``Buffer``.
+- New class ``mpservice.streamer.EagerBatcher``.
+
+
 ## [0.13.4] - 2023-06-18
 
 - ``IterableQueue``, ``IterableProcessQueue``, ``AsyncIterableQueue`` became generic with an element type parameter.
@@ -15,51 +23,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.13.3] - 2023-06-11
 
-- New methods ``threading.Thread.{raise_exc, terminate}``.
-- New functions ``threading.{wait, as_completed}``.
-- Enhancements to ``multiprocessing.server_process`` esp regarding "hosted" data.
-- Do not raise exception if a ``multiprocessing.context.SpawnProcess`` was terminated by ``.terminate()``.
+- New methods ``mpservice.threading.Thread.{raise_exc, terminate}``.
+- New functions ``mpservice.threading.{wait, as_completed}``.
+- Enhancements to ``mpservice.multiprocessing.server_process`` esp regarding "hosted" data.
+- Do not raise exception if a ``mpservice.multiprocessing.context.SpawnProcess`` was terminated by ``.terminate()``.
   The previous behavior tends to raise exception when a ``ServerProcess`` shuts down.
-- ``mpserver.Worker`` adds support for ``preprocess``.
-- Revised implementation of ``multiprocessing.context.SpawnProcess`` to use a Future to supper ``wait`` and ``as_completed``.
-- New functions ``multiprocessing.{wait, as_completed}``.
-- Renamed ``_streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}`` to ``{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
-- Finetune implementation of ``_stramer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
-- Made ``_streamer.Stream`` generic to allow type-annotating ``Stream[T]``.
+- ``mpservice.mpserver.Worker`` adds support for ``preprocess``.
+- Revised implementation of ``mpservice.multiprocessing.context.SpawnProcess`` to use a Future to supper ``wait`` and ``as_completed``.
+- New functions ``mpservice.multiprocessing.{wait, as_completed}``.
+- Renamed ``mpservice._streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}`` to ``{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
+- Finetune implementation of ``mpservice._stramer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
+- Made ``mpservice._streamer.Stream`` generic to allow type-annotating ``Stream[T]``.
 
 
 ## [0.13.2] - 2023-06-07
 
 - Re-orged ``mpservice.multiprocessing`` into a sub-package as the module has grown considerably and may grow further.
-- ``mpserver.{Server, AsyncServer}`` bug related to "gather-output" and "notify" requesters.
-- Enhancements to ``mpserver.multiprocessing.ServerProcess`` (in progress).
+- ``mpservice.mpserver.{Server, AsyncServer}`` bug related to "gather-output" and "notify" requesters.
+- Enhancements to ``mpservice.mpserver.multiprocessing.ServerProcess`` (in progress).
 
 
 ## [0.13.1] - 2023-06-04
 
-- Finetune to ``multiprocessing.ServerProcess`` and its shared-memory facilities.
-- Fix a bug in ``mpserver.{Server, AsyncServer}`` related to input buffer.
-- Finetune ``mpserver.{Server, AsyncServer}`` internals.
+- Finetune to ``mpservice.multiprocessing.ServerProcess`` and its shared-memory facilities.
+- Fix a bug in ``mpservice.mpserver.{Server, AsyncServer}`` related to input buffer.
+- Finetune ``mpservice.mpserver.{Server, AsyncServer}`` internals.
 
 
 ## [0.13.0] - 2023-05-31
 
-- Breaking changes to ``mpserver.Server`` API: the class is split into two classes: ``Server`` and ``AsyncServer``.
-- ``mpserver.Server.call`` got new parameter ``backpressure`` (previously only the async call has this parameter).
-- Finetuned waiting and sleeping logic in ``mpserver.{Server, AsyncServer}``; use ``Condition`` to replace sleeping.
-- Made sure (or confirmed) that ``mpserver.Server.call`` and ``mpserver.Server.stream` are thread-safe.
-- ``streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
-- Refinements to classes ``streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
-- Refinements to ``multiprocessing.ServerProcess``: further diverge from the standard class.
-- Initial support for "shared memory" in the class ``multiprocessing.ServerProcess``.
+- Breaking changes to ``mpservice.mpserver.Server`` API: the class is split into two classes: ``Server`` and ``AsyncServer``.
+- ``mpservice.mpserver.Server.call`` got new parameter ``backpressure`` (previously only the async call has this parameter).
+- Finetuned waiting and sleeping logic in ``mpservice.mpserver.{Server, AsyncServer}``; use ``Condition`` to replace sleeping.
+- Made sure (or confirmed) that ``mpservice.mpserver.Server.call`` and ``mpservice.mpserver.Server.stream` are thread-safe.
+- ``mpservice.streamer.Stream.peek`` finetune of printing; got new parameter ``prefix`` and ``suffix``.
+- Refinements to classes ``mpservice.streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}``.
+- Refinements to ``mpservice.multiprocessing.ServerProcess``: further diverge from the standard class.
+- Initial support for "shared memory" in the class ``mpservice.multiprocessing.ServerProcess``.
 
 
 ## [0.12.9] - 2023-05-23
 
-- New function ``streamer.tee``.
-- New class ``streamer.IterProcessQueue``.
-- Removed the "cancellation" "Event" mechanism in ``mpserver.Server`` that was introduced in 0.12.7.
-  There are two main reasons for the removal: (1) the ``multiprocessing.manager.Event`` that is checked
+- New function ``mpservice.streamer.tee``.
+- New class ``mpservice.streamer.IterProcessQueue``.
+- Removed the "cancellation" "Event" mechanism in ``mpservice.mpserver.Server`` that was introduced in 0.12.7.
+  There are two main reasons for the removal: (1) the ``mpservice.multiprocessing.manager.Event`` that is checked
   by every worker seems to have considerable overhead although I did not measure it; (2) there is
   difficulty in maintaining a reference to the ``Event`` object in the event of cancellation to
   ensure any worker that tries to access it will do so before it is gone in the manager process;
@@ -69,33 +77,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.12.8] - 2023-05-17
 
-- Removed ``mpserver.{ProcessWorker, ThreadWorker}``; just use ``Worker``.
-- Renamed ``mpserver.make_threadworker`` to ``mpserver.make_worker``.
-- ``mpserver.Server`` got new method ``async_stream``.
-- New classes ``streamer.IterQueue``, ``streamer.AsyncIterQueue``.
-- Minor tuning of ``multiprocessing.ServerProcess``.
+- Removed ``mpservice.mpserver.{ProcessWorker, ThreadWorker}``; just use ``Worker``.
+- Renamed ``mpservice.mpserver.make_threadworker`` to ``mpservice.mpserver.make_worker``.
+- ``mpservice.mpserver.Server`` got new method ``async_stream``.
+- New classes ``mpservice.streamer.IterQueue``, ``mpservice.streamer.AsyncIterQueue``.
+- Minor tuning of ``mpservice.multiprocessing.ServerProcess``.
 
 
 ## [0.12.7] - 2023-05-07
 
 ### Removed
 
-- Methods ``streamer.Stream.{async_parmap, parmap_async}`` are dropped and merged into ``parmap``.
-- Function ``http.run_app``.
+- Methods ``mpservice.streamer.Stream.{async_parmap, parmap_async}`` are dropped and merged into ``parmap``.
+- Function ``mpservice.http.run_app``.
 
 ### Changed
 
-- ``streamer.Stream.parmap``: parameter ``executor`` became named only.
-- ``multiprocessing.Manager`` was renamed ``ServerProcess``.
-- Parameter ``backlog`` to ``mpserver.Server.__init__`` was renamed to ``capacity``.
+- ``mpservice.streamer.Stream.parmap``: parameter ``executor`` became named only.
+- ``mpservice.multiprocessing.Manager`` was renamed ``ServerProcess``.
+- Parameter ``backlog`` to ``mpservice.mpserver.Server.__init__`` was renamed to ``capacity``.
 
 ### Added
 
-- ``streamer.Stream`` added extensive support for async.
-- Methods ``streamer.Stream.{to_sync, to_async, __aiter__}``.
-- Method ``mpserver.Server.full`` and properties ``mpserver.Server.{capacity, backlog}``.
-- Added capabilities to cancel a item submitted to ``mpserver.Server`` and halt its processing in the pipeline as soon as practical.
-- Made ``mpservice.multiprocessing`` more close to the standard ``multiprocessing`` in terms of what can be imported from it.
+- ``mpservice.streamer.Stream`` added extensive support for async.
+- Methods ``mpservice.streamer.Stream.{to_sync, to_async, __aiter__}``.
+- Method ``mpservice.mpserver.Server.full`` and properties ``mpservice.mpserver.Server.{capacity, backlog}``.
+- Added capabilities to cancel a item submitted to ``mpservice.mpserver.Server`` and halt its processing in the pipeline as soon as practical.
+- Made ``mpservice.mpservice.multiprocessing`` more close to the standard ``multiprocessing`` in terms of what can be imported from it.
 - New parameter ``name`` to ``SpawnContext.Manager``.
 - ``SpawnProcess`` captures warnings to logging.
 
@@ -104,18 +112,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- New method ``streamer.Stream.async_parmap`` with corresponding class ``AsyncParmapper``.
+- New method ``mpservice.streamer.Stream.async_parmap`` with corresponding class ``AsyncParmapper``.
 
 ### Improved
 
-- The cleanup or "finalize" logic of ``streamer.{Buffer, Parmapper, AsyncParmapper, ParmapperAsync}``.
+- The cleanup or "finalize" logic of ``mpservice.streamer.{Buffer, Parmapper, AsyncParmapper, ParmapperAsync}``.
 
 
 ## [0.12.5] - 2023-04-24
 
 ### Added
 
-- New method ``streamer.Stream.parmap_async``, taking an async worker function.
+- New method ``mpservice.streamer.Stream.parmap_async``, taking an async worker function.
 
 ### Fixed
 
@@ -144,17 +152,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Added
 
-- ``mpserver.Worker`` got new parameter ``worker_index`` to ``__init__``, which is
+- ``mpservice.mpserver.Worker`` got new parameter ``worker_index`` to ``__init__``, which is
   automatically provided by the parent ``ProcessServlet`` or ``ThreadServlet``.
   Subclasses of ``Worker`` should be sure to accept this parameter in their ``__init__``.
-- function ``multiprocessing.get_context``.
-- ``multiprocessing.Manager`` gets two init parameters ``process_name`` and ``process_cpu``.
-- ``concurrent.futures.ProcessPoolExecutor`` gets parameter ``mp_context`` to be compatible
-  with the standard lib, but with a different default that is ``multiprocessing.MP_SPAWN_CTX``.
+- function ``mpservice.multiprocessing.get_context``.
+- ``mpservice.multiprocessing.Manager`` gets two init parameters ``process_name`` and ``process_cpu``.
+- ``mpservice.concurrent.futures.ProcessPoolExecutor`` gets parameter ``mp_context`` to be compatible
+  with the standard lib, but with a different default that is ``mpservice.multiprocessing.MP_SPAWN_CTX``.
   
 ## Enhanced
 
-- ``multiprocessing.SpawnProcess`` finetune on ``join`` and finalization cleanup.
+- ``mpservice.multiprocessing.SpawnProcess`` finetune on ``join`` and finalization cleanup.
 
 
 ## [0.12.3] - 2023-04-14
@@ -165,12 +173,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- ``util.{Process, Thread}`` have customized method ``join`` that will raise the exception raised in the child process or thread.
+- ``mpservice.util.{Process, Thread}`` have customized method ``join`` that will raise the exception raised in the child process or thread.
 
 ### Enhanced or changed
 
-- ``util.{Process, Thread}`` finetune related to exceptions.
-- ``util.{Process, Thread}``: parameter ``loud_exception`` moved from ``__init__`` to ``submit``.
+- ``mpservice.util.{Process, Thread}`` finetune related to exceptions.
+- ``mpservice.util.{Process, Thread}``: parameter ``loud_exception`` moved from ``__init__`` to ``submit``.
 - ``streamer`` finetune related to exception printout in worker threads/processes.
 
 
@@ -187,7 +195,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Improved
 
-- ``mpserver.Server.stream`` retries on enqueue timeout.
+- ``mpservice.mpserver.Server.stream`` retries on enqueue timeout.
 - Finetune to waiting times in `Server`.
 
 
@@ -197,15 +205,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - ``EnsembleServlet`` gets new parameter ``fail_fast`` to control behavior when ensemble members return exceptions.
 - New exception class ``EnsembleError``.
-- Added ``.util.Process``, which is an alias to ``util.SpawnProcess``.
-- Refinements to ``util.SpawnProcessPoolExecutor``.
-- Added ``util.ProcessPoolExecutor``, which is an alias to ``util.SpawnProcessPoolExecutor``.
-- New class ``util.ThreadPoolExecutor``.
-- New class ``mpserver.SwitchServlet``.
+- Added ``mpservice.util.Process``, which is an alias to ``util.SpawnProcess``.
+- Refinements to ``mpservice.util.SpawnProcessPoolExecutor``.
+- Added ``mpservice.util.ProcessPoolExecutor``, which is an alias to ``mpservice.util.SpawnProcessPoolExecutor``.
+- New class ``mpservice.util.ThreadPoolExecutor``.
+- New class ``mpservice.mpserver.SwitchServlet``.
 
 ### Fixed
 
-- ``util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
+- ``mpservice.util.{Thread, SpawnProcess}`` print out tracback upon exception, making errors in concurrent code more
   discoverable. This functionality was there previously but it was buggy.
 - Fixed a deadlock situation during the shutdown of streamer ``parmap``.
 
@@ -214,7 +222,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Bug fixes
 
-- Bug in `mpserver.EnsembleServlet`.
+- Bug in `mpservice.mpserver.EnsembleServlet`.
 
 
 ## [0.11.9] - 2022-02-25
@@ -222,7 +230,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 - Deprecated context manager on `Streamer`. Instead, use the object directly.
-- Deprecated function `util.is_exception`.
+- Deprecated function `mpservice.util.is_exception`.
 
 ### Changed
 
@@ -231,10 +239,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added or enhanced
 
-- `streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
+- `mpservice.streamer.Parmapper.__init__` takes two new arguments `executor_initializer`
   and `executor_init_args`.
 - Simplifications to the implementation of `streamer.py`, making use of `GeneratorExit` and removing class `Stream`.
-- New utility functions `util.get_shared_thread_pool`, `util.get_shared_process_pool`.
+- New utility functions `mpservice.util.get_shared_thread_pool`, `mpservice.util.get_shared_process_pool`.
 
 
 ## [0.11.8] - 2022-12-21
@@ -243,27 +251,27 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ### Removed
 
-- `streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
+- `mpservice.streamer.Streamer.{drop_first_n, peek_random, drop_if, keep_if}`, and corresponding classes
   `Dropper`.
-- `streamer.Streamer.drop_exceptions`.
+- `mpservice.streamer.Streamer.drop_exceptions`.
 
 ### Changed
 
-- `streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
-- `mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
-- `streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
-- `streamer.Streamer.peek` was refactored.
-- `streamer.Streamer.transform` was renamed to `parmap`.
+- `mpservice.streamer.Streamer.transform`: parameter `concurrency` used to default to 1 (i.e. no concurrency), now defaults to higher numbers (i.e. with concurrency).
+- `mpservice.mpserver.{Sequential, Ensemble}` were renamed to `SequentialServlet` and `EnsembleServlet` respectively.
+- `mpservice.streamer.Streamer.drain`: return count of elements processed, instead of the tuple of element count and exception count.
+- `mpservice.streamer.Streamer.peek` was refactored.
+- `mpservice.streamer.Streamer.transform` was renamed to `parmap`.
 - Relaxed the requirement for using context manager with `Streamer`.
 - `Streamer.parmap` uses processes by default, instead of threads.
 
 ### Added or enhanced
 
 - Enhanced documentation. Started to host generated doc on Read the Docs.
-- New class `mpserver.CpuAffinity`.
-- New method on `streamer.Streamer` and corresponding classes:
+- New class `mpservice.mpserver.CpuAffinity`.
+- New method on `mpservice.streamer.Streamer` and corresponding classes:
   `filter` and `Filter`, `tail` and `Tailor`, `map` and `Mapper`, `groupby` and `Grouper`.
-- New method `streamer.Streamer.filter_exceptions`, `streamer.Streamer.accumulate`.
+- New method `mpservice.streamer.Streamer.filter_exceptions`, `mpservice.streamer.Streamer.accumulate`.
 
 
 ## [0.11.7.post1] - 2022-10-21
@@ -276,13 +284,13 @@ The two largest efforts of this release are documentation and "streamer" refacto
 - `Streamer` implementation finetune, mainly about worker thread/process finalization.
 - `Streamer` removes methods that are trivial (so user can implement them if needed) and unnecessary or not very needed: `collect`, `drop_nones`, `keep_every_nth`, `keep_random`, `log_every_nth`.
 - `Streamer.log_exceptions` was renamed `peek_exceptions` with minor changes.
-- Parameter `shed_load` to `mpserver.Server.async_call` is renamed to `backpressure`.
+- Parameter `shed_load` to `mpservice.mpserver.Server.async_call` is renamed to `backpressure`.
 
 
 ## [0.11.6] - 2022-10-07
 
 - `mpserver` wait-time fine tunning.
-- `mpserver.Server.async_call` gets new parameter `shed_load` with default `True`.
+- `mpservice.mpserver.Server.async_call` gets new parameter `shed_load` with default `True`.
 - New exception class `PipelineFull` in `mpserver`.
 
 
@@ -291,7 +299,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 - `RemoteException` is re-written with much simplifications; the class is moved from `remote_exception` to `util`; the module `remote_exception` is removed.
 - Enhancements to `SpawnProcess`.
 - Improvements to util.ProcessLogger`.
-- The new constant `.util.MP_SPAWN_CTX` is a customization to the standard spawn
+- The new constant `mpservice.util.MP_SPAWN_CTX` is a customization to the standard spawn
   context that uses `SpawnProcess` instead of `Process`.
 - Use spawn method or `SpawnProcess` exclusively or by default in various places in the code.
 - `Streamer.transform` gets new parameter `executor` to support multiprocessing for CPU-bound operators.
@@ -301,8 +309,8 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.11.4] - 2022-09-01
 
-- `util.ProcessLogger` gets context manager methods.
-- New class `util.SpawnProcess`.
+- `mpservice.util.ProcessLogger` gets context manager methods.
+- New class `mpservice.util.SpawnProcess`.
 
 
 ## [0.11.3] - 2022-06-24
@@ -321,7 +329,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.11.1] - 2022-05-31
 
-- Added `mpserver.ThreadWorker` and `ThreadServlet`.
+- Added `mpservice.mpserver.ThreadWorker` and `ThreadServlet`.
 - Simplified `mpserver` parameter for CPU pinning spec.
 - Added log on worker process CPU/memory utilization in `mpserver`.
 
@@ -417,7 +425,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.10.1] - 2022-03-17
 
-- `http_server` was renamed to `http`.
+- `mpservice.http_server` was renamed to `mpservice.http`.
 - Initial implementation of socket client/server.
 
 
@@ -437,13 +445,13 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 - Use 'spawn' method for process creation.
 - Refactored and simplified test/build process.
-- Removed `http_server.run_local_app`.
+- Removed `mpservice.http_server.run_local_app`.
 - Minor bug fixes.
 
 
 ## [0.9.8.post2] - 2022-01-31
 
-- Improvements to the utilities in `http_server`, esp regarding service shutdown.
+- Improvements to the utilities in `mpservice.http_server`, esp regarding service shutdown.
 
 
 ## [0.9.8.post1] - 2022-01-31
@@ -496,7 +504,7 @@ The two largest efforts of this release are documentation and "streamer" refacto
 
 ## [0.9.3] - 2021-11-16
 
-- Bug fix in `streamer.{Stream, AsyncStream}.batch`.
+- Bug fix in `mpservice.streamer.{Stream, AsyncStream}.batch`.
 - Change Python version requirement from 3.7 to 3.8, due to the use of
   parameter `name` in `asyncio.create_task`.
 
@@ -517,20 +525,20 @@ The two largest efforts of this release are documentation and "streamer" refacto
 ## [0.9.0] - 2021-08-28
 
 - Bug fix.
-- `mpserver.Servlet.__call__` is renamed to `call`.
+- `mpservice.mpserver.Servlet.__call__` is renamed to `call`.
 
 
 ## [0.8.9] - 2021-08-16
 
-- Add `mpserver.EnsembleServer` to implement ensembles; rename `Server` to `SequentialServer`.
-- Add `mpserver.SimpleServer`.
+- Add `mpservice.mpserver.EnsembleServer` to implement ensembles; rename `Server` to `SequentialServer`.
+- Add `mpservice.mpserver.SimpleServer`.
 - Revise `cpu` specification in `mpserver`.
 
 
 ## [0.8.8] - 2021-08-10
 
-- `mpserver.Server` gets a sync API, in addition to the existing async API.
-- `mpserver.Server` gets sync and async stream methods.
+- `mpservice.mpserver.Server` gets a sync API, in addition to the existing async API.
+- `mpservice.mpserver.Server` gets sync and async stream methods.
 
 
 ## [0.8.7] - 2021-08-05
@@ -557,7 +565,7 @@ Fine tuning on `streamer`.
 
 Added:
 
-- `streamer.{transform, unordered_transform}` get new parameter `return_exceptions`.
+- `mpservice.streamer.{transform, unordered_transform}` get new parameter `return_exceptions`.
   Similarly, `drain` gets new parameter `ignore_exceptions`.
 
 
@@ -573,8 +581,8 @@ Added:
 Changed:
 
 - `Servlet.process` is renamed to `Servlet.__call__`.
-- `_http` renamed to `http_server` with enhancements.
-- `_server_process` renamed to `server_process`.
+- `mpservice._http` renamed to `mpservice.http_server` with enhancements.
+- `mpservice._server_process` renamed to `mpservice.server_process`.
 
 
 ## [0.8.0] - 2021-05-19

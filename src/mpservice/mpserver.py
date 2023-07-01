@@ -550,7 +550,7 @@ class Worker(ABC):
                     if buffer.qsize() >= batchsize:
                         # `buffer` has reached `batchsize`, which is the most
                         # that `_get_input_batch` will take in one call.
-                        # Even if `buffer` is not full, we no longer has priority
+                        # Even if `buffer` is not full, we no longer have priority
                         # for more data. Release the lock to give others
                         # a chance.
                         break
