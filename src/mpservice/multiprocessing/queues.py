@@ -27,11 +27,14 @@ class IterableQueue(multiprocessing.queues.Queue, Generic[Elem]):
         self._finished_ = b
 
     def finish(self, *, timeout=None):
+        if self._finished_.is_set():
+            return
         self._finished_.set()
         super().put(FINISHED, timeout=timeout)
 
     def finished(self) -> bool:
-        return self._finished_.is_set() and self.empty()
+        # TODO: not reliable if there are multiple concurrent users to this object.
+        return self._finished_.is_set() and self.qsize() <= 1
 
     def put(self, *args, **kwargs):
         if self._finished_.is_set():
@@ -41,7 +44,7 @@ class IterableQueue(multiprocessing.queues.Queue, Generic[Elem]):
     def get(self, *args, **kwargs):
         z = super().get(*args, **kwargs)
         if z == FINISHED:
-            self.finish()
+            super().put(FINISHED)
             raise Finished
         return z
 
