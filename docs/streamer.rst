@@ -234,11 +234,8 @@ API reference
 
 .. autofunction:: mpservice.streamer.tee
 
-.. autoclass:: mpservice.streamer.IterableQueue
+.. autoclass:: mpservice.streamer.EagerBatcher
 
-.. autoclass:: mpservice.streamer.IterableProcessQueue
-
-.. autoclass:: mpservice.streamer.AsyncIterableQueue
 
 
 
