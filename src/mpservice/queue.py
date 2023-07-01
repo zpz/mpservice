@@ -20,7 +20,7 @@ class IterableQueue(queue.Queue, Generic[Elem]):
         super().__init__(*args, **kwargs)
         self._finished_ = False
 
-    def finish(self, *, timeout=None):
+    def finish(self):
         '''
         This is on the "putting" side, indicating all elements
         have been placed in the queue and there will be no more.
@@ -32,22 +32,24 @@ class IterableQueue(queue.Queue, Generic[Elem]):
 
         Calling :meth:`put` after this raises :class:`Finished`.
 
-        Calling this method multiple times is OK as long as
-        the queue's size limit is not a blocker.
+        Calling this method multiple times is OK.
 
         Another possible name of this method could be "close",
         but the multiprocessing Queue class has a method called
         "close", hence we can't use it.
         '''
+        if self._finished_:
+            return
         self._finished_ = True
         # NOTE: this must preceed the next line to prevent another call to `self.put`.
         # In effect, after one call to ``self.finish``, no more ``self.put``
         # will go through; more calls to ``self.finish`` will go through.
         # See :meth:`get`.
-        super().put(FINISHED, timeout=timeout)
+        super().put(FINISHED)
 
     def finished(self) -> bool:
-        return self._finished_ and self.empty()
+        # TODO: not reliable if there are multiple concurrent users to this object.
+        return self._finished_ and self.qsize() <= 1
 
     def put(self, *args, **kwargs):
         if self._finished_:
@@ -61,7 +63,7 @@ class IterableQueue(queue.Queue, Generic[Elem]):
             # If another thread is trying to ``get`` now, it will either get
             # a remaining ``FINISHED`` or (if the queue is empty) wait for
             # the following ``self.finish()`` to put a ``FINISHED`` in the queue.
-            self.finish()
+            super().put(FINISHED)
             # Put another indicator in the queue so that
             # the closing mark is always present.
             raise Finished

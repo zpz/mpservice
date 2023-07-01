@@ -16,7 +16,12 @@ class IterableQueue(asyncio.Queue, Generic[Elem]):
         self._finished_ = False
 
     async def finish(self):
+        if self._finished_:
+            return
         self._finished_ = True
+        await self._put_finished_marker()
+
+    async def _put_finished_marker(self):
         while True:
             try:
                 super().put_nowait(FINISHED)
@@ -27,11 +32,13 @@ class IterableQueue(asyncio.Queue, Generic[Elem]):
         # and raise :class:``QueueFinished``.
 
     def finish_nowait(self):
+        if self._finished_:
+            return
         self._finished_ = True
         super().put_nowait(FINISHED)
 
     def finished(self) -> bool:
-        return self._finished_ and self.empty()
+        return self._finished_ and self.qsize() <= 1
 
     def put_nowait(self, *args, **kwargs):
         # `put` uses `put_nowait`.
@@ -43,7 +50,7 @@ class IterableQueue(asyncio.Queue, Generic[Elem]):
         # `get` uses `get_nowait`.
         z = super().get_nowait(*args, **kwargs)
         if z == FINISHED:
-            self.finish_nowait()
+            super().put_nowait(FINISHED)
             raise QueueFinished
         return z
 
