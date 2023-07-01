@@ -1,8 +1,10 @@
 import pytest
-from mpservice.multiprocessing import Process, IterableQueue as IterableProcessQueue
+from mpservice.asyncio import IterableQueue as AsyncIterableQueue
+from mpservice.asyncio import QueueFinished
+from mpservice.multiprocessing import IterableQueue as IterableProcessQueue
+from mpservice.multiprocessing import Process
 from mpservice.multiprocessing.queues import IterableQueue as IterableProcessQueueType
-from mpservice.asyncio import IterableQueue as AsyncIterableQueue, QueueFinished
-from mpservice.queue import IterableQueue, Finished
+from mpservice.queue import Finished, IterableQueue
 from mpservice.threading import Thread
 
 
@@ -62,4 +64,3 @@ async def test_asynciterqueue():
 
     with pytest.raises(QueueFinished):
         await q.get()
-

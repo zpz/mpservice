@@ -1,6 +1,6 @@
 import queue
-from typing import Generic, TypeVar
 from collections.abc import Iterator
+from typing import Generic, TypeVar
 
 Elem = TypeVar('Elem')
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"

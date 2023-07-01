@@ -369,6 +369,7 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
     def IterableQueue(self, maxsize=0):
         from .queues import IterableQueue
+
         return IterableQueue(maxsize, ctx=self.get_context())
 
 

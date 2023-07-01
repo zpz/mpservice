@@ -7,13 +7,13 @@ from time import perf_counter, sleep
 import pytest
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
+from mpservice.queue import IterableQueue
 from mpservice.streamer import (
+    EagerBatcher,
     Stream,
     tee,
-    EagerBatcher,
 )
 from mpservice.threading import Thread
-from mpservice.queue import IterableQueue
 
 
 async def agen(n=10):
@@ -1065,4 +1065,3 @@ def test_eager_batcher():
     zz = list(walker)
     print(zz)
     assert zz == [[1, 2, 3], [4, 5], [6], [7]]
-

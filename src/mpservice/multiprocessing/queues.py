@@ -1,11 +1,8 @@
-
 import multiprocessing
-from typing import Generic
 from collections.abc import Iterator
-from typing import TypeVar
+from typing import Generic, TypeVar
 
-from mpservice.queue import Finished, FINISHED
-
+from mpservice.queue import FINISHED, Finished
 
 Elem = TypeVar('Elem')
 

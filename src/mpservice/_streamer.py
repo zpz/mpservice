@@ -60,7 +60,6 @@ from .concurrent.futures import (
     get_shared_thread_pool,
 )
 from .multiprocessing import (
-    MP_SPAWN_CTX,
     Event,
     get_remote_traceback,
     is_remote_exception,
@@ -820,8 +819,6 @@ class AsyncIter(AsyncIterable):
                 if x == FINISHED:  # `instream_` exhausted
                     break
                 yield x
-
-
 
 
 class Mapper(Iterable):

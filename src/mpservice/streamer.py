@@ -20,9 +20,12 @@ of streamlets or operators.
 Both sync and async programming modes are supported. For the most part,
 the usage of Stream is one and the same in both modes.
 """
+import queue
 from collections.abc import Iterable
 from time import perf_counter
-import queue
+
+from mpservice.multiprocessing.queues import IterableQueue as IterableMpQueue
+from mpservice.queue import Finished, IterableQueue
 
 from ._streamer import (
     Batcher,
@@ -31,8 +34,6 @@ from ._streamer import (
     Unbatcher,
     tee,
 )
-from mpservice.queue import IterableQueue, Finished
-from mpservice.multiprocessing.queues import IterableQueue as IterableMpQueue
 
 __all__ = [
     'Stream',
@@ -44,7 +45,6 @@ __all__ = [
 ]
 
 
-
 class EagerBatcher(Iterable):
     '''
     ``EagerBatcher`` collects items from the incoming stream towards a target batch size and yields the batches.
@@ -52,7 +52,14 @@ class EagerBatcher(Iterable):
     or has reached ``timeout``. Note, the timer starts upon getting the first item, whereas getting the first item
     for a new batch may take however long.
     '''
-    def __init__(self, instream: IterableQueue | IterableMpQueue, /, batch_size: int, timeout: float = None):
+
+    def __init__(
+        self,
+        instream: IterableQueue | IterableMpQueue,
+        /,
+        batch_size: int,
+        timeout: float = None,
+    ):
         # ``timeout`` can be 0.
         self._instream = instream
         self._batch_size = batch_size
