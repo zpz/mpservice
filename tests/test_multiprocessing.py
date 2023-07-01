@@ -191,14 +191,16 @@ def test_terminate():
 
 
 def test_wait():
-    workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [
-        Thread(target=sleeper, args=(4,))
+    workers = [
+        Process(target=sleeper, args=(2,)),
+        Process(target=sleeper, args=(3,)),
+        Thread(target=sleeper, args=(4,)),
     ]
     for t in workers:
         t.start()
     done, notdone = wait(workers, timeout=2.2)
     assert len(done) == 1
-    assert done.pop() is workers[1]
+    assert done.pop() is workers[0]
 
 
 def test_wait_exc():
