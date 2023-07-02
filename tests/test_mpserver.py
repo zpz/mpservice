@@ -682,4 +682,3 @@ def test_preprocess_streamserver():
                 assert isinstance(y, ValueError)
             else:
                 assert y == x + 3
-

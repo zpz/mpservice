@@ -1882,14 +1882,17 @@ class StreamServer:
                     break
         finally:
             stopped.set()
+            # Make sure `worker` is not blocked at `sem.acquire`.
             if sem._value < self._capacity:
                 sem.release()
-            worker.result()
-            # Leave the server in a clean state so that
-            # ``.stream`` can be called again:
-            while n < n_x:
-                q_out.get()
-                n += 1
+            try:
+                worker.result()
+            finally:
+                # Leave the server in a clean state so that
+                # ``.stream`` can be called again:
+                while n < n_x:
+                    q_out.get()
+                    n += 1
 
 
 class AsyncServer:
