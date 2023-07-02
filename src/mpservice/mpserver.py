@@ -1828,71 +1828,77 @@ class StreamServer:
             If ``False``, exceptions will be propagated right away, crashing the program.
         """
 
-        def _enqueue(data_stream, uid_x, sem, stopped):
+        def _enqueue(data_stream, uid_x, nomoredata, stopped):
             q_in = self._q_in
-            n = 0
             try:
                 for x in data_stream:
                     if stopped.is_set():
                         break
-                    sem.acquire()
                     uid = id(x)
-                    uid_x[uid] = x
+                    uid_x.put((uid, x))
                     q_in.put((uid, x))
-                    n += 1
             finally:
-                nonlocal n_x
-                n_x = n
+                uid_x.put(nomoredata)
             # TODO: the workers do not know a stream has concluded.
             # They may be waiting for some extra time for batching.
             # This is not a big problem for long jobs, but for short ones
             # this can be a user experience issue.
 
-        uid_x = {}
-        sem = threading.BoundedSemaphore(self._capacity)
+        nomoredata = NOMOREDATA
+        uid_x = queue.Queue(self._capacity)
         stopped = threading.Event()
-        n_x = None
-
+        
         worker = Thread(
             target=_enqueue,
-            args=(data_stream, uid_x, sem, stopped),
+            args=(data_stream, uid_x, nomoredata, stopped),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
         worker.start()
 
+        uid_y = {}
+        null = object()
         q_out = self._q_out
         n = 0
         try:
             while True:
-                uid, y = q_out.get()
-                n += 1
-                x = uid_x.pop(uid)
-                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                sem.release()
+                z = uid_x.get()
+                # Get one input item from ``uid_x``.
+                # Get its corresponding result, either already in cache ``uid_y``,
+                # or to be obtained out of ``q_out``.
+                if z == nomoredata:
+                    break
+                uid, x = z
+                y = uid_y.pop(uid, null)
+                while y is null:
+                    uid_, y_ = q_out.get()
+                    if uid_ == uid:
+                        y = y_
+                    else:
+                        uid_y[uid_] = y_
+
+                # Exception could happen in the following block,
+                # either by `raise y`, or due to `ExitGenerator`.
                 if isinstance(y, RemoteException):
                     y = y.exc
                 if isinstance(y, Exception) and not return_exceptions:
-                    print('\nerror, to raise', y)
                     raise y
                 if return_x:
                     yield x, y
                 else:
                     yield y
-                if n == n_x:
-                    break
         finally:
             stopped.set()
-            # Make sure `worker` is not blocked at `sem.acquire`.
-            if sem._value < self._capacity:
-                sem.release()
-            try:
-                worker.result()
-            finally:
-                # Leave the server in a clean state so that
-                # ``.stream`` can be called again:
-                while n < n_x:
-                    q_out.get()
-                    n += 1
+            n = 0  # number of input items that have not been accounted for
+            while z != nomoredata:
+                z = uid_x.get()
+                n += 1
+            n -= 1
+            n -= len(uid_y)
+            # Now need to get count ``n`` results out of ``q_out``.
+            # No need to pair them with input; just discard.
+            for _ in range(n):
+                q_out.get()
+            worker.result()
 
 
 class AsyncServer:
