@@ -37,6 +37,7 @@ from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
 
 import psutil
+from deprecation import deprecated
 
 from mpservice import TimeoutError
 
@@ -379,9 +380,10 @@ class Worker(ABC):
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
         preprocess = getattr(self, 'preprocess', None)
+        nomoredata = NOMOREDATA
         while True:
             z = q_in.get()
-            if z == NOMOREDATA:
+            if z == nomoredata:
                 q_out.put(z)
                 q_in.put(z)  # broadcast to one fellow worker
                 break
@@ -435,6 +437,8 @@ class Worker(ABC):
 
         n_batches = 0
         batch_size_log_cadence = self.batch_size_log_cadence
+        nomoredata = NOMOREDATA
+
         try:
             while True:
                 if batch_size_log_cadence and n_batches == 0:
@@ -442,8 +446,8 @@ class Worker(ABC):
                     batch_size_min = 1000000
                     batch_size_mean = 0.0
 
-                batch = self._get_input_batch()
-                if batch == NOMOREDATA:
+                batch = self._get_input_batch(nomoredata)
+                if batch == nomoredata:
                     q_in.put(batch)  # broadcast to fellow workers.
                     q_out.put(batch)
                     break
@@ -490,6 +494,7 @@ class Worker(ABC):
         buffer = self._batch_buffer
         batchsize = self.batch_size
         preprocess = getattr(self, 'preprocess', None)
+        nomoredata = NOMOREDATA
 
         while True:
             if buffer.full():
@@ -507,7 +512,7 @@ class Worker(ABC):
                 while True:
                     z = q_in.get()  # wait as long as it takes to get one item.
                     while True:
-                        if z == NOMOREDATA:
+                        if z == nomoredata:
                             buffer.put(z)
                             q_in.put(z)  # broadcast to fellow workers.
                             q_out.put(z)
@@ -555,14 +560,14 @@ class Worker(ABC):
                         # a chance.
                         break
 
-    def _get_input_batch(self):
+    def _get_input_batch(self, nomoredata):
         # This function gets a batch from `self._batch_buffer`.
 
         extra_timeout = self.batch_wait_time
         batchsize = self.batch_size
         buffer = self._batch_buffer
         out = buffer.get()
-        if out == NOMOREDATA:
+        if out == nomoredata:
             return out
         out = [out]
         n = 1
@@ -582,7 +587,7 @@ class Worker(ABC):
                 # hence will get an item w/o wait.
             except Empty:
                 break
-            if z == NOMOREDATA:
+            if z == nomoredata:
                 # Return the batch so far.
                 # Put this indicator back in the buffer.
                 # Next call to this method will get
@@ -1304,15 +1309,12 @@ def _init_server(
     self,
     servlet: Servlet,
     *,
-    main_cpu: int = 0,
+    main_cpu: int = None,
     capacity: int = 256,
 ):
     self.servlet = servlet
     assert capacity > 0
     self._capacity = capacity
-    self._uid_to_futures = {}
-    # Size of this dict is capped at `self._capacity`.
-    # A few places need to enforce this size limit.
 
     self._main_cpus = None
     if main_cpu is not None:
@@ -1420,7 +1422,7 @@ class Server:
         self,
         servlet: Servlet,
         *,
-        main_cpu: int = 0,
+        main_cpu: int = None,
         backlog: int = None,
         capacity: int = 256,
     ):
@@ -1464,6 +1466,9 @@ class Server:
             )
             capacity = backlog
         _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
+        self._uid_to_futures = {}
+        # Size of this dict is capped at `self._capacity`.
+        # A few places need to enforce this size limit.
 
     @property
     def capacity(self) -> int:
@@ -1484,8 +1489,9 @@ class Server:
         self.servlet.stop()
         if self._onboard_thread is not None:
             self._onboard_thread.join()
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
 
     def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
@@ -1617,6 +1623,11 @@ class Server:
     def debug_info(self):
         return _server_debug_info(self)
 
+    @deprecated(
+        deprecated_in='0.13.5',
+        removed_in='0.14.0',
+        details='Use ``StreamServer`` instead.',
+    )
     def stream(
         self,
         data_stream: Iterable,
@@ -1743,6 +1754,127 @@ class Server:
             shutdown()
 
 
+class StreamServer:
+    @final
+    @classmethod
+    def get_mp_context(cls):
+        return MP_SPAWN_CTX
+
+    def __init__(
+        self,
+        servlet: Servlet,
+        *,
+        main_cpu: int = None,
+        capacity: int = 256,
+    ):
+        _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def __enter__(self):
+        self._q_in = (
+            _SimpleThreadQueue()
+            if self.servlet.input_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self._q_out = (
+            _SimpleThreadQueue()
+            if self.servlet.output_queue_type == 'thread'
+            else _SimpleProcessQueue()
+        )
+        self.servlet.start(self._q_in, self._q_out)
+        return self
+
+    def __exit__(self, *args):
+        self.servlet.stop()
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
+
+    def stream(
+        self,
+        data_stream: Iterable,
+        /,
+        *,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+    ) -> Iterator:
+        """
+        Use this method for high-throughput processing of a long stream of
+        data elements. In theory, this method achieves the throughput upper-bound
+        of the server, as it saturates the pipeline.
+
+        The order of elements in the stream is preserved, i.e.,
+        elements in the output stream correspond to elements
+        in the input stream in the same order.
+
+        This method is NOT thread-safe, that is, there can not be multiple users
+        calling this method concurrently from multiple threads.ResourceWarning
+
+        Parameters
+        ----------
+        data_stream
+            An (possibly unlimited) iterable of input data elements.
+        return_x
+            If ``True``, each output element is a length-two tuple
+            containing the input data and the result.
+            If ``False``, each output element is just the result.
+        return_exceptions
+            If ``True``, any Exception object will be produced in the output stream
+            in place of the would-be regular result.
+            If ``False``, exceptions will be propagated right away, crashing the program.
+        """
+
+        def _enqueue(data_stream, uid_x, sem, nomoredata, stopped):
+            q_in = self._q_in
+            try:
+                for x in data_stream:
+                    if stopped.is_set():
+                        break
+                    sem.acquire()
+                    uid = id(x)
+                    uid_x[uid] = x
+                    q_in.put((uid, x))
+            finally:
+                q_in.put(nomoredata)
+
+        uid_x = {}
+        sem = threading.BoundedSemaphore(self._capacity)
+        stopped = threading.Event()
+        nomoredata = NOMOREDATA
+
+        worker = Thread(
+            target=_enqueue,
+            args=(data_stream, uid_x, sem, nomoredata, stopped),
+            name=f"{self.__class__.__name__}.stream._enqueue",
+        )
+        worker.start()
+
+        try:
+            q_out = self._q_out
+            while True:
+                z = q_out.get()
+                if z == nomoredata:
+                    break
+                uid, y = z
+                x = uid_x.pop(uid)
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                sem.release()
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if isinstance(y, Exception) and not return_exceptions:
+                    raise y
+                if return_x:
+                    yield x, y
+                else:
+                    yield y
+        finally:
+            stopped.set()
+            worker.result()
+
+
 class AsyncServer:
     '''
     An ``AsyncServer`` object must be started in an async context manager.
@@ -1761,7 +1893,7 @@ class AsyncServer:
         servlet: Servlet,
         *,
         backlog: int = None,
-        main_cpu: int = 0,
+        main_cpu: int = None,
         capacity: int = 256,
     ):
         if backlog is not None:
@@ -1772,6 +1904,9 @@ class AsyncServer:
             )
             capacity = backlog
         _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
+        self._uid_to_futures = {}
+        # Size of this dict is capped at `self._capacity`.
+        # A few places need to enforce this size limit.
 
     @property
     def capacity(self) -> int:
@@ -1793,8 +1928,9 @@ class AsyncServer:
         self.servlet.stop()
         if self._onboard_thread is not None:
             self._onboard_thread.join()
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
 
     async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
@@ -1909,6 +2045,7 @@ class AsyncServer:
     def debug_info(self) -> dict:
         return _server_debug_info(self)
 
+    @deprecated(deprecated_in='0.13.5', removed_in='0.14.0')
     async def stream(
         self,
         data_stream: AsyncIterable,
