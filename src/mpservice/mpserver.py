@@ -1622,7 +1622,11 @@ class Server:
     def debug_info(self):
         return _server_debug_info(self)
 
-    @deprecated(deprecated_in='0.13.5', removed_in='0.14.0', details='Use ``StreamServer`` instead.')
+    @deprecated(
+        deprecated_in='0.13.5',
+        removed_in='0.14.0',
+        details='Use ``StreamServer`` instead.',
+    )
     def stream(
         self,
         data_stream: Iterable,
@@ -1813,7 +1817,7 @@ class StreamServer:
 
         This method is NOT thread-safe, that is, there can not be multiple users
         calling this method concurrently from multiple threads.ResourceWarning
-        
+
         Parameters
         ----------
         data_stream

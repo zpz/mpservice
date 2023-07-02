@@ -17,6 +17,7 @@ def make_message(seed=1234):
     }
     return data
 
+
 def expensive(n=1000):
     # Return a random list of values going through json/unjson many times to simulate
     # an expensive computation. ``n=1000`` roughly will take 1 sec.
@@ -27,4 +28,3 @@ def expensive(n=1000):
     for _ in range(1000):
         x = loads(dumps(x))
     return x
-

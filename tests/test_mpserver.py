@@ -632,4 +632,3 @@ def test_streamserver():
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [v * v for v in data]
-
