@@ -21,7 +21,7 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
 """
 
 
-__version__ = "0.13.5b3"
+__version__ = "0.13.5b4"
 
 
 import builtins

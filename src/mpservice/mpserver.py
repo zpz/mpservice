@@ -381,6 +381,7 @@ class Worker(ABC):
         batch_size = self.batch_size
         preprocess = getattr(self, 'preprocess', None)
         nomoredata = NOMOREDATA
+
         while True:
             z = q_in.get()
             if z == nomoredata:
@@ -1827,8 +1828,9 @@ class StreamServer:
             If ``False``, exceptions will be propagated right away, crashing the program.
         """
 
-        def _enqueue(data_stream, uid_x, sem, nomoredata, stopped):
+        def _enqueue(data_stream, uid_x, sem, stopped):
             q_in = self._q_in
+            n = 0
             try:
                 for x in data_stream:
                     if stopped.is_set():
@@ -1837,42 +1839,57 @@ class StreamServer:
                     uid = id(x)
                     uid_x[uid] = x
                     q_in.put((uid, x))
+                    n += 1
             finally:
-                q_in.put(nomoredata)
+                nonlocal n_x
+                n_x = n
+            # TODO: the workers do not know a stream has concluded.
+            # They may be waiting for some extra time for batching.
+            # This is not a big problem for long jobs, but for short ones
+            # this can be a user experience issue.
 
         uid_x = {}
         sem = threading.BoundedSemaphore(self._capacity)
         stopped = threading.Event()
-        nomoredata = NOMOREDATA
+        n_x = None
 
         worker = Thread(
             target=_enqueue,
-            args=(data_stream, uid_x, sem, nomoredata, stopped),
+            args=(data_stream, uid_x, sem, stopped),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
         worker.start()
 
+        q_out = self._q_out
+        n = 0
         try:
-            q_out = self._q_out
             while True:
-                z = q_out.get()
-                if z == nomoredata:
-                    break
-                uid, y = z
+                uid, y = q_out.get()
+                n += 1
                 x = uid_x.pop(uid)
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
                 sem.release()
                 if isinstance(y, RemoteException):
                     y = y.exc
                 if isinstance(y, Exception) and not return_exceptions:
+                    print('\nerror, to raise', y)
                     raise y
                 if return_x:
                     yield x, y
                 else:
                     yield y
+                if n == n_x:
+                    break
         finally:
             stopped.set()
+            if sem._value < self._capacity:
+                sem.release()
             worker.result()
+            # Leave the server in a clean state so that
+            # ``.stream`` can be called again:
+            while n < n_x:
+                q_out.get()
+                n += 1
 
 
 class AsyncServer:

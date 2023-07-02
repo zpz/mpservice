@@ -144,6 +144,13 @@ def test_sequential_stream():
         assert list(s) == [v * v for v in data]
 
 
+def test_sequential_streamserver():
+    with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        data = range(100)
+        ss = service.stream(data)
+        assert list(ss) == [v * v for v in data]
+
+
 def test_stream_error():
     with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = list(range(30))
@@ -153,8 +160,29 @@ def test_stream_error():
             assert list(ss) == [v * v for v in data]
 
 
+def test_streamserver_error():
+    with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        data = list(range(30))
+        data[22] = 'a'
+        ss = service.stream(data)
+        with pytest.raises(TypeError):
+            assert list(ss) == [v * v for v in data]
+
+
 def test_stream_early_quit():
     with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
+        data = range(100)
+        ss = service.stream(data)
+        n = 0
+        for x, y in zip(data, ss):
+            assert y == x * x
+            n += 1
+            if n > 33:
+                break
+
+
+def test_streamserver_early_quit():
+    with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
         data = range(100)
         ss = service.stream(data)
         n = 0
@@ -315,6 +343,13 @@ def test_ensemble_stream():
         assert list(s) == [[v + 1, v + 7] for v in data]
 
 
+def test_ensemble_streamserver():
+    with StreamServer(his_wide_server) as service:
+        data = range(100)
+        ss = service.stream(data)
+        assert list(ss) == [[v + 1, v + 7] for v in data]
+
+
 class AddOne(Worker):
     def call(self, x):
         time.sleep(0.3)
@@ -339,6 +374,16 @@ def test_thread():
     s = SequentialServlet(EnsembleServlet(s1, s2), s3)
     with Server(s) as service:
         assert service.call(3) == 6
+        for x, y in service.stream(range(100), return_x=True):
+            assert y == x + 3
+
+
+def test_thread_streamserver():
+    s1 = ThreadServlet(AddOne, num_threads=3)
+    s2 = ThreadServlet(AddFive)
+    s3 = ThreadServlet(TakeMean)
+    s = SequentialServlet(EnsembleServlet(s1, s2), s3)
+    with StreamServer(s) as service:
         for x, y in service.stream(range(100), return_x=True):
             assert y == x + 3
 
@@ -627,8 +672,14 @@ def test_preprocess():
                 assert y == x + 3
 
 
-def test_streamserver():
-    with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
-        data = range(100)
-        ss = service.stream(data)
-        assert list(ss) == [v * v for v in data]
+def test_preprocess_streamserver():
+    server = StreamServer(
+        ProcessServlet(WorkerWithPreprocess, batch_size=10, batch_wait_time=0.1)
+    )
+    with server:
+        for x, y in server.stream(range(200), return_x=True, return_exceptions=True):
+            if x > 100:
+                assert isinstance(y, ValueError)
+            else:
+                assert y == x + 3
+
