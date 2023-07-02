@@ -1847,7 +1847,7 @@ class StreamServer:
         nomoredata = NOMOREDATA
         uid_x = queue.Queue(self._capacity)
         stopped = threading.Event()
-        
+
         worker = Thread(
             target=_enqueue,
             args=(data_stream, uid_x, nomoredata, stopped),
