@@ -13,6 +13,7 @@ from mpservice.mpserver import (
     ProcessServlet,
     SequentialServlet,
     Server,
+    StreamServer,
     SwitchServlet,
     ThreadServlet,
     Worker,
@@ -624,3 +625,11 @@ def test_preprocess():
                 assert isinstance(y, ValueError)
             else:
                 assert y == x + 3
+
+
+def test_streamserver():
+    with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
+        data = range(100)
+        ss = service.stream(data)
+        assert list(ss) == [v * v for v in data]
+
