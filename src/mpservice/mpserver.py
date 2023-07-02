@@ -1309,7 +1309,7 @@ def _init_server(
     self,
     servlet: Servlet,
     *,
-    main_cpu: int = 0,
+    main_cpu: int = None,
     capacity: int = 256,
 ):
     self.servlet = servlet
@@ -1422,7 +1422,7 @@ class Server:
         self,
         servlet: Servlet,
         *,
-        main_cpu: int = 0,
+        main_cpu: int = None,
         backlog: int = None,
         capacity: int = 256,
     ):
@@ -1489,8 +1489,9 @@ class Server:
         self.servlet.stop()
         if self._onboard_thread is not None:
             self._onboard_thread.join()
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
 
     def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
@@ -1757,20 +1758,13 @@ class StreamServer:
     @final
     @classmethod
     def get_mp_context(cls):
-        """
-        If subclasses need to use additional Queues, Locks, Conditions, etc,
-        they should create them out of this context.
-        This returns a spawn context.
-
-        Subclasses should not customize this method.
-        """
         return MP_SPAWN_CTX
 
     def __init__(
         self,
         servlet: Servlet,
         *,
-        main_cpu: int = 0,
+        main_cpu: int = None,
         capacity: int = 256,
     ):
         _init_server(self, servlet=servlet, capacity=capacity, main_cpu=main_cpu)
@@ -1795,8 +1789,9 @@ class StreamServer:
 
     def __exit__(self, *args):
         self.servlet.stop()
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
 
     def stream(
         self,
@@ -1898,7 +1893,7 @@ class AsyncServer:
         servlet: Servlet,
         *,
         backlog: int = None,
-        main_cpu: int = 0,
+        main_cpu: int = None,
         capacity: int = 256,
     ):
         if backlog is not None:
@@ -1933,8 +1928,9 @@ class AsyncServer:
         self.servlet.stop()
         if self._onboard_thread is not None:
             self._onboard_thread.join()
-        psutil.Process().cpu_affinity(cpus=[])
-        # Reset CPU affinity.
+        if self._main_cpus is not None:
+            psutil.Process().cpu_affinity(cpus=[])
+            # Reset CPU affinity.
 
     async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
         """
