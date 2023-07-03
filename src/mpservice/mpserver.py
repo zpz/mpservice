@@ -1072,9 +1072,10 @@ class EnsembleServlet(Servlet):
         qins = self._qins
         catalog = self._uid_to_results
         nn = len(qins)
+        nomoredata = NOMOREDATA
         while True:
             z = qin.get()
-            if z == NOMOREDATA:  # sentinel for end of input
+            if z == nomoredata:  # sentinel for end of input
                 for q in qins:
                     q.put(z)  # send the same sentinel to each servlet
                 qout.put(z)
@@ -1101,6 +1102,7 @@ class EnsembleServlet(Servlet):
         qouts = self._qouts
         catalog = self._uid_to_results
         fail_fast = self._fail_fast
+        nomoredata = NOMOREDATA
 
         nn = len(qouts)
         while True:
@@ -1116,7 +1118,7 @@ class EnsembleServlet(Servlet):
                     # input element.
                     all_empty = False
                     v = q.get()
-                    if v == NOMOREDATA:
+                    if v == nomoredata:
                         qout.put(v)
                         return
                     uid, y = v
@@ -1269,9 +1271,10 @@ class SwitchServlet(Servlet):
         qin = self._qin
         qout = self._qout
         qins = self._qins
+        nomoredata = NOMOREDATA
         while True:
             v = qin.get()
-            if v == NOMOREDATA:  # sentinel for end of input
+            if v == nomoredata:  # sentinel for end of input
                 for q in qins:
                     q.put(v)  # send the same sentinel to each servlet
                 qout.put(v)
@@ -1357,10 +1360,11 @@ def _enter_server(self, gather_args: tuple = None):
         def _onboard_input():
             qin = self._input_buffer
             qout = self._q_in
+            nomoredata = NOMOREDATA
             while True:
                 x = qin.get()
                 qout.put(x)
-                if x == NOMOREDATA:
+                if x == nomoredata:
                     break
 
         self._onboard_thread = Thread(
@@ -1585,26 +1589,27 @@ class Server:
     def _gather_output(self) -> None:
         q_out = self._q_out
         pipeline = self._uid_to_futures
+        nomoredata = NOMOREDATA
 
         q_notify = queue.SimpleQueue()
 
-        def notify():
+        def notify(nomoredata):
             q = q_notify
             pipeline_notfull = self._pipeline_notfull
             while True:
                 z = q.get()
-                if z == NOMOREDATA:
+                if z == nomoredata:
                     break
                 with pipeline_notfull:
                     pipeline_notfull.notify()
 
-        notification_thread = Thread(target=notify)
+        notification_thread = Thread(target=notify, args=(nomoredata,))
         notification_thread.start()
 
         while True:
             z = q_out.get()
-            if z == NOMOREDATA:
-                q_notify.put(NOMOREDATA)
+            if z == nomoredata:
+                q_notify.put(nomoredata)
                 notification_thread.join()
                 break
             uid, y = z
@@ -1675,7 +1680,7 @@ class Server:
             even large as needed.
         """
 
-        def _enqueue(tasks, stopped, timeout):
+        def _enqueue(tasks, stopped, timeout, nomoredata, crashed):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -1693,12 +1698,12 @@ class Server:
                 # exception state. This exception is not covered by `return_exceptions`;
                 # it will be detected in the main thread.
             except Exception as e:
-                tasks.put(CRASHED)
+                tasks.put(crashed)
                 tasks.put(e)
             else:
-                tasks.put(NOMOREDATA)
+                tasks.put(nomoredata)
 
-        def shutdown():
+        def shutdown(nomoredata, crashed):
             stopped.set()
             while True:
                 worker.join(timeout=0.1)
@@ -1706,31 +1711,33 @@ class Server:
                     break
                 while not tasks.empty():
                     v = tasks.get()
-                    if v == NOMOREDATA:
+                    if v == nomoredata:
                         break
-                    if v == CRASHED:
+                    if v == crashed:
                         v = tasks.get()
                         break
                     _, fut = v
                     fut.cancel()
 
+        nomoredata = NOMOREDATA
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
         worker = Thread(
             target=_enqueue,
-            args=(tasks, stopped, timeout),
+            args=(tasks, stopped, timeout, nomoredata),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
         worker.start()
 
         _wait = self._wait_for_result
+        crashed = CRASHED
 
         try:
             while True:
                 z = tasks.get()
-                if z == NOMOREDATA:
+                if z == nomoredata:
                     break
-                if z == CRASHED:
+                if z == crashed:
                     e = tasks.get()
                     raise e
 
@@ -1752,7 +1759,7 @@ class Server:
                     else:
                         yield y
         finally:
-            shutdown()
+            shutdown(nomoredata, crashed)
 
 
 class StreamServer:
@@ -2047,10 +2054,11 @@ class AsyncServer:
                 pipeline_notfull.notify()
 
         notifications = {}
+        nomoredata = NOMOREDATA
 
         while True:
             z = q_out.get()
-            if z == NOMOREDATA:
+            if z == nomoredata:
                 break
             uid, y = z
             fut = pipeline.pop(uid)  # this must exist
@@ -2071,7 +2079,7 @@ class AsyncServer:
     def debug_info(self) -> dict:
         return _server_debug_info(self)
 
-    @deprecated(deprecated_in='0.13.5', removed_in='0.14.0')
+    @deprecated(deprecated_in='0.13.5', removed_in='0.13.8')
     async def stream(
         self,
         data_stream: AsyncIterable,
@@ -2087,7 +2095,7 @@ class AsyncServer:
         at the same time by different "users" (in the same thread).
         '''
 
-        async def _enqueue(tasks, timeout):
+        async def _enqueue(tasks, timeout, nomoredata, crashed):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -2100,33 +2108,35 @@ class AsyncServer:
                 # exception state. This exception is not covered by `return_exceptions`;
                 # it will be detected in the main thread.
             except asyncio.CancelledError:
-                await tasks.put(NOMOREDATA)
+                await tasks.put(nomoredata)
                 raise
             except Exception as e:
-                await tasks.put(CRASHED)
+                await tasks.put(crashed)
                 await tasks.put(e)
             else:
-                await tasks.put(NOMOREDATA)
+                await tasks.put(nomoredata)
 
-        async def shutdown():
+        async def shutdown(nomoredata, crashed):
             t_enqueue.cancel()
             while True:
                 if t_enqueue.done():
                     break
                 while not tasks.empty():
                     v = tasks.get_nowait()
-                    if v == NOMOREDATA:
+                    if v == nomoredata:
                         break
-                    if v == CRASHED:
+                    if v == crashed:
                         await tasks.get()
                         break
                     x, fut = v
                     fut.cancel()
                 await asyncio.sleep(0.1)
 
+        nomoredata = NOMOREDATA
+        crashed = CRASHED
         tasks = asyncio.Queue(max(1, self.capacity - 2))
         t_enqueue = asyncio.create_task(
-            _enqueue(tasks, timeout),
+            _enqueue(tasks, timeout, nomoredata, crashed),
             name=f'{self.__class__.__name__}.async_stream._enqueue',
         )
 
@@ -2135,9 +2145,9 @@ class AsyncServer:
         try:
             while True:
                 z = await tasks.get()
-                if z == NOMOREDATA:
+                if z == nomoredata:
                     break
-                if z == CRASHED:
+                if z == crashed:
                     e = await tasks.get()
                     raise e
 
@@ -2159,7 +2169,7 @@ class AsyncServer:
                     else:
                         yield y
         finally:
-            await shutdown()
+            await shutdown(nomoredata, crashed)
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
