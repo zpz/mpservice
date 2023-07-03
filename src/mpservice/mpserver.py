@@ -1720,17 +1720,17 @@ class Server:
                     fut.cancel()
 
         nomoredata = NOMOREDATA
+        crashed = CRASHED
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
         worker = Thread(
             target=_enqueue,
-            args=(tasks, stopped, timeout, nomoredata),
+            args=(tasks, stopped, timeout, nomoredata, crashed),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
         worker.start()
 
         _wait = self._wait_for_result
-        crashed = CRASHED
 
         try:
             while True:
