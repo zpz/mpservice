@@ -70,7 +70,6 @@ logger = logging.getLogger(__name__)
 
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
-CRASHED = "57cf8a88-434e-4772-9bca-01086f6c45e9"
 NOTSET = object()
 
 
@@ -787,12 +786,14 @@ class SyncIter(Iterable):
         else:
             self._start()
             q = self._q
+            finished = FINISHED
+            stopped = STOPPED
             try:
                 while True:
                     x = q.get()
-                    if x == FINISHED:
+                    if x == finished:
                         break
-                    if x == STOPPED:
+                    if x == stopped:
                         raise q.get()
                     yield x
             finally:
@@ -810,13 +811,14 @@ class AsyncIter(AsyncIterable):
         else:
             loop = asyncio.get_running_loop()
             instream = iter(self._instream)
+            finished = FINISHED
             while True:
                 # ``next(instream)`` could involve some waiting and sleeping,
                 # hence doing it in another thread.
-                x = await loop.run_in_executor(None, next, instream, FINISHED)
+                x = await loop.run_in_executor(None, next, instream, finished)
                 # `FINISHED` is returned if there's no more elements.
                 # See https://stackoverflow.com/a/61774972
-                if x == FINISHED:  # `instream_` exhausted
+                if x == finished:  # `instream_` exhausted
                     break
                 yield x
 
@@ -1094,12 +1096,14 @@ class Buffer(Iterable):
     def __iter__(self):
         self._start()
         tasks = self._tasks
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 z = tasks.get()
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     raise tasks.get()
                 yield z
         finally:
@@ -1151,6 +1155,8 @@ class AsyncBuffer(AsyncIterable):
     async def __aiter__(self):
         self._start()
         tasks = self._tasks
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 try:
@@ -1159,9 +1165,9 @@ class AsyncBuffer(AsyncIterable):
                     await asyncio.sleep(0.002)
                     # TODO: how to avoid this sleep?
                     continue
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     raise tasks.get()
                 yield z
         finally:
@@ -1315,12 +1321,14 @@ class Parmapper(Iterable, ParmapperMixin):
 
     def __iter__(self):
         self._start()
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 z = self._tasks.get()
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     # raise self._worker.exception()
                     raise self._tasks.get()
 
@@ -1412,6 +1420,8 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
 
     async def __aiter__(self):
         self._start()
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 try:
@@ -1421,9 +1431,9 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
                     # TODO: how to avoid this sleep?
                     continue
 
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     # raise self._worker.exception()
                     raise self._tasks.get()
 
@@ -1558,22 +1568,24 @@ class ParmapperAsync(Iterable):
             stopped = self._stopped
             return_exceptions = self._return_exceptions
             n_submitted = 0
+            finished = FINISHED
+            stopped = STOPPED
             while True:
                 v = await tasks.get()
-                if v == FINISHED:
+                if v == finished:
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
                     try:
-                        outstream.put_nowait(FINISHED)
+                        outstream.put_nowait(finished)
                     except queue.Full:
-                        await loop.run_in_executor(thread_pool, outstream.put, FINISHED)
+                        await loop.run_in_executor(thread_pool, outstream.put, finished)
                     # No more cleanup is needed.
                     return
-                if v == STOPPED:
+                if v == stopped:
                     try:
-                        outstream.put_nowait(STOPPED)
+                        outstream.put_nowait(stopped)
                     except queue.Full:
-                        await loop.run_in_executor(thread_pool, outstream.put, STOPPED)
+                        await loop.run_in_executor(thread_pool, outstream.put, stopped)
                     e = await tasks.get()
                     # This is placed by `enqueue`, hence
                     # must be the last item in the queue.
@@ -1615,9 +1627,9 @@ class ParmapperAsync(Iterable):
             cancelling = []
             while True:
                 v = await tasks.get()
-                if v == FINISHED:
+                if v == finished:
                     break
-                if v == STOPPED:
+                if v == stopped:
                     await tasks.get()
                     break
                 x, t = v
@@ -1648,12 +1660,14 @@ class ParmapperAsync(Iterable):
     def __iter__(self):
         self._start()
         outstream = self._outstream
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 z = outstream.get()
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     raise outstream.get()
 
                 x, y = z
@@ -1735,15 +1749,16 @@ class AsyncParmapperAsync(AsyncIterable):
             return
         self._worker.cancel()
         # At this point `self._worker` could have finished.
-
+        finished = FINISHED
+        stopped = STOPPED
         if not done:
             tasks = self._tasks
             tt = []
             while True:
                 z = await tasks.get()
-                if z == FINISHED:
+                if z == finished:
                     break
-                if z == STOPPED:
+                if z == stopped:
                     _ = tasks.get()
                     break
                 x, t = z
@@ -1767,13 +1782,15 @@ class AsyncParmapperAsync(AsyncIterable):
         await self._start()
         tasks = self._tasks
         done = False
+        finished = FINISHED
+        stopped = STOPPED
         try:
             while True:
                 z = await tasks.get()
-                if z == FINISHED:
+                if z == finished:
                     done = True
                     break
-                if z == STOPPED:
+                if z == stopped:
                     e = await tasks.get()
                     done = True
                     raise e
