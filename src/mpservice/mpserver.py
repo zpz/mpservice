@@ -1603,7 +1603,7 @@ class Server:
                 with pipeline_notfull:
                     pipeline_notfull.notify()
 
-        notification_thread = Thread(target=notify, args=(nomoredata, ))
+        notification_thread = Thread(target=notify, args=(nomoredata,))
         notification_thread.start()
 
         while True:
