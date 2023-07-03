@@ -744,10 +744,10 @@ class SyncIter(Iterable):
     def _worker(self):
         async def main():
             q = self._q
-            stopped = self._stopped
+            to_stop = self._stopped
             try:
                 async for x in self._instream:
-                    if stopped.is_set():
+                    if to_stop.is_set():
                         while True:
                             try:
                                 q.get_nowait()
@@ -1300,12 +1300,12 @@ class Parmapper(Iterable, ParmapperMixin):
     def _run_worker(self):
         func = self._func
         kwargs = self._func_kwargs
-        stopped = self._stopped
+        to_stop = self._stopped
         executor = self._executor
         tasks = self._tasks
         try:
             for x in self._instream:
-                if stopped.is_set():
+                if to_stop.is_set():
                     break
                 t = executor.submit(func, x, loud_exception=False, **kwargs)
                 tasks.put((x, t))
@@ -1397,12 +1397,12 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         async def enqueue():
             func = self._func
             kwargs = self._func_kwargs
-            stopped = self._stopped
+            to_stop = self._stopped
             executor = self._executor
             tasks = self._tasks
             try:
                 async for x in self._instream:
-                    if stopped.is_set():
+                    if to_stop.is_set():
                         break
                     t = executor.submit(func, x, loud_exception=False, **kwargs)
                     tasks.put((x, t))
@@ -1543,11 +1543,11 @@ class ParmapperAsync(Iterable):
             loop = asyncio.get_running_loop()
             func = self._func
             kwargs = {**self._func_kwargs, **self._async_context}
-            stopped = self._stopped
+            to_stop = self._stopped
             try:
                 instream = AsyncIter(self._instream)
                 async for x in instream:
-                    if stopped.is_set():
+                    if to_stop.is_set():
                         break
                     t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))
@@ -1565,7 +1565,7 @@ class ParmapperAsync(Iterable):
             loop = asyncio.get_running_loop()
             thread_pool = get_shared_thread_pool()
             outstream = self._outstream
-            stopped = self._stopped
+            to_stop = self._stopped
             return_exceptions = self._return_exceptions
             n_submitted = 0
             finished = FINISHED
@@ -1595,7 +1595,7 @@ class ParmapperAsync(Iterable):
                         await loop.run_in_executor(thread_pool, outstream.put, e)
                     # No more cleanup is needed.
                     return
-                if stopped.is_set():
+                if to_stop.is_set():
                     break
                 x, t = v
                 n_submitted += 1
@@ -1607,7 +1607,7 @@ class ParmapperAsync(Iterable):
                     except queue.Full:
                         await loop.run_in_executor(thread_pool, outstream.put, (x, e))
                     if not return_exceptions:
-                        stopped.set()  # signal `enqueue` to stop
+                        to_stop.set()  # signal `enqueue` to stop
                         break
                 else:
                     try:
@@ -1620,9 +1620,9 @@ class ParmapperAsync(Iterable):
             # cancel those that are not finished.
             # Do not cancel and wait for cancellation to finish one by one.
             # Instead, send cancel signal into all of them, then wait on them.
-            if not stopped.is_set():
+            if not to_stop.is_set():
                 raise ValueError(
-                    f"expecting `stopped.is_set()` to be True but got: {stopped.is_set()}"
+                    f"expecting `stopped.is_set()` to be True but got: {to_stop.is_set()}"
                 )
             cancelling = []
             while True:
