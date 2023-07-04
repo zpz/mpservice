@@ -37,7 +37,6 @@ from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
 
 import psutil
-from deprecation import deprecated
 
 from mpservice import TimeoutError
 
