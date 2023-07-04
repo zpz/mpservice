@@ -484,7 +484,7 @@ class Worker(ABC):
                 # Finally, log this if `batch_size_log_cadence` is "truthy"
                 # and there has been any unlogged batch.
                 print_batching_info()
-            _ = collector_thread.result()
+            collector_thread.join()
 
     def _build_input_batches(self, q_in, q_out):
         # This background thread get elements from `q_in`
@@ -776,7 +776,7 @@ class ProcessServlet(Servlet):
         assert self._started
         self._q_in.put(NOMOREDATA)
         for w in self._workers:
-            _ = w.result()
+            w.join()
         self._workers = []
         self._started = False
 
@@ -886,7 +886,7 @@ class ThreadServlet(Servlet):
         assert self._started
         self._q_in.put(NOMOREDATA)
         for w in self._workers:
-            _ = w.result()
+            w.join()
         self._workers = []
         self._started = False
 
@@ -1168,7 +1168,7 @@ class EnsembleServlet(Servlet):
         for s in self._servlets:
             s.stop()
         for t in self._threads:
-            _ = t.result()
+            t.join()
         self._reset()
         self._started = False
 
@@ -1235,7 +1235,7 @@ class SwitchServlet(Servlet):
         self._qin.put(NOMOREDATA)
         for s in self._servlets:
             s.stop()
-        _ = self._thread_enqueue.result()
+        self._thread_enqueue.join()
         self._reset()
         self._started = False
 
@@ -1629,11 +1629,11 @@ class Server:
     def debug_info(self):
         return _server_debug_info(self)
 
-    @deprecated(
-        deprecated_in='0.13.5',
-        removed_in='0.14.0',
-        details='Use ``StreamServer`` instead.',
-    )
+    # @deprecated(
+    #     deprecated_in='0.13.5',
+    #     removed_in='0.14.0',
+    #     details='Use ``StreamServer`` instead.',
+    # )
     def stream(
         self,
         data_stream: Iterable,
@@ -1641,7 +1641,7 @@ class Server:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 60,
+        timeout: int | float = 600,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1905,7 +1905,7 @@ class StreamServer:
             # No need to pair them with input; just discard.
             for _ in range(n):
                 q_out.get()
-            worker.result()
+            worker.join()
 
 
 class AsyncServer:
@@ -2079,7 +2079,7 @@ class AsyncServer:
     def debug_info(self) -> dict:
         return _server_debug_info(self)
 
-    @deprecated(deprecated_in='0.13.5', removed_in='0.13.8')
+    # @deprecated(deprecated_in='0.13.5', removed_in='0.13.8')
     async def stream(
         self,
         data_stream: AsyncIterable,
@@ -2087,7 +2087,7 @@ class AsyncServer:
         *,
         return_x: bool = False,
         return_exceptions: bool = False,
-        timeout: int | float = 60,
+        timeout: int | float = 600,
     ) -> AsyncIterator:
         '''
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
