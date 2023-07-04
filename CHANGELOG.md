@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.13.5] - in progress
+## [0.13.5] - 2023-07-03
 
 - New class ``mpservice.streamer.EagerBatcher``.
-- New class ``mpservice.mpserver.StreamServer``, intended to replace and deprecate ``mpservice.mpserver.Server.stream``.
+- New class ``mpservice.mpserver.StreamServer``. This intends to eventually replace and deprecate ``mpservice.mpserver.Server.stream``,
+  but the current version has not shown speed benefits yet, despite being simpler.
 - Speed improvements to ``mpserver`` and ``streamer``.
 - ``mpservice._streamer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}`` were moved into
   ``mpservice.queue``, ``mpservice.multiprocessing.queues``, ``mpservice.asyncio`` respectively and all renamed to ``IterableQueue``.
