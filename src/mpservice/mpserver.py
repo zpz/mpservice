@@ -2025,7 +2025,6 @@ class AsyncServer:
             await shutdown(nomoredata, crashed)
 
 
-
 class StreamServer:
     '''
     This class is experimental.
@@ -2036,6 +2035,7 @@ class StreamServer:
     it has not demonstrated speed (or throughput) benefits. Until then,
     there is no plan to deprecate :meth:`Server.stream`.
     '''
+
     @final
     @classmethod
     def get_mp_context(cls):
