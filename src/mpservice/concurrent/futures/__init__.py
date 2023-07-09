@@ -87,6 +87,7 @@ class ProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
         super().__init__(max_workers=max_workers, mp_context=mp_context, **kwargs)
 
     def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
+
         if loud_exception:
             return super().submit(_loud_process_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)

@@ -3,6 +3,9 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+# To fail on warning, use
+#    make html SPHINXOPTS="-W"
+
 import mpservice
 
 # -- Project information -----------------------------------------------------
@@ -41,10 +44,10 @@ autodoc_default_options = {
 }
 autodoc_class_signature = 'separated'
 autodoc_typehints = 'signature'
+autodoc_inherit_docstrings = False
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'links.rst']
-
 
 
 # -- Options for HTML output -------------------------------------------------

@@ -1,22 +1,23 @@
 """
 ``mpservice.mpserver`` provides classes that use `multiprocessing`_ to perform CPU-bound operations
 taking advantage of all the CPUs (i.e. cores) on the machine.
-
-Using `threading`_ to perform IO-bound operations is also supported, although that is not the initial focus.
+Using `threading`_ to perform IO-bound operations is equally supported, although it was not the initial focus.
 
 There are three levels of constructs.
 
 1. On the lowest level is :class:`Worker`. This defines operations on a single input item
-   or a batch of items in usual sync code. This is supposed to run in its own process (thread)
-   and use that single process (thread) only.
+   or a batch of items in usual sync code. This is supposed to run in its own process (or thread)
+   and use that single process (or thread) only. In other words, to keep things simple, the user-defined
+   behavior of :class:`Worker` should not launch processes or threads.
 
-2. On the middle level is :class:`Servlet`. A basic form of Servlet arranges to execute a :class:`Worker` in multiple
-   processes (threads). A more "advanced" form of Servlet arranges to executive multiple
-   Servlets as a sequence or an ensemble.
+2. On the middle level is :class:`Servlet`. A basic form of Servlet arranges to execute a :class:`Worker` in one or more
+   processes (or threads). More advanced forms of Servlet arrange to executive multiple
+   Servlets as a sequence or an ensemble, or select a Servlet (from a set of Servlets) to process
+   a particular input element based on certain conditions.
 
 3. On the top level is :class:`Server` (or :class:`AsyncServer`). A Server
    handles interfacing with the outside world, while passing the "real work" to
-   a :class:`Servlet` and relays the latter's result to the requester.
+   a :class:`Servlet` and relays the latter's result back to the outside world.
 """
 
 from __future__ import annotations
