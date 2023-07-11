@@ -50,7 +50,7 @@ class IterableQueue(asyncio.Queue, Generic[Elem]):
         # `get` uses `get_nowait`.
         z = super().get_nowait(*args, **kwargs)
         if z == FINISHED:
-            super().put_nowait(FINISHED)
+            super().put_nowait(z)
             raise QueueFinished
         return z
 

@@ -44,7 +44,7 @@ class IterableQueue(multiprocessing.queues.Queue, Generic[Elem]):
     def get(self, *args, **kwargs):
         z = super().get(*args, **kwargs)
         if z == FINISHED:
-            super().put(FINISHED)
+            super().put(z)
             raise Finished
         return z
 

@@ -63,7 +63,7 @@ class IterableQueue(queue.Queue, Generic[Elem]):
             # If another thread is trying to ``get`` now, it will either get
             # a remaining ``FINISHED`` or (if the queue is empty) wait for
             # the following ``self.finish()`` to put a ``FINISHED`` in the queue.
-            super().put(FINISHED)
+            super().put(z)
             # Put another indicator in the queue so that
             # the closing mark is always present.
             raise Finished
