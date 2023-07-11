@@ -14,7 +14,6 @@ Serving using named pipes
 .. automodule:: mpservice.pipe
     :no-members:
     :no-special-members:
-    :no-undoc-members:
 
 .. autoclass:: mpservice.pipe._Pipe
 
@@ -26,6 +25,11 @@ Serving using named pipes
 
 Serving using sockets
 ---------------------
+
+.. automodule:: mpservice.socket
+    :no-members:
+    :no-special-members:
+
 
 .. autoclass:: mpservice.socket.SocketApplication
 

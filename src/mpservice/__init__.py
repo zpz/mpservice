@@ -14,14 +14,14 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
    for the latter use case.
 2. Stream processing, i.e. processing a long, possibly infinite stream
    of input data, with multiple operators in the pipeline. A main use case
-   is that one or more of the operators is I/O bound or CPU bound,
+   is that one or more of the operators is I/O bound or compute intensive,
    hence can benefit from concurrency.
-3. Utilities in ``mpservice.multiprocessing`` to enhance or customize Python's standard
-   ``multiprocessing`` module.
+3. Utilities in :mod:`mpservice.multiprocessing` to enhance or customize Python's standard
+   :mod:`multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ module.
 """
 
 
-__version__ = "0.13.5"
+__version__ = "0.13.6b1"
 
 
 import builtins

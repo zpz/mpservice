@@ -1,3 +1,7 @@
+"""The module ``mpservice.socket`` provides tools to use sockets to communicate between
+two Python processes on the same machine.
+"""
+
 from __future__ import annotations
 
 import asyncio

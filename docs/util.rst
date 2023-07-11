@@ -1,6 +1,6 @@
-==============
-More utilities
-==============
+====================
+Additional utilities
+====================
 
 
 Threading
