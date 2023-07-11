@@ -676,6 +676,7 @@ class ProcessServlet(Servlet):
         worker_cls: type[Worker],
         *,
         cpus: None | int | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
+        worker_name: str = None,
         **kwargs,
     ):
         """
@@ -710,6 +711,9 @@ class ProcessServlet(Servlet):
             4. CPUs 4, 5, 6
             5. CPU 4
             6. Any CPU, no pinning
+        worker_name
+            Prefix to the name of the worker processes. If not provided, a default is
+            constructed based on the class name.
         **kwargs
             Passed to the ``__init__`` method of ``worker_cls``.
 
@@ -729,6 +733,7 @@ class ProcessServlet(Servlet):
             ]
         self._init_kwargs = kwargs
         self._workers = []
+        self._worker_name = worker_name
         self._started = False
 
     def start(self, q_in: _SimpleProcessQueue, q_out: _SimpleProcessQueue):
@@ -745,10 +750,11 @@ class ProcessServlet(Servlet):
             A queue for results.
         """
         assert not self._started
+        basename = self._worker_name or f"{self._worker_cls.__name__}-process"
         for worker_index, cpu in enumerate(self._cpus):
             # Create as many processes as the length of `cpus`.
             # Each process is pinned to the specified cpu core.
-            sname = f"{self._worker_cls.__name__}-process-{worker_index}"
+            sname = f"{basename}-{worker_index}"
             logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
             p = Process(
                 target=self._worker_cls.run,
@@ -810,6 +816,7 @@ class ThreadServlet(Servlet):
         worker_cls: type[Worker],
         *,
         num_threads: None | int = None,
+        worker_name: str | None = None,
         **kwargs,
     ):
         """
@@ -820,6 +827,9 @@ class ThreadServlet(Servlet):
         num_threads
             The number of threads to create. Each thread will host and run
             an instance of ``worker_cls``.
+        worker_name
+            Prefix to the name of the worker threads. If not provided, a default is
+            constructed based on the class name.
         **kwargs
             Passed on the ``__init__`` method of ``worker_cls``.
 
@@ -832,6 +842,7 @@ class ThreadServlet(Servlet):
         self._num_threads = num_threads or 1
         self._init_kwargs = kwargs
         self._workers = []
+        self._worker_name = worker_name
         self._started = False
 
     def start(
@@ -858,8 +869,9 @@ class ThreadServlet(Servlet):
             queues are both :class:`_SimpleProcessQueue`\\s.
         """
         assert not self._started
+        basename = self._worker_name or f"{self._worker_cls.__name__}-thread"
         for ithread in range(self._num_threads):
-            sname = f"{self._worker_cls.__name__}-thread-{ithread}"
+            sname = f"{basename}-{ithread}"
             logger.info("adding worker <%s> in thread ...", sname)
             w = Thread(
                 target=self._worker_cls.run,
