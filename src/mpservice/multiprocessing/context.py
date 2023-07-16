@@ -367,6 +367,21 @@ class SpawnContext(multiprocessing.context.SpawnContext):
             return self
         return super().get_context(method)
 
+    def Queue(self, maxsize=0):
+        from .queues import Queue
+
+        return Queue(maxsize, ctx=self.get_context())
+
+    def JoinableQueue(self, maxsize: int = 0):
+        from .queues import JoinableQueue
+
+        return JoinableQueue(maxsize, ctx=self.get_context())
+
+    def SimpleQueue(self):
+        from .queues import SimpleQueue
+
+        return SimpleQueue(ctx=self.get_context())
+
     def IterableQueue(self, maxsize=0):
         from .queues import IterableQueue
 

@@ -6,11 +6,15 @@ Elem = TypeVar('Elem')
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 
 
+class Queue(asyncio.Queue, Generic[Elem]):
+    pass
+
+
 class QueueFinished(Exception):
     pass
 
 
-class IterableQueue(asyncio.Queue, Generic[Elem]):
+class IterableQueue(Queue[Elem]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._finished_ = False

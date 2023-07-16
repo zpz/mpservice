@@ -7,7 +7,19 @@ from mpservice.queue import FINISHED, Finished
 Elem = TypeVar('Elem')
 
 
-class IterableQueue(multiprocessing.queues.Queue, Generic[Elem]):
+class Queue(multiprocessing.queues.Queue, Generic[Elem]):
+    pass
+
+
+class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
+    pass
+
+
+class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
+    pass
+
+
+class IterableQueue(Queue[Elem]):
     # Refer to ``mpservice.queue.IterableQueue``.
 
     def __init__(self, maxsize=0, *, ctx):
