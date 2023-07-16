@@ -18,7 +18,7 @@ class Finished(Exception):
     pass
 
 
-class IterableQueue(Queue):
+class IterableQueue(Queue[Elem]):
     # In the implementations of ``queue.Queue`` and ``multiprocessing.queues.Queue``,
     # ``put_nowait`` and ``get_nowait`` simply call ``put`` and ``get``.
     # In the implementation of ``asyncio.queues.Queue``, however,

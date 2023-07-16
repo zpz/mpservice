@@ -19,7 +19,7 @@ class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
     pass
 
 
-class IterableQueue(Queue):
+class IterableQueue(Queue[Elem]):
     # Refer to ``mpservice.queue.IterableQueue``.
 
     def __init__(self, maxsize=0, *, ctx):

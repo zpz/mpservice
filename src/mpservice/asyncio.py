@@ -14,7 +14,7 @@ class QueueFinished(Exception):
     pass
 
 
-class IterableQueue(Queue):
+class IterableQueue(Queue[Elem]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._finished_ = False
