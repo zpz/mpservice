@@ -6,11 +6,19 @@ Elem = TypeVar('Elem')
 FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
 
 
+class Queue(queue.Queue, Generic[Elem]):
+    pass
+
+
+class SimpleQueue(queue.SimpleQueue, Generic[Elem]):
+    pass
+
+
 class Finished(Exception):
     pass
 
 
-class IterableQueue(queue.Queue, Generic[Elem]):
+class IterableQueue(Queue):
     # In the implementations of ``queue.Queue`` and ``multiprocessing.queues.Queue``,
     # ``put_nowait`` and ``get_nowait`` simply call ``put`` and ``get``.
     # In the implementation of ``asyncio.queues.Queue``, however,

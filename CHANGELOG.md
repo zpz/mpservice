@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.13.6] - in progress
 
 - ``mpservice.mpserver.{ProcessServlet, ThreadServlet}`` get new parameter ``worker_name``.
+- Added trivial subclasses of the standard ``queue.{Queue, SimpleQueue}``, ``asyncio.Queue``, ``multiprocessing.queues.{Queue, SimpleQueue}``; the subclasses are generic, hence can take annotations for the type of the elements contained in the queues.
 
 
 ## [0.13.5] - 2023-07-03

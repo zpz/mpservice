@@ -10,8 +10,9 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
 import time
+from typing import Any
 import warnings
-from multiprocessing import util
+from multiprocessing import queues, util
 
 from mpservice import TimeoutError
 
@@ -367,9 +368,20 @@ class SpawnContext(multiprocessing.context.SpawnContext):
             return self
         return super().get_context(method)
 
+    def Queue(self, maxsize=0):
+        from .queues import Queue
+        return Queue(maxsize, ctx=self.get_context())
+
+    def JoinableQueue(self, maxsize: int = 0):
+        from .queues import JoinableQueue
+        return JoinableQueue(maxsize, ctx=self.get_context())
+    
+    def SimpleQueue(self):
+        from .queues import SimpleQueue
+        return SimpleQueue(ctx=self.get_context())
+
     def IterableQueue(self, maxsize=0):
         from .queues import IterableQueue
-
         return IterableQueue(maxsize, ctx=self.get_context())
 
 
