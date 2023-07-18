@@ -1,8 +1,15 @@
 import pytest
-from mpservice.experimental.asyncio import IterableQueue as AsyncIterableQueue, QueueFinished
-from mpservice.multiprocessing import Process
-from mpservice.experimental.multiprocessing.queues import IterableQueue as IterableProcessQueue
+from mpservice.experimental.asyncio import (
+    IterableQueue as AsyncIterableQueue,
+)
+from mpservice.experimental.asyncio import (
+    QueueFinished,
+)
+from mpservice.experimental.multiprocessing.queues import (
+    IterableQueue as IterableProcessQueue,
+)
 from mpservice.experimental.queue import Finished, IterableQueue
+from mpservice.multiprocessing import Process
 from mpservice.threading import Thread
 
 

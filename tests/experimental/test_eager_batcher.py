@@ -1,8 +1,8 @@
 from time import sleep
 
 from mpservice.experimental.queue import IterableQueue
-from mpservice.threading import Thread
 from mpservice.experimental.streamer import EagerBatcher
+from mpservice.threading import Thread
 
 
 def test_eager_batcher():

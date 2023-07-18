@@ -8,7 +8,6 @@ from mpservice.multiprocessing import MP_SPAWN_CTX
 Elem = TypeVar('Elem')
 
 
-
 class IterableQueue(multiprocessing.queues.Queue, Generic[Elem]):
     # Refer to ``mpservice.experimental.queue.IterableQueue``.
 

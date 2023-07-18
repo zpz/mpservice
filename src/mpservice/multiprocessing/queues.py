@@ -1,7 +1,6 @@
 import multiprocessing
 from typing import Generic, TypeVar
 
-
 Elem = TypeVar('Elem')
 
 

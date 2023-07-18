@@ -1,9 +1,10 @@
-
 import queue
 from collections.abc import Iterable
 from time import perf_counter
 
-from mpservice.experimental.multiprocessing.queues import IterableQueue as IterableMpQueue
+from mpservice.experimental.multiprocessing.queues import (
+    IterableQueue as IterableMpQueue,
+)
 from mpservice.experimental.queue import Finished, IterableQueue
 
 
