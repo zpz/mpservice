@@ -39,8 +39,8 @@ doc = [
 test = [
     "coverage[toml]",
     "Faker",
-    "httpx",
     "mypy",
+    "httpx",
     "pytest",
     "pytest-asyncio",
     "requests",
@@ -48,6 +48,7 @@ test = [
     "zpz",
     'ruff',
 ]
+
 
 
 [tool.flit.module]
