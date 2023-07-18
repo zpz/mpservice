@@ -1,14 +1,12 @@
 import pytest
-from mpservice.asyncio import IterableQueue as AsyncIterableQueue
-from mpservice.asyncio import QueueFinished
-from mpservice.multiprocessing import IterableQueue as IterableProcessQueue
+from mpservice.experimental.asyncio import IterableQueue as AsyncIterableQueue, QueueFinished
 from mpservice.multiprocessing import Process
-from mpservice.multiprocessing.queues import IterableQueue as IterableProcessQueueType
-from mpservice.queue import Finished, IterableQueue
+from mpservice.experimental.multiprocessing.queues import IterableQueue as IterableProcessQueue
+from mpservice.experimental.queue import Finished, IterableQueue
 from mpservice.threading import Thread
 
 
-def _iterqueue_put(q: IterableQueue[int] | IterableProcessQueueType[int]):
+def _iterqueue_put(q: IterableQueue[int] | IterableProcessQueue[int]):
     q.put(100)
     return 100
 

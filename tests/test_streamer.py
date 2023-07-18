@@ -7,13 +7,10 @@ from time import perf_counter, sleep
 import pytest
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
-from mpservice.queue import IterableQueue
 from mpservice.streamer import (
-    EagerBatcher,
     Stream,
     tee,
 )
-from mpservice.threading import Thread
 
 
 async def agen(n=10):
@@ -1037,31 +1034,3 @@ def test_tee():
             f2 = pool.submit(sum, t2)
             assert f1.result() == sum(x + 2 for x in data)
             assert f2.result() == sum(x + 3 for x in data)
-
-
-def test_eager_batcher():
-    def stuff(q):
-        sleep(0.2)
-        q.put('OK')
-        q.put(1)
-        q.put(2)
-        sleep(0.1)
-        q.put(3)
-        q.put(4)
-        sleep(0.05)
-        q.put(5)
-        sleep(0.4)
-        q.put(6)
-        sleep(0.3)
-        q.put(7)
-        sleep(0.25)
-        q.finish()
-
-    q = IterableQueue()
-    stuffer = Thread(target=stuff, args=(q,))
-    stuffer.start()
-    walker = EagerBatcher(q, batch_size=3, timeout=0.2)
-    q.get()
-    zz = list(walker)
-    print(zz)
-    assert zz == [[1, 2, 3], [4, 5], [6], [7]]
