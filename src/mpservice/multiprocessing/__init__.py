@@ -29,6 +29,7 @@ from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
 from mpservice.threading import Thread
 
+from . import queues, server_process
 from .context import MP_SPAWN_CTX, SpawnProcess
 from .remote_exception import (
     RemoteException,
@@ -38,7 +39,6 @@ from .remote_exception import (
 from .server_process import (
     ServerProcess,
 )
-from . import queues, server_process
 
 __all__ = [
     'SpawnProcess',
