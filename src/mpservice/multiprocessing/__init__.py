@@ -29,6 +29,7 @@ from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
 from mpservice.threading import Thread
 
+from . import queues, server_process
 from .context import MP_SPAWN_CTX, SpawnProcess
 from .remote_exception import (
     RemoteException,
@@ -45,6 +46,8 @@ __all__ = [
     'get_remote_traceback',
     'is_remote_exception',
     'MP_SPAWN_CTX',
+    'queues',
+    'server_process',
     'ServerProcess',
     'wait',
     'as_completed',

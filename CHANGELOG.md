@@ -5,10 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.13.6] - in progress
+## [0.13.6] - 2023-07-18
 
 - ``mpservice.mpserver.{ProcessServlet, ThreadServlet}`` get new parameter ``worker_name``.
 - Added trivial subclasses of the standard ``queue.{Queue, SimpleQueue}``, ``asyncio.Queue``, ``multiprocessing.queues.{Queue, SimpleQueue}``; the subclasses are generic, hence can take annotations for the type of the elements contained in the queues.
+- New subpackage `mpservice.experimental`; moved all the few types of ``IterableQueue`` as well as ``mpservice.streamer.EagerBatcher`` into it.
+- Import some subpackages in ``__init__.py``.
 
 
 ## [0.13.5] - 2023-07-03
