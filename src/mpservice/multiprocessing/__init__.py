@@ -38,6 +38,7 @@ from .remote_exception import (
 from .server_process import (
     ServerProcess,
 )
+from . import queues, server_process
 
 __all__ = [
     'SpawnProcess',
@@ -45,6 +46,8 @@ __all__ = [
     'get_remote_traceback',
     'is_remote_exception',
     'MP_SPAWN_CTX',
+    'queues',
+    'server_process',
     'ServerProcess',
     'wait',
     'as_completed',
