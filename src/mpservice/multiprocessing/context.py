@@ -9,6 +9,7 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
+import os
 import time
 import warnings
 from multiprocessing import util
@@ -191,11 +192,18 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         try:
             result = self._result_and_error_.recv()
             error = self._result_and_error_.recv()
-        except EOFError:
+        except EOFError as exc:
             # the process has been terminated by calling ``self.terminate()``
             while self.exitcode is None:
                 time.sleep(0.001)
-            assert self.exitcode == -15, f"exitcode is {self.exitcode}"
+            exitcode = -self.exitcode
+            if exitcode != 15:
+                msg = os.strerror(exitcode)
+                if exitcode == 9:
+                    msg += ': possibly out of memory'
+                error = OSError(exitcode, msg)
+                error.__cause__ = exc
+                print(f'Error in process "{self.name}": {error}')
 
         self._result_and_error_.close()
         self._result_and_error_ = None
@@ -302,7 +310,10 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             # ``signal.Signals.SIGKILL`` is 9.
             # ``signal.Signals.SIGINT`` is 2.
         else:
-            raise ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+            if self._future_.exception():
+                raise self._future_.exception()
+            else:
+                raise ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 

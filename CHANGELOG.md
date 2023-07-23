@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.7] - in progress
+
+- Finetune exit status handling of ``SpawnProcess``.
+
+
 ## [0.13.6] - 2023-07-18
 
 - ``mpservice.mpserver.{ProcessServlet, ThreadServlet}`` get new parameter ``worker_name``.
