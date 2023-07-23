@@ -313,7 +313,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             if self._future_.exception():
                 raise self._future_.exception()
             else:
-                raise ChildProcessError(f"exitcode {exitcode}, {errno.errorcode[exitcode]}")
+                raise ChildProcessError(
+                    f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
+                )
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 
