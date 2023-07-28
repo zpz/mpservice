@@ -60,9 +60,6 @@ class StreamServer:
     def __exit__(self, *args):
         self.servlet.stop()
 
-
-
-
     def stream(
         self,
         data_stream: Iterable,
