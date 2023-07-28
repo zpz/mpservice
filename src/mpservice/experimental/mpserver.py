@@ -1,7 +1,7 @@
-import threading
-from collections.abc import Iterator, Iterable
-from typing import final
 import queue
+import threading
+from collections.abc import Iterable, Iterator
+from typing import final
 
 from mpservice.mpserver import (
     MP_SPAWN_CTX,
@@ -13,7 +13,6 @@ from mpservice.mpserver import (
     _SimpleProcessQueue,
     _SimpleThreadQueue,
 )
-import psutil
 
 
 class StreamServer:
