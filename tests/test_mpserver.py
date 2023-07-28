@@ -143,7 +143,6 @@ def test_sequential_stream():
         assert list(s) == [v * v for v in data]
 
 
-
 def test_stream_error():
     with Server(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = list(range(30))
@@ -151,6 +150,7 @@ def test_stream_error():
         ss = service.stream(data)
         with pytest.raises(TypeError):
             assert list(ss) == [v * v for v in data]
+
 
 def test_stream_early_quit():
     with Server(ProcessServlet(Square, cpus=[1, 2, 3]), capacity=10) as service:
@@ -340,7 +340,6 @@ def test_thread():
         assert service.call(3) == 6
         for x, y in service.stream(range(100), return_x=True):
             assert y == x + 3
-
 
 
 class Error1(Exception):
@@ -625,4 +624,3 @@ def test_preprocess():
                 assert isinstance(y, ValueError)
             else:
                 assert y == x + 3
-

@@ -37,8 +37,6 @@ from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
 
-import psutil
-
 from ._common import TimeoutError
 from ._queues import SingleLane
 from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
@@ -2011,6 +2009,7 @@ class AsyncServer:
                         yield y
         finally:
             await shutdown(nomoredata, crashed)
+
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
     """

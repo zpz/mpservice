@@ -1,6 +1,7 @@
 import time
 
 import pytest
+from mpservice.experimental.mpserver import StreamServer
 from mpservice.mpserver import (
     EnsembleServlet,
     ProcessServlet,
@@ -9,7 +10,6 @@ from mpservice.mpserver import (
     Worker,
     make_worker,
 )
-from mpservice.experimental.mpserver import StreamServer
 
 
 class Shift(Worker):
@@ -31,13 +31,11 @@ class Square(Worker):
         return [v * v for v in x]
 
 
-
 def test_sequential_streamserver():
     with StreamServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         data = range(100)
         ss = service.stream(data)
         assert list(ss) == [v * v for v in data]
-
 
 
 def test_streamserver_error():
@@ -47,7 +45,6 @@ def test_streamserver_error():
         ss = service.stream(data)
         with pytest.raises(TypeError):
             assert list(ss) == [v * v for v in data]
-
 
 
 def test_streamserver_early_quit():
@@ -60,8 +57,6 @@ def test_streamserver_early_quit():
             n += 1
             if n > 33:
                 break
-
-
 
 
 his_wide_server = SequentialServlet(
@@ -99,7 +94,6 @@ class TakeMean(Worker):
         return sum(x) / len(x)
 
 
-
 def test_thread_streamserver():
     s1 = ThreadServlet(AddOne, num_threads=3)
     s2 = ThreadServlet(AddFive)
@@ -108,8 +102,6 @@ def test_thread_streamserver():
     with StreamServer(s) as service:
         for x, y in service.stream(range(100), return_x=True):
             assert y == x + 3
-
-
 
 
 class WorkerWithPreprocess(Worker):
@@ -122,7 +114,6 @@ class WorkerWithPreprocess(Worker):
         if self.batch_size:
             return [v + 3 for v in x]
         return x + 3
-
 
 
 def test_preprocess_streamserver():

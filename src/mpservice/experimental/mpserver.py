@@ -1,7 +1,19 @@
+import threading
+from collections.abc import Iterator, Iterable
+from typing import final
+import queue
+
 from mpservice.mpserver import (
-    final, MP_SPAWN_CTX, Servlet, _init_server, _SimpleThreadQueue, _SimpleProcessQueue,
-    psutil, Iterable, Iterator, NOMOREDATA, queue, Thread, threading, RemoteException,
+    MP_SPAWN_CTX,
+    NOMOREDATA,
+    RemoteException,
+    Servlet,
+    Thread,
+    _init_server,
+    _SimpleProcessQueue,
+    _SimpleThreadQueue,
 )
+import psutil
 
 
 class StreamServer:
@@ -48,9 +60,6 @@ class StreamServer:
 
     def __exit__(self, *args):
         self.servlet.stop()
-        if self._main_cpus is not None:
-            psutil.Process().cpu_affinity(cpus=[])
-            # Reset CPU affinity.
 
     def stream(
         self,
@@ -157,4 +166,3 @@ class StreamServer:
             for _ in range(n):
                 q_out.get()
             worker.join()
-
