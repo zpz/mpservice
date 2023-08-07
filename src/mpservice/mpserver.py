@@ -174,7 +174,11 @@ class Worker(ABC):
             hence they should consist mainly of small, Python builtin types such as string, number, small dict's, etc.
             Be careful about passing custom class objects in ``**kwargs``.
         """
-        obj = cls(**init_kwargs)
+        try:
+            obj = cls(**init_kwargs)
+        except Exception as e:
+            q_out.put(None)
+            raise
         q_out.put(obj.name)
         # This sends a signal to the caller (or "coordinator")
         # indicating completion of init.
@@ -767,6 +771,8 @@ class ProcessServlet(Servlet):
             cpu.set(pid=p.pid)
             self._workers.append(p)
             name = q_out.get()
+            if name is None:
+                p.join()  # this will raise exception b/c worker __init__ failed
             logger.debug("   ... worker <%s> is ready", name)
 
         self._q_in = q_in
@@ -883,6 +889,8 @@ class ThreadServlet(Servlet):
             w.start()
             self._workers.append(w)
             name = q_out.get()
+            if name is None:
+                w.join()  # this will raise exception b/c worker __init__ failed
             logger.debug("   ... worker <%s> is ready", name)
 
         self._q_in = q_in
