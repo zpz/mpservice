@@ -624,3 +624,32 @@ def test_preprocess():
                 assert isinstance(y, ValueError)
             else:
                 assert y == x + 3
+
+
+class FailableWorker(Worker):
+    def __init__(self, x, **kwargs):
+        super().__init__(**kwargs)
+        if x > 10:
+            raise ValueError(x)
+        self._x = x
+
+    def call(self, x):
+        if self.batch_size:
+            return [_ + self._x for _ in x]
+        return x + self._x
+
+
+def test_worker_init_failure():
+    server = Server(ProcessServlet(FailableWorker, x=3))
+    with server:
+        assert server.call(8) == 11
+
+    server = Server(ProcessServlet(FailableWorker, x=30))
+    with pytest.raises(ValueError):
+        with server:
+            assert server.call(8) == 38
+
+    server = Server(ThreadServlet(FailableWorker, x=30))
+    with pytest.raises(ValueError):
+        with server:
+            assert server.call(8) == 38

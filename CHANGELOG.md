@@ -5,14 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.13.7] - in progress
+## [0.13.7] - 2023-08-07
 
 - Finetune exit status handling of ``SpawnProcess``.
 - ``mpservice.mpserver.StreamServer`` was moved into ``mpservice.experimental.mpserver``.
 - Parameter ``main_cpu`` to a few functions in ``mpservice.mpserver`` was removed.
 - Default value of parameter ``timeout`` to ``mpservice.mpserver.Server.stream`` and ``mpservice.mpserver.AsyncServer.stream``
   were changed from 600 to 3600, so that user almost never need to specify this parameter.
-  
+- in ``mpservice.mpserver``, if a Worker fails to start, the exception will propagate through ``Servlet.start`` into ``Server.__enter__``.
+
 
 ## [0.13.6] - 2023-07-18
 
