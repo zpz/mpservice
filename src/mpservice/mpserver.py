@@ -176,7 +176,7 @@ class Worker(ABC):
         """
         try:
             obj = cls(**init_kwargs)
-        except Exception as e:
+        except Exception:
             q_out.put(None)
             raise
         q_out.put(obj.name)

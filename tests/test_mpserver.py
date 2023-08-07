@@ -637,7 +637,7 @@ class FailableWorker(Worker):
         if self.batch_size:
             return [_ + self._x for _ in x]
         return x + self._x
-    
+
 
 def test_worker_init_failure():
     server = Server(ProcessServlet(FailableWorker, x=3))
