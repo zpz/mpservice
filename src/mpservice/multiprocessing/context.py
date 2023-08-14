@@ -394,11 +394,6 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
         return SimpleQueue(ctx=self.get_context())
 
-    def IterableQueue(self, maxsize=0):
-        from .queues import IterableQueue
-
-        return IterableQueue(maxsize, ctx=self.get_context())
-
 
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
 # The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.

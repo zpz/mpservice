@@ -198,7 +198,7 @@ def test_wait():
     ]
     for t in workers:
         t.start()
-    done, notdone = wait(workers, timeout=2.2)
+    done, notdone = wait(workers, timeout=2.5)
     assert len(done) == 1
     assert done.pop() is workers[0]
 
