@@ -1,5 +1,5 @@
-from time import sleep
 import queue
+from time import sleep
 
 from mpservice.experimental.streamer import EagerBatcher
 from mpservice.threading import Thread
