@@ -1,6 +1,6 @@
 from time import sleep
+import queue
 
-from mpservice.experimental.queue import IterableQueue
 from mpservice.experimental.streamer import EagerBatcher
 from mpservice.threading import Thread
 
@@ -21,9 +21,9 @@ def test_eager_batcher():
         sleep(0.3)
         q.put(7)
         sleep(0.25)
-        q.finish()
+        q.put(None)
 
-    q = IterableQueue()
+    q = queue.Queue()
     stuffer = Thread(target=stuff, args=(q,))
     stuffer.start()
     walker = EagerBatcher(q, batch_size=3, timeout=0.2)

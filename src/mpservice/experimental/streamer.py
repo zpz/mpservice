@@ -2,11 +2,6 @@ import queue
 from collections.abc import Iterable
 from time import perf_counter
 
-from mpservice.experimental.multiprocessing.queues import (
-    IterableQueue as IterableMpQueue,
-)
-from mpservice.experimental.queue import Finished, IterableQueue
-
 
 class EagerBatcher(Iterable):
     '''
@@ -18,28 +13,32 @@ class EagerBatcher(Iterable):
 
     def __init__(
         self,
-        instream: IterableQueue | IterableMpQueue,
+        instream,
         /,
         batch_size: int,
         timeout: float = None,
+        endmarker=None,
     ):
+        # ``instream`` is a queue (thread or process) with the specicial value ``endmarker``
+        # indicating the end of the stream.
         # ``timeout`` can be 0.
         self._instream = instream
         self._batch_size = batch_size
         if timeout is None:
             timeout = 3600 * 24  # effectively unlimited wait
         self._timeout = timeout
+        self._endmarker = endmarker
 
     def __iter__(self):
         q_in = self._instream
         batchsize = self._batch_size
         timeout = self._timeout
+        end = self._endmarker
 
         while True:
-            try:
-                z = q_in.get()  # wait as long as it takes to get one item.
-            except Finished:
-                return
+            z = q_in.get()  # wait as long as it takes to get one item.
+            if z is end or z == end:
+                break
 
             batch = [z]
             n = 1
@@ -55,9 +54,11 @@ class EagerBatcher(Iterable):
                     # get more towards the target batch-size
                     # even if it's already past the timeout deadline.
                     z = q_in.get(timeout=max(0, t))
-                except (queue.Empty, Finished):
+                except queue.Empty:
                     break
                 else:
+                    if z is end or z == end:
+                        break
                     batch.append(z)
                     n += 1
 
