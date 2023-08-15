@@ -2,10 +2,10 @@ import queue
 import threading
 from collections.abc import Iterable, Iterator
 from typing import final
+import concurrent.futures
 
 from mpservice.mpserver import (
     MP_SPAWN_CTX,
-    NOMOREDATA,
     RemoteException,
     Servlet,
     Thread,
@@ -94,7 +94,7 @@ class StreamServer:
             If ``False``, exceptions will be propagated right away, crashing the program.
         """
 
-        def _enqueue(data_stream, uid_x, nomoredata, stopped):
+        def _enqueue(data_stream, uid_x, stopped):
             q_in = self._q_in
             try:
                 for x in data_stream:
@@ -104,22 +104,21 @@ class StreamServer:
                     uid_x.put((uid, x))
                     q_in.put((uid, x))
             finally:
-                uid_x.put(nomoredata)
+                uid_x.put(None)
             # TODO: the workers do not know a stream has concluded.
             # They may be waiting for some extra time for batching.
             # This is not a big problem for long jobs, but for short ones
             # this can be a user experience issue.
 
-        nomoredata = NOMOREDATA
         uid_x = queue.Queue(self._capacity)
         stopped = threading.Event()
 
-        worker = Thread(
+        feeder = Thread(
             target=_enqueue,
-            args=(data_stream, uid_x, nomoredata, stopped),
+            args=(data_stream, uid_x, stopped),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
-        worker.start()
+        feeder.start()
 
         uid_y = {}
         null = object()
@@ -131,7 +130,7 @@ class StreamServer:
                 # Get one input item from ``uid_x``.
                 # Get its corresponding result, either already in cache ``uid_y``,
                 # or to be obtained out of ``q_out``.
-                if z == nomoredata:
+                if z is None:
                     break
                 uid, x = z
                 y = uid_y.pop(uid, null)
@@ -155,7 +154,7 @@ class StreamServer:
         finally:
             stopped.set()
             n = 0  # number of input items that have not been accounted for
-            while z != nomoredata:
+            while z is not None:
                 z = uid_x.get()
                 n += 1
             n -= 1
@@ -164,4 +163,4 @@ class StreamServer:
             # No need to pair them with input; just discard.
             for _ in range(n):
                 q_out.get()
-            worker.join()
+            feeder.join()
