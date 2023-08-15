@@ -2,6 +2,7 @@ import queue
 import threading
 from collections.abc import Iterable, Iterator
 from typing import final
+import concurrent.futures
 
 from mpservice.mpserver import (
     MP_SPAWN_CTX,
@@ -93,73 +94,88 @@ class StreamServer:
             If ``False``, exceptions will be propagated right away, crashing the program.
         """
 
-        def _enqueue(data_stream, uid_x, stopped):
+        def _enqueue(data_stream, x_fut, uid_fut, stopped):
             q_in = self._q_in
+            Future = concurrent.futures.Future
             try:
                 for x in data_stream:
                     if stopped.is_set():
                         break
                     uid = id(x)
-                    uid_x.put((uid, x))
+                    fut = Future()
+                    x_fut.put((x, fut))
+                    uid_fut[uid] = fut
                     q_in.put((uid, x))
+            except Exception as e:
+                x_fut.put(e)
+            else:
+                x_fut.put(None)
             finally:
-                uid_x.put(None)
+                q_in.put(None)
             # TODO: the workers do not know a stream has concluded.
             # They may be waiting for some extra time for batching.
             # This is not a big problem for long jobs, but for short ones
             # this can be a user experience issue.
 
-        uid_x = queue.Queue(self._capacity)
+        def _collect(uid_fut):
+            q_out = self._q_out
+            while True:
+                z = q_out.get()
+                if z is None:
+                    break
+                uid, y = z
+                fut = uid_fut.pop(uid)
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if isinstance(y, Exception):
+                    fut.set_exception(y)
+                else:
+                    fut.set_result(y)
+
+
+        x_fut = queue.Queue(self._capacity)
+        uid_fut = {}
         stopped = threading.Event()
 
         feeder = Thread(
             target=_enqueue,
-            args=(data_stream, uid_x, stopped),
+            args=(data_stream, x_fut, uid_fut, stopped),
             name=f"{self.__class__.__name__}.stream._enqueue",
         )
         feeder.start()
 
-        uid_y = {}
-        null = object()
-        q_out = self._q_out
-        n = 0
+        collector = Thread(
+            target=_collect,
+            args=(uid_fut,),
+            name=f"{self.__class__.__name__}.stream._collect",
+        )
+        collector.start()
+
         try:
             while True:
-                z = uid_x.get()
-                # Get one input item from ``uid_x``.
-                # Get its corresponding result, either already in cache ``uid_y``,
-                # or to be obtained out of ``q_out``.
+                z = x_fut.get()
                 if z is None:
                     break
-                uid, x = z
-                y = uid_y.pop(uid, null)
-                while y is null:
-                    uid_, y_ = q_out.get()
-                    if uid_ == uid:
-                        y = y_
-                    else:
-                        uid_y[uid_] = y_
-
-                # Exception could happen in the following block,
-                # either by `raise y`, or due to `ExitGenerator`.
-                if isinstance(y, RemoteException):
-                    y = y.exc
-                if isinstance(y, Exception) and not return_exceptions:
-                    raise y
+                try:
+                    x, fut = z
+                except TypeError:
+                    raise z
+                try:
+                    y = fut.result()
+                except Exception as e:
+                    if not return_exceptions:
+                        raise
+                    y = e
                 if return_x:
                     yield x, y
                 else:
                     yield y
         finally:
             stopped.set()
-            n = 0  # number of input items that have not been accounted for
-            while z is not None:
-                z = uid_x.get()
-                n += 1
-            n -= 1
-            n -= len(uid_y)
-            # Now need to get count ``n`` results out of ``q_out``.
-            # No need to pair them with input; just discard.
-            for _ in range(n):
-                q_out.get()
+            while True:
+                try:
+                    x_fut.get_nowait()
+                except queue.Empty:
+                    break
+            collector.join()
             feeder.join()
