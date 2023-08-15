@@ -311,7 +311,7 @@ class Worker(ABC):
         or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
         When a subclass is designed to do non-batching work, this attribute is not needed, because the same
-        concern can be handled in :meth:class: directly.
+        concern can be handled in :meth:`call` directly.
 
         When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
         '''
