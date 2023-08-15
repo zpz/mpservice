@@ -37,7 +37,7 @@ class EagerBatcher(Iterable):
 
         while True:
             z = q_in.get()  # wait as long as it takes to get one item.
-            if (z is None if end is None else z == end):
+            if z is None if end is None else z == end:
                 break
 
             batch = [z]

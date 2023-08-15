@@ -1719,7 +1719,7 @@ class Server:
                     x, fut = z
                 except TypeError:
                     raise z
-                
+
                 try:
                     y = _wait(fut)
                     # May raise TimeoutError or an exception out of RemoteException.

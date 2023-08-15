@@ -2,7 +2,6 @@ import queue
 import threading
 from collections.abc import Iterable, Iterator
 from typing import final
-import concurrent.futures
 
 from mpservice.mpserver import (
     MP_SPAWN_CTX,
