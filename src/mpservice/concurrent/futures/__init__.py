@@ -118,7 +118,7 @@ def get_shared_thread_pool(
 
     User should assign the returned executor to a variable and keep the variable in scope
     as long as the executor is needed.
-    Once all user references to a named executor have been garbage collected, the executor is gone. 
+    Once all user references to a named executor have been garbage collected, the executor is gone.
     When it is requested again, it will be created again.
 
     User should not call ``shutdown`` on the returned executor.
@@ -135,13 +135,13 @@ def get_shared_thread_pool(
             _global_thread_pools_[name] = executor
         else:
             if max_workers is not None and max_workers != executor._max_workers:
-                raise ValueError(f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}")
+                raise ValueError(
+                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                )
     return executor
 
 
-def get_shared_process_pool(
-    name: str, max_workers: int = None
-) -> ProcessPoolExecutor:
+def get_shared_process_pool(name: str, max_workers: int = None) -> ProcessPoolExecutor:
     """
     Get a globally shared "process pool", that is,
     `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
@@ -157,7 +157,9 @@ def get_shared_process_pool(
             _global_process_pools_[name] = executor
         else:
             if max_workers is not None and max_workers != executor._max_workers:
-                raise ValueError(f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}")
+                raise ValueError(
+                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                )
     return executor
 
 
