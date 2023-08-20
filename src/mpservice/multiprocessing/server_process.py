@@ -301,6 +301,7 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
 import multiprocessing.queues
+import os
 import sys
 import threading
 import traceback
@@ -316,7 +317,6 @@ from multiprocessing.managers import (
 from traceback import format_exc
 
 from .context import MP_SPAWN_CTX
-from .util import CpuAffinity
 
 __all__ = [
     'ServerProcess',
@@ -762,6 +762,8 @@ class ServerProcess(multiprocessing.managers.SyncManager):
         '''
         super().__init__(ctx=MP_SPAWN_CTX, **kwargs)
         self._name = name
+        if isinstance(cpu, int):
+            cpu = [cpu]
         self._cpu = cpu
 
     def __enter__(self):
@@ -770,7 +772,7 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             self._process.name = self._name
 
         if self._cpu is not None:
-            CpuAffinity(self._cpu).set(pid=self._process.pid)
+            os.sched_setaffinity(self._process.pid, self._cpu)
 
         self._memoryblock_proxies = weakref.WeakValueDictionary()
         return self

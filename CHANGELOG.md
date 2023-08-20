@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.9] - in progress
+
+- Deprecated ``mpservice.multiprocessing.util.CpuAffinity``.
+
+
 ## [0.13.8] - 2023-08-15
 
 - Removed "IterableQueue" and variants, as well as ``StreamServer``, from ``mpservice.experimental``.

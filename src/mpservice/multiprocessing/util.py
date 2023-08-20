@@ -1,3 +1,5 @@
+import warnings
+
 import psutil
 
 
@@ -33,6 +35,11 @@ class CpuAffinity:
             On some systems such as Linux this may not necessarily mean all available logical
             CPUs as in ``list(range(psutil.cpu_count()))``.
         """
+        warnings.warn(
+            "`CpuAffinity` was deprecated in 0.13.9 and will be removed in 0.14.x. Use `os.sched_setaffinity` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if target is not None:
             if isinstance(target, int):
                 target = [target]
