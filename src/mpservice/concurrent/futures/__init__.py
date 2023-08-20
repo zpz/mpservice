@@ -102,81 +102,64 @@ _global_process_pools_lock: threading.Lock = threading.Lock()
 
 
 def get_shared_thread_pool(
-    name: str = "default", max_workers: int | None = None
+    name: str, max_workers: int | None = None
 ) -> ThreadPoolExecutor:
     """
     Get a globally shared "thread pool", that is,
     `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 
-    This is often called with no argument, leaving both ``name`` and ``max_workers`` at their default.
-
-    The default value of ``name`` is "default".
-    Different values of ``name`` refer to independent executors.
-
     The default value of ``max_workers`` is the default value of ThreadPoolExecutor.
     (Since Python 3.8, it is ``min(32, (os.cpu_count() or 1) + 4)``.)
     If an executor with the requested ``name`` does not exist, it will be created
     with the specified ``max_workers`` argument (or using default if not specified).
-    However, if the name is "default", the internal default size is always used; user specified ``max_workers``,
-    if any, will be ignored.
 
-    If the named executor exists, it will be returned, and ``max_workers`` will be ignored.
+    If the named executor exists, it will be returned. However, if ``max_workers`` is specified
+    but mismatches the "max workers" of the existing executor, ``ValueError`` is raised.
 
     User should assign the returned executor to a variable and keep the variable in scope
     as long as the executor is needed.
-    Once all user references to a named executor (including the default one named "default")
-    have been garbage collected, the executor is gone. When it is requested again,
-    it will be created again.
+    Once all user references to a named executor have been garbage collected, the executor is gone.
+    When it is requested again, it will be created again.
 
     User should not call ``shutdown`` on the returned executor.
 
     This function is thread-safe, meaning it can be called safely in multiple threads with different
     or the same ``name``.
     """
+    assert name
     with _global_thread_pools_lock:
         executor = _global_thread_pools_.get(name)
-        # If the named pool exists, it is returned; the input `max_workers` is ignored.
         if executor is None or executor._shutdown:
             # `executor._shutdown` is True if user inadvertently called `shutdown` on the executor.
-            if name == "default":
-                if max_workers is not None:
-                    warnings.warn(
-                        f"size of the 'default' thread pool is determined internally; the input {max_workers} is ignored"
-                    )
-                    max_workers = None
-            else:
-                if max_workers is not None:
-                    assert 1 <= max_workers <= 64
             executor = ThreadPoolExecutor(max_workers)
             _global_thread_pools_[name] = executor
+        else:
+            if max_workers is not None and max_workers != executor._max_workers:
+                raise ValueError(
+                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                )
     return executor
 
 
-def get_shared_process_pool(
-    name: str = "default", max_workers: int = None
-) -> ProcessPoolExecutor:
+def get_shared_process_pool(name: str, max_workers: int = None) -> ProcessPoolExecutor:
     """
     Get a globally shared "process pool", that is,
     `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
 
     Analogous to :func:`get_shared_thread_pool`.
     """
+    assert name
     with _global_process_pools_lock:
         executor = _global_process_pools_.get(name)
-        # If the named pool exists, it is returned; the input `max_workers` is ignored.
         if executor is None or executor._processes is None:
             # `executor._processes` is None if user inadvertently called `shutdown` on the executor.
-            if name == "default":
-                if max_workers is not None:
-                    warnings.warn(
-                        f"size of the 'default' process pool is determined internally; the input {max_workers} is ignored"
-                    )
-                    max_workers = None
-            else:
-                if max_workers is not None:
-                    assert 1 <= (os.cpu_count() or 1) * 2
             executor = ProcessPoolExecutor(max_workers)
             _global_process_pools_[name] = executor
+        else:
+            if max_workers is not None and max_workers != executor._max_workers:
+                raise ValueError(
+                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                )
     return executor
 
 
