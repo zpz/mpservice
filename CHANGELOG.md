@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.13.9] - in progress
 
 - Deprecated ``mpservice.multiprocessing.util.CpuAffinity``.
+- Refinement to ``get_shared_thread_pool`` and ``get_shared_process_pool``.
+
 
 
 ## [0.13.8] - 2023-08-15

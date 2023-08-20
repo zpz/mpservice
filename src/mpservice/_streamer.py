@@ -1182,7 +1182,7 @@ class ParmapperMixin:
         if self._executor_type == "thread":
             self._stopped = threading.Event()
             if num_workers is None and self._executor_initializer is None:
-                self._executor = get_shared_thread_pool()
+                self._executor = get_shared_thread_pool('_mpservice_streamer_')
                 self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
@@ -1200,7 +1200,7 @@ class ParmapperMixin:
             self._stopped = Event()
 
             if num_workers is None and self._executor_initializer is None:
-                self._executor = get_shared_process_pool()
+                self._executor = get_shared_process_pool('_mpservice_streamer_')
                 self._executor_is_shared = True
                 num_workers = self._executor._max_workers
             else:
@@ -1563,7 +1563,7 @@ class ParmapperAsync(Iterable):
 
         async def dequeue(tasks):
             loop = asyncio.get_running_loop()
-            thread_pool = get_shared_thread_pool()
+            thread_pool = get_shared_thread_pool('_mpservice_streamer_')
             outstream = self._outstream
             to_stop = self._stopped
             return_exceptions = self._return_exceptions
