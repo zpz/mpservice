@@ -17,7 +17,6 @@ from multiprocessing import util
 from .._common import TimeoutError
 from ..threading import Thread
 from .remote_exception import RemoteException
-from .util import CpuAffinity
 
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
@@ -371,7 +370,9 @@ class SpawnContext(multiprocessing.context.SpawnContext):
         if name:
             m._process.name = name
         if cpu is not None:
-            CpuAffinity(cpu).set(pid=m._process.pid)
+            if isinstance(cpu, int):
+                cpu = [cpu]
+            os.sched_setaffinity(m._process.pid, cpu)
         return m
 
     def get_context(self, method=None):

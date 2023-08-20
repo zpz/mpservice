@@ -52,9 +52,3 @@ Server Process
 .. autoclass:: mpservice.multiprocessing.server_process.MemoryBlockProxy
 
 .. autoclass:: mpservice.multiprocessing.server_process.hosted
-
-
-CPU pinning
-===========
-
-.. autoclass:: mpservice.multiprocessing.util.CpuAffinity

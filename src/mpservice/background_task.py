@@ -160,7 +160,7 @@ class Task:
 
 class BackgroundTask(ABC):
     """
-    ``BackgroundTask`` provides a mechanism to manager "tasks" run in a
+    ``BackgroundTask`` provides a mechanism to manage "tasks" run in a
     thread pool or process pool. Given a user-specified way to determine
     a task based on the task parameters, a repeat submission of an
     existing task (i.e. a task with the same ID) will simply get

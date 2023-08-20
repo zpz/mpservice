@@ -27,6 +27,7 @@ import concurrent.futures
 import logging
 import multiprocessing
 import multiprocessing.queues
+import os
 import queue
 import threading
 import warnings
@@ -41,7 +42,6 @@ from ._common import TimeoutError
 from ._queues import SingleLane
 from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
 from .multiprocessing.remote_exception import EnsembleError
-from .multiprocessing.util import CpuAffinity
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
@@ -670,7 +670,7 @@ class ProcessServlet(Servlet):
         self,
         worker_cls: type[Worker],
         *,
-        cpus: None | int | Sequence[CpuAffinity | None | int | Sequence[int]] = None,
+        cpus: None | int | Sequence[None | int | Sequence[int]] = None,
         worker_name: str = None,
         **kwargs,
     ):
@@ -687,9 +687,8 @@ class ProcessServlet(Servlet):
 
             If an int, indicating number of (unpinned) processes.
 
-            Otherwise, a list of :class:`CpuAffinity` objects.
-            For convenience, values of primitive types are also accepted;
-            they will be used to construct `CpuAffinity` objects.
+            Otherwise, a list specifiying CPU pinning.
+            Each element of the list specifies the CPU pinning of one process.
             The number of processes created is the number of elements in ``cpus``.
             The CPU spec is very flexible. For example,
 
@@ -719,13 +718,11 @@ class ProcessServlet(Servlet):
         """
         self._worker_cls = worker_cls
         if cpus is None:
-            self._cpus = [CpuAffinity(None)]
+            self._cpus = [None]
         else:
             if isinstance(cpus, int):
                 cpus = [None for _ in range(cpus)]
-            self._cpus = [
-                v if isinstance(v, CpuAffinity) else CpuAffinity(v) for v in cpus
-            ]
+            self._cpus = cpus
         self._init_kwargs = kwargs
         self._workers = []
         self._worker_name = worker_name
@@ -762,7 +759,10 @@ class ProcessServlet(Servlet):
                 },
             )
             p.start()
-            cpu.set(pid=p.pid)
+            if cpu is not None:
+                if isinstance(cpu, int):
+                    cpu = [cpu]
+                os.sched_setaffinity(p.pid, cpu)
             self._workers.append(p)
             name = q_out.get()
             if name is None:
