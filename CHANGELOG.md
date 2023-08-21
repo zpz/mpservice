@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.13.9] - in progress
+## [0.13.9] - 2023-08-20
 
 - Deprecated ``mpservice.multiprocessing.util.CpuAffinity``.
 - Refinement to ``get_shared_thread_pool`` and ``get_shared_process_pool``.
-
+- Removed the constant ``MAX_THREADS`` from ``mpservice.threading``.
 
 
 ## [0.13.8] - 2023-08-15

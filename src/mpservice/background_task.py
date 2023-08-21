@@ -12,7 +12,6 @@ from collections.abc import Hashable
 from datetime import datetime
 
 from .concurrent.futures import ThreadPoolExecutor
-from .threading import MAX_THREADS
 
 
 class Task:
@@ -175,22 +174,17 @@ class BackgroundTask(ABC):
         ----------
         executor
             If you provide your own *process* executor,
-            it's recommended to use ``mpservice.multiprocessing.MP_SPAWN_CTX`` for its
-            ``ctx`` parameter.
+            it's recommended to use ``mpservice.concurrent.futures.ProcessPoolExecutor``.
         """
         self._own_executor = False
         if executor is None:
-            executor = ThreadPoolExecutor(MAX_THREADS)
+            executor = ThreadPoolExecutor()
             self._own_executor = True
         self._executor = executor
         self._tasks: dict[Hashable, Task] = {}
 
         if self._own_executor:
-            weakref.finalize(self, type(self)._shutdown_executor, executor)
-
-    @staticmethod
-    def _shutdown_executor(executor):
-        executor.shutdown()
+            weakref.finalize(self, executor.shutdown)
 
     @classmethod
     @abstractmethod
@@ -224,6 +218,8 @@ class BackgroundTask(ABC):
         the execution. Therefore user code needs to be proactive, using
         ``_cancelled`` to detect the cancellation request and act accordingly.
 
+        User would request cancellation using ``Task.cancel()``.
+
         The queue ``_info`` is used to pass info to the caller, e.g. periodic
         progress reports. Because there is no guarantee that this queue
         is being checked by the caller timely or at all,
@@ -231,6 +227,8 @@ class BackgroundTask(ABC):
         In fact, it has length 1. Before pushing an element onto
         the queue, the user code should pop any existing elements.
         An element in this queue is typically a small dict.
+
+        User would retrieve this info using ``Task.info()``.
 
         It is not mandatory that the user task code makes use of
         ``_cancelled`` and ``_info``.
@@ -261,7 +259,8 @@ class BackgroundTask(ABC):
         The parameter list should be identical to that
         of ``run``, minus ``_cancelled`` and ``_status``.
 
-        The default implementation returns a random value.
+        The default implementation returns a random value, meaning
+        every new submission is considered a new, unique task.
         """
         return str(datetime.utcnow())
 

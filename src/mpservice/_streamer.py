@@ -32,7 +32,6 @@ import contextlib
 import functools
 import inspect
 import logging
-import os
 import queue
 import threading
 import traceback
@@ -64,7 +63,7 @@ from .multiprocessing import (
     get_remote_traceback,
     is_remote_exception,
 )
-from .threading import MAX_THREADS, Thread
+from .threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -1184,12 +1183,7 @@ class ParmapperMixin:
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_thread_pool('_mpservice_streamer_')
                 self._executor_is_shared = True
-                num_workers = self._executor._max_workers
             else:
-                if num_workers is None:
-                    num_workers = MAX_THREADS
-                else:
-                    assert 1 <= num_workers <= 100
                 self._executor = ThreadPoolExecutor(
                     num_workers,
                     initializer=self._executor_initializer,
@@ -1198,16 +1192,10 @@ class ParmapperMixin:
                 )
         else:
             self._stopped = Event()
-
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool('_mpservice_streamer_')
                 self._executor_is_shared = True
-                num_workers = self._executor._max_workers
             else:
-                if num_workers is None:
-                    num_workers = os.cpu_count() or 1
-                else:
-                    assert 1 <= num_workers <= (os.cpu_count() or 1) * 2
                 self._executor = ProcessPoolExecutor(
                     num_workers,
                     initializer=self._executor_initializer,
@@ -1215,6 +1203,7 @@ class ParmapperMixin:
                 )
                 # TODO: what about the process names?
 
+        num_workers = self._executor._max_workers
         self._tasks = SingleLane(num_workers + 1)
         self._worker = Thread(
             target=self._run_worker,

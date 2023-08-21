@@ -17,7 +17,6 @@ def test_deprecated():
             is_remote_exception,
             get_docker_host_ip,
             is_async,
-            MAX_THREADS,
             Thread,
             SpawnProcessPoolExecutor,
         )

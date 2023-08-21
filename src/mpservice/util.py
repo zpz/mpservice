@@ -34,7 +34,7 @@ def __getattr__(name):
         mname = 'mpservice.multiprocessing'
     elif name in ('get_docker_host_ip', 'is_async'):
         mname = 'mpservice.socket'
-    elif name in ('MAX_THREADS', 'Thread'):
+    elif name in ('Thread',):
         mname = 'mpservice.threading'
     elif name == 'SpawnProcessPoolExecutor':
         from mpservice.concurrent.futures import ProcessPoolExecutor

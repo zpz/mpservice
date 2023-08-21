@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import ctypes
-import os
 import threading
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
@@ -17,7 +16,6 @@ from ._common import TimeoutError
 
 __all__ = [
     'InvalidStateError',
-    'MAX_THREADS',
     'Thread',
     'FIRST_COMPLETED',
     'FIRST_EXCEPTION',
@@ -26,14 +24,6 @@ __all__ = [
 
 class InvalidStateError(RuntimeError):
     pass
-
-
-MAX_THREADS = min(32, (os.cpu_count() or 1) + 4)
-"""
-This default is suitable for I/O bound operations.
-This value is what is used by `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
-For others, you may want to specify a smaller value.
-"""
 
 
 class Thread(threading.Thread):
