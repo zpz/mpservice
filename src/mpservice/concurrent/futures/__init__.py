@@ -101,7 +101,9 @@ _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictio
 _global_process_pools_lock: threading.Lock = threading.Lock()
 
 
-def get_shared_thread_pool(name: str, max_workers: int | None = None) -> ThreadPoolExecutor:
+def get_shared_thread_pool(
+    name: str, max_workers: int | None = None
+) -> ThreadPoolExecutor:
     """
     Get a globally shared "thread pool", that is,
     `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.

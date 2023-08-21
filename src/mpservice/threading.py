@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import ctypes
-import os
 import threading
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
@@ -25,7 +24,6 @@ __all__ = [
 
 class InvalidStateError(RuntimeError):
     pass
-
 
 
 class Thread(threading.Thread):
