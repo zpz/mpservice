@@ -24,7 +24,6 @@ from typing import Any, Awaitable, Callable
 from ._queues import SingleLane
 from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing import RemoteException
-from .threading import MAX_THREADS
 
 __all__ = [
     'SocketApplication',
@@ -492,7 +491,7 @@ class SocketClient:
             self._host = host
             self._port = int(port)
 
-        self._num_connections = num_connections or MAX_THREADS
+        self._num_connections = num_connections or 32
         self._connection_timeout = connection_timeout
         self._backlog = backlog
         self._encoder = "pickle"  # encoder when sending requests.

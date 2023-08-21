@@ -101,15 +101,11 @@ _global_process_pools_: dict[str, ProcessPoolExecutor] = weakref.WeakValueDictio
 _global_process_pools_lock: threading.Lock = threading.Lock()
 
 
-def get_shared_thread_pool(
-    name: str, max_workers: int | None = None
-) -> ThreadPoolExecutor:
+def get_shared_thread_pool(name: str, max_workers: int | None = None) -> ThreadPoolExecutor:
     """
     Get a globally shared "thread pool", that is,
     `concurrent.futures.ThreadPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ThreadPoolExecutor>`_.
 
-    The default value of ``max_workers`` is the default value of ThreadPoolExecutor.
-    (Since Python 3.8, it is ``min(32, (os.cpu_count() or 1) + 4)``.)
     If an executor with the requested ``name`` does not exist, it will be created
     with the specified ``max_workers`` argument (or using default if not specified).
 
@@ -121,10 +117,16 @@ def get_shared_thread_pool(
     Once all user references to a named executor have been garbage collected, the executor is gone.
     When it is requested again, it will be created again.
 
-    User should not call ``shutdown`` on the returned executor.
+    User should not call ``shutdown`` on the returned executor, because it is *shared* with other
+    users.
 
     This function is thread-safe, meaning it can be called safely in multiple threads with different
     or the same ``name``.
+
+    Example use case: an instance of a class needs to start and use a ThreadPoolExecutor; user may
+    have many such instances live at the same time although they are unlikely to use the ThreadPoolExecutor
+    at the same time; to avoid having too many threads open, the class may choose to use a "shared"
+    thread pool between the instances.
     """
     assert name
     with _global_thread_pools_lock:
