@@ -30,7 +30,6 @@ import multiprocessing.queues
 import os
 import queue
 import threading
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from datetime import datetime
@@ -1422,7 +1421,6 @@ class Server:
         self,
         servlet: Servlet,
         *,
-        backlog: int = None,
         capacity: int = 256,
     ):
         """
@@ -1433,9 +1431,6 @@ class Server:
 
             The ``servlet`` has not "started". Its :meth:`~Servlet.start` will be called
             in :meth:`__enter__`.
-
-        backlog
-            .. deprecated:: 0.12.7. Will be removed in 0.14.0. Use `capacity` instead.
 
         capacity
             Max number of requests concurrently in progress within this server,
@@ -1453,13 +1448,6 @@ class Server:
 
             .. seealso: documentation of the method :meth:`call`.
         """
-        if backlog is not None:
-            warnings.warn(
-                "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capacity = backlog
         _init_server(self, servlet=servlet, capacity=capacity)
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
@@ -1757,16 +1745,8 @@ class AsyncServer:
         self,
         servlet: Servlet,
         *,
-        backlog: int = None,
         capacity: int = 256,
     ):
-        if backlog is not None:
-            warnings.warn(
-                "The parameter `backlog` is deprecated in version 0.12.7 and will be removed in 0.14.0. Use `capacity` instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capacity = backlog
         _init_server(self, servlet=servlet, capacity=capacity)
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
@@ -2042,22 +2022,3 @@ class PassThrough(Worker):
 
     def call(self, x):
         return x
-
-
-def __getattr__(name):
-    if name in ('ProcessWorker', 'ThreadWorker'):
-        warnings.warn(
-            f"'mpservice.mpserver.{name}' is deprecated in 0.12.8 and will be removed in 0.14.0. Use 'mpservice.mpserver.Worker' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return Worker
-    if name == 'make_threadworker':
-        warnings.warn(
-            f"'mpservice.mpserver.{name}' is deprecated in 0.12.8 and will be removed in 0.14.0. Use 'mpservice.mpserver.make_worker' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return make_worker
-
-    raise AttributeError(f"module 'mpservice.mpserver' has no attribute '{name}'")
