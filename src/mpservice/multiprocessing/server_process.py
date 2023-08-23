@@ -575,16 +575,18 @@ class _ProcessServer(multiprocessing.managers.Server):
                     else:
                         msg = ('#RETURN', res)
 
+                    # FIX
+                    del res
+
                 # FIX:
                 # If no more request is coming, then `function` and `res` will stay around.
                 # If `function` is a instance method of `obj`, then it carries a reference to `obj`.
                 # Also, `res` is a refernce to the object that has been tracked in `self.id_to_obj`
                 # and "returned" to the requester.
                 # The extra reference to `obj` and `res` lingering here have no use, yet can cause
-                # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``..
+                # sutble bugs in applications that make use of their ref counts, such as ``MemoryBlock``.
                 del function
                 del obj
-                del res
 
             except AttributeError:
                 if methodname is None:

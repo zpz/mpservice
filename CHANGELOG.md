@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.0] - 2023-08-22
+
+
+- Bug fix.
+- Remove previously deprecated code.
+
+
 ## [0.13.9] - 2023-08-20
 
 - Deprecated ``mpservice.multiprocessing.util.CpuAffinity``.

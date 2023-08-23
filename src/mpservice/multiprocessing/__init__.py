@@ -23,7 +23,6 @@ instead we send it to the main or another process to be investigated when/where 
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
 """
 import concurrent.futures
-import warnings
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
@@ -103,42 +102,3 @@ def as_completed(
     future_to_thread = {id(t._future_): t for t in workers}
     for f in concurrent.futures.as_completed(futures, timeout=timeout):
         yield future_to_thread[id(f)]
-
-
-def __getattr__(name):
-    if name in ('CpuAffinity',):
-        warnings.warn(
-            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.util' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        import mpservice.multiprocessing.util
-
-        o = getattr(mpservice.multiprocessing.util, name)
-        return o
-
-    if name in ('SpawnContext',):
-        warnings.warn(
-            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.context' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        import mpservice.multiprocessing.context
-
-        o = getattr(mpservice.multiprocessing.context, name)
-        return o
-
-    if name in ('RemoteTraceback',):
-        warnings.warn(
-            f"'mpservice.multiprocessing.{name}' is deprecated in 0.13.3 and will be removed in 0.14.0. Import from 'mpservice.multiprocessing.remote_exception' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        import mpservice.multiprocessing.remote_exception
-
-        o = getattr(mpservice.multiprocessing.remote_exception, name)
-        return o
-
-    raise AttributeError(
-        f"module 'mpservice.multiprocessing' has no attribute '{name}'"
-    )

@@ -12,7 +12,7 @@ Remote exception
 
 .. autoclass:: mpservice.multiprocessing.RemoteException
 
-.. autoexception:: mpservice.multiprocessing.RemoteTraceback
+.. autoexception:: mpservice.multiprocessing.remote_exception.RemoteTraceback
 
 .. autofunction:: mpservice.multiprocessing.is_remote_exception
 
@@ -24,7 +24,7 @@ The "spawn" context
 
 .. autoclass:: mpservice.multiprocessing.SpawnProcess
 
-.. autoclass:: mpservice.multiprocessing.SpawnContext
+.. autoclass:: mpservice.multiprocessing.context.SpawnContext
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 
