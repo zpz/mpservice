@@ -1,4 +1,3 @@
-
 # This function is no longer used in this package but can be useful.
 # It will be removed eventually.
 def full_class_name(cls):
