@@ -1,23 +1,26 @@
-import socket
 import asyncio
-import os
 import logging
-import signal
-from typing import Optional, List, Callable
 import multiprocessing.synchronize
+import os
+import signal
+import socket
 import sys
 import time
+from typing import Callable, List, Optional
 
+import click
 import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
-import click
+
 from mpservice.multiprocessing import MP_SPAWN_CTX, SpawnProcess
 
 logger = logging.getLogger(__name__)
 
 
 class Server(uvicorn.Server):
-    def run(self, sockets: list[socket.socket] | None = None, worker_idx: int = 0) -> None:
+    def run(
+        self, sockets: list[socket.socket] | None = None, worker_idx: int = 0
+    ) -> None:
         # When there are multiple worker processes, this method is the
         # `target` function that runs in a new process.
         # Our customization is to put the `worker_idx` in the environ in case
@@ -32,7 +35,7 @@ class Server(uvicorn.Server):
 
     async def on_tick(self, *args, **kwargs):
         return (await super().on_tick(*args, **kwargs)) or self._stop_requested.is_set()
- 
+
     async def shutdown(self, *args, **kwargs):
         z = await super().shutdown(*args, **kwargs)
         os.environ.pop('UVICORN_WORKER_IDX', None)
@@ -61,7 +64,10 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
 
         for _idx in range(self.config.workers):
             process = get_subprocess(
-                config=self.config, target=self.target, sockets=self.sockets, worker_idx=_idx,
+                config=self.config,
+                target=self.target,
+                sockets=self.sockets,
+                worker_idx=_idx,
                 # Customization: pass in `worker_idx`
             )
             process.start()
@@ -176,7 +182,7 @@ def start_server(
         an instance, like ``'mypackage.mymodule:app'``. The module as named, `'mypackage.mymodule'`, must be able
         to be imported. If `app` is defined in a script (say `example.py`) that is in the current working directory,
         that is, if you type
-        
+
             python example.py
 
         in the directory that contains `example.py`, then Python will be able to import that script.
@@ -222,8 +228,9 @@ def start_server(
         server.run()
     else:
         sock = config.bind_socket()
-        Multiprocess(config, target=server.run, sockets=[sock]).run(server._stop_requested)
+        Multiprocess(config, target=server.run, sockets=[sock]).run(
+            server._stop_requested
+        )
 
     if config.uds and os.path.exists(config.uds):
-        os.remove(config.uds)   # pragma: py-win32
-
+        os.remove(config.uds)  # pragma: py-win32

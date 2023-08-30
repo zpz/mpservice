@@ -3,13 +3,13 @@ import os
 from time import sleep
 from types import SimpleNamespace
 
-from mpservice.mpserver import Worker, ThreadServlet, AsyncServer
-from mpservice.experimental.http import start_server, stop_server
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse, PlainTextResponse
-from mpservice.multiprocessing import Process
 import httpx
 import pytest
+from mpservice.experimental.http import start_server, stop_server
+from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
+from mpservice.multiprocessing import Process
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, PlainTextResponse
 
 # Gather global objects in this `context`.
 context = SimpleNamespace()
@@ -53,7 +53,10 @@ app.add_route('/shutdown', shutdown, ['POST'])
 
 def test_server():
     port = 8002
-    p = Process(target=start_server, kwargs={'app': 'test_http:app', 'workers': 4, 'port': port, 'log_config': None})
+    p = Process(
+        target=start_server,
+        kwargs={'app': 'test_http:app', 'workers': 4, 'port': port, 'log_config': None},
+    )
     p.start()
     sleep(1)
 
