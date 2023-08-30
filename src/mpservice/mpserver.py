@@ -822,7 +822,7 @@ class ThreadServlet(Servlet):
             A subclass of :class:`Worker`
         num_threads
             The number of threads to create. Each thread will host and run
-            an instance of ``worker_cls``.
+            an instance of ``worker_cls``. Default ``None`` means 1.
         worker_name
             Prefix to the name of the worker threads. If not provided, a default is
             constructed based on the class name.
@@ -1453,6 +1453,9 @@ class Server:
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
 
+    def __getstate__(self):
+        raise TypeError(f"cannot pickle '{self.__class__.__name__!r}' object")
+
     @property
     def capacity(self) -> int:
         return self._capacity
@@ -1751,6 +1754,9 @@ class AsyncServer:
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
+
+    def __getstate__(self):
+        raise TypeError(f"cannot pickle '{self.__class__.__name__!r}' object")
 
     @property
     def capacity(self) -> int:
