@@ -55,7 +55,12 @@ def test_server():
     port = 8002
     p = Process(
         target=start_server,
-        kwargs={'app': 'test_ex_http:app', 'workers': 4, 'port': port, 'log_config': None},
+        kwargs={
+            'app': 'test_ex_http:app',
+            'workers': 4,
+            'port': port,
+            'log_config': None,
+        },
     )
     p.start()
     sleep(1)
