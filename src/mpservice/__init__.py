@@ -27,6 +27,7 @@ __version__ = "0.14.1b2"
 from . import (
     asyncio,
     concurrent,
+    http,
     mpserver,
     multiprocessing,
     queue,

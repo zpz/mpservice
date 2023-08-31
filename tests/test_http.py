@@ -6,6 +6,7 @@ import time
 from time import sleep
 from types import SimpleNamespace
 
+import httpcore
 import httpx
 import pytest
 from mpservice.http import make_server, start_server, stop_server
@@ -14,6 +15,7 @@ from mpservice.multiprocessing import Process
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.testclient import TestClient
+from starlette.routing import Route
 
 HOST = '0.0.0.0'
 SHUTDOWN_MSG = "server shutdown"
@@ -152,7 +154,7 @@ class MyServer(AsyncServer):
 async def double(request):
     data = await request.json()
     x = data['x']
-    y = await context.model.call(x)
+    y = await request.state.model.call(x)
     return JSONResponse({'x': x, 'y': y}, status_code=200)
 
 
@@ -165,14 +167,14 @@ async def shutdown(request):
 async def lifespan(app):
     print('worker index:', os.environ['UVICORN_WORKER_IDX'])
     model = MyServer()
-    context.model = model
     async with model:
-        yield
+        yield {'model': model}
 
 
-app = Starlette(lifespan=lifespan)
-app.add_route('/double', double, ['POST'])
-app.add_route('/shutdown', shutdown, ['POST'])
+app = Starlette(lifespan=lifespan, routes=[
+    Route('/double', double, methods=['POST']),
+    Route('/shutdown', shutdown, methods=['POST']),
+])
 
 
 def test_server():
@@ -187,14 +189,28 @@ def test_server():
         },
     )
     p.start()
-    sleep(1)
 
     url = f'http://0.0.0.0:{port}'
 
     with httpx.Client() as client:
-        response = client.post(url + '/double', json={'x': 8})
+        retry = 0
+        while True:
+            try:
+                response = client.post(url + '/double', json={'x': 8})
+                break
+            except (httpx.ConnectError, httpcore.ConnectError, ConnectionRefusedError) as e:
+                retry += 1
+                if retry == 5:
+                    raise
+                print('retry', retry, ' on error:', e)
+                time.sleep(0.2)
+
         assert response.status_code == 200
         assert response.json() == {'x': 8, 'y': 16}
+
+        response = client.post(url + '/double', json={'x': 80})
+        assert response.status_code == 200
+        assert response.json() == {'x': 80, 'y': 160}
 
         response = client.post(url + '/shutdown')
         assert response.status_code == 200

@@ -1,4 +1,4 @@
-import multiprocessing
+import multiprocessing.queues
 from typing import Generic, TypeVar
 
 Elem = TypeVar('Elem')

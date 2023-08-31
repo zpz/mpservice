@@ -4,10 +4,7 @@ using `uvicorn <https://www.uvicorn.org/>`_ and `starlette <https://www.starlett
 
 This utility code is not directly connected to :class:`~mpservice.mpserver.AsyncServer`, because AsyncServer simply
 provides the method :meth:`~mpservice.mpserver.AsyncServer.call` that can be called from an HTTP
-request handler function. The example below shows one way to "hook" an AsyncServer to the http stuff.
-
-Below is one way to structure it.
-In this example, we use a global ``context`` object to arrange some connections.
+request handler function. The example below shows one way to connect things:
 
 ::
     # "example.py"
@@ -15,19 +12,17 @@ In this example, we use a global ``context`` object to arrange some connections.
     import asyncio
     import contextlib
     import os
-    from types import SimpleNamespace
     from starlette.applications import Starlette
+    from starlette.routing import Route
     from starlette.responses import PlainTextResponse, JSONResponse
     from mpservice.mpserver import AsyncServer
     from mpservice.http import start_server, stop_server
-
-    context = SimpleNamespace()
 
 
     async def handle_request(request):
         ...
         ...
-        result = await context.model.call(...)
+        result = await request.state.model.call(...)
         ...
         return JSONResponse(...)
 
@@ -40,22 +35,23 @@ In this example, we use a global ``context`` object to arrange some connections.
     @contextlib.asynccontextmanager
     async def lifespan(app):
         async with AsyncServer(...) as model:
-            context.model = model
             print("starting worker", os.environ['UVICORN_WORKER_IDX'])
-            yield
+            yield {'model': model}
 
 
-    app = Starlette(lifespan=lifespan)
-    app.add_route('/', handle_request, ['GET'])
-    app.add_route('/stop', stop, ['POST])
+    app = Starlette(lifespan=lifespan,
+                    routes=[
+                        Route('/', handle_request),
+                        Route('/stop', stop, methods=['POST']),
+                    ])
 
     if __name__ == '__main__':
         start_server('example:app')
 
 As demonstrated, you can set up (async) context managers and other things
-in ``lifespan`` and attach things to the global ``context`` as needed.
+in ``lifespan`` and make things available via the lifespan's "state" as needed.
 The use of ``starlette`` is very lightweight: it just handles HTTP
-routing and request acceptance and response.
+routing and request acceptance/response.
 """
 from __future__ import annotations
 
