@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 # See `uvicorn`.
 class Server(uvicorn.Server):
     def run(
-        self, stop_requested: multiprocessing.synchronize.Event,
-        sockets: list[socket.socket] | None = None, 
-        worker_idx: int = 0
+        self,
+        stop_requested: multiprocessing.synchronize.Event,
+        sockets: list[socket.socket] | None = None,
+        worker_idx: int = 0,
     ) -> None:
         # When there are multiple worker processes, this method is the
         # `target` function that runs in a new process.
@@ -250,9 +251,7 @@ def start_server(
         server.run(stop_requested)
     else:
         sock = config.bind_socket()
-        Multiprocess(config, target=server.run, sockets=[sock]).run(
-            stop_requested
-        )
+        Multiprocess(config, target=server.run, sockets=[sock]).run(stop_requested)
 
     if config.uds and os.path.exists(config.uds):
         os.remove(config.uds)  # pragma: py-win32

@@ -1,15 +1,15 @@
 import asyncio
-import multiprocessing
-import time
-from types import SimpleNamespace
-import os
 import contextlib
+import multiprocessing
+import os
+import time
 from time import sleep
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from mpservice.http import make_server, start_server, stop_server
-from mpservice.mpserver import Worker, Server, AsyncServer, ThreadServlet
+from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
 from mpservice.multiprocessing import Process
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -130,7 +130,6 @@ async def test_mp():
             assert response.status_code == 201
 
     process.join()
-
 
 
 # test new code #

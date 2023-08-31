@@ -65,9 +65,7 @@ import uvicorn
 from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 from deprecation import deprecated
 
-
 from ._http import start_server, stop_server
-
 
 __all__ = ['start_server', 'stop_server']
 
@@ -87,7 +85,9 @@ logger = logging.getLogger(__name__)
 # http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
 
 
-@deprecated(deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead')
+@deprecated(
+    deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead'
+)
 def make_server(
     app: str | ASGIApplication,
     *,
@@ -99,7 +99,7 @@ def make_server(
 ) -> uvicorn.Server:
     """
     This function is *deprecated* in favor of ``start_server`` and ``stop_server``.
-    
+
     This function is comparable to ``start_server`` with ``workers=1``.
 
     NOTE: this function does not work with ``stop_server``; set ``server.should_stop=True`` for that effect,
