@@ -14,8 +14,8 @@ from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
 from mpservice.multiprocessing import Process
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
-from starlette.testclient import TestClient
 from starlette.routing import Route
+from starlette.testclient import TestClient
 
 HOST = '0.0.0.0'
 SHUTDOWN_MSG = "server shutdown"
@@ -171,10 +171,13 @@ async def lifespan(app):
         yield {'model': model}
 
 
-app = Starlette(lifespan=lifespan, routes=[
-    Route('/double', double, methods=['POST']),
-    Route('/shutdown', shutdown, methods=['POST']),
-])
+app = Starlette(
+    lifespan=lifespan,
+    routes=[
+        Route('/double', double, methods=['POST']),
+        Route('/shutdown', shutdown, methods=['POST']),
+    ],
+)
 
 
 def test_server():
@@ -198,7 +201,11 @@ def test_server():
             try:
                 response = client.post(url + '/double', json={'x': 8})
                 break
-            except (httpx.ConnectError, httpcore.ConnectError, ConnectionRefusedError) as e:
+            except (
+                httpx.ConnectError,
+                httpcore.ConnectError,
+                ConnectionRefusedError,
+            ) as e:
                 retry += 1
                 if retry == 5:
                     raise
