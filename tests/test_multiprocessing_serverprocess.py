@@ -182,6 +182,12 @@ def test_concurrency():
             t1 = time.perf_counter()
             print('took', t1 - t0, 'seconds')
             assert 6 < t1 - t0 < 7
+
+            time.sleep(1)
+            # The following sometimes fails during release test, showing
+            # more than one active children. I don't know why.
+            # The extra child may be from other tests.
+            # Adding sleep to give processes more time to exit.
             assert len(active_children()) == 1
 
 

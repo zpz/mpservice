@@ -21,12 +21,13 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
 """
 
 
-__version__ = "0.14.1b1"
+__version__ = "0.14.1b2"
 
 
 from . import (
     asyncio,
     concurrent,
+    http,
     mpserver,
     multiprocessing,
     queue,
