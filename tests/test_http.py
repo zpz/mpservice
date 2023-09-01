@@ -11,7 +11,7 @@ import httpx
 import pytest
 from mpservice.http import make_server, start_server, stop_server
 from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
-from mpservice.multiprocessing import Process
+from mpservice.multiprocessing import Process, Queue
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
@@ -137,10 +137,6 @@ async def test_mp():
 # test new code #
 
 
-# Gather global objects in this `context`.
-context = SimpleNamespace()
-
-
 class MyWorker(Worker):
     def call(self, x):
         return x * 2
@@ -165,9 +161,11 @@ async def shutdown(request):
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
-    print('worker index:', os.environ['UVICORN_WORKER_IDX'])
+    worker_context = app.worker_context
+    print('worker index:', worker_context['worker_idx'])
     model = MyServer()
     async with model:
+        worker_context['q_ack'].put(worker_context['worker_idx'])
         yield {'model': model}
 
 
@@ -182,16 +180,26 @@ app = Starlette(
 
 def test_server():
     port = 8002
+    acks = Queue()
     p = Process(
         target=start_server,
         kwargs={
             'app': 'test_http:app',
             'workers': 4,
+            'worker_contexts': [
+                {'worker_idx': i, 'q_ack': acks}
+                for i in range(4)
+            ],
             'port': port,
             'log_config': None,
         },
     )
     p.start()
+
+    signals = []
+    for _ in range(4):
+        signals.append(acks.get())
+    assert sorted(signals) == [0, 1, 2, 3]
 
     url = f'http://0.0.0.0:{port}'
 
