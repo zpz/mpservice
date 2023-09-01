@@ -35,8 +35,7 @@ request handler function. The example below shows one way to connect things:
     @contextlib.asynccontextmanager
     async def lifespan(app):
         async with AsyncServer(...) as model:
-            print("starting worker", os.environ['UVICORN_WORKER_IDX'])
-            yield {'model': model}
+            yield {'model': model}  # available in endpoint functions via `request.state`
 
 
     app = Starlette(lifespan=lifespan,
@@ -50,6 +49,10 @@ request handler function. The example below shows one way to connect things:
 
 As demonstrated, you can set up (async) context managers and other things
 in ``lifespan`` and make things available via the lifespan's "state" as needed.
+The ``app`` received by ``lifespan`` has an attribute ``worker_context``
+(which is added by our customization) that can be used to pass config-style
+data from the main process (where ``start_server`` is called) to the worker processes.
+
 The use of ``starlette`` is very lightweight: it just handles HTTP
 routing and request acceptance/response.
 """
@@ -98,7 +101,7 @@ def make_server(
 
     This function is comparable to ``start_server`` with ``workers=1``.
 
-    NOTE: this function does not work with ``stop_server``; set ``server.should_stop=True`` for that effect,
+    NOTE: this function does not work with ``stop_server``; instead, set ``server.should_stop=True`` for that effect,
     where ``server`` is the output of this function.
     """
     config = uvicorn.Config(
