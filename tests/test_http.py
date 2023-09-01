@@ -1,10 +1,8 @@
 import asyncio
 import contextlib
 import multiprocessing
-import os
 import time
 from time import sleep
-from types import SimpleNamespace
 
 import httpcore
 import httpx
@@ -186,10 +184,7 @@ def test_server():
         kwargs={
             'app': 'test_http:app',
             'workers': 4,
-            'worker_contexts': [
-                {'worker_idx': i, 'q_ack': acks}
-                for i in range(4)
-            ],
+            'worker_contexts': [{'worker_idx': i, 'q_ack': acks} for i in range(4)],
             'port': port,
             'log_config': None,
         },

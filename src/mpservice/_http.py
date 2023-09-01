@@ -6,8 +6,8 @@ import signal
 import socket
 import sys
 import time
-from typing import Callable, List, Optional, Any
 import warnings
+from typing import Any, Callable, List, Optional
 
 import click
 import uvicorn
@@ -54,7 +54,11 @@ class Server(uvicorn.Server):
 
 # See `uvicorn`.
 class Multiprocess(uvicorn.supervisors.Multiprocess):
-    def run(self, stop_requested: multiprocessing.synchronize.Event, worker_contexts: list[Any]):
+    def run(
+        self,
+        stop_requested: multiprocessing.synchronize.Event,
+        worker_contexts: list[Any],
+    ):
         self.startup(stop_requested=stop_requested, worker_contexts=worker_contexts)
         while True:
             if self.should_exit.is_set() or stop_requested.is_set():
@@ -62,7 +66,11 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
             time.sleep(0.15)
         self.shutdown()
 
-    def startup(self, stop_requested: multiprocessing.synchronize.Event, worker_contexts: list[Any]) -> None:
+    def startup(
+        self,
+        stop_requested: multiprocessing.synchronize.Event,
+        worker_contexts: list[Any],
+    ) -> None:
         message = "Started parent process [{}]".format(str(self.pid))
         color_message = "Started parent process [{}]".format(
             click.style(str(self.pid), fg="cyan", bold=True)
@@ -160,7 +168,9 @@ def subprocess_started(
     config.configure_logging()
 
     # Now we can call into `Server.run(sockets=sockets)`
-    target(stop_requested=stop_requested, sockets=sockets, worker_context=worker_context)
+    target(
+        stop_requested=stop_requested, sockets=sockets, worker_context=worker_context
+    )
 
 
 _stop_requested: MP_SPAWN_CTX.Event() = None
@@ -252,8 +262,11 @@ def start_server(
         Passed to ``uvicorn.Config``.
     """
     if log_config is not UNSET:
-        warnings.warn("`log_config` is ignored since 0.14.1 and will be an error in 0.15.0",
-                      DeprecationWarning, stacklevel=2)
+        warnings.warn(
+            "`log_config` is ignored since 0.14.1 and will be an error in 0.15.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     config = uvicorn.Config(
         app,
@@ -275,7 +288,9 @@ def start_server(
         server.run(stop_requested=stop_requested, worker_context=worker_contexts[0])
     else:
         sock = config.bind_socket()
-        Multiprocess(config, target=server.run, sockets=[sock]).run(stop_requested=stop_requested, worker_contexts=worker_contexts)
+        Multiprocess(config, target=server.run, sockets=[sock]).run(
+            stop_requested=stop_requested, worker_contexts=worker_contexts
+        )
 
     if config.uds and os.path.exists(config.uds):
         os.remove(config.uds)  # pragma: py-win32
