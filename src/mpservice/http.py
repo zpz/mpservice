@@ -64,7 +64,7 @@ from typing import Union
 import uvicorn
 from deprecation import deprecated
 
-from ._http import start_server, stop_server
+from ._http import start_server, stop_server, ASGIApplication
 
 __all__ = ['start_server', 'stop_server']
 
@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
     deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead'
 )
 def make_server(
-    app: Union[str, 'ASGIApplication'],
+    app: str | ASGIApplication,
     *,
     host: str = "0.0.0.0",
     port: int = 8000,

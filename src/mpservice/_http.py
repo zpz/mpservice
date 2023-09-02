@@ -7,7 +7,7 @@ import socket
 import sys
 import time
 import warnings
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, TypeVar
 
 import click
 import uvicorn
@@ -190,9 +190,11 @@ async def stop_server():
 
 UNSET = object()
 
+ASGIApplication = TypeVar['ASGIApplication']
+
 
 def start_server(
-    app: Union["ASGIApplication", str],
+    app: ASGIApplication | str,
     *,
     host: str = "0.0.0.0",
     port: int = 8000,
