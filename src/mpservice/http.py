@@ -61,10 +61,9 @@ from __future__ import annotations
 import logging
 
 import uvicorn
-from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 from deprecation import deprecated
 
-from ._http import start_server, stop_server
+from ._http import ASGIApplication, start_server, stop_server
 
 __all__ = ['start_server', 'stop_server']
 

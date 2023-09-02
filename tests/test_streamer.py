@@ -313,6 +313,28 @@ async def test_async_peek():
     assert await Stream(exc).to_async().peek().drain() == len(exc)
 
 
+def test_shuffle():
+    print('')
+    data = list(range(20))
+    shuffled = list(Stream(data).shuffle(5))
+    print(shuffled)
+    shuffled = list(Stream(data).shuffle(50))
+    print(shuffled)
+
+
+@pytest.mark.asyncio
+async def test_async_shuffle():
+    async def data():
+        for x in range(20):
+            yield x
+
+    print('')
+    shuffled = [v async for v in Stream(data()).shuffle(5)]
+    print(shuffled)
+    shuffled = [v async for v in Stream(data()).shuffle(50)]
+    print(shuffled)
+
+
 def test_head():
     data = [0, 1, 2, 3, 'a', 5]
     assert list(Stream(data).head(3)) == data[:3]
@@ -354,7 +376,7 @@ def test_groupby():
         'plum',
         'please',
     ]
-    assert Stream(data).groupby(lambda x: x[0]).collect() == [
+    assert Stream(data).groupby(lambda x: x[0]).map(lambda x: list(x[1])).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],
@@ -383,7 +405,11 @@ async def test_async_groupby():
         for x in data:
             yield x
 
-    assert await Stream(gen()).groupby(lambda x: x[0]).collect() == [
+    async def gather(x):
+        key, grp = x
+        return [v async for v in grp]
+
+    assert await Stream(gen()).groupby(lambda x: x[0]).map(gather).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],

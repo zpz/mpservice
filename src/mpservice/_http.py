@@ -7,11 +7,10 @@ import socket
 import sys
 import time
 import warnings
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, TypeVar
 
 import click
 import uvicorn
-from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 
 from mpservice.multiprocessing import MP_SPAWN_CTX, SpawnProcess
 
@@ -191,9 +190,11 @@ async def stop_server():
 
 UNSET = object()
 
+ASGIApplication = TypeVar('ASGIApplication')
+
 
 def start_server(
-    app: str | ASGIApplication,
+    app: ASGIApplication | str,
     *,
     host: str = "0.0.0.0",
     port: int = 8000,

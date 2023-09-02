@@ -142,6 +142,10 @@ Read-only (will not change the elements):
     - :meth:`~Stream.buffer` (speed stabilizing)
     - :meth:`~Stream.peek` (info printing)
 
+All these methods preserve the order of the elements.
+There is one additonal method that changes the elements' order, and that is
+:meth:`~Stream.shuffle`.
+
 The operation in ``parmap`` is supposedly heavy and expensive.
 All the other operations are meant to be ligthweight and simple.
 

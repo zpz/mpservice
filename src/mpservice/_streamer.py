@@ -31,13 +31,15 @@ import concurrent.futures
 import contextlib
 import functools
 import inspect
+import itertools
 import logging
 import queue
+import random
 import threading
 import traceback
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
-from random import random
+from inspect import iscoroutinefunction
 from types import SimpleNamespace
 from typing import (
     Any,
@@ -49,6 +51,7 @@ from typing import (
     TypeVar,
 )
 
+import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from ._queues import SingleLane
@@ -238,8 +241,6 @@ class Stream(Generic[Elem]):
             (which do not have to differ from the original) form the new stream going
             forward.
 
-            .. note:: This function must be sync. If you have to use an async function, then use it with :meth:`parmap`.
-
         *kwargs
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
@@ -274,8 +275,6 @@ class Stream(Generic[Elem]):
         func
             A function that takes a data element and returns ``True`` or ``False`` to indicate
             the element should be kept in or dropped from the stream.
-
-            This function must be sync.
 
             This function should not make changes to the input data element.
         *kwargs
@@ -433,7 +432,7 @@ class Stream(Generic[Elem]):
                         if self._idx % self._interval == 0:
                             should_print = True
                     else:
-                        should_print = random() < self._interval
+                        should_print = random.random() < self._interval
                 if (
                     not should_print
                     and self._exc_types
@@ -466,6 +465,17 @@ class Stream(Generic[Elem]):
 
         return self.map(Peeker())
 
+    def shuffle(self, buffer_size: int = 1000) -> Self:
+        """
+        Shuffle the elements using a buffer as intermediate storage.
+
+        If ``buffer_size`` is ``>=`` the number of the elements, then the shuffling is fully random.
+        Otherwise, the shuffling is somewhat "localized".
+        """
+        cls = self._choose_by_mode(Shuffler, AsyncShuffler)
+        self.streamlets.append(cls(self.streamlets[-1], buffer_size=buffer_size))
+        return self
+
     def head(self, n: int) -> Self:
         """
         Take the first ``n`` elements and ignore the rest.
@@ -491,32 +501,30 @@ class Stream(Generic[Elem]):
         self.streamlets.append(cls(self.streamlets[-1], n))
         return self
 
-    def groupby(self, func: Callable[[T], Any], /, **kwargs) -> Self:
+    def groupby(self, key: Callable[[T], Any], /, **kwargs) -> Self:
         """
-        ``func`` takes a data element and outputs a value.
+        ``key`` takes a data element and outputs a value.
         **Consecutive** elements that have the same value of this output
-        will be grouped into a list.
+        will be yielded as a generator.
 
-        Following this operator, every element in the output stream is a list of length 1 or more.
+        Following this operator, every element in the output stream is a tuple
+        with the key and the values (as a generator).
 
-        ``func`` must be sync.
+        This function is similar to the standard
+        `itertools.groupby <https://docs.python.org/3/library/itertools.html#itertools.groupby>`_.
 
-        The output of ``func`` is usually a str or int or a tuple of a few strings or ints.
+        The output of ``key`` is usually a str or int or a tuple of a few strings or ints.
 
-        ``**kwargs`` are additional keyword arguments to ``func``.
-
-        .. note:: A group will be kept in memory until it is concluded (i.e. the next element
-            starts a new group). For this reason, the groups should not be too large
-            for the typical size of the data element.
+        ``**kwargs`` are additional keyword arguments to ``key``.
 
         Examples
         --------
         >>> data = ['atlas', 'apple', 'answer', 'bee', 'block', 'away', 'peter', 'question', 'plum', 'please']
-        >>> print(Stream(data).groupby(lambda x: x[0]).collect())
+        >>> print(Stream(data).groupby(lambda x: x[0]).map(lambda x: list(x[1])).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
         cls = self._choose_by_mode(Grouper, AsyncGrouper)
-        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
+        self.streamlets.append(cls(self.streamlets[-1], key, **kwargs))
         return self
 
     def batch(self, batch_size: int) -> Self:
@@ -834,14 +842,25 @@ class Mapper(Iterable):
 
 
 class AsyncMapper(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, func: Callable[[T], Any], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        func: Callable[[T], Any] | Callable[[T], Awaitable[T]],
+        **kwargs,
+    ):
         self._instream = instream
-        self.func = functools.partial(func, **kwargs) if kwargs else func
+        if kwargs:
+            func = functools.partial(func, **kwargs)
+        self.func = func
 
     async def __aiter__(self):
         func = self.func
-        async for v in self._instream:
-            yield func(v)
+        if iscoroutinefunction(func):
+            async for v in self._instream:
+                yield await func(v)
+        else:
+            async for v in self._instream:
+                yield func(v)
 
 
 class Filter(Iterable):
@@ -857,15 +876,25 @@ class Filter(Iterable):
 
 
 class AsyncFilter(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, func: Callable[[T], bool], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        func: Callable[[T], bool] | Callable[[T], Awaitable[bool]],
+        **kwargs,
+    ):
         self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
     async def __aiter__(self):
         func = self.func
-        async for v in self._instream:
-            if func(v):
-                yield v
+        if iscoroutinefunction(func):
+            async for v in self._instream:
+                if await func(v):
+                    yield v
+        else:
+            async for v in self._instream:
+                if func(v):
+                    yield v
 
 
 class Header(Iterable):
@@ -941,47 +970,62 @@ class AsyncTailor(AsyncIterable):
 
 
 class Grouper(Iterable):
-    def __init__(self, instream: Iterable, /, func: Callable[[T], Any], **kwargs):
+    def __init__(self, instream: Iterable, /, key: Callable[[T], Any], **kwargs):
         self._instream = instream
-        self.func = functools.partial(func, **kwargs) if kwargs else func
+        if kwargs:
+            key = functools.partial(key, **kwargs)
+        self.key = key
 
     def __iter__(self):
-        _z = object()
-        group = None
-        func = self.func
-        for x in self._instream:
-            z = func(x)
-            if z == _z:
-                group.append(x)
-            else:
-                if group is not None:
-                    yield group
-                group = [x]
-                _z = z
-        if group:
-            yield group
+        yield from itertools.groupby(self._instream, self.key)
+
+        # _z = object()
+        # group = None
+        # func = self.func
+        # for x in self._instream:
+        #     z = func(x)
+        #     if z == _z:
+        #         group.append(x)
+        #     else:
+        #         if group is not None:
+        #             yield _z, group
+        #         group = [x]
+        #         _z = z
+        # if group:
+        #     yield _z, group
 
 
 class AsyncGrouper(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, /, func: Callable[[T], Any], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        /,
+        key: Callable[[T], Any] | Callable[[T], Awaitable[Any]],
+        **kwargs,
+    ):
         self._instream = instream
-        self.func = functools.partial(func, **kwargs) if kwargs else func
+        if kwargs:
+            key = functools.partial(key, **kwargs)
+        self.key = key
 
     async def __aiter__(self):
-        _z = object()
-        group = None
-        func = self.func
-        async for x in self._instream:
-            z = func(x)
-            if z == _z:
-                group.append(x)
-            else:
-                if group is not None:
-                    yield group
-                group = [x]
-                _z = z
-        if group:
-            yield group
+        async for v in asyncstdlib.itertools.groupby(self._instream, self.key):
+            yield v
+
+        # _z = object()
+        # group = None
+        # func = self.func
+        # async for x in self._instream:
+        #     z = func(x)
+        #     if z == _z:
+        #         group.append(x)
+        #     else:
+        #         if group is not None:
+        #             yield _z, group
+        #         group = [x]
+        #         _z = z
+        # if group:
+        #     yield _z, group
 
 
 class Batcher(Iterable):
@@ -1045,12 +1089,60 @@ class AsyncUnbatcher(AsyncIterable):
 
     async def __aiter__(self):
         async for x in self._instream:
+            # `x` must be iterable or async iterable.
             if isiterable(x):
                 for y in x:
                     yield y
             else:
                 async for y in x:
                     yield y
+
+
+class Shuffler(Iterable):
+    def __init__(self, instream: Iterable, /, buffer_size: int = 1000):
+        assert buffer_size > 0
+        self._instream = instream
+        self._buffersize = buffer_size
+
+    def __iter__(self):
+        buffer = []
+        buffersize = self._buffersize
+        randrange = random.randrange
+        for x in self._instream:
+            if len(buffer) < buffersize:
+                buffer.append(x)
+            else:
+                idx = randrange(buffersize)
+                y = buffer[idx]
+                buffer[idx] = x
+                yield y
+        if buffer:
+            random.shuffle(buffer)
+            yield from buffer
+
+
+class AsyncShuffler(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, buffer_size: int = 1000):
+        assert buffer_size > 0
+        self._instream = instream
+        self._buffersize = buffer_size
+
+    async def __aiter__(self):
+        buffer = []
+        buffersize = self._buffersize
+        randrange = random.randrange
+        async for x in self._instream:
+            if len(buffer) < buffersize:
+                buffer.append(x)
+            else:
+                idx = randrange(buffersize)
+                y = buffer[idx]
+                buffer[idx] = x
+                yield y
+        if buffer:
+            random.shuffle(buffer)
+            for x in buffer:
+                yield x
 
 
 class Buffer(Iterable):
