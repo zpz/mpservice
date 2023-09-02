@@ -192,7 +192,7 @@ UNSET = object()
 
 
 def start_server(
-    app: Union[str, 'ASGIApplication'],
+    app: Union["ASGIApplication", str],
     *,
     host: str = "0.0.0.0",
     port: int = 8000,

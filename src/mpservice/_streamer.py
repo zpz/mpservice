@@ -831,7 +831,12 @@ class Mapper(Iterable):
 
 
 class AsyncMapper(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, func: Callable[[T], Any] | Callable[[T], Awaitable[T]], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        func: Callable[[T], Any] | Callable[[T], Awaitable[T]],
+        **kwargs,
+    ):
         self._instream = instream
         if kwargs:
             func = functools.partial(func, **kwargs)
@@ -860,7 +865,12 @@ class Filter(Iterable):
 
 
 class AsyncFilter(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, func: Callable[[T], bool] | Callable[[T], Awaitable[bool]], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        func: Callable[[T], bool] | Callable[[T], Awaitable[bool]],
+        **kwargs,
+    ):
         self._instream = instream
         self.func = functools.partial(func, **kwargs) if kwargs else func
 
@@ -975,7 +985,13 @@ class Grouper(Iterable):
 
 
 class AsyncGrouper(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, /, key: Callable[[T], Any] | Callable[[T], Awaitable[Any]], **kwargs):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        /,
+        key: Callable[[T], Any] | Callable[[T], Awaitable[Any]],
+        **kwargs,
+    ):
         self._instream = instream
         if kwargs:
             key = functools.partial(key, **kwargs)
