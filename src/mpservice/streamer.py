@@ -22,7 +22,6 @@ the usage of Stream is one and the same in both modes.
 """
 from ._streamer import (
     Batcher,
-    Buffer,
     Stream,
     Unbatcher,
     tee,
@@ -33,5 +32,4 @@ __all__ = [
     'tee',
     'Batcher',
     'Unbatcher',
-    'Buffer',
 ]

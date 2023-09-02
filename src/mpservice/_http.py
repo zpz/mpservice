@@ -190,7 +190,7 @@ async def stop_server():
 
 UNSET = object()
 
-ASGIApplication = TypeVar['ASGIApplication']
+ASGIApplication = TypeVar('ASGIApplication')
 
 
 def start_server(

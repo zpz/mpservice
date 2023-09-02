@@ -34,12 +34,12 @@ import inspect
 import itertools
 import logging
 import queue
+import random
 import threading
 import traceback
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from inspect import iscoroutinefunction
-from random import random
 from types import SimpleNamespace
 from typing import (
     Any,
@@ -432,7 +432,7 @@ class Stream(Generic[Elem]):
                         if self._idx % self._interval == 0:
                             should_print = True
                     else:
-                        should_print = random() < self._interval
+                        should_print = random.random() < self._interval
                 if (
                     not should_print
                     and self._exc_types
@@ -464,6 +464,17 @@ class Stream(Generic[Elem]):
                 return x
 
         return self.map(Peeker())
+
+    def shuffle(self, buffer_size: int = 1000) -> Self:
+        """
+        Shuffle the elements using a buffer as intermediate storage.
+
+        If ``buffer_size`` is ``>=`` the number of the elements, then the shuffling is fully random.
+        Otherwise, the shuffling is somewhat "localized".
+        """
+        cls = self._choose_by_mode(Shuffler, AsyncShuffler)
+        self.streamlets.append(cls(self.streamlets[-1], buffer_size=buffer_size))
+        return self
 
     def head(self, n: int) -> Self:
         """
@@ -1078,12 +1089,60 @@ class AsyncUnbatcher(AsyncIterable):
 
     async def __aiter__(self):
         async for x in self._instream:
+            # `x` must be iterable or async iterable.
             if isiterable(x):
                 for y in x:
                     yield y
             else:
                 async for y in x:
                     yield y
+
+
+class Shuffler(Iterable):
+    def __init__(self, instream: Iterable, /, buffer_size: int = 1000):
+        assert buffer_size > 0
+        self._instream = instream
+        self._buffersize = buffer_size
+
+    def __iter__(self):
+        buffer = []
+        buffersize = self._buffersize
+        randrange = random.randrange
+        for x in self._instream:
+            if len(buffer) < buffersize:
+                buffer.append(x)
+            else:
+                idx = randrange(buffersize)
+                y = buffer[idx]
+                buffer[idx] = x
+                yield y
+        if buffer:
+            random.shuffle(buffer)
+            yield from buffer
+
+
+class AsyncShuffler(AsyncIterable):
+    def __init__(self, instream: AsyncIterable, /, buffer_size: int = 1000):
+        assert buffer_size > 0
+        self._instream = instream
+        self._buffersize = buffer_size
+
+    async def __aiter__(self):
+        buffer = []
+        buffersize = self._buffersize
+        randrange = random.randrange
+        async for x in self._instream:
+            if len(buffer) < buffersize:
+                buffer.append(x)
+            else:
+                idx = randrange(buffersize)
+                y = buffer[idx]
+                buffer[idx] = x
+                yield y
+        if buffer:
+            random.shuffle(buffer)
+            for x in buffer:
+                yield x
 
 
 class Buffer(Iterable):
