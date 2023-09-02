@@ -59,12 +59,11 @@ routing and request acceptance/response.
 from __future__ import annotations
 
 import logging
-from typing import Union
 
 import uvicorn
 from deprecation import deprecated
 
-from ._http import start_server, stop_server, ASGIApplication
+from ._http import ASGIApplication, start_server, stop_server
 
 __all__ = ['start_server', 'stop_server']
 
