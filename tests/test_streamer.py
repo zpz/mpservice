@@ -333,7 +333,7 @@ async def test_async_shuffle():
     print(shuffled)
     shuffled = [v async for v in Stream(data()).shuffle(50)]
     print(shuffled)
-    
+
 
 def test_head():
     data = [0, 1, 2, 3, 'a', 5]
