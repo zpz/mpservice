@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - New http serving code in ``mpservice.http`` designed for multiple worker processes
   managed by ``uvicorn`` (as opposed to multiple worker processes managed by ``mpservice.mpserver``).
 - Removed dependency on ``asgiref``.
+- ``Streamer.groupby`` now behaves like the standard ``itertools.groupby`` in that the subgroups it yields are generators rather than lists.
+- ``Streamer.{map, filter}`` now can take async ``func`` arguments.
 
 
 ## [0.14.0] - 2023-08-22

@@ -59,9 +59,9 @@ routing and request acceptance/response.
 from __future__ import annotations
 
 import logging
+from typing import Union
 
 import uvicorn
-from asgiref.typing import ASGIApplication  # such as `starlette.applications.Starlette`
 from deprecation import deprecated
 
 from ._http import start_server, stop_server
@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
     deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead'
 )
 def make_server(
-    app: str | 'ASGIApplication',
+    app: Union[str, 'ASGIApplication'],
     *,
     host: str = "0.0.0.0",
     port: int = 8000,

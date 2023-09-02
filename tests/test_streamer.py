@@ -354,7 +354,7 @@ def test_groupby():
         'plum',
         'please',
     ]
-    assert Stream(data).groupby(lambda x: x[0]).collect() == [
+    assert Stream(data).groupby(lambda x: x[0]).map(lambda x: list(x[1])).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],
@@ -383,7 +383,11 @@ async def test_async_groupby():
         for x in data:
             yield x
 
-    assert await Stream(gen()).groupby(lambda x: x[0]).collect() == [
+    async def gather(x):
+        key, grp = x
+        return [v async for v in grp]
+
+    assert await Stream(gen()).groupby(lambda x: x[0]).map(gather).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],
