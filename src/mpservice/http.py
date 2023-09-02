@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
     deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead'
 )
 def make_server(
-    app: str | ASGIApplication,
+    app: str | 'ASGIApplication',
     *,
     host: str = "0.0.0.0",
     port: int = 8000,

@@ -193,7 +193,7 @@ UNSET = object()
 
 
 def start_server(
-    app: str | ASGIApplication,
+    app: str | 'ASGIApplication',
     *,
     host: str = "0.0.0.0",
     port: int = 8000,
