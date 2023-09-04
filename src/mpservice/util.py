@@ -1,5 +1,7 @@
-# This function is no longer used in this package but can be useful.
-# It will be removed eventually.
+from deprecation import deprecated
+
+
+@deprecated(deprecated_in='0.14.1', removed_in='0.15.0')
 def full_class_name(cls):
     if not isinstance(cls, type):
         cls = cls.__class__
