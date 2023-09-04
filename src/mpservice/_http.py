@@ -249,7 +249,16 @@ def start_server(
 
         Note that worker processes are not dynamically created and killed according to need---this fixed
         number of processes are started and they remain active---this is in contrast to Gunicorn.
-        This also makes our customization---placing ``UVICORN_WORKER_IDX`` in the environ---meaningful.
+        This also makes the parameter ``worker_contexts`` meaningful.
+
+        Since ``mpservice.mpserver`` handles sophisticated multiprocessing servers "natively",
+        usually you should use ``workers=1``, that is, let ``uvicorn`` run a simple "in-process"
+        worker (implemented by a ``mpservice.mpserver.AsyncServer`` object) and let ``AsyncServer``
+        handle multiple worker processes.
+
+        There *may* be cases where ``workers > 1`` has some speed advantage. One possible reason
+        for such advantage might come from saving on pickling overhead. You need to bencharmk
+        you particular use case to decide.
     worker_contexts
         If provided, this must be a list or tuple with as many as ``workers`` elements.
         The elements of ``worker_contexts`` will become the attribute ``worker_context`` of ``app``
