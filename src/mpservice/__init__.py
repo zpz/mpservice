@@ -17,11 +17,11 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
    is that one or more of the operators is I/O bound or compute intensive,
    hence can benefit from concurrency.
 3. Utilities in :mod:`mpservice.multiprocessing` to enhance or customize Python's standard
-   :mod:`multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ module.
+   `multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ module.
 """
 
 
-__version__ = "0.14.1"
+__version__ = "0.14.2"
 
 
 from . import (

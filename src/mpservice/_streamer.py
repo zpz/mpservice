@@ -61,11 +61,8 @@ from .concurrent.futures import (
     get_shared_process_pool,
     get_shared_thread_pool,
 )
-from .multiprocessing import (
-    Event,
-    get_remote_traceback,
-    is_remote_exception,
-)
+from .multiprocessing import Event
+from .multiprocessing.remote_exception import get_remote_traceback, is_remote_exception
 from .threading import Thread
 
 logger = logging.getLogger(__name__)

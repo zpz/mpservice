@@ -4,6 +4,12 @@ import traceback
 from types import TracebackType
 from typing import Optional
 
+__call__ = [
+    'RemoteException',
+    'get_remote_traceback',
+    'is_remote_exception',
+]
+
 
 # This class should be in the module `mpserver`.
 # It is here because the class `RemoteException` needs to handle it.

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.2] - 2023-09-10
+
+- Adjustment to the importing of things in ``mpservice.multiprocessing``. Some changes are breaking.
+  ``mpservice.multiprocessing.context`` has become ``mpservice.multiprocessing._context``.
+  ``mpservice.multiprocessing.util`` has been removed.
+
+
 ## [0.14.1] - 2023-09-04
 
 - New http serving code in ``mpservice.http`` designed for multiple worker processes

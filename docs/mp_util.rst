@@ -24,7 +24,7 @@ The "spawn" context
 
 .. autoclass:: mpservice.multiprocessing.SpawnProcess
 
-.. autoclass:: mpservice.multiprocessing.context.SpawnContext
+.. autoclass:: mpservice.multiprocessing.SpawnContext
 
 .. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
 

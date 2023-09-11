@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable
 
 from ._queues import SingleLane
 from .concurrent.futures import ThreadPoolExecutor
-from .multiprocessing import RemoteException
+from .multiprocessing.remote_exception import RemoteException
 
 __all__ = [
     'SocketApplication',

@@ -1,6 +1,25 @@
 """
-`multiprocessing`_ can be tricky.
-``mpservice`` provides help to address several common difficulties.
+The standard module ``multiprocessing`` is complicated by the so-called "start method" or "context" (ctx).
+The commonly used classes like ``Queue``, ``Lock``, ``Event``, etc. have a **required** parameter ``ctx``, 
+yet we usually do not use these classes (residing in submodules of ``multiprocessing``) directly.
+Instead, we import them from ``multiprocessing``, which has plugged in a "default context" for us.
+This is not all good. One problem is the following:
+
+> If we import ``Process`` (or ``Queue``, or many others) from ``multiprocessing``,
+> this is **not** a class, but rather a factory method. As a result, although we use
+> ``Process(...)`` to create a process instance, we can **not** use ``Process`` to annotate the type
+> of this object.
+
+This is both inconvenient and confusing.
+
+The module ``mpservice.multiprocessing`` breaks from some of the ``multiprocessing`` design to alleviate this problem.
+The symbols ``Queue``, ``Lock``, ``Condition``, ``Semaphore``, etc. that are exposed by ``mpservice.multiprocessing``
+are classes (not factory methods of a "context" object), hence they can be used in type annotations.
+In the meatime, their parameter ``ctx`` is **optional** (as opposed to **required**), and default to
+a spawn context--``MP_SPAWN_CTX`` to be specific. As a result, user is encouraged to use these classes directly
+and leave out the ``ctx`` argument.
+
+In addition, ``mpservice.multiprocessing`` provides some enhancements to the standard ``multiprocessing``.
 
 First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
 :data:`~mpservice.multiprocessing.MP_SPAWN_CTX` is provided to make this easier.
@@ -18,18 +37,46 @@ With `multiprocessing`_, in contrast, we have to pass the results or explicitly 
 to the main process via a queue. :class:`~mpservice.multiprocessing.SpawnProcess` has this covered as well.
 It can be used in the ``concurrent.futures`` way.
 
-Last but not least, if exception happens in a child process and we don't want the program to crash right there,
+Third, if exception happens in a child process and we don't want the program to crash right there,
 instead we send it to the main or another process to be investigated when/where we are ready to,
 the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
+
+Besides these fixes to "pain points", the module ``mpservice.server_process`` provide some new capabilities
+for the "manager" facility in ``multiprocessing``.
+
+..note::
+  Recommendations on the use of ``MP_SPAWN_CTX``: use the classes ``Process``, ``Manager``, ``Lock``,
+  ``RLock``, ``Condition``, ``Semaphore``, ``BoundedSemaphore``, ``Event``, ``Barrier``,
+  ``Queue``, ``JoinableQueue``, ``SimpleQueue``, ``Pool`` diretly to create objects and type-annote them;
+  this is preferred over ``MP_SPAWN_CTX.Process``, ``MP_SPAWN_CTX.Manager``, etc, although they would work, too.
+  A few factory methods such as ``RawArray``, ``RawValue``, ``Array``, ``Value`` are not exposed in ``mpservice.multiprocessing``;
+  you may use them as methods of the object ``MP_SPAWN_CTX``.
 """
 import concurrent.futures
 from collections.abc import Iterator, Sequence
-from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION  # noqa
 
 from mpservice.threading import Thread
 
-from . import queues, server_process
-from .context import MP_SPAWN_CTX, SpawnProcess
+from ._context import (
+    MP_SPAWN_CTX,
+    Barrier,
+    BoundedSemaphore,
+    Condition,
+    Event,
+    JoinableQueue,
+    Lock,
+    Pool,
+    Queue,
+    RLock,
+    Semaphore,
+    SimpleQueue,
+    SpawnContext,
+    SpawnProcess,
+)
+from ._context import (
+    SyncManager as Manager,
+)
 from .remote_exception import (
     RemoteException,
     get_remote_traceback,
@@ -39,34 +86,31 @@ from .server_process import (
     ServerProcess,
 )
 
+Process = SpawnProcess
+
 __all__ = [
-    'SpawnProcess',
+    'SpawnContext',
+    'MP_SPAWN_CTX',
+    'Process',
+    'Manager',
+    'Lock',
+    'RLock',
+    'Condition',
+    'Semaphore',
+    'BoundedSemaphore',
+    'Event',
+    'Barrier',
+    'Queue',
+    'JoinableQueue',
+    'SimpleQueue',
+    'Pool',
     'RemoteException',
     'get_remote_traceback',
     'is_remote_exception',
-    'MP_SPAWN_CTX',
-    'queues',
-    'server_process',
     'ServerProcess',
     'wait',
     'as_completed',
 ]
-
-
-_names_ = [
-    x for x in dir(MP_SPAWN_CTX) if not x.startswith('_') and x != 'TimeoutError'
-]
-globals().update((name, getattr(MP_SPAWN_CTX, name)) for name in _names_)
-# Names like `Process`, `Queue`, `Pool`, `Event`, `Manager` etc are directly import-able from this module.
-# But they are not classes; rather they are bound methods of the context `MP_SPAWN_CTX`.
-# This is the same behavior as the standard `multiprocessing`.
-# With this, you can usually replace
-#
-#    from multiprocessing import ...
-#
-# by
-#
-#    from mpservice.multiprocessing import ...
 
 
 def wait(

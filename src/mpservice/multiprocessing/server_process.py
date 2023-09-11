@@ -316,7 +316,7 @@ from multiprocessing.managers import (
 )
 from traceback import format_exc
 
-from .context import MP_SPAWN_CTX
+from ._context import MP_SPAWN_CTX
 
 __all__ = [
     'ServerProcess',
