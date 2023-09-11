@@ -39,8 +39,8 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from .multiprocessing import MP_SPAWN_CTX, Process, RemoteException
-from .multiprocessing.remote_exception import EnsembleError
+from .multiprocessing import MP_SPAWN_CTX, Process
+from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.

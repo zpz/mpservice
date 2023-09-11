@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import multiprocessing.synchronize
 import os
 import signal
 import socket
@@ -12,7 +11,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 import click
 import uvicorn
 
-from mpservice.multiprocessing import MP_SPAWN_CTX, SpawnProcess
+from mpservice.multiprocessing import Process, Event
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class Server(uvicorn.Server):
     def run(
         self,
         *,
-        stop_requested: multiprocessing.synchronize.Event,
+        stop_requested: Event,
         sockets: list[socket.socket] | None = None,
         worker_context: Any = None,
     ) -> None:
@@ -55,7 +54,7 @@ class Server(uvicorn.Server):
 class Multiprocess(uvicorn.supervisors.Multiprocess):
     def run(
         self,
-        stop_requested: multiprocessing.synchronize.Event,
+        stop_requested: Event,
         worker_contexts: list[Any],
     ):
         self.startup(stop_requested=stop_requested, worker_contexts=worker_contexts)
@@ -67,7 +66,7 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
 
     def startup(
         self,
-        stop_requested: multiprocessing.synchronize.Event,
+        stop_requested: Event,
         worker_contexts: list[Any],
     ) -> None:
         message = "Started parent process [{}]".format(str(self.pid))
@@ -98,8 +97,8 @@ def get_subprocess(
     target: Callable[..., None],
     sockets: List[socket.socket],
     worker_context: Any,
-    stop_requested: multiprocessing.synchronize.Event,
-) -> SpawnProcess:
+    stop_requested: Event,
+) -> Process:
     """
     Called in the parent process, to instantiate a new child process instance.
     The child is not yet started at this point.
@@ -133,7 +132,7 @@ def get_subprocess(
         "stop_requested": stop_requested,
     }
 
-    return MP_SPAWN_CTX.Process(target=subprocess_started, kwargs=kwargs)
+    return Process(target=subprocess_started, kwargs=kwargs)
 
 
 # See `uvicorn`.
@@ -143,7 +142,7 @@ def subprocess_started(
     sockets: List[socket.socket],
     stdin_fileno: Optional[int],
     worker_context: Any,
-    stop_requested: multiprocessing.synchronize.Event,
+    stop_requested: Event,
 ) -> None:
     """
     Called when the child process starts.
@@ -172,7 +171,7 @@ def subprocess_started(
     )
 
 
-_stop_requested: MP_SPAWN_CTX.Event() = None
+_stop_requested: Event = None
 # When a new process is spawned, this variable will be `None`
 # in that process upon importing this module.
 # This variable is initialized in `start_server` in the "main" process
@@ -293,7 +292,7 @@ def start_server(
         worker_contexts = [None] * workers
 
     server = Server(config=config)
-    stop_requested = MP_SPAWN_CTX.Event()
+    stop_requested = Event()
     if workers == 1:
         server.run(stop_requested=stop_requested, worker_context=worker_contexts[0])
     else:

@@ -9,10 +9,13 @@ import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.queues
+import multiprocessing.synchronize
+import multiprocessing.pool
 import os
 import time
 import warnings
 from multiprocessing import util
+from typing import Generic, TypeVar
 
 from .._common import TimeoutError
 from ..threading import Thread
@@ -362,38 +365,13 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
     Process = SpawnProcess
 
-    def Manager(self, *, name: str | None = None, cpu: int | list[int] | None = None):
-        '''
-        The counterpart in the standard lib does not have the parameters ``name`` and ``cpu``.
-        '''
-        m = super().Manager()
-        if name:
-            m._process.name = name
-        if cpu is not None:
-            if isinstance(cpu, int):
-                cpu = [cpu]
-            os.sched_setaffinity(m._process.pid, cpu)
-        return m
+    def Manager(self, *args, **kwargs):
+        return SyncManager(*args, ctx=self.get_context(), **kwargs)
 
     def get_context(self, method=None):
         if method is None or method == 'spawn':
             return self
         return super().get_context(method)
-
-    def Queue(self, maxsize=0):
-        from .queues import Queue
-
-        return Queue(maxsize, ctx=self.get_context())
-
-    def JoinableQueue(self, maxsize: int = 0):
-        from .queues import JoinableQueue
-
-        return JoinableQueue(maxsize, ctx=self.get_context())
-
-    def SimpleQueue(self):
-        from .queues import SimpleQueue
-
-        return SimpleQueue(ctx=self.get_context())
 
 
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
@@ -436,7 +414,7 @@ So, multiprocessing code is often written this way::
     ...
 
 The constant ``MP_SPAWN_CTX`` is a replacement of the standard spawn context.
-Instead of the above, you are advised to write this::
+Instead of the above, you may use::
 
     from mpservice.multiprocessing import MP_SPAWN_CTX as ctx
     q = ctx.Queue(...)
@@ -448,12 +426,83 @@ The difference between ``MP_SPAWN_CTX`` and the standard spawn context
 is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of the standard
 `Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
 
-If you only need to start a process and don't need to create other objects
-(like queue or event) from a context, then you can use :class:`SpawnProcess` directly.
-
-All multiprocessing code in ``mpservice`` uses either ``MP_SPAWN_CTX``, or ``SpawnProcess`` directly.
-
-`concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_
-takes a parameter ``mp_context``.
-You can provide ``MP_SPAWN_CTX`` for this parameter so that the executor will use ``SpawnProcess``.
+Also see documentation of ``mpservice.multiprocessing``.
 """
+
+
+
+class SyncManager(multiprocessing.managers.SyncManager):
+    def __init__(self, *args, ctx=None, name: str | None = None, cpu: int | list[int] | None = None, **kwargs):
+        super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
+        self.start()
+        if name:
+            self._process.name = name
+        if cpu is not None:
+            if isinstance(cpu, int):
+                cpu = [cpu]
+            os.sched_setaffinity(self._process.pid, cpu)
+
+
+class Lock(multiprocessing.synchronize.Lock):
+    def __init__(self, *, ctx=None):
+        super().__init__(ctx=ctx or MP_SPAWN_CTX)
+
+
+class RLock(multiprocessing.synchronize.RLock):
+    def __init__(self, *, ctx=None):
+        super().__init__(ctx=ctx or MP_SPAWN_CTX)
+
+
+class Condition(multiprocessing.synchronize.Condition):
+    def __init__(self, lock=None, *, ctx=None):
+        super().__init__(lock=lock, ctx=ctx or MP_SPAWN_CTX)
+
+
+class Semaphore(multiprocessing.synchronize.Semaphore):
+    def __init__(self, value=1, *, ctx=None):
+        super().__init__(value=value, ctx=ctx or MP_SPAWN_CTX)
+
+
+class BoundedSemaphore(multiprocessing.synchronize.BoundedSemaphore):
+    def __init__(self, value=1, *, ctx=None):
+        super().__init__(value=value, ctx=ctx or MP_SPAWN_CTX)
+
+
+class Event(multiprocessing.synchronize.Event):
+    def __init__(self, *, ctx=None):
+        super().__init__(ctx=ctx or MP_SPAWN_CTX)
+
+
+class Barrier(multiprocessing.synchronize.Barrier):
+    def __init__(self, *args, ctx=None, **kwargs):
+        super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
+
+
+Elem = TypeVar('Elem')
+
+
+class Queue(multiprocessing.queues.Queue, Generic[Elem]):
+    def __init__(self, maxsize=0, *, ctx=None):
+        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
+
+
+class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
+    def __init__(self, maxsize=0, *, ctx=None):
+        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
+
+
+class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
+    def __init__(self, maxsize=0, *, ctx=None):
+        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
+
+
+class Pool(multiprocessing.pool.Pool):
+    @staticmethod
+    def Process(*args, ctx=None, **kwargs):
+        if ctx is None:
+            ctx = MP_SPAWN_CTX
+        return ctx.Process(*args, **kwargs)
+    
+    def __init__(self, *args, context=None, **kwargs):
+        super().__init__(*args, context=context or MP_SPAWN_CTX, **kwargs)
+
