@@ -8,9 +8,9 @@ import multiprocessing
 import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
+import multiprocessing.pool
 import multiprocessing.queues
 import multiprocessing.synchronize
-import multiprocessing.pool
 import os
 import time
 import warnings
@@ -430,9 +430,15 @@ Also see documentation of ``mpservice.multiprocessing``.
 """
 
 
-
 class SyncManager(multiprocessing.managers.SyncManager):
-    def __init__(self, *args, ctx=None, name: str | None = None, cpu: int | list[int] | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        ctx=None,
+        name: str | None = None,
+        cpu: int | list[int] | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
         self.start()
         if name:
@@ -502,7 +508,6 @@ class Pool(multiprocessing.pool.Pool):
         if ctx is None:
             ctx = MP_SPAWN_CTX
         return ctx.Process(*args, **kwargs)
-    
+
     def __init__(self, *args, context=None, **kwargs):
         super().__init__(*args, context=context or MP_SPAWN_CTX, **kwargs)
-

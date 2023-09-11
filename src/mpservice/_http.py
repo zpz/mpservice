@@ -11,7 +11,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 import click
 import uvicorn
 
-from mpservice.multiprocessing import Process, Event
+from mpservice.multiprocessing import Event, Process
 
 logger = logging.getLogger(__name__)
 
