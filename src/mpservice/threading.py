@@ -19,6 +19,9 @@ __all__ = [
     'Thread',
     'FIRST_COMPLETED',
     'FIRST_EXCEPTION',
+    'ALL_COMPLETED',
+    'wait',
+    'as_completed',
 ]
 
 
