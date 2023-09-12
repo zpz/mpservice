@@ -115,9 +115,9 @@ __all__ = [
     'JoinableQueue',
     'SimpleQueue',
     'Pool',
-    'RawValue', 
+    'RawValue',
     'RawArray',
-    'Value', 
+    'Value',
     'Array',
     'cpu_count',
     'RemoteException',
@@ -126,7 +126,9 @@ __all__ = [
     'ServerProcess',
     'wait',
     'as_completed',
-    'ALL_COMPLETED', 'FIRST_COMPLETED', 'FIRST_EXCEPTION',
+    'ALL_COMPLETED',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
 ]
 
 

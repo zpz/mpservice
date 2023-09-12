@@ -24,8 +24,11 @@ __all__ = [
     'ProcessPoolExecutor',
     'get_shared_thread_pool',
     'get_shared_process_pool',
-    'wait', 'as_completed',
-    'ALL_COMPLETED', 'FIRST_COMPLETED', 'FIRST_EXCEPTION',
+    'wait',
+    'as_completed',
+    'ALL_COMPLETED',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
 ]
 
 
