@@ -10,7 +10,6 @@ import weakref
 
 from mpservice.multiprocessing import MP_SPAWN_CTX
 
-Executor = concurrent.futures.Executor
 wait = concurrent.futures.wait
 as_completed = concurrent.futures.as_completed
 ALL_COMPLETED = concurrent.futures.ALL_COMPLETED
@@ -19,11 +18,8 @@ FIRST_EXCEPTION = concurrent.futures.FIRST_EXCEPTION
 
 
 __all__ = [
-    'Executor',
     'ThreadPoolExecutor',
     'ProcessPoolExecutor',
-    'get_shared_thread_pool',
-    'get_shared_process_pool',
     'wait',
     'as_completed',
     'ALL_COMPLETED',

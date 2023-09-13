@@ -30,7 +30,9 @@ from . import (
     http,
     mpserver,
     multiprocessing,
+    pipe,
     queue,
+    socket,
     streamer,
     threading,
 )

@@ -57,6 +57,8 @@ for the "manager" facility in ``multiprocessing``.
 import concurrent.futures
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
+from importlib import import_module
+import warnings
 
 from mpservice.threading import Thread
 
@@ -78,14 +80,6 @@ from ._context import (
 )
 from ._context import (
     SyncManager as Manager,
-)
-from .remote_exception import (
-    RemoteException,
-    get_remote_traceback,
-    is_remote_exception,
-)
-from .server_process import (
-    ServerProcess,
 )
 
 Process = SpawnProcess
@@ -120,10 +114,6 @@ __all__ = [
     'Value',
     'Array',
     'cpu_count',
-    'RemoteException',
-    'get_remote_traceback',
-    'is_remote_exception',
-    'ServerProcess',
     'wait',
     'as_completed',
     'ALL_COMPLETED',
@@ -165,3 +155,15 @@ def as_completed(
     future_to_thread = {id(t._future_): t for t in workers}
     for f in concurrent.futures.as_completed(futures, timeout=timeout):
         yield future_to_thread[id(f)]
+
+
+def __getattr__(name):
+    if name in ('RemoteException', 'get_remote_traceback', 'is_remote_exception'):
+        mname = 'mpservice.multiprocessing.remote_exception'
+    if name in ('ServerProcess', ):
+        mname = 'mpservice.multiprocessing.server_process'
+    m = import_module(mname)
+    o = getattr(m, name)
+    warnings.warn(f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3. Import from '{mname}' instead.",
+                    DeprecationWarning, stacklevel=2)
+    return o
