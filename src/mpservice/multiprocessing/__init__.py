@@ -55,10 +55,10 @@ for the "manager" facility in ``multiprocessing``.
   you may use them via the object ``MP_SPAWN_CTX``.
 """
 import concurrent.futures
+import warnings
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 from importlib import import_module
-import warnings
 
 from mpservice.threading import Thread
 
@@ -160,10 +160,13 @@ def as_completed(
 def __getattr__(name):
     if name in ('RemoteException', 'get_remote_traceback', 'is_remote_exception'):
         mname = 'mpservice.multiprocessing.remote_exception'
-    if name in ('ServerProcess', ):
+    if name in ('ServerProcess',):
         mname = 'mpservice.multiprocessing.server_process'
     m = import_module(mname)
     o = getattr(m, name)
-    warnings.warn(f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3. Import from '{mname}' instead.",
-                    DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3. Import from '{mname}' instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return o
