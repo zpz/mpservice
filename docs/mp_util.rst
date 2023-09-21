@@ -7,8 +7,14 @@ Utilities for multiprocessing
     :no-special-members:
     :no-undoc-members:
 
+
 Remote exception
 ================
+
+.. automodule:: mpservice.multiprocessing.remote_exception
+    :no-members:
+    :no-special-members:
+
 
 .. autoclass:: mpservice.multiprocessing.RemoteException
 

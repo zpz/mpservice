@@ -5,10 +5,10 @@ yet we usually do not use these classes (residing in submodules of ``multiproces
 Instead, we import them from ``multiprocessing``, which has plugged in a "default context" for us.
 This is not all good. One problem is the following:
 
-> If we import ``Process`` (or ``Queue``, or many others) from ``multiprocessing``,
-> this is **not** a class, but rather a factory method. As a result, although we use
-> ``Process(...)`` to create a process instance, we can **not** use ``Process`` to annotate the type
-> of this object.
+    If we import ``Process`` (or ``Queue``, or many others) from ``multiprocessing``,
+    this is **not** a class, but rather a factory method. As a result, although we use
+    ``Process(...)`` to create a process instance, we can **not** use ``Process`` to annotate the type
+    of this object.
 
 This is both inconvenient and confusing.
 
@@ -46,8 +46,7 @@ the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.
 Besides these fixes to "pain points", the module ``mpservice.server_process`` provide some new capabilities
 for the "manager" facility in ``multiprocessing``.
 
-..note::
-  Recommendations on the use of ``MP_SPAWN_CTX``: use the classes ``Process``, ``Manager``, ``Lock``,
+.. note:: Recommendations on the use of ``MP_SPAWN_CTX``: use the classes ``Process``, ``Manager``, ``Lock``,
   ``RLock``, ``Condition``, ``Semaphore``, ``BoundedSemaphore``, ``Event``, ``Barrier``,
   ``Queue``, ``JoinableQueue``, ``SimpleQueue``, ``Pool`` diretly to create objects and type-annote them;
   this is preferred over ``MP_SPAWN_CTX.Process``, ``MP_SPAWN_CTX.Manager``, etc, although they would work, too.

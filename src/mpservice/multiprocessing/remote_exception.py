@@ -1,84 +1,5 @@
-from __future__ import annotations
-
-import traceback
-from types import TracebackType
-from typing import Optional
-
-__call__ = [
-    'RemoteException',
-    'get_remote_traceback',
-    'is_remote_exception',
-]
-
-
-# This class should be in the module `mpserver`.
-# It is here because the class `RemoteException` needs to handle it.
-# User should import it from `mpserver`.
-class EnsembleError(RuntimeError):
-    def __init__(self, results: dict):
-        nerr = sum(
-            1 if isinstance(v, (BaseException, RemoteException)) else 0
-            for v in results['y']
-        )
-        errmsg = None
-        for v in results['y']:
-            if isinstance(v, (BaseException, RemoteException)):
-                errmsg = repr(v)
-                break
-        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
-        super().__init__(msg, results)
-        # self.args[1] is the results
-
-    def __repr__(self):
-        return self.args[0]
-
-    def __str__(self):
-        return self.args[0]
-
-    def __reduce__(self):
-        return type(self), (self.args[1],)
-
-
-def is_remote_exception(e) -> bool:
-    """Return ``True`` if the exception ``e`` was created by :class:`RemoteException`, and ``False`` otherwise."""
-    return isinstance(e, BaseException) and isinstance(e.__cause__, RemoteTraceback)
-
-
-def get_remote_traceback(e) -> str:
-    """
-    ``e`` must have checked ``True`` by :func:`is_remote_exception`.
-    Suppose an Exception object is wrapped by :class:`RemoteException` and sent to another process
-    through a queue.
-    Taken out of the queue in the other process, the object will check ``True``
-    by :func:`is_remote_exception`. Then this function applied on the object
-    will return the traceback info as a string.
-    """
-    return e.__cause__.tb
-
-
-class RemoteTraceback(Exception):
-    """
-    This class is used by :class:`RemoteException`.
-    End-user does not use this class directly.
-    """
-
-    def __init__(self, tb: str):
-        self.tb = tb
-
-    def __str__(self):
-        return self.tb
-
-
-def _rebuild_exception(exc: BaseException, tb: str):
-    exc.__cause__ = RemoteTraceback(tb)
-
-    return exc
-
-
-class RemoteException:
-    # fmt: off
-    """
-This class is a pickle helper for Exception objects to preserve some traceback info.
+"""
+The class :class:`RemoteException` is a pickle helper for Exception objects to preserve some traceback info.
 This is needed because directly calling ``pickle.dumps`` on an Exception object will lose
 its ``__traceback__`` and ``__cause__`` attributes.
 
@@ -107,7 +28,7 @@ A clear benefit, though, is that we can detect the type of the exception by ``is
 
 .. seealso:: :func:`is_remote_exception`, :func:`get_remote_traceback`.
 
-The session below shows the basic behaviors of a ``RemoteException``.
+The session below shows the basic behaviors of a :class:`RemoteException`.
 
 >>> from mpservice.multiprocessing import RemoteException, is_remote_exception, get_remote_traceback
 >>> import pickle
@@ -189,7 +110,7 @@ ValueError: 38
 
 Examples
 --------
-Let's use an example to demonstrate the use of ``RemoteException``.
+Let's use an example to demonstrate the use of :class:`RemoteException`.
 First, create a script with the following content:
 
 .. code-block:: python
@@ -378,9 +299,86 @@ Run it::
     File "error.py", line 47, in main
         raise y[1]
     TypeError: can only concatenate str (not "int") to str
-    """
-    # fmt: on
+"""
 
+from __future__ import annotations
+
+import traceback
+from types import TracebackType
+from typing import Optional
+
+__call__ = [
+    'RemoteException',
+    'get_remote_traceback',
+    'is_remote_exception',
+]
+
+
+# This class should be in the module `mpserver`.
+# It is here because the class `RemoteException` needs to handle it.
+# User should import it from `mpserver`.
+class EnsembleError(RuntimeError):
+    def __init__(self, results: dict):
+        nerr = sum(
+            1 if isinstance(v, (BaseException, RemoteException)) else 0
+            for v in results['y']
+        )
+        errmsg = None
+        for v in results['y']:
+            if isinstance(v, (BaseException, RemoteException)):
+                errmsg = repr(v)
+                break
+        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
+        super().__init__(msg, results)
+        # self.args[1] is the results
+
+    def __repr__(self):
+        return self.args[0]
+
+    def __str__(self):
+        return self.args[0]
+
+    def __reduce__(self):
+        return type(self), (self.args[1],)
+
+
+def is_remote_exception(e) -> bool:
+    """Return ``True`` if the exception ``e`` was created by :class:`RemoteException`, and ``False`` otherwise."""
+    return isinstance(e, BaseException) and isinstance(e.__cause__, RemoteTraceback)
+
+
+def get_remote_traceback(e) -> str:
+    """
+    ``e`` must have checked ``True`` by :func:`is_remote_exception`.
+    Suppose an Exception object is wrapped by :class:`RemoteException` and sent to another process
+    through a queue.
+    Taken out of the queue in the other process, the object will check ``True``
+    by :func:`is_remote_exception`. Then this function applied on the object
+    will return the traceback info as a string.
+    """
+    return e.__cause__.tb
+
+
+class RemoteTraceback(Exception):
+    """
+    This class is used by :class:`RemoteException`.
+    End-user does not use this class directly.
+    """
+
+    def __init__(self, tb: str):
+        self.tb = tb
+
+    def __str__(self):
+        return self.tb
+
+
+def _rebuild_exception(exc: BaseException, tb: str):
+    exc.__cause__ = RemoteTraceback(tb)
+
+    return exc
+
+
+class RemoteException:
     # This takes the idea of `concurrent.futures.process._ExceptionWithTraceback`
     # with slightly tweaked traceback printout.
     # `pebble.common` uses the same idea.
