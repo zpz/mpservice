@@ -33,16 +33,16 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
        `concurrent.futures.ProcessPoolExecutor.submit <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit>`_.
     2. Make logs in the worker process handled in the main process.
 
-        Logging messages produced in worker processes are tricky.
-        First, some settings should be concerned in the main process only,
-        including log formatting, log-level control, log handler (destination), etc.
-        Specifically, these should be settled in the "launching script", and definitely
-        should not be concerned in worker processes.
-        Second, the terminal printout of loggings in multiple processes tends to be
-        intermingled and mis-ordered.
+       Logging messages produced in worker processes are tricky.
+       First, some settings should be concerned in the main process only,
+       including log formatting, log-level control, log handler (destination), etc.
+       Specifically, these should be settled in the "launching script", and definitely
+       should not be concerned in worker processes.
+       Second, the terminal printout of loggings in multiple processes tends to be
+       intermingled and mis-ordered.
 
-        This class uses a queue to transmit all logging messages that are produced
-        in the worker process to the main process/thread, to be handled there.
+       This class uses a queue to transmit all logging messages that are produced
+       in the worker process to the main process/thread, to be handled there.
 
     Examples
     --------

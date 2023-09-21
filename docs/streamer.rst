@@ -19,6 +19,10 @@ API reference
 
 .. autoclass:: mpservice.streamer.Stream
 
+.. autoclass:: mpservice.streamer.Batcher
+
+.. autoclass:: mpservice.streamer.Unbatcher
+
 .. autofunction:: mpservice.streamer.tee
 
 

@@ -19,6 +19,8 @@ The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerP
 with mainly two enhancements to the standard ``Manager``:
 one concerns "shared memory",
 and the other concerns returning a mix of hosted and non-hosted data from a proxy.
+If you do not make use of these enhancements, you may as well use the ``Manager`` that is imported
+from ``mpservice.multiprocessing``.
 
 
 Basic workflow

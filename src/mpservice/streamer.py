@@ -117,7 +117,6 @@ The first three lines are equivalent to this one line:
 
 >>> data_stream = Stream(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
 
-
 Operators
 =========
 
@@ -184,12 +183,12 @@ the usage of Stream is one and same in both modes.
 This host or calling-site "mode" refers to the "sync-ness" or "async-ness" of the function in which
 the Stream object is being used.
 Related to the host mode, a Stream object may be "sync" or "async".
-The former means the object is "iterable", i.e. has method ``__iter__``, hence is to be consumed by::
+The former means the object is "iterable", i.e. has method :meth:`~Stream.__iter__`, hence is to be consumed by::
 
     for x in stream:
         ...
 
-whereas the latter means the object is "async iterable", i.e. has method ``__aiter__``,
+whereas the latter means the object is "async iterable", i.e. has method :meth:`~Stream.__aiter__`,
 hence is to be consumed by::
 
     async for x in stream:
@@ -206,8 +205,8 @@ When an operator is called, it adds a sync streamlet or async streamlet based on
 
     stream.map(...)
 
-will add a :class:`Mapper` streamlet if ``stream`` (at this point) is sync,
-or a :class:`AsyncMapper` otherwise.
+will add a :class:`~mpservice._streamer.Mapper` streamlet if ``stream`` (at this point) is sync,
+or a :class:`~mpservice._streamer.AsyncMapper` otherwise.
 
 There is a special case, though.
 The first streamlet is the input data, which, beding defined externally, could be iterable, async iterable, or even both.
