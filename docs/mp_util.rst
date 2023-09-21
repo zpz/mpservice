@@ -16,13 +16,13 @@ Remote exception
     :no-special-members:
 
 
-.. autoclass:: mpservice.multiprocessing.RemoteException
+.. autoclass:: mpservice.multiprocessing.remote_exception.RemoteException
 
 .. autoexception:: mpservice.multiprocessing.remote_exception.RemoteTraceback
 
-.. autofunction:: mpservice.multiprocessing.is_remote_exception
+.. autofunction:: mpservice.multiprocessing.remote_exception.is_remote_exception
 
-.. autofunction:: mpservice.multiprocessing.get_remote_traceback
+.. autofunction:: mpservice.multiprocessing.remote_exception.get_remote_traceback
 
 
 The "spawn" context

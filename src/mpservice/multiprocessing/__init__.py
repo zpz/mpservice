@@ -159,8 +159,11 @@ def as_completed(
 def __getattr__(name):
     if name in ('RemoteException', 'get_remote_traceback', 'is_remote_exception'):
         mname = 'mpservice.multiprocessing.remote_exception'
-    if name in ('ServerProcess',):
+    elif name in ('ServerProcess',):
         mname = 'mpservice.multiprocessing.server_process'
+    else:
+        raise AttributeError(name)
+
     m = import_module(mname)
     o = getattr(m, name)
     warnings.warn(
