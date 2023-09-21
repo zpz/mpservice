@@ -7,6 +7,7 @@ provides the method :meth:`~mpservice.mpserver.AsyncServer.call` that can be cal
 request handler function. The example below shows one way to connect things:
 
 ::
+
     # "example.py"
 
     import asyncio
