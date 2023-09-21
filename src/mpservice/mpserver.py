@@ -66,6 +66,7 @@ __all__ = [
     'EnsembleServlet',
     'SwitchServlet',
     'Server',
+    'TimeoutError',
 ]
 
 # Set level for logs produced by the standard `multiprocessing` module.

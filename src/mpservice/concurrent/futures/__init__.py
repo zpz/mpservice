@@ -6,16 +6,25 @@ import os
 import sys
 import threading
 import traceback
-import warnings
 import weakref
 
 from mpservice.multiprocessing import MP_SPAWN_CTX
 
+wait = concurrent.futures.wait
+as_completed = concurrent.futures.as_completed
+ALL_COMPLETED = concurrent.futures.ALL_COMPLETED
+FIRST_COMPLETED = concurrent.futures.FIRST_COMPLETED
+FIRST_EXCEPTION = concurrent.futures.FIRST_EXCEPTION
+
+
 __all__ = [
     'ThreadPoolExecutor',
     'ProcessPoolExecutor',
-    'get_shared_thread_pool',
-    'get_shared_process_pool',
+    'wait',
+    'as_completed',
+    'ALL_COMPLETED',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
 ]
 
 
