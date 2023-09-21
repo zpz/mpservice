@@ -110,7 +110,7 @@ class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
 
 class _SimpleThreadQueue(queue.SimpleQueue):
     """
-    A customization of 
+    A customization of
     `queue._SimpleThreadQueue <https://docs.python.org/3/library/queue.html#queue._SimpleThreadQueue>`_,
     this class is analogous to :class:`_SimpleProcessQueue` but is designed to be used between two threads.
     """
