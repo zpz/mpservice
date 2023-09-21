@@ -260,7 +260,7 @@ class SocketApplication:
         and returns a response (which could be ``None`` if so desired).
         The response should be serializable by the encoder.
         To be safe, return a object of Python native types.
-        If exception is raised in this method, appropriate :class:`RemoteException`
+        If exception is raised in this method, appropriate :class:`~mpservice.multiprocessing.remote_exception.RemoteException`
         object will be sent in the response.
         The method could also proactively return a :class:`RemoteException` object.
 
@@ -439,6 +439,20 @@ class SocketServer:
 
 
 def make_server(app: SocketApplication, **kwargs):
+    '''
+    Example::
+
+        async def double(data):
+            await asyncio.sleep(0.01)
+            return data * 2
+
+        app = SocketApplication()
+        app.add_route('/', double)
+
+        server = make_server(app, path='/tmp/sock_abc')
+        asyncio.run(server.serve())
+    '''
+
     return SocketServer(app, **kwargs)
 
 

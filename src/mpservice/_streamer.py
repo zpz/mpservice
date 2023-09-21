@@ -1026,6 +1026,10 @@ class AsyncGrouper(AsyncIterable):
 
 
 class Batcher(Iterable):
+    '''
+    See :meth:`Stream.batch`.
+    '''
+
     def __init__(self, instream: Iterable, /, batch_size: int):
         self._instream = instream
         assert batch_size > 0
@@ -1061,8 +1065,12 @@ class AsyncBatcher(AsyncIterable):
             yield batch
 
 
-# This is comparable to ``itertools.chain.from_iterable``.
 class Unbatcher(Iterable):
+    '''
+    See :meth:`Stream.unbatch`.
+    This is comparable to the standard ``itertools.chain.from_iterable``.
+    '''
+
     def __init__(self, instream: Iterable, /):
         """
         The incoming stream consists of lists.

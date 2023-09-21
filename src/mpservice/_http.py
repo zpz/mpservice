@@ -179,8 +179,10 @@ _stop_requested: Event = None
 
 
 async def stop_server():
-    # This function is to be called in a web service endpoint to request termination
-    # of the service.
+    '''
+    This function is to be called in a web service endpoint to request termination
+    of the service.
+    '''
     _stop_requested.set()
     await asyncio.sleep(0.2)
     # TODO:

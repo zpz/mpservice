@@ -167,7 +167,7 @@ def __getattr__(name):
     m = import_module(mname)
     o = getattr(m, name)
     warnings.warn(
-        f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3. Import from '{mname}' instead.",
+        f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3 and may be removed in the future. Please import from '{mname}' instead.",
         DeprecationWarning,
         stacklevel=2,
     )
