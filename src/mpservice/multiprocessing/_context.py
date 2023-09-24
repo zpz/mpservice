@@ -431,7 +431,6 @@ Also see documentation of ``mpservice.multiprocessing``.
 """
 
 
-
 class SyncManager(multiprocessing.managers.SyncManager):
     def __init__(
         self,
