@@ -376,7 +376,7 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
 # The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.
-MP_SPAWN_CTX = SpawnContext()
+MP_SPAWN_CTX: SpawnContext
 """
 `multiprocessing`_ has a "context", which has to do with how a process is created and started.
 Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
@@ -428,6 +428,9 @@ is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of
 
 Also see documentation of ``mpservice.multiprocessing``.
 """
+
+MP_SPAWN_CTX = SpawnContext()
+
 
 
 class SyncManager(multiprocessing.managers.SyncManager):

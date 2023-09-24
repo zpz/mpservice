@@ -1,5 +1,6 @@
 '''
-The :class:`Manager` in ``multiprocessing`` provides a mechanism to interactively
+The standard `Managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_
+provide a mechanism to interactively
 communicate with a "server" that runs in another process.
 
 The keyword is "interactively"---just like a client to a HTTP server, the client process
@@ -19,7 +20,8 @@ The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerP
 with mainly two enhancements to the standard ``Manager``:
 one concerns "shared memory",
 and the other concerns returning a mix of hosted and non-hosted data from a proxy.
-If you do not make use of these enhancements, you may as well use the ``Manager`` that is imported
+If you do not make use of these enhancements, you may as well use the 
+:class:`Manager` that is imported
 from ``mpservice.multiprocessing``.
 
 

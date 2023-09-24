@@ -18,6 +18,12 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
    hence can benefit from concurrency.
 3. Utilities in :mod:`mpservice.multiprocessing` to enhance or customize Python's standard
    `multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ module.
+
+To install, do
+
+::
+   
+   python3 -m pip install mpservice
 """
 
 
