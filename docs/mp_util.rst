@@ -15,14 +15,12 @@ The "spawn" process and context
 
 .. autoclass:: mpservice.multiprocessing.SpawnContext
 
-.. autodata:: mpservice.multiprocessing.MP_SPAWN_CTX
-
 
 Standard classes with customizations
 ====================================
 
 The following classes are subclasses of their counterparts in the standard ``multiprocessing``.
-The customization is that by default they use :class:`SpawnContext` as the "context".
+The typical customization is that by default they use :class:`SpawnContext` as the "context".
 In addition, the queue types (:class:`~mpservice.multiprocessing.Queue`,
 :class:`~mpservice.multiprocessing.SimpleQueue`, :class:`~mpservice.multiprocessing.JoinableQueue`)
 are made `Generic <https://docs.python.org/3/library/typing.html#typing.Generic>`_ to enable annotating
