@@ -349,7 +349,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
 class SpawnContext(multiprocessing.context.SpawnContext):
     '''
-    The standard package ``multiprocessing`` has a 
+    The standard package ``multiprocessing`` has a
     `"context" <https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods>`_,
     which has to do with how a process is created and started.
     Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
