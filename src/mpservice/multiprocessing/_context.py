@@ -432,7 +432,6 @@ Also see documentation of ``mpservice.multiprocessing``.
 MP_SPAWN_CTX = SpawnContext()
 
 
-
 class SyncManager(multiprocessing.managers.SyncManager):
     def __init__(
         self,
