@@ -129,6 +129,9 @@ One-to-one (will not change the elements' count or order):
     - :meth:`~Stream.parmap`
     - :meth:`~Stream.buffer`
 
+One-to-one (will change the elements' order, but not count):
+    - :meth:`~Stream.shuffle`
+    
 Many-to-one (may shrink the stream):
     - :meth:`~Stream.groupby`
     - :meth:`~Stream.batch`
@@ -149,8 +152,7 @@ Read-only (will not change the elements):
     - :meth:`~Stream.buffer` (speed stabilizing)
     - :meth:`~Stream.peek` (info printing)
 
-All these methods preserve the order of the elements.
-There is one additonal method that changes the elements' order, and that is
+All these methods preserve the order of the elements, with the only exception 
 :meth:`~Stream.shuffle`.
 
 The operation in ``parmap`` is supposedly heavy and expensive.
@@ -174,6 +176,12 @@ There are several ways to consume the stream:
   just the count of them. This is used when the final operator exists mainly for a side effect, such as saving things to a database.
 
 The latter two methods are trivial wrappers of the first.
+
+Two particular operators, namely :class:`Batcher` and :class:`Unbatcher` (the workhorses behind the methods
+:meth:`Stream.batch` and :meth:`Stream.unbatch`), are exposed on the module level so that they can be used standalone.
+
+In addition, there is a module function :func:`tee`, which is analogous to the standard
+`itertools.tee <https://docs.python.org/3/library/itertools.html#itertools.tee>`_.
 
 Sync vs async
 =============

@@ -151,40 +151,6 @@ Workers
 Servlets
 ========
 
-A :class:`Servlet` manages the execution of one or more :class:`Worker`.
-We make a distinction between "simple" servlets, including :class:`ProcessServlet` and :class:`ThreadServlet`,
-and "compound" servlets, including :class:`SequentialServlet`, :class:`EnsembleServlet`,
-and :class:`SwitchServlet`.
-
-A simple servlet arranges to execute one :class:`Worker` in requested number of processes (or threads).
-Optionally, it can specify exactly which CPU(s) each worker process should use.
-Each input item is passed to and processed by exactly one of the processes (or threads).
-
-A compound servlet arranges to execute multiple :class:`Servlet`\s as a sequence or an ensemble.
-In addition, there is :class:`SwitchServlet` that acts as a "switch"
-in front of a set of Servlets.
-There's a flavor of recursion in this definition in that a member servlet can very well be
-a compound servlet.
-
-Great power comes from this recursive definition.
-In principle, we can freely compose and nest the :class:`Servlet` types.
-For example, suppose `W1`, `W2`,..., are :class:`Worker` subclasses,
-then we may design such a workflow,
-
-::
-
-    s = SequentialServlet(
-            ProcessServlet(W1),
-            EnsembleServlet(
-                ThreadServlet(W2),
-                SequentialServlet(ProcessServlet(W3), ThreadServlet(W4)),
-                ),
-            EnsembleServlet(
-                Sequetial(ProcessServlet(W5), ProcessServlet(W6)),
-                Sequetial(ProcessServlet(W7), ThreadServlet(W8), ProcessServlet(W9)),
-                ),
-        )
-
 
 
 .. autoclass:: mpservice.mpserver.Servlet
@@ -204,40 +170,11 @@ Server
 ======
 
 
-The "interfacing" and "scheduling" code of :class:`Server`
-runs in the "main process".
-Two usage patterns are supported, namely making individual
-calls to the service to get individual results, or flowing
-a (potentially unlimited) stream of data through the service
-to get a stream of results.
-
-A typical setup looks like this::
-
-    server = Server(servlet)
-    with server:
-        z = server.call('abc')
-
-        for x, y in server.stream(data, return_x=True):
-            print(x, y)
-
-
-Code in the "workers" should raise exceptions as it normally does, without handling them,
-if it considers the situation to be non-recoverable, e.g. input is of wrong type.
-The exceptions will be funneled through the pipelines and raised to the end-user
-with useful traceback info.
-
-The user's main work is implementing the operations in the "workers".
-Another task (of some trial and error) by the user is experimenting with
-CPU allocations among workers to achieve best performance.
-
-:class:`Server` has an async counterpart named :class:`AsyncServer`.
-
-.. autoexception:: mpservice.mpserver.ServerBacklogFull
-
 .. autoclass:: mpservice.mpserver.Server
 
 .. autoclass:: mpservice.mpserver.AsyncServer
 
+.. autoexception:: mpservice.mpserver.ServerBacklogFull
 
 .. **Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
 .. This article describes roughly version 0.7.2. Things have evolved a lot.

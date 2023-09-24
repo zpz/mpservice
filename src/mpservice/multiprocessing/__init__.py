@@ -1,57 +1,30 @@
 """
-The standard module ``multiprocessing`` is complicated by the so-called "start method" or "context" (ctx).
-The commonly used classes like ``Queue``, ``Lock``, ``Event``, etc. have a **required** parameter ``ctx``, 
-yet we usually do not use these classes (residing in submodules of ``multiprocessing``) directly.
-Instead, we import them from ``multiprocessing``, which has plugged in a "default context" for us.
-This is not all good. One problem is the following:
-
-    If we import ``Process`` (or ``Queue``, or many others) from ``multiprocessing``,
-    this is **not** a class, but rather a factory method. As a result, although we use
-    ``Process(...)`` to create a process instance, we can **not** use ``Process`` to annotate the type
-    of this object.
-
-This is both inconvenient and confusing.
-
-The module ``mpservice.multiprocessing`` breaks from some of the ``multiprocessing`` design to alleviate this problem.
-Most of the more useful symbols that you can import from ``multiprocessing`` can be imported from 
-``mpservice.multiprocessing``, such as ``Queue``, ``Lock``, ``Condition``, ``Semaphore``, etc.
-However, unlike from ``multiprocessing`` where these are *functions*,
-they classes, hence can be used in type annotations.
-In the meatime, their parameter ``ctx`` is **optional** (as opposed to **required**), and defaults to
-a spawn context--``MP_SPAWN_CTX`` to be specific. As a result, user is encouraged to use these classes directly
-and leave out the ``ctx`` argument.
-
-In addition, ``mpservice.multiprocessing`` provides some enhancements to the standard ``multiprocessing``.
+The module ``mpservice.multiprocessing`` provides some customizations and enhancements to the module `multiprocessing`_.
 
 First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
-:data:`~mpservice.multiprocessing.MP_SPAWN_CTX` is provided to make this easier.
+See details in the custom :class:`mpservice.multiprocessing.SpawnContext`.
 
 Second, in well structured code, a **spawned** process will not get the logging configurations that have been set
 in the main process. On the other hand, we should definitely not separately configure logging in
-non-main processes. The class :class:`~mpservice.multiprocessing.SpawnProcess` addresses this issue. In fact,
-``MP_SPAWN_CTX.Process`` is a reference to ``SpawnProcess``. Therefore, when you use ``MP_SPAWN_CTX``,
-logging in the non-main processes are covered---log messages are sent to the main process to be handled,
-all transparently.
+child processes. The class :class:`mpservice.multiprocessing.SpawnProcess` addresses this issue by 
+sending log messages if child processes to the main process for handling, all transparently.
 
 Third, one convenience of `concurrent.futures`_ compared to `multiprocessing`_ is that the former
 makes it easy to get the results or exceptions of the child process via the object returned from job submission.
 With `multiprocessing`_, in contrast, we have to pass the results or explicitly captured exceptions
-to the main process via a queue. :class:`~mpservice.multiprocessing.SpawnProcess` has this covered as well.
-It can be used in the ``concurrent.futures`` way.
+to the main process via a queue. The custom :class:`~mpservice.multiprocessing.SpawnProcess` has this covered
+as well--it can be used in the ``concurrent.futures`` way.
 
-Third, if exception happens in a child process and we don't want the program to crash right there,
-instead we send it to the main or another process to be investigated when/where we are ready to,
-the traceback info will be lost in pickling. :class:`~mpservice.multiprocessing.RemoteException` helps on this.
+Fourth, if an Exception object is pickled, its traceback info is lost.
+A consequence of this is that
+if exception happens in a child process and we don't want the program to crash right there,
+instead we send it to the main process to be investigated or raised when/where we are ready to,
+we won't have the traceback info. For example, the printout of ``raise ..`` in another process
+will not be very informative.
+The module :mod:`mpservice.multiprocessing.remote_exception` helps on this.
 
-Besides these fixes to "pain points", the module ``mpservice.server_process`` provide some new capabilities
-for the "manager" facility in ``multiprocessing``.
-
-.. note:: Recommendations on the use of ``MP_SPAWN_CTX``: use the classes ``Process``, ``Manager``, ``Lock``,
-  ``RLock``, ``Condition``, ``Semaphore``, ``BoundedSemaphore``, ``Event``, ``Barrier``,
-  ``Queue``, ``JoinableQueue``, ``SimpleQueue``, ``Pool`` diretly to create objects and type-annote them;
-  this is preferred over ``MP_SPAWN_CTX.Process``, ``MP_SPAWN_CTX.Manager``, etc, although they would work, too.
-  A few other methods of ``SpawnContext`` are not exposed in ``mpservice.multiprocessing``;
-  you may use them via the object ``MP_SPAWN_CTX``.
+Besides these fixes to "pain points", the module :mod:`mpservice.multiprocessing.server_process` provides some new capabilities
+to the "manager" facility in the standard ``multiprocessing``, especially about "shared memory".
 """
 import concurrent.futures
 import warnings

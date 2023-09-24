@@ -349,18 +349,77 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
 class SpawnContext(multiprocessing.context.SpawnContext):
     '''
-    We want to use :class:`SpawnProcess` as the process class when
-    the creation method is 'spawn'.
-    However, because the return of ``multiprocessing.get_context('spawn')``
-    is a global var, we shouldn't directly change its
-    ``.Process`` attribute like this::
+    The standard package ``multiprocessing`` has a
+    `"context" <https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods>`_,
+    which has to do with how a process is created and started.
+    Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
+    the same context in order to work together. For example, if you send a ``Queue`` created out of
+    the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
 
+    If you do
+
+    ::
+
+        import multiprocessing
+        q = multiprocessing.Queue()
+
+    this is equivalent to
+
+    ::
+
+        q = multiprocessing.get_context().Queue()
+
+    `multiprocessing.get_context <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.get_context>`_ takes the sole parameter ``method``,
+    which **on Linux** defaults to ``'fork'``.
+
+    However, it is advised to **not** use this default; rather, **always** use the "spawn" context.
+    There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
+    and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
+
+    So, multiprocessing code is better written this way::
+
+        import multiprocessing
         ctx = multiprocessing.get_context('spawn')
-        ctx.Process = SpawnProcess
+        q = ctx.Queue(...)
+        e = ctx.Event(...)
+        p = ctx.Process(..., args=(q, e))
+        ...
 
-    It would change the behavior of the spawn context in code
-    outside of our own.
-    To achieve the goal in a controlled way, we designed this class.
+    where ``ctx`` is an instance of ``multiprocessing.context.SpawnContext``.
+
+    ``mpservice.multiprocessing.SpawnContext`` inherits from the standard ``SpawnContext``
+    and provides some enhancements. (The main enhancement is to use the custom :class:`mpservice.multiprocessing.SpawnProcess`
+    for process creation.) The constant ``mpservice.multiprocessing.MP_SPAWN_CTX``
+    points to an instance of this class. With these facilities, the code above can be replaced by this::
+
+        from mpservice.multiprocessing import MP_SPAWN_CTX as ctx
+        q = ctx.Queue(...)
+        e = ctx.Event(...)
+        p = ctx.Process(..., args=(q, e))
+        ...
+
+    However, there is an annoyance here: ``ctx.Queue``, ``ctx.Event``, and some others are not **classes**,
+    but rather **factory methods**. As a result, they can not be used to annotate the type of the objects
+    created by them. (Similarly, if you do ``from multiprocessing import Queue, Event``, you are getting
+    factory methods, not classes. The actual classes, ``multiprocessing.queues.Queue`` and ``multiprocessing.synchronize.Event``,
+    have a **required** parameter ``ctx``, hence are somewhat inconvenient to use.)
+
+    The module ``mpservice.multiprocessing`` breaks from the standard ``multiprocessing`` API design to alleviate this problem.
+    It provides custom classes :class:`Queue`, :class:`Event`, and some others, that have an **optional**
+    rather than required parameter ``ctx``, which defaults to, you guessed it, ``mpservice.multiprocessing.MP_SPAWN_CTX``.
+    With this, the code above is better yet written this way::
+
+        from mpservice.multiprocessing import Queue, Event, Process
+        q: Queue = Queue(...)
+        e: Event = Event(...)
+        p: Process = Process(..., args=(q, e))
+
+    .. note:: Recommendations on the use of ``MP_SPAWN_CTX``: use the classes ``Process``, ``Manager``, ``Lock``,
+        ``RLock``, ``Condition``, ``Semaphore``, ``BoundedSemaphore``, ``Event``, ``Barrier``,
+        ``Queue``, ``JoinableQueue``, ``SimpleQueue``, ``Pool`` diretly to create objects and type-annote them;
+        this is preferred over ``MP_SPAWN_CTX.Process``, ``MP_SPAWN_CTX.Manager``, etc, although they would work, too.
+        A few other methods of ``SpawnContext`` are not exposed in ``mpservice.multiprocessing``;
+        you may use them via the object ``MP_SPAWN_CTX``.
     '''
 
     Process = SpawnProcess
@@ -377,57 +436,6 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
 # The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.
 MP_SPAWN_CTX = SpawnContext()
-"""
-`multiprocessing`_ has a "context", which has to do with how a process is created and started.
-Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
-the same context in order to work together. For example, if you send a ``Queue`` created out of
-the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
-
-Python's default "process start method" **on Linux** is "fork".
-If you do
-
-::
-
-    import multiprocessing
-    q = multiprocessing.Queue()
-
-this is equivalent to
-
-::
-
-    q = multiprocessing.get_context().Queue()
-
-`multiprocessing.get_context <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.get_context>`_ takes the sole parameter ``method``,
-which on Linux defaults to ``'fork'``.
-
-However, it is advised to not use this default; rather, **always** use the "spawn" context.
-There are some references on this topic; for example, see `this article <https://pythonspeed.com/articles/python-multiprocessing/>`_
-and `this StackOverflow thread <https://stackoverflow.com/questions/64095876/multiprocessing-fork-vs-spawn>`_.
-
-So, multiprocessing code is often written this way::
-
-    import multiprocessing
-    ctx = multiprocessing.get_context('spawn')
-    q = ctx.Queue(...)
-    e = ctx.Event(...)
-    p = ctx.Process(..., args=(q, e))
-    ...
-
-The constant ``MP_SPAWN_CTX`` is a replacement of the standard spawn context.
-Instead of the above, you may use::
-
-    from mpservice.multiprocessing import MP_SPAWN_CTX as ctx
-    q = ctx.Queue(...)
-    e = ctx.Event(...)
-    p = ctx.Process(..., args=(q, e))
-    ...
-
-The difference between ``MP_SPAWN_CTX`` and the standard spawn context
-is that ``MP_SPAWN_CTX.Process`` is the custom :class:`SpawnProcess` in place of the standard
-`Process <https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Process>`_.
-
-Also see documentation of ``mpservice.multiprocessing``.
-"""
 
 
 class SyncManager(multiprocessing.managers.SyncManager):

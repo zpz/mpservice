@@ -21,12 +21,6 @@ mpservice
    :no-members:
    :no-special-members:
 
-To install, do
-
-::
-   
-   python3 -m pip install mpservice
-
 
 .. toctree::
    :maxdepth: 1
