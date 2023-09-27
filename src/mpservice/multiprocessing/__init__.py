@@ -1,8 +1,14 @@
 """
-The module ``mpservice.multiprocessing`` provides some customizations and enhancements to the module `multiprocessing`_.
+The module ``mpservice.multiprocessing`` provides some customizations and enhancements to the standard module `multiprocessing`_.
+Most of the customizations are drop-in replacements.
 
-First, it is a good idea to always use the non-default (on Linux) "spawn" method to start a process.
-See details in the custom :class:`mpservice.multiprocessing.SpawnContext`.
+First, the standard package ``multiprocessing`` has a
+`"context" <https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods>`_,
+which has to do with how a process is created and started.
+Multiprocessing objects like ``Queue``, ``Event``, etc., must be created from a context that matches
+the process in order to be used with the process.
+The default context on **Linux** is a "fork" one. However, it's recommended to use a "spawn" context.
+The :class:`mpservice.multiprocessing.SpawnContext` customizes the standard counterpart.
 
 Second, in well structured code, a **spawned** process will not get the logging configurations that have been set
 in the main process. On the other hand, we should definitely not separately configure logging in
