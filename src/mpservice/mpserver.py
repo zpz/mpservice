@@ -287,8 +287,6 @@ class Worker(ABC):
         else:
             if batch_wait_time is None:
                 batch_wait_time = 0.01
-            else:
-                assert 0 < batch_wait_time < 1
 
         self.worker_index = worker_index
         self.batch_size = batch_size

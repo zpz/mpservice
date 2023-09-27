@@ -44,6 +44,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
        This class uses a queue to transmit all logging messages that are produced
        in the worker process to the main process/thread, to be handled there.
 
+    This class is aliased by ``mpservice.multiprocessing.Process``.
+    It is preferred to import by the aliased name.
+
     Examples
     --------
     Let's use an example to show the logging behavior.
@@ -352,9 +355,9 @@ class SpawnContext(multiprocessing.context.SpawnContext):
     The standard package ``multiprocessing`` has a
     `"context" <https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods>`_,
     which has to do with how a process is created and started.
-    Multiprocessing objects like ``Process``, ``Queue``, ``Event``, etc., must be created from
-    the same context in order to work together. For example, if you send a ``Queue`` created out of
-    the "spawn" context to a ``Process`` created out of the "fork" context, it will not work.
+    For example, a ``ForkContext`` (or ``SpawnContext``) will create processes by ``ForkProcess`` (or ``SpawnProcess``).
+    To use a queue to communicate with the process, the queue needs to be created via ``ForkContext.Queue`` (or ``SpawnContext.Queue``),
+    else it will not work.
 
     If you do
 

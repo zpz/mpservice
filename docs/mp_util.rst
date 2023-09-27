@@ -11,9 +11,10 @@ Utilities for multiprocessing
 The "spawn" process and context
 ===============================
 
-.. autoclass:: mpservice.multiprocessing.SpawnProcess
 
 .. autoclass:: mpservice.multiprocessing.SpawnContext
+
+.. autoclass:: mpservice.multiprocessing.SpawnProcess
 
 
 Standard classes with customizations
