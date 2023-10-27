@@ -71,6 +71,7 @@ html_theme_options = {
     'show_nav_level': 4,  # no effect?
     'navigation_depth': 4,  # no effect?
     'collapse_navigation': False,
+    'navigation_with_keys': False,
 }
 
 html_static_path = ['_static']

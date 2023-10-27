@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.4] - in progress
+
+- Bug fix in ``mpservice.experimental.streamer.EagerBatcher``.
+
+
 ## [0.14.3] - 2023-09-20
 
 - Further finetune of importing paths of things, esp in ``mpservice.multiprocessing``.
