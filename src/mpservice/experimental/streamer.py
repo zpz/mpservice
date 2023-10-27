@@ -37,8 +37,12 @@ class EagerBatcher(Iterable):
 
         while True:
             z = q_in.get()  # wait as long as it takes to get one item.
-            if z is None if end is None else z == end:
-                break
+            if end is None:
+                if z is None:
+                    break
+            else:
+                if z == end:
+                    break
 
             batch = [z]
             n = 1
@@ -56,10 +60,17 @@ class EagerBatcher(Iterable):
                     z = q_in.get(timeout=max(0, t))
                 except queue.Empty:
                     break
+
+                if end is None:
+                    if z is None:
+                        yield batch
+                        return
                 else:
-                    if z is None if end is None else z == end:
-                        break
-                    batch.append(z)
-                    n += 1
+                    if z == end:
+                        yield batch
+                        return
+
+                batch.append(z)
+                n += 1
 
             yield batch
