@@ -156,8 +156,8 @@ def test_concurrency():
             print('cls:', cls)
             print('')
             pp = [
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-1"),
-                cls(target=worker, args=(t, 3), name=f"{cls.__name__}-2"),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-1'),
+                cls(target=worker, args=(t, 3), name=f'{cls.__name__}-2'),
             ]
             t0 = time.perf_counter()
             for p in pp:
@@ -170,9 +170,9 @@ def test_concurrency():
 
             print('')
             pp = [
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-3"),
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-4"),
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-5"),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-3'),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-4'),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-5'),
             ]
             t0 = time.perf_counter()
             for p in pp:

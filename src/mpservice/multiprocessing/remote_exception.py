@@ -405,10 +405,10 @@ class RemoteException:
         if isinstance(tb, str):
             pass
         elif isinstance(tb, TracebackType):
-            tb = "".join(traceback.format_exception(type(exc), exc, tb))
+            tb = ''.join(traceback.format_exception(type(exc), exc, tb))
         else:
             if tb is not None:
-                raise ValueError(f"expecting no traceback but got: {tb}")
+                raise ValueError(f'expecting no traceback but got: {tb}')
 
             if exc.__traceback__ is not None:
                 # This is the most common use case---in an exception handler block:
@@ -424,7 +424,7 @@ class RemoteException:
                 # (hence `is_remote_exception(e)` is True) and is raised again, and because
                 # we intend to pickle it again (e.g. paassing it to another process via a queue),
                 # hence we put it in `RemoteException`.
-                tb = "".join(
+                tb = ''.join(
                     traceback.format_exception(type(exc), exc, exc.__traceback__)
                 )
             else:
@@ -435,7 +435,7 @@ class RemoteException:
                     tb = get_remote_traceback(exc)
                     # `exc.__cause__` will become `None` after pickle/unpickle.
                 else:
-                    raise ValueError(f"{repr(exc)} does not contain traceback info")
+                    raise ValueError(f'{repr(exc)} does not contain traceback info')
                     # In this case, don't use RemoteException. Pickle the exc object directly.
 
         if isinstance(exc, EnsembleError):
@@ -460,7 +460,7 @@ class RemoteException:
         self.tb = tb
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.exc.__repr__()})"
+        return f'{self.__class__.__name__}({self.exc.__repr__()})'
 
     def __str__(self):
         return f"{self.__class__.__name__}('{self.exc.__str__()}')"

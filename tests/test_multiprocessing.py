@@ -85,7 +85,7 @@ def _test_thread_process(cls):
     t.join()
 
 
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnhandledThreadExceptionWarning')
 def test_thread():
     _test_thread_process(Thread)
 

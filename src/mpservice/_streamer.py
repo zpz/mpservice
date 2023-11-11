@@ -40,6 +40,7 @@ import traceback
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from inspect import iscoroutinefunction
+from time import perf_counter
 from types import SimpleNamespace
 from typing import (
     Any,
@@ -50,7 +51,6 @@ from typing import (
     Optional,
     TypeVar,
 )
-from time import perf_counter
 
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -68,13 +68,13 @@ from .threading import Thread
 
 logger = logging.getLogger(__name__)
 
-FINISHED = "8d906c4b-1161-40cc-b585-7cfb012bca26"
-STOPPED = "ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e"
+FINISHED = '8d906c4b-1161-40cc-b585-7cfb012bca26'
+STOPPED = 'ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e'
 NOTSET = object()
 
 
-T = TypeVar("T")  # indicates input data element
-TT = TypeVar("TT")  # indicates output after an op on `T`
+T = TypeVar('T')  # indicates input data element
+TT = TypeVar('TT')  # indicates output after an op on `T`
 Elem = TypeVar('Elem')
 
 
@@ -132,17 +132,17 @@ class Stream(Generic[Elem]):
         self.streamlets: list[Iterable] = [instream]
 
     def to_sync(self):
-        '''
+        """
         Make the stream "sync" iterable only.
-        '''
+        """
         if isasynciterable(self):
             self.streamlets.append(SyncIter(self.streamlets[-1]))
         return self
 
     def to_async(self):
-        '''
+        """
         Make the stream "async" iterable only.
-        '''
+        """
         if isiterable(self):
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
         return self
@@ -441,24 +441,24 @@ class Stream(Generic[Elem]):
                 if not should_print:
                     return x
                 if not isinstance(x, BaseException):
-                    self._print_func(f"{self._prefix}#{self._idx}:")
-                    self._print_func(f"{x}{self._suffix}")
+                    self._print_func(f'{self._prefix}#{self._idx}:')
+                    self._print_func(f'{x}{self._suffix}')
                     return x
-                trace = ""
+                trace = ''
                 if self._with_trace:
                     if is_remote_exception(x):
                         trace = get_remote_traceback(x)
                     else:
                         try:
-                            trace = "".join(traceback.format_tb(x.__traceback__))
+                            trace = ''.join(traceback.format_tb(x.__traceback__))
                         except AttributeError:
                             pass
-                self._print_func(f"{self._prefix}#{self._idx}:")
+                self._print_func(f'{self._prefix}#{self._idx}:')
                 if trace:
-                    self._print_func(f"{x}")
-                    self._print_func(f"{trace}{self._suffix}")
+                    self._print_func(f'{x}')
+                    self._print_func(f'{trace}{self._suffix}')
                 else:
-                    self._print_func(f"{x}{self._suffix}")
+                    self._print_func(f'{x}{self._suffix}')
                 return x
 
         return self.map(Peeker())
@@ -1027,9 +1027,9 @@ class AsyncGrouper(AsyncIterable):
 
 
 class Batcher(Iterable):
-    '''
+    """
     See :meth:`Stream.batch`.
-    '''
+    """
 
     def __init__(self, instream: Iterable, /, batch_size: int):
         self._instream = instream
@@ -1067,10 +1067,10 @@ class AsyncBatcher(AsyncIterable):
 
 
 class Unbatcher(Iterable):
-    '''
+    """
     See :meth:`Stream.unbatch`.
     This is comparable to the standard ``itertools.chain.from_iterable``.
-    '''
+    """
 
     def __init__(self, instream: Iterable, /):
         """
@@ -1276,7 +1276,7 @@ class ParmapperMixin:
         num_workers = self._num_workers
         self._executor_is_shared = False
 
-        if self._executor_type == "thread":
+        if self._executor_type == 'thread':
             self._stopped = threading.Event()
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_thread_pool('_mpservice_streamer_')
@@ -1342,7 +1342,7 @@ class Parmapper(Iterable, ParmapperMixin):
         instream: Iterable,
         func: Callable[[T], TT],
         *,
-        executor: Literal["thread", "process"],
+        executor: Literal['thread', 'process'],
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
@@ -1351,7 +1351,7 @@ class Parmapper(Iterable, ParmapperMixin):
         parmapper_name='parmapper-sync-sync',
         **kwargs,
     ):
-        '''
+        """
         Parameters
         ----------
         executor
@@ -1364,8 +1364,8 @@ class Parmapper(Iterable, ParmapperMixin):
         kwargs
             Named arguments to ``func``, in addition to the first, positional
             argument, which is an element of ``instream``.
-        '''
-        assert executor in ("thread", "process")
+        """
+        assert executor in ('thread', 'process')
         if executor_initializer is None:
             assert not executor_init_args
         self._instream = instream
@@ -1452,7 +1452,7 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         instream: AsyncIterable,
         func: Callable[[T], TT],
         *,
-        executor: Literal["thread", "process"],
+        executor: Literal['thread', 'process'],
         num_workers: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
@@ -1461,7 +1461,7 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         parmapper_name='parmapper-async-sync',
         **kwargs,
     ):
-        assert executor in ("thread", "process")
+        assert executor in ('thread', 'process')
         if executor_initializer is None:
             assert not executor_init_args
         self._instream = instream
@@ -1565,7 +1565,7 @@ class ParmapperAsync(Iterable):
         async_context: dict = None,
         **kwargs,
     ):
-        '''
+        """
         Parameters
         ----------
         async_context
@@ -1590,7 +1590,7 @@ class ParmapperAsync(Iterable):
                 stream.parmap_async(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
                 for img in stream:
                     ...
-        '''
+        """
         self._instream = instream
         self._func = func
         self._func_kwargs = kwargs
@@ -1608,7 +1608,7 @@ class ParmapperAsync(Iterable):
 
         self._worker_thread = Thread(
             target=self._run_worker,
-            name=f"{self._name}-thread",
+            name=f'{self._name}-thread',
             # TODO: what if there are multiple such threads owned by multiple ParmapperAsync objects?
             # How to use diff names for them?
         )
@@ -1709,7 +1709,7 @@ class ParmapperAsync(Iterable):
             # Instead, send cancel signal into all of them, then wait on them.
             if not to_stop.is_set():
                 raise ValueError(
-                    f"expecting `stopped.is_set()` to be True but got: {to_stop.is_set()}"
+                    f'expecting `stopped.is_set()` to be True but got: {to_stop.is_set()}'
                 )
             cancelling = []
             while True:
@@ -1724,7 +1724,7 @@ class ParmapperAsync(Iterable):
                 t.cancel()
                 cancelling.append(t)
             logger.debug(
-                f"cancelling {len(cancelling)} of the {n_submitted} tasks submitted"
+                f'cancelling {len(cancelling)} of the {n_submitted} tasks submitted'
             )
             for t in cancelling:
                 try:
@@ -1852,7 +1852,7 @@ class AsyncParmapperAsync(AsyncIterable):
                 t.cancel()
                 tt.append(t)
             logger.debug(
-                f"cancelling {len(tt)} of the {self._n_submitted} tasks submitted"
+                f'cancelling {len(tt)} of the {self._n_submitted} tasks submitted'
             )
             for t in tt:
                 try:
@@ -2018,7 +2018,7 @@ class Fork:
 def tee(
     instream: Iterable[Elem], n: int = 2, /, *, buffer_size: int = 256
 ) -> tuple[Stream[Elem], ...]:
-    '''
+    """
     ``tee`` produces multiple (default 2) "copies" of the input data stream,
     to be used in different ways.
 
@@ -2084,7 +2084,7 @@ def tee(
         processing may be slow at different elements. A larger buffer window reduces the need
         for the forks to wait for their slower peers (if the slowness is on random elements rather
         than on every element).
-    '''
+    """
     assert buffer_size >= 2
     # In practice, use a reasonably large value that is feasible for the application.
 
@@ -2103,14 +2103,13 @@ def tee(
     return tuple(Stream(f) for f in forks)
 
 
-
 class EagerBatcher(Iterable):
-    '''
+    """
     ``EagerBatcher`` collects items from the incoming stream towards a target batch size and yields the batches.
     For each batch, after getting the first item, it will yield the batch either it has collected enough items
     or has reached ``timeout``. Note, the timer starts upon getting the first item, whereas getting the first item
     for a new batch may take however long.
-    '''
+    """
 
     def __init__(
         self,

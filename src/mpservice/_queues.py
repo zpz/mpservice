@@ -47,7 +47,7 @@ class SingleLane:
 
     def put(self, item, block=True, timeout=None):
         if self._closed:
-            raise ValueError(f"{self!r} is closed")
+            raise ValueError(f'{self!r} is closed')
         with self._not_full:
             if 0 < self.maxsize <= len(self._queue):
                 if not block:
@@ -59,7 +59,7 @@ class SingleLane:
 
     def get(self, block=True, timeout=None):
         if self._closed:
-            raise ValueError(f"{self!r} is closed")
+            raise ValueError(f'{self!r} is closed')
         with self._not_empty:
             if len(self._queue) == 0:
                 if not block:
@@ -93,7 +93,7 @@ class SingleLane:
             # This is not necessarily an error, but user should understand
             # whether this is expected behavior in their particular application.
             logger.warning(
-                "%r closed with %d data items un-consumed and abandoned",
+                '%r closed with %d data items un-consumed and abandoned',
                 self,
                 self.qsize(),
             )

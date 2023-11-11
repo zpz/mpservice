@@ -253,10 +253,10 @@ which controls how long to wait before yielding an under-sized batch.
 """
 from ._streamer import (
     Batcher,
+    EagerBatcher,
     Stream,
     Unbatcher,
     tee,
-    EagerBatcher,
 )
 
 __all__ = [

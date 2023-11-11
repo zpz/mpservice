@@ -90,7 +90,7 @@ logger = logging.getLogger(__name__)
 def make_server(
     app: str | ASGIApplication,
     *,
-    host: str = "0.0.0.0",
+    host: str = '0.0.0.0',
     port: int = 8000,
     access_log: bool = False,
     backlog: int = 128,

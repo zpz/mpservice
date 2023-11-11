@@ -16,7 +16,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 HOST = '0.0.0.0'
-SHUTDOWN_MSG = "server shutdown"
+SHUTDOWN_MSG = 'server shutdown'
 
 
 def make_app():
