@@ -176,6 +176,8 @@ Server
 
 .. autoexception:: mpservice.mpserver.ServerBacklogFull
 
+.. autoexception:: mpservice.mpserver.TimeoutError
+
 .. **Reference**: `Service Batching from Scratch, Again <https://zpz.github.io/blog/batched-service-redesign/>`_.
 .. This article describes roughly version 0.7.2. Things have evolved a lot.
 

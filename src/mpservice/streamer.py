@@ -180,9 +180,6 @@ The latter two methods are trivial wrappers of the first.
 Two particular operators, namely :class:`Batcher` and :class:`Unbatcher` (the workhorses behind the methods
 :meth:`Stream.batch` and :meth:`Stream.unbatch`), are exposed on the module level so that they can be used standalone.
 
-In addition, there is a module function :func:`tee`, which is analogous to the standard
-`itertools.tee <https://docs.python.org/3/library/itertools.html#itertools.tee>`_.
-
 Sync vs async
 =============
 
@@ -243,12 +240,23 @@ For example,
         data = range(1000)
         stream = Stream(data).to_async().map(...).batch(...).filter(...).peek(...).parmap(...)
         n = await stream.drain()
+
+
+Additional utilities separate from the class `Stream`
+=====================================================
+
+There is a module function :func:`tee`, which is analogous to the standard
+`itertools.tee <https://docs.python.org/3/library/itertools.html#itertools.tee>`_.
+
+The class :class:`EagerBatcher` is analogous to :class:`Batcher` but has a timeout,
+which controls how long to wait before yielding an under-sized batch.
 """
 from ._streamer import (
     Batcher,
     Stream,
     Unbatcher,
     tee,
+    EagerBatcher,
 )
 
 __all__ = [
@@ -256,4 +264,5 @@ __all__ = [
     'tee',
     'Batcher',
     'Unbatcher',
+    'EagerBatcher',
 ]

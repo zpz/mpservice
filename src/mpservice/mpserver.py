@@ -303,7 +303,7 @@ class Worker(ABC):
         to the output queue.
 
         When ``self.batch_size > 1``, if :meth:`call` needs to take care of an element of the batch that
-        might fail a pre-condition, it is tetious to properly assemble the "good" and "bad" elements to further processing
+        might fail a pre-condition, it is tedious to properly assemble the "good" and "bad" elements to further processing
         or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
         When a subclass is designed to do non-batching work, this attribute is not needed, because the same
@@ -1352,17 +1352,6 @@ class SwitchServlet(Servlet):
         return self._servlets
 
 
-def _init_server(
-    self,
-    servlet: Servlet,
-    *,
-    capacity: int = 256,
-):
-    self.servlet = servlet
-    assert capacity > 0
-    self._capacity = capacity
-
-
 def _enter_server(self, gather_args: tuple = None):
     self._q_in = (
         _SimpleThreadQueue()
@@ -1514,7 +1503,9 @@ class Server:
 
             .. seealso: documentation of the method :meth:`call`.
         """
-        _init_server(self, servlet=servlet, capacity=capacity)
+        self.servlet = servlet
+        assert capacity > 0
+        self._capacity = capacity
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
@@ -1524,18 +1515,45 @@ class Server:
 
     @property
     def capacity(self) -> int:
+        '''
+        The value of the parameter `capacity` to :meth:`__init__`.
+        '''
         return self._capacity
 
     @property
     def backlog(self) -> int:
+        '''
+        The number of items currently being processed in the server.
+        They may be in various stages.
+        '''
         return len(self._uid_to_futures)
 
     def __enter__(self):
+        '''
+        The main operations conducted in this method include:
+
+        - Start the servlet (hence creating and starting :class:`Worker` instances).
+
+        - Set up queues between the main thread (this "server" object) and the workers
+          for passing input elements (and intermediate results) and results.
+
+        - Set up background threads responsible for taking incoming calls and gathering/returning results.
+          Roughly speaking, when :meth:`call` is invoked, its input is handled by a thread, which
+          places the input in a pipeline with appropriate book-keeping; it then waits for the result,
+          which becomes available once another thread gathers the result from (another end of) the pipeline.
+        '''
         self._pipeline_notfull = threading.Condition()
         _enter_server(self)
         return self
 
     def __exit__(self, *args):
+        '''
+        The main operations conducted in this method include:
+
+        - Place a special sentinel in the pipeline to indicate the end of operations; all :class:`Worker`\s
+          in the servlet will eventually see the sentinel and exit.
+        - Wait for the servlet and all helper threads to exit.
+        '''
         self._input_buffer.put(None)
         self._gather_thread.join()
         self.servlet.stop()
@@ -1577,9 +1595,14 @@ class Server:
             in the "enqueue" step, that is, the timer starts upon receiving the request,
             i.e. at the beginning of the function ``call``.
         backpressure
-            If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
+            If ``True``, and the input queue is full (that is, ``self.backlog == self.capacity``),
+            do not wait; raise :class:`ServerBacklogFull`
             right away. If ``False``, wait on the input queue for as long as
             ``timeout`` seconds.
+
+            The exception ``ServerBacklogFull`` may indicate an erronous situation---somehow
+            the server is (almost) stuck and can not process requests as quickly as expected---or
+            a valid situation---the server is getting requests faster than its expected load.
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1669,7 +1692,14 @@ class Server:
             fut.data["t2"] = perf_counter()
             q_notify.put(1)
 
-    def debug_info(self):
+    def debug_info(self) -> dict:
+        '''
+        Return a dict with various pieces of info, about the status and health of the server,
+        that may be helpful for debugging. Example content includes `self.backlog`,
+        active child processes, status (alive/dead) of helper threads.
+
+        The content of the returned dict is str, int, or other types that are friendly to `json`.
+        '''
         return _server_debug_info(self)
 
     def stream(
@@ -1715,7 +1745,7 @@ class Server:
 
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value or make it
-            even large as needed.
+            even larger as needed.
         """
 
         def _enqueue(tasks, stopped, timeout):
@@ -1816,7 +1846,9 @@ class AsyncServer:
         *,
         capacity: int = 256,
     ):
-        _init_server(self, servlet=servlet, capacity=capacity)
+        self.servlet = servlet
+        assert capacity > 0
+        self._capacity = capacity
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
@@ -1971,6 +2003,8 @@ class AsyncServer:
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
         (i.e. interleaved); multiple calls to :meth:`stream` can also happen
         at the same time by different "users" (in the same thread).
+
+        .. seealso:: :meth:`Server.stream`
         '''
 
         async def _enqueue(tasks, timeout):
