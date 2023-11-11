@@ -1,4 +1,4 @@
-'''
+"""
 The standard `Managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_
 provide a mechanism to interactively
 communicate with a "server" that runs in another process.
@@ -296,7 +296,7 @@ is not a tuple, list, or dict, and not ``hosted``, hence it is returned as is.
 Similarly, ``data['b']['x'][0]`` is a string and returned as is.
 On the other hand, ``data['b']['x'][1]`` is a tuple, hence each of its elements is examined,
 and it is found that it contains a plain string and a ``hosted`` list.
-'''
+"""
 from __future__ import annotations
 
 import multiprocessing
@@ -332,9 +332,9 @@ __all__ = [
 
 # This is based on the 3.10 version.
 def _callmethod(self, methodname, args=(), kwds={}):
-    '''
+    """
     Try to call a method of the referent and return a copy of the result
-    '''
+    """
     for tries in (0, 1):
         try:
             try:
@@ -398,7 +398,7 @@ BaseProxy._callmethod = _callmethod
 
 
 class PickleThroughProxy(BaseProxy):
-    '''
+    """
     With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
     on the hosted object in the server process. Once the refcount of the hosted object
     drops to 0, the object is discarded.
@@ -411,7 +411,7 @@ class PickleThroughProxy(BaseProxy):
     In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
     This proxy classs is designed for this use case. It makes pickled data count as one reference
     to the server-process-hosted object.
-    '''
+    """
 
     def __reduce__(self):
         # The only sensible case of pickling this proxy object is for
@@ -525,13 +525,12 @@ class hosted:
 
 
 class _ProcessServer(multiprocessing.managers.Server):
-
     # This is the cpython code in versions 3.7-3.12.
     # My fix is labeled "FIX".
     def serve_client(self, conn):
-        '''
+        """
         Handle requests from the proxies in a particular process/thread
-        '''
+        """
         util.debug(
             'starting server thread to service %r', threading.current_thread().name
         )
@@ -543,7 +542,6 @@ class _ProcessServer(multiprocessing.managers.Server):
         Token = multiprocessing.managers.Token
 
         while not self.stop_event.is_set():
-
             try:
                 methodname = obj = None
                 request = recv()
@@ -635,7 +633,7 @@ class _ProcessServer(multiprocessing.managers.Server):
 
         def convert_hosted(value):
             value, typeid = value.value, value.typeid
-            typeid_nocall = f"{typeid}-nocall"
+            typeid_nocall = f'{typeid}-nocall'
             if typeid_nocall not in self.registry:
                 self.registry[typeid_nocall] = (
                     None,
@@ -739,7 +737,7 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             callable = typeid
             typeid = callable.__name__
             warnings.warn(
-                "the signature of ``register`` has changed; now the first argument should be ``typeid``, which is a str",
+                'the signature of ``register`` has changed; now the first argument should be ``typeid``, which is a str',
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -758,14 +756,14 @@ class ServerProcess(multiprocessing.managers.SyncManager):
         name: str | None = None,
         **kwargs,
     ):
-        '''
+        """
         Parameters
         ----------
         name
             Name of the server process. If ``None``, a default name will be created.
         cpu
             Specify CPU pinning for the server process.
-        '''
+        """
         super().__init__(ctx=MP_SPAWN_CTX, **kwargs)
         self._name = name
         if isinstance(cpu, int):
@@ -816,10 +814,10 @@ except ImportError:
 else:
 
     class MemoryBlock:
-        '''
+        """
         This class is used within the "server process" of a ``ServerProcess`` to
         create and track shared memory blocks.
-        '''
+        """
 
         _blocks_ = set()
 
@@ -846,7 +844,7 @@ else:
             return self._mem.buf
 
         def _list_memory_blocks(self):
-            '''
+            """
             Return a list of the names of the shared memory blocks
             created and tracked by this class.
             This list includes the memory block created by the current
@@ -855,12 +853,12 @@ else:
 
             This is for use by ``MemoryBlockProxy``.
             This is mainly for debugging purposes.
-            '''
+            """
 
             return list(self._blocks_)
 
         def __del__(self):
-            '''
+            """
             The garbage collection of this object happens when its refcount
             reaches 0. Unless this object is "attached" to anything within
             the server process, it is garbage collected once all references to its
@@ -879,14 +877,14 @@ else:
             reference to the shared memory block, and it is safe to "destroy" the memory block.
 
             Therefore, this ``__del__`` destroys that memory block.
-            '''
+            """
             name = self._mem.name
             self._mem.close()
             self._mem.unlink()
             self.__class__._blocks_.remove(name)
 
         def __repr__(self):
-            return f"<{self.__class__.__name__} {self.name()}, size {self.size()}>"
+            return f'<{self.__class__.__name__} {self.name()}, size {self.size()}>'
 
     class MemoryBlockProxy(PickleThroughProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
@@ -922,37 +920,37 @@ else:
 
         @property
         def name(self):
-            '''
+            """
             Return the name of the ``SharedMemory`` object.
-            '''
+            """
             if self._name is None:
                 self._name = self._callmethod('_name')
             return self._name
 
         @property
         def size(self) -> int:
-            '''
+            """
             Return size of the memory block in bytes.
-            '''
+            """
             if self._mem is None:
                 self._mem = SharedMemory(name=self.name, create=False)
             return self._mem.size
 
         @property
         def buf(self) -> memoryview:
-            '''
+            """
             Return a ``memoryview`` into the context of the memory block.
-            '''
+            """
             if self._mem is None:
                 self._mem = SharedMemory(name=self.name, create=False)
             return self._mem.buf
 
         def _list_memory_blocks(self) -> list[str]:
-            '''
+            """
             Return names of shared memory blocks being
             tracked by the ``ServerProcess`` that "ownes" the current
             proxy object.
-            '''
+            """
             return self._callmethod('_list_memory_blocks')
 
         def __str__(self):
@@ -966,9 +964,9 @@ else:
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
 
     def list_memory_blocks(self):
-        '''
+        """
         List names of MemoryBlock objects being tracked in the server process.
-        '''
+        """
         m = self.MemoryBlock(1)
         blocks = m._list_memory_blocks()
         blocks.remove(m.name)

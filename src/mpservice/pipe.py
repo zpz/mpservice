@@ -95,9 +95,9 @@ class _Pipe:
 
 class Server(_Pipe):
     def __init__(self, path: str):
-        super().__init__(path + ".1", path + ".2")
+        super().__init__(path + '.1', path + '.2')
 
 
 class Client(_Pipe):
     def __init__(self, path: str):
-        super().__init__(path + ".2", path + ".1")
+        super().__init__(path + '.2', path + '.1')

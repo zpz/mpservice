@@ -70,7 +70,7 @@ def _loud_process_function(fn, *args, **kwargs):
 
 
 class ProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
-    '''
+    """
     This class is a drop-in replacement of the standard
     `concurrent.futures.ProcessPoolExecutor <https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.ProcessPoolExecutor>`_.
     By default, it uses a "spawn" context and the process class :class:`SpawnProcess`.
@@ -83,7 +83,7 @@ class ProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
     `Future <https://docs.python.org/3/library/concurrent.futures.html#future-objects>`_ object
     returned from the method :meth:`submit`, the printing in the worker process
     is handy for debugging in cases where the user fails to check the Future object in a timely manner.
-    '''
+    """
 
     # The loud-ness of this executor is different from the loud-ness of
     # ``SpawnProcess``. In this executor, loudness refers to each submitted function.
@@ -96,7 +96,6 @@ class ProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
         super().__init__(max_workers=max_workers, mp_context=mp_context, **kwargs)
 
     def submit(self, fn, /, *args, loud_exception: bool = True, **kwargs):
-
         if loud_exception:
             return super().submit(_loud_process_function, fn, *args, **kwargs)
         return super().submit(fn, *args, **kwargs)
@@ -149,7 +148,7 @@ def get_shared_thread_pool(
         else:
             if max_workers is not None and max_workers != executor._max_workers:
                 raise ValueError(
-                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                    f'`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}'
                 )
     return executor
 
@@ -171,7 +170,7 @@ def get_shared_process_pool(name: str, max_workers: int = None) -> ProcessPoolEx
         else:
             if max_workers is not None and max_workers != executor._max_workers:
                 raise ValueError(
-                    f"`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}"
+                    f'`max_workers`, {max_workers}, mismatches the existing value, {executor._max_workers}'
                 )
     return executor
 

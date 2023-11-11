@@ -40,7 +40,7 @@ def is_async(func):
         func = func.func
     return inspect.iscoroutinefunction(func) or (
         not inspect.isfunction(func)
-        and hasattr(func, "__call__")
+        and hasattr(func, '__call__')
         and inspect.iscoroutinefunction(func.__call__)
     )
 
@@ -59,10 +59,10 @@ def get_docker_host_ip():
     # The command `ip` is provided by the Linux package `iproute2`.
 
     z = subprocess.check_output(
-        ["ip", "-4", "route", "list", "match", "0/0"]  # noqa: S603, S607
+        ['ip', '-4', 'route', 'list', 'match', '0/0']  # noqa: S603, S607
     )
-    z = z.decode()[len("default via ") :]
-    return z[: z.find(" ")]
+    z = z.decode()[len('default via ') :]
+    return z[: z.find(' ')]
 
 
 def put_in_queue(q, x, stop_event, timeout=0.1):
@@ -107,21 +107,21 @@ def put_in_queue(q, x, stop_event, timeout=0.1):
 
 
 def encode(data, encoder):
-    if encoder == "pickle":
+    if encoder == 'pickle':
         return pickle_dumps(data)
-    if encoder == "utf8":
-        return data.encode("utf8")
-    if encoder != "none":
+    if encoder == 'utf8':
+        return data.encode('utf8')
+    if encoder != 'none':
         raise ValueError(f"expecting 'none' but got: {encoder}")
     return data  # `data` must be bytes
 
 
 def decode(data, encoder):
-    if encoder == "pickle":
+    if encoder == 'pickle':
         return pickle_loads(data)
-    if encoder == "utf8":
-        return data.decode("utf")
-    assert encoder == "none"
+    if encoder == 'utf8':
+        return data.decode('utf')
+    assert encoder == 'none'
     return data  # bytes unchanged
 
 
@@ -137,9 +137,9 @@ def decode(data, encoder):
 # of bytes, which should be decoded by `decode` according to the 'encoder'.
 
 
-async def write_record(writer, request_id, data, *, encoder: str = "pickle"):
+async def write_record(writer, request_id, data, *, encoder: str = 'pickle'):
     data_bytes = encode(data, encoder)
-    writer.write(f"{request_id} {len(data_bytes)} {encoder}\n".encode())
+    writer.write(f'{request_id} {len(data_bytes)} {encoder}\n'.encode())
     writer.write(data_bytes)
     await writer.drain()
     # TODO: add timeout?
@@ -150,7 +150,7 @@ async def read_record(reader, *, timeout=None):
     # This may raise `asyncio.TimeoutError` (nothing to read at the moment)
     # or `asyncio.IncompleteReadError` (connection has been closed by
     # the other side).
-    data = await asyncio.wait_for(reader.readuntil(b"\n"), timeout)
+    data = await asyncio.wait_for(reader.readuntil(b'\n'), timeout)
     request_id, num_bytes, encoder = data[:-1].decode().split()
     data = await reader.readexactly(int(num_bytes))
     return request_id, decode(data, encoder)
@@ -165,8 +165,8 @@ async def read_record(reader, *, timeout=None):
 async def run_tcp_server(conn_handler: Callable, host: str, port: int):
     server = await asyncio.start_server(conn_handler, host, port)
     async with server:
-        addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets)
-        logger.info("serving on %s", addrs)
+        addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+        logger.info('serving on %s', addrs)
         await server.serve_forever()
 
 
@@ -188,8 +188,8 @@ async def run_unix_server(conn_handler: Callable, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
     server = await asyncio.start_unix_server(conn_handler, path)
     async with server:
-        addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets)
-        logger.info("serving on %s", addrs)
+        addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+        logger.info('serving on %s', addrs)
         await server.serve_forever()
 
 
@@ -291,7 +291,7 @@ class SocketServer:
         host: str | None = None,
         port: int | None = None,
         backlog: int | None = None,
-        shutdown_path: str = "/shutdown",
+        shutdown_path: str = '/shutdown',
     ):
         """
         ``backlog`` is the max concurrent in-progress requests per connection.
@@ -315,12 +315,12 @@ class SocketServer:
             # it should be '127.0.0.1' (I think but did not verify).
             assert port
             if not host:
-                host = "0.0.0.0"  # in Docker
+                host = '0.0.0.0'  # in Docker
             self._path = None
             self._host = host
             self._port = int(port)
         self._backlog = backlog or 256
-        self._encoder = "pickle"  # encoder when sending responses
+        self._encoder = 'pickle'  # encoder when sending responses
         self._n_connections = 0
         self._shutdown_path = shutdown_path
         self.to_shutdown = False
@@ -345,11 +345,11 @@ class SocketServer:
             server_task = asyncio.create_task(
                 run_tcp_server(self._handle_connection, self._host, self._port)
             )
-        logger.info("server %s is ready", self)
+        logger.info('server %s is ready', self)
         try:
             while True:
                 if self.to_shutdown and not self._n_connections:
-                    raise Exception("shutdown requested")
+                    raise Exception('shutdown requested')
                 await asyncio.sleep(0.1)
         except BaseException as e:
             # This should take care of keyboard interrupt and such.
@@ -357,8 +357,8 @@ class SocketServer:
             server_task.cancel()
             if self._path:
                 os.unlink(self._path)
-            logger.info("server %s is stopped", self)
-            if str(e) != "shutdown requested":
+            logger.info('server %s is stopped', self)
+            if str(e) != 'shutdown requested':
                 raise
 
     async def _handle_connection(self, reader, writer):
@@ -368,12 +368,12 @@ class SocketServer:
         This method handles requests in that connection.
         """
         if self._path:
-            addr = writer.get_extra_info("sockname")
+            addr = writer.get_extra_info('sockname')
         else:
-            addr = writer.get_extra_info("peername")
+            addr = writer.get_extra_info('peername')
         self._n_connections += 1
         logger.info(
-            "connection %d is openned from client %r", self._n_connections, addr
+            'connection %d is openned from client %r', self._n_connections, addr
         )
         reqs = asyncio.Queue(self._backlog)
 
@@ -434,12 +434,12 @@ class SocketServer:
 
         writer.close()
         await writer.wait_closed()
-        logger.info("connection %d from client %r is closed", self._n_connections, addr)
+        logger.info('connection %d from client %r is closed', self._n_connections, addr)
         self._n_connections -= 1
 
 
 def make_server(app: SocketApplication, **kwargs):
-    '''
+    """
     Example::
 
         async def double(data):
@@ -451,7 +451,7 @@ def make_server(app: SocketApplication, **kwargs):
 
         server = make_server(app, path='/tmp/sock_abc')
         asyncio.run(server.serve())
-    '''
+    """
 
     return SocketServer(app, **kwargs)
 
@@ -508,7 +508,7 @@ class SocketClient:
         self._num_connections = num_connections or 32
         self._connection_timeout = connection_timeout
         self._backlog = backlog
-        self._encoder = "pickle"  # encoder when sending requests.
+        self._encoder = 'pickle'  # encoder when sending requests.
         self._prepare_shutdown = threading.Event()
         self._to_shutdown = threading.Event()
         self._executor = ThreadPoolExecutor()
@@ -532,14 +532,14 @@ class SocketClient:
         n = 0
         while n < self._num_connections:
             z = q.get()
-            if z == "OK":
+            if z == 'OK':
                 n += 1
             if isinstance(z, BaseException):
                 self._to_shutdown.set()
                 concurrent.futures.wait(self._tasks)
                 self._executor.shutdown()
                 raise z
-        logger.info("client %s is ready", self)
+        logger.info('client %s is ready', self)
         return self
 
     def __exit__(self, *args, **kwargs):
@@ -613,9 +613,9 @@ class SocketClient:
             except Exception as e:
                 q.put(e)
                 return
-            q.put("OK")
-            addr = writer.get_extra_info("peername")
-            logger.info("connection %d to server %r is openned", k + 1, addr)
+            q.put('OK')
+            addr = writer.get_extra_info('peername')
+            logger.info('connection %d to server %r is openned', k + 1, addr)
             tw = asyncio.create_task(_keep_sending(writer))
             tr = asyncio.create_task(_keep_receiving(reader))
             try:
@@ -627,7 +627,7 @@ class SocketClient:
                 await tw
             writer.close()
             await writer.wait_closed()
-            logger.info("connection %d to server %r is closed", k + 1, addr)
+            logger.info('connection %d to server %r is closed', k + 1, addr)
 
         async def _main():
             tasks = [_open_connection(i) for i in range(self._num_connections)]
@@ -641,10 +641,10 @@ class SocketClient:
     def _enqueue(self, path: str, data, *, timeout=None):
         if not self._pending_requests:
             raise Exception(
-                "Client is not yet started. Please use it in a context manager"
+                'Client is not yet started. Please use it in a context manager'
             )
         if self._prepare_shutdown.is_set() or self._to_shutdown.is_set():
-            raise Exception("Client is closed")
+            raise Exception('Client is closed')
         fut = concurrent.futures.Future()
         # `data` is the payload to send.
         # `fut` will hold the corresponding response to be received.
@@ -732,7 +732,7 @@ class SocketClient:
                         raise t.exception()
                     if not self._to_shutdown.is_set():
                         raise ValueError(
-                            f"expecting `self._to_shutdown.is_set()` to be True but got: {self._to_shutdown.is_set()}"
+                            f'expecting `self._to_shutdown.is_set()` to be True but got: {self._to_shutdown.is_set()}'
                         )
                     break
                 if self._to_shutdown.is_set():

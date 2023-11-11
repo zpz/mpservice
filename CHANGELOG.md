@@ -5,9 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.14.4] - in progress
+## [0.14.4] - 2023-11-11
 
 - Bug fix in ``mpservice.experimental.streamer.EagerBatcher``.
+- `EagerBatcher` is moved out of `experimental` into `mpservice.streamer`.
 
 
 ## [0.14.3] - 2023-09-20

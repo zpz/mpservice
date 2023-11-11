@@ -25,6 +25,8 @@ API reference
 
 .. autofunction:: mpservice.streamer.tee
 
+.. autoclass:: mpservice.streamer.EagerBatcher
+
 
 
 .. Reference (for an early version of the code): https://zpz.github.io/blog/stream-processing/

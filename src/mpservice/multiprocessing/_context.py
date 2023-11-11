@@ -131,17 +131,17 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         else:
             kwargs = dict(kwargs)
 
-        assert "_result_and_error_" not in kwargs
-        assert "_logger_queue_" not in kwargs
+        assert '_result_and_error_' not in kwargs
+        assert '_logger_queue_' not in kwargs
         reader, writer = multiprocessing.connection.Pipe(duplex=False)
-        kwargs["_result_and_error_"] = writer
+        kwargs['_result_and_error_'] = writer
         logger_queue = MP_SPAWN_CTX.Queue()
         kwargs['_logger_queue_'] = logger_queue
 
         super().__init__(*args, kwargs=kwargs, **moreargs)
 
-        assert not hasattr(self, "_result_and_error_")
-        assert not hasattr(self, "_logger_queue_")
+        assert not hasattr(self, '_result_and_error_')
+        assert not hasattr(self, '_logger_queue_')
         assert not hasattr(self, '_logger_thread_')
         assert not hasattr(self, '_collector_thread_')
         assert not hasattr(self, '_finalize_')
@@ -164,14 +164,14 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._logger_thread_ = Thread(
             target=self._run_logger_thread,
             args=(self._logger_queue_,),
-            name="ProcessLoggerThread",
+            name='ProcessLoggerThread',
             daemon=True,
         )
         self._logger_thread_.start()
 
         self._collector_thread_ = Thread(
             target=self._run_collector_thread,
-            name="ProcessCollectorThread",
+            name='ProcessCollectorThread',
         )
         self._collector_thread_.start()
 
@@ -233,12 +233,12 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
         ``start`` arranges for this to be run in a child process.
         """
-        result_and_error = self._kwargs.pop("_result_and_error_")
+        result_and_error = self._kwargs.pop('_result_and_error_')
 
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
         if self._target:
-            logger_queue = self._kwargs.pop("_logger_queue_")
+            logger_queue = self._kwargs.pop('_logger_queue_')
 
             if not logging.getLogger().hasHandlers():
                 # Set up putting all log messages
@@ -269,7 +269,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 raise  # should it raise or stay silent?
             except BaseException as e:
-                print(f"{multiprocessing.current_process().name}: {repr(e)}")
+                print(f'{multiprocessing.current_process().name}: {repr(e)}')
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 raise
@@ -287,10 +287,10 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.close()
 
     def join(self, timeout=None):
-        '''
+        """
         Same behavior as the standard lib, except that if the process
         terminates with an exception, the exception is raised.
-        '''
+        """
         super().join(timeout=timeout)
         exitcode = self.exitcode
         if exitcode is None:
@@ -303,11 +303,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode == 1:
             raise self._future_.exception()
         if exitcode >= 0:
-            raise ValueError(f"expecting negative `exitcode` but got: {exitcode}")
+            raise ValueError(f'expecting negative `exitcode` but got: {exitcode}')
         exitcode = -exitcode
         if exitcode == errno.ENOTBLK:  # 15
             warnings.warn(
-                f"process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`",
+                f'process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`',
                 stacklevel=2,
             )
             # For example, ``self.terminate()`` was called. That's a code smell.
@@ -319,7 +319,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 raise self._future_.exception()
             else:
                 raise ChildProcessError(
-                    f"exitcode {exitcode}, {errno.errorcode[exitcode]}"
+                    f'exitcode {exitcode}, {errno.errorcode[exitcode]}'
                 )
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
@@ -332,18 +332,18 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         return self.exitcode is not None
 
     def result(self, timeout: float | int | None = None):
-        '''
+        """
         Behavior is similar to ``concurrent.futures.Future.result``.
-        '''
+        """
         super().join(timeout)
         if not self.done():
             raise TimeoutError
         return self._future_.result()
 
     def exception(self, timeout: float | int | None = None):
-        '''
+        """
         Behavior is similar to ``concurrent.futures.Future.exception``.
-        '''
+        """
         super().join(timeout)
         if not self.done():
             raise TimeoutError
@@ -351,7 +351,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
 
 
 class SpawnContext(multiprocessing.context.SpawnContext):
-    '''
+    """
     The standard package ``multiprocessing`` has a
     `"context" <https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods>`_,
     which has to do with how a process is created and started.
@@ -423,7 +423,7 @@ class SpawnContext(multiprocessing.context.SpawnContext):
         this is preferred over ``MP_SPAWN_CTX.Process``, ``MP_SPAWN_CTX.Manager``, etc, although they would work, too.
         A few other methods of ``SpawnContext`` are not exposed in ``mpservice.multiprocessing``;
         you may use them via the object ``MP_SPAWN_CTX``.
-    '''
+    """
 
     Process = SpawnProcess
 

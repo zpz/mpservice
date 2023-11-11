@@ -39,14 +39,12 @@ doc = [
 test = [
     "coverage[toml]",
     "Faker",
-    "mypy",
     "httpx",
     "pytest",
     "pytest-asyncio",
     "requests",
     "starlette",
     "zpz",
-    'ruff',
 ]
 
 
@@ -67,6 +65,9 @@ exclude = ["tests/manual", "tests/benchmarks", "tests/experiments", "tests/test_
 "__init__.py" = ["E402", "F401"]
 "util.py" = ["E402", "F401"]
 "server_process.py" = ["E402", "F401"]
+
+[tool.ruff.format]
+quote-style = "single"
 
 
 [tool.pytest.ini_options]

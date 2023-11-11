@@ -292,10 +292,10 @@ class Worker(ABC):
         self.batch_size = batch_size
         self.batch_size_log_cadence = batch_size_log_cadence
         self.batch_wait_time = batch_wait_time
-        self.name = f"{multiprocessing.current_process().name}-{threading.current_thread().name}"
+        self.name = f'{multiprocessing.current_process().name}-{threading.current_thread().name}'
 
         self.preprocess: Callable[[Any], Any]
-        '''
+        """
         If a subclass has a method ``preprocess`` or an attribute ``preprocess`` that is a free-standing
         function, this method or function must take one data element (not a batch) as the sole, positional
         argument. This processes/transforms the data, and the output is used in :meth:`call`. If this function
@@ -303,14 +303,14 @@ class Worker(ABC):
         to the output queue.
 
         When ``self.batch_size > 1``, if :meth:`call` needs to take care of an element of the batch that
-        might fail a pre-condition, it is tetious to properly assemble the "good" and "bad" elements to further processing
+        might fail a pre-condition, it is tedious to properly assemble the "good" and "bad" elements to further processing
         or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
         When a subclass is designed to do non-batching work, this attribute is not needed, because the same
         concern can be handled in :meth:`call` directly.
 
         When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
-        '''
+        """
 
     @abstractmethod
     def call(self, x):
@@ -368,7 +368,7 @@ class Worker(ABC):
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
-            print(self.name, "stopped by KeyboardInterrupt")
+            print(self.name, 'stopped by KeyboardInterrupt')
             # The process or thread will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
@@ -416,7 +416,7 @@ class Worker(ABC):
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
             logger.info(
-                "%d batches with sizes %d--%d, mean %.1f",
+                '%d batches with sizes %d--%d, mean %.1f',
                 n_batches,
                 batch_size_min,
                 batch_size_max,
@@ -428,7 +428,7 @@ class Worker(ABC):
         collector_thread = Thread(
             target=self._build_input_batches,
             args=(q_in, q_out),
-            name=f"{self.name}._build_input_batches",
+            name=f'{self.name}._build_input_batches',
         )
         collector_thread.start()
 
@@ -597,7 +597,7 @@ class Worker(ABC):
 
 
 class Servlet(ABC):
-    '''
+    """
     A :class:`Servlet` manages the execution of one or more :class:`Worker`.
     We make a distinction between "simple" servlets, including :class:`ProcessServlet` and :class:`ThreadServlet`,
     and "compound" servlets, including :class:`SequentialServlet`, :class:`EnsembleServlet`,
@@ -631,7 +631,7 @@ class Servlet(ABC):
                     Sequetial(ProcessServlet(W7), ThreadServlet(W8), ProcessServlet(W9)),
                     ),
             )
-    '''
+    """
 
     @abstractmethod
     def start(self, q_in, q_out) -> None:
@@ -639,7 +639,7 @@ class Servlet(ABC):
 
     @abstractmethod
     def stop(self) -> None:
-        '''
+        """
         When this method is called, there shouldn't be "pending" work
         in the servlet. If for whatever reason, the servlet is in a busy,
         messy state, it is not required to "wait" for things to finish.
@@ -649,31 +649,31 @@ class Servlet(ABC):
         the special constant ``None`` in the input queue.
         The user should have done that; but just to be sure,
         this method may do that again.
-        '''
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def input_queue_type(self) -> Literal['thread', 'process']:
-        '''
+        """
         Indicate whether the input queue can be a "thread queue"
         (i.e. ``queue.Queue``) or needs to be a "process queue"
         (i.e. ``multiprocessing.queues.Queue``).
         If "thread", caller can provide either a thread queue or a
         process queue. If "process", caller must provide a process queue.
-        '''
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def output_queue_type(self) -> Literal['thread', 'process']:
-        '''
+        """
         Indicate whether the output queue can be a "thread queue"
         (i.e. ``queue.Queue``) or needs to be a "process queue"
         (i.e. ``multiprocessing.queues.Queue``).
         If "thread", caller can provide either a thread queue or a
         process queue. If "process", caller must provide a process queue.
-        '''
+        """
         raise NotImplementedError
 
     @property
@@ -777,19 +777,19 @@ class ProcessServlet(Servlet):
             A queue for results.
         """
         assert not self._started
-        basename = self._worker_name or f"{self._worker_cls.__name__}-process"
+        basename = self._worker_name or f'{self._worker_cls.__name__}-process'
         for worker_index, cpu in enumerate(self._cpus):
             # Create as many processes as the length of `cpus`.
             # Each process is pinned to the specified cpu core.
-            sname = f"{basename}-{worker_index}"
-            logger.info("adding worker <%s> at CPU %s ...", sname, cpu)
+            sname = f'{basename}-{worker_index}'
+            logger.info('adding worker <%s> at CPU %s ...', sname, cpu)
             p = Process(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
-                    "q_in": q_in,
-                    "q_out": q_out,
-                    "worker_index": worker_index,
+                    'q_in': q_in,
+                    'q_out': q_out,
+                    'worker_index': worker_index,
                     **self._init_kwargs,
                 },
             )
@@ -802,11 +802,11 @@ class ProcessServlet(Servlet):
             name = q_out.get()
             if name is None:
                 p.join()  # this will raise exception b/c worker __init__ failed
-            logger.debug("   ... worker <%s> is ready", name)
+            logger.debug('   ... worker <%s> is ready', name)
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._worker_cls.__name__)
+        logger.info('servlet %s is ready', self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
@@ -820,11 +820,11 @@ class ProcessServlet(Servlet):
 
     @property
     def input_queue_type(self):
-        return "process"
+        return 'process'
 
     @property
     def output_queue_type(self):
-        return "process"
+        return 'process'
 
     @property
     def workers(self):
@@ -901,17 +901,17 @@ class ThreadServlet(Servlet):
             queues are both :class:`_SimpleProcessQueue`\\s.
         """
         assert not self._started
-        basename = self._worker_name or f"{self._worker_cls.__name__}-thread"
+        basename = self._worker_name or f'{self._worker_cls.__name__}-thread'
         for ithread in range(self._num_threads):
-            sname = f"{basename}-{ithread}"
-            logger.info("adding worker <%s> in thread ...", sname)
+            sname = f'{basename}-{ithread}'
+            logger.info('adding worker <%s> in thread ...', sname)
             w = Thread(
                 target=self._worker_cls.run,
                 name=sname,
                 kwargs={
-                    "q_in": q_in,
-                    "q_out": q_out,
-                    "worker_index": ithread,
+                    'q_in': q_in,
+                    'q_out': q_out,
+                    'worker_index': ithread,
                     **self._init_kwargs,
                 },
             )
@@ -920,11 +920,11 @@ class ThreadServlet(Servlet):
             name = q_out.get()
             if name is None:
                 w.join()  # this will raise exception b/c worker __init__ failed
-            logger.debug("   ... worker <%s> is ready", name)
+            logger.debug('   ... worker <%s> is ready', name)
 
         self._q_in = q_in
         self._q_out = q_out
-        logger.info("servlet %s is ready", self._worker_cls.__name__)
+        logger.info('servlet %s is ready', self._worker_cls.__name__)
         self._started = True
 
     def stop(self):
@@ -938,11 +938,11 @@ class ThreadServlet(Servlet):
 
     @property
     def input_queue_type(self):
-        return "thread"
+        return 'thread'
 
     @property
     def output_queue_type(self):
-        return "thread"
+        return 'thread'
 
     @property
     def workers(self):
@@ -1104,10 +1104,10 @@ class EnsembleServlet(Servlet):
             s.start(q1, q2)
             self._qins.append(q1)
             self._qouts.append(q2)
-        t = Thread(target=self._dequeue, name=f"{self.__class__.__name__}._dequeue")
+        t = Thread(target=self._dequeue, name=f'{self.__class__.__name__}._dequeue')
         t.start()
         self._threads.append(t)
-        t = Thread(target=self._enqueue, name=f"{self.__class__.__name__}._enqueue")
+        t = Thread(target=self._enqueue, name=f'{self.__class__.__name__}._enqueue')
         t.start()
         self._threads.append(t)
         self._started = True
@@ -1133,7 +1133,7 @@ class EnsembleServlet(Servlet):
                 # short circuit exception to the output queue
                 qout.put((uid, x))
                 continue
-            z = {"y": [None] * nn, "n": 0}
+            z = {'y': [None] * nn, 'n': 0}
             # `y` is the list of outputs from the servlets, in order.
             # `n` is number of outputs already received.
             catalog[uid] = z
@@ -1175,8 +1175,8 @@ class EnsembleServlet(Servlet):
                     if isinstance(y, BaseException):
                         y = RemoteException(y)
 
-                    z["y"][idx] = y
-                    z["n"] += 1
+                    z['y'][idx] = y
+                    z['n'] += 1
 
                     if fail_fast and isinstance(y, RemoteException):
                         # If fail fast, then the first exception causes
@@ -1199,7 +1199,7 @@ class EnsembleServlet(Servlet):
                             except Exception as e:
                                 y = RemoteException(e)
                         else:
-                            y = z["y"]
+                            y = z['y']
                         qout.put((uid, y))
 
             if all_empty:
@@ -1268,7 +1268,7 @@ class SwitchServlet(Servlet):
             s.start(q1, q_out)
             self._qins.append(q1)
         self._thread_enqueue = Thread(
-            target=self._enqueue, name=f"{self.__class__.__name__}._enqueue"
+            target=self._enqueue, name=f'{self.__class__.__name__}._enqueue'
         )
         self._thread_enqueue.start()
         self._started = True
@@ -1285,7 +1285,7 @@ class SwitchServlet(Servlet):
 
     @abstractmethod
     def switch(self, x) -> int:
-        '''
+        """
         Parameters
         ----------
         x
@@ -1308,7 +1308,7 @@ class SwitchServlet(Servlet):
           The index of the member servlet that will receive and process ``x``.
           This number is between 0 and the number of member servlets minus 1,
           inclusive.
-        '''
+        """
         raise NotImplementedError
 
     def _enqueue(self):
@@ -1352,17 +1352,6 @@ class SwitchServlet(Servlet):
         return self._servlets
 
 
-def _init_server(
-    self,
-    servlet: Servlet,
-    *,
-    capacity: int = 256,
-):
-    self.servlet = servlet
-    assert capacity > 0
-    self._capacity = capacity
-
-
 def _enter_server(self, gather_args: tuple = None):
     self._q_in = (
         _SimpleThreadQueue()
@@ -1398,13 +1387,13 @@ def _enter_server(self, gather_args: tuple = None):
                     break
 
         self._onboard_thread = Thread(
-            target=_onboard_input, name=f"{self.__class__.__name__}._onboard_input"
+            target=_onboard_input, name=f'{self.__class__.__name__}._onboard_input'
         )
         self._onboard_thread.start()
 
     self._gather_thread = Thread(
         target=self._gather_output,
-        name=f"{self.__class__.__name__}._gather_output",
+        name=f'{self.__class__.__name__}._gather_output',
         args=gather_args or (),
     )
     self._gather_thread.start()
@@ -1441,7 +1430,7 @@ def _server_debug_info(self):
 
 
 class Server:
-    '''
+    """
     The "interfacing" and "scheduling" code of :class:`Server`
     runs in the "main process".
     Two usage patterns are supported, namely making individual
@@ -1469,7 +1458,7 @@ class Server:
     CPU allocations among workers to achieve best performance.
 
     :class:`Server` has an async counterpart named :class:`AsyncServer`.
-    '''
+    """
 
     @final
     @classmethod
@@ -1514,7 +1503,9 @@ class Server:
 
             .. seealso: documentation of the method :meth:`call`.
         """
-        _init_server(self, servlet=servlet, capacity=capacity)
+        self.servlet = servlet
+        assert capacity > 0
+        self._capacity = capacity
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
@@ -1524,18 +1515,45 @@ class Server:
 
     @property
     def capacity(self) -> int:
+        """
+        The value of the parameter `capacity` to :meth:`__init__`.
+        """
         return self._capacity
 
     @property
     def backlog(self) -> int:
+        """
+        The number of items currently being processed in the server.
+        They may be in various stages.
+        """
         return len(self._uid_to_futures)
 
     def __enter__(self):
+        """
+        The main operations conducted in this method include:
+
+        - Start the servlet (hence creating and starting :class:`Worker` instances).
+
+        - Set up queues between the main thread (this "server" object) and the workers
+          for passing input elements (and intermediate results) and results.
+
+        - Set up background threads responsible for taking incoming calls and gathering/returning results.
+          Roughly speaking, when :meth:`call` is invoked, its input is handled by a thread, which
+          places the input in a pipeline with appropriate book-keeping; it then waits for the result,
+          which becomes available once another thread gathers the result from (another end of) the pipeline.
+        """
         self._pipeline_notfull = threading.Condition()
         _enter_server(self)
         return self
 
     def __exit__(self, *args):
+        """
+        The main operations conducted in this method include:
+
+        - Place a special sentinel in the pipeline to indicate the end of operations; all :class:`Worker`\s
+          in the servlet will eventually see the sentinel and exit.
+        - Wait for the servlet and all helper threads to exit.
+        """
         self._input_buffer.put(None)
         self._gather_thread.join()
         self.servlet.stop()
@@ -1577,9 +1595,14 @@ class Server:
             in the "enqueue" step, that is, the timer starts upon receiving the request,
             i.e. at the beginning of the function ``call``.
         backpressure
-            If ``True``, and the input queue is full, do not wait; raise :class:`ServerBacklogFull`
+            If ``True``, and the input queue is full (that is, ``self.backlog == self.capacity``),
+            do not wait; raise :class:`ServerBacklogFull`
             right away. If ``False``, wait on the input queue for as long as
             ``timeout`` seconds.
+
+            The exception ``ServerBacklogFull`` may indicate an erronous situation---somehow
+            the server is (almost) stuck and can not process requests as quickly as expected---or
+            a valid situation---the server is getting requests faster than its expected load.
         """
         fut = self._enqueue(x, timeout, backpressure)
         return self._wait_for_result(fut)
@@ -1600,18 +1623,18 @@ class Server:
                 if backpressure:
                     raise ServerBacklogFull(
                         len(pipeline),
-                        "0 seconds enqueue with back-pressure",
+                        '0 seconds enqueue with back-pressure',
                     )
                 if not self._pipeline_notfull.wait(timeout * 0.99):
                     raise ServerBacklogFull(
                         len(pipeline),
-                        f"{perf_counter() - t0:.3f} seconds enqueue",
+                        f'{perf_counter() - t0:.3f} seconds enqueue',
                     )
             pipeline[uid] = fut
 
         fut.data = {
-            "t0": t0,
-            "t1": perf_counter(),  # end of enqueuing
+            't0': t0,
+            't1': perf_counter(),  # end of enqueuing
             'deadline': t0 + timeout,
         }
         self._input_buffer.put((uid, x))
@@ -1625,7 +1648,7 @@ class Server:
             # This may raise an exception originating from RemoteException
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
-            t0 = fut.data["t0"]
+            t0 = fut.data['t0']
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -1666,10 +1689,17 @@ class Server:
                     fut.set_exception(y)
                 else:
                     fut.set_result(y)
-            fut.data["t2"] = perf_counter()
+            fut.data['t2'] = perf_counter()
             q_notify.put(1)
 
-    def debug_info(self):
+    def debug_info(self) -> dict:
+        """
+        Return a dict with various pieces of info, about the status and health of the server,
+        that may be helpful for debugging. Example content includes `self.backlog`,
+        active child processes, status (alive/dead) of helper threads.
+
+        The content of the returned dict is str, int, or other types that are friendly to `json`.
+        """
         return _server_debug_info(self)
 
     def stream(
@@ -1715,7 +1745,7 @@ class Server:
 
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value or make it
-            even large as needed.
+            even larger as needed.
         """
 
         def _enqueue(tasks, stopped, timeout):
@@ -1761,7 +1791,7 @@ class Server:
         worker = Thread(
             target=_enqueue,
             args=(tasks, stopped, timeout),
-            name=f"{self.__class__.__name__}.stream._enqueue",
+            name=f'{self.__class__.__name__}.stream._enqueue',
         )
         worker.start()
 
@@ -1798,12 +1828,12 @@ class Server:
 
 
 class AsyncServer:
-    '''
+    """
     An ``AsyncServer`` object must be started in an async context manager.
     The primary methods :meth:`call` and :meth:`stream` are async.
 
     Most concepts and usage are analogous to :class:`Server`.
-    '''
+    """
 
     @final
     @classmethod
@@ -1816,7 +1846,9 @@ class AsyncServer:
         *,
         capacity: int = 256,
     ):
-        _init_server(self, servlet=servlet, capacity=capacity)
+        self.servlet = servlet
+        assert capacity > 0
+        self._capacity = capacity
         self._uid_to_futures = {}
         # Size of this dict is capped at `self._capacity`.
         # A few places need to enforce this size limit.
@@ -1857,14 +1889,13 @@ class AsyncServer:
         return await self._wait_for_result(fut)
 
     async def _enqueue(self, x, timeout: float, backpressure: bool) -> asyncio.Future:
-
         t0 = perf_counter()
         pipeline = self._uid_to_futures
 
         fut = asyncio.get_running_loop().create_future()
         fut.data = {
-            "t0": t0,
-            "t1": t0,  # end of enqueuing; to be updated
+            't0': t0,
+            't1': t0,  # end of enqueuing; to be updated
             'deadline': t0 + timeout,
         }
         uid = id(fut)
@@ -1874,7 +1905,7 @@ class AsyncServer:
                 if backpressure:
                     raise ServerBacklogFull(
                         len(pipeline),
-                        "0 seconds enqueue with back-pressure",
+                        '0 seconds enqueue with back-pressure',
                     )
                     # If this is behind a HTTP service, should return
                     # code 503 (Service Unavailable) to client.
@@ -1888,7 +1919,7 @@ class AsyncServer:
                 ):  # should be the first one, but official doc referrs to the second
                     raise ServerBacklogFull(
                         len(pipeline),
-                        f"{perf_counter() - t0:.3f} seconds enqueue",
+                        f'{perf_counter() - t0:.3f} seconds enqueue',
                     )
             pipeline[uid] = fut
 
@@ -1949,7 +1980,7 @@ class AsyncServer:
                     loop.call_soon_threadsafe(fut.set_exception, y)
                 else:
                     loop.call_soon_threadsafe(fut.set_result, y)
-                fut.data["t2"] = perf_counter()
+                fut.data['t2'] = perf_counter()
 
             f = asyncio.run_coroutine_threadsafe(notify(), loop)
             notifications[id(f)] = f
@@ -1967,11 +1998,13 @@ class AsyncServer:
         return_exceptions: bool = False,
         timeout: int | float = 3600,
     ) -> AsyncIterator:
-        '''
+        """
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
         (i.e. interleaved); multiple calls to :meth:`stream` can also happen
         at the same time by different "users" (in the same thread).
-        '''
+
+        .. seealso:: :meth:`Server.stream`
+        """
 
         async def _enqueue(tasks, timeout):
             # Putting input data in the queue does not need concurrency.
@@ -2063,7 +2096,7 @@ def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
         def call(self, x):
             return func(x)
 
-    MyWorker.__name__ = f"Worker-{func.__name__}"
+    MyWorker.__name__ = f'Worker-{func.__name__}'
     return MyWorker
 
 

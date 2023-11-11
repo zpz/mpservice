@@ -40,7 +40,7 @@ class Server(uvicorn.Server):
         # of `app`. See Starlette documentation on "lifespan".
 
         global _stop_requested
-        assert _stop_requested is None, f"{_stop_requested} is None"
+        assert _stop_requested is None, f'{_stop_requested} is None'
         _stop_requested = stop_requested
         self._stop_requested = stop_requested  # to be used in `on_tick`.
 
@@ -69,11 +69,11 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
         stop_requested: Event,
         worker_contexts: list[Any],
     ) -> None:
-        message = "Started parent process [{}]".format(str(self.pid))
-        color_message = "Started parent process [{}]".format(
-            click.style(str(self.pid), fg="cyan", bold=True)
+        message = 'Started parent process [{}]'.format(str(self.pid))
+        color_message = 'Started parent process [{}]'.format(
+            click.style(str(self.pid), fg='cyan', bold=True)
         )
-        logger.info(message, extra={"color_message": color_message})
+        logger.info(message, extra={'color_message': color_message})
 
         for sig in uvicorn.supervisors.multiprocess.HANDLED_SIGNALS:
             signal.signal(sig, self.signal_handler)
@@ -124,12 +124,12 @@ def get_subprocess(
         stdin_fileno = None
 
     kwargs = {
-        "config": config,
-        "target": target,
-        "sockets": sockets,
-        "stdin_fileno": stdin_fileno,
-        "worker_context": worker_context,
-        "stop_requested": stop_requested,
+        'config': config,
+        'target': target,
+        'sockets': sockets,
+        'stdin_fileno': stdin_fileno,
+        'worker_context': worker_context,
+        'stop_requested': stop_requested,
     }
 
     return Process(target=subprocess_started, kwargs=kwargs)
@@ -179,10 +179,10 @@ _stop_requested: Event = None
 
 
 async def stop_server():
-    '''
+    """
     This function is to be called in a web service endpoint to request termination
     of the service.
-    '''
+    """
     _stop_requested.set()
     await asyncio.sleep(0.2)
     # TODO:
@@ -197,7 +197,7 @@ ASGIApplication = TypeVar('ASGIApplication')
 def start_server(
     app: ASGIApplication | str,
     *,
-    host: str = "0.0.0.0",
+    host: str = '0.0.0.0',
     port: int = 8000,
     access_log: bool = False,
     backlog: int = 128,
@@ -274,7 +274,7 @@ def start_server(
     """
     if log_config is not UNSET:
         warnings.warn(
-            "`log_config` is ignored since 0.14.1 and will be an error in 0.15.0",
+            '`log_config` is ignored since 0.14.1 and will be an error in 0.15.0',
             DeprecationWarning,
             stacklevel=2,
         )

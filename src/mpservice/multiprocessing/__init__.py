@@ -103,12 +103,12 @@ __all__ = [
 def wait(
     workers: Sequence[Thread | SpawnProcess], /, timeout=None, return_when=ALL_COMPLETED
 ) -> tuple[set[Thread | SpawnProcess], set[Thread | SpawnProcess]]:
-    '''
+    """
     ``workers`` is a sequence of ``Thread`` or ``SpawnProcess`` that have been started.
     It can be a mix of the two types.
 
     See ``concurrent.futures.wait``.
-    '''
+    """
 
     futures = [t._future_ for t in workers]
     future_to_thread = {id(t._future_): t for t in workers}
@@ -127,7 +127,7 @@ def wait(
 def as_completed(
     workers: Sequence[Thread | SpawnProcess], /, timeout=None
 ) -> Iterator[Thread | SpawnProcess]:
-    '''See ``concurrent.futures.as_completed``.'''
+    """See ``concurrent.futures.as_completed``."""
 
     futures = [t._future_ for t in workers]
     future_to_thread = {id(t._future_): t for t in workers}

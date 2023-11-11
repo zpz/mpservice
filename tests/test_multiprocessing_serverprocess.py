@@ -156,8 +156,8 @@ def test_concurrency():
             print('cls:', cls)
             print('')
             pp = [
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-1"),
-                cls(target=worker, args=(t, 3), name=f"{cls.__name__}-2"),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-1'),
+                cls(target=worker, args=(t, 3), name=f'{cls.__name__}-2'),
             ]
             t0 = time.perf_counter()
             for p in pp:
@@ -170,9 +170,9 @@ def test_concurrency():
 
             print('')
             pp = [
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-3"),
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-4"),
-                cls(target=worker, args=(d, 3), name=f"{cls.__name__}-5"),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-3'),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-4'),
+                cls(target=worker, args=(d, 3), name=f'{cls.__name__}-5'),
             ]
             t0 = time.perf_counter()
             for p in pp:
@@ -209,7 +209,7 @@ def test_shared_memory():
     print('')
     with ServerProcess() as manager:
         mem = manager.MemoryBlock(10)
-        assert type(mem.buf) is memoryview
+        assert type(mem.buf) is memoryview  # noqa: E721
         assert len(mem.buf) == 10
         mem.buf[4] = 100
 
