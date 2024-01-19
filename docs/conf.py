@@ -74,7 +74,7 @@ html_theme_options = {
     'navigation_with_keys': False,
 }
 
-html_static_path = ['_static']
+# html_static_path = ['_static']
 
 
 # make rst_epilog a variable, so you can add other epilog parts to it

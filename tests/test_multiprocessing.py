@@ -10,12 +10,10 @@ from mpservice import TimeoutError
 from mpservice.multiprocessing import (
     FIRST_EXCEPTION,
     Process,
-    RemoteException,
     as_completed,
-    get_remote_traceback,
-    is_remote_exception,
     wait,
 )
+from mpservice.multiprocessing.remote_exception import RemoteException, get_remote_traceback, is_remote_exception
 from mpservice.threading import Thread
 
 logger = logging.getLogger(__name__)

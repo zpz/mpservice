@@ -4,8 +4,8 @@ import time
 from multiprocessing import active_children
 
 import pytest
-from mpservice.multiprocessing import Process, Queue, ServerProcess, SpawnProcess
-from mpservice.multiprocessing.server_process import MemoryBlock, hosted
+from mpservice.multiprocessing import Process, Queue, SpawnProcess
+from mpservice.multiprocessing.server_process import MemoryBlock, hosted, ServerProcess
 from mpservice.threading import Thread
 
 
