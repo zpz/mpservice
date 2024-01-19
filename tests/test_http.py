@@ -85,14 +85,13 @@ def test_testclient():
 
 def _run_app(port):
     app = make_app()
-    server = make_server(app, host=HOST, port=port)
 
     async def shutdown(request):
-        server.should_exit = True
+        await stop_server()
         return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
 
     app.add_route('/shutdown', shutdown, ['POST'])
-    server.run()
+    start_server(app, host=HOST, port=port)
 
 
 # This one failed in `./run-tests` but succeeded when run

@@ -205,7 +205,7 @@ def start_server(
     worker_contexts: list = None,
     log_config=UNSET,
     **kwargs,
-) -> uvicorn.Server:
+):
     """
     This function is intended for lauching a service that uses :mod:`mpservice.mpserver`.
 
