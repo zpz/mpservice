@@ -22,6 +22,8 @@ from ..threading import Thread
 from .remote_exception import RemoteException
 
 
+logger = logging.getLogger(__name__)
+
 class SpawnProcess(multiprocessing.context.SpawnProcess):
     """
     A subclass of the standard ``multiprocessing.context.SpawnProcess``,
@@ -227,6 +229,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         t_logger.join()
         t_collector.join()
 
+    @staticmethod
+    def handle_exception(exc):
+        # Subclass can customize this to log more info.
+        print(f'{multiprocessing.current_process().name}: {repr(exc)}')
+
     def run(self):
         """
         Overrides the standard ``Process.run``.
@@ -269,7 +276,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 result_and_error.send(None)
                 raise  # should it raise or stay silent?
             except BaseException as e:
-                print(f'{multiprocessing.current_process().name}: {repr(e)}')
+                self.handle_exception(e)
+                # For some reason, this needs to go before the two lines below.
+                # If this is after them, the customization in `mpservice.mpserver`
+                # will not work---the extra log does not show.
+
                 result_and_error.send(None)
                 result_and_error.send(RemoteException(e))
                 raise
@@ -303,7 +314,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode == 1:
             raise self._future_.exception()
         if exitcode >= 0:
-            raise ValueError(f'expecting negative `exitcode` but got: {exitcode}')
+            raise ValueError(f'expecting negative `exitcode` but got {exitcode}')
         exitcode = -exitcode
         if exitcode == errno.ENOTBLK:  # 15
             warnings.warn(
@@ -319,7 +330,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 raise self._future_.exception()
             else:
                 raise ChildProcessError(
-                    f'exitcode {exitcode}, {errno.errorcode[exitcode]}'
+                    f'child process failed with exitcode {exitcode}, {errno.errorcode[exitcode]}'
                 )
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html

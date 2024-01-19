@@ -44,6 +44,12 @@ class Thread(threading.Thread):
         super().__init__(*args, **kwargs)
         self._future_: concurrent.futures.Future = None
 
+
+    @staticmethod
+    def handle_exception(exc):
+        # Subclass can customize this to log more info.
+        print(f'{threading.current_thread().name}: {repr(exc)}')
+
     def run(self):
         """
         This method represents the thread's activity.
@@ -61,10 +67,9 @@ class Thread(threading.Thread):
             self._future_.set_result(None)
             return
         except BaseException as e:
+            self.handle_exception(e)
             self._future_.set_exception(e)
             # Sometimes somehow error is not visible (maybe it's a `pytest` issue?).
-            # Just make it more visible:
-            print(f'{threading.current_thread().name}: {repr(e)}')
             raise  # Standard threading will print error info here.
         finally:
             # Avoid a refcycle if the thread is running a function with

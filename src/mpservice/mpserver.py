@@ -39,9 +39,9 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from .multiprocessing import MP_SPAWN_CTX, Process
+from .multiprocessing import MP_SPAWN_CTX, Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
-from .threading import Thread
+from .threading import Thread as _Thread
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -75,8 +75,29 @@ multiprocessing.log_to_stderr(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+class Thread(_Thread):
+    @staticmethod
+    def handle_exception(exc):
+        # print(f'{threading.current_thread().name}: {repr(exc)}')
+        logger.exception(exc)
+
+
+class Process(_Process):
+    @staticmethod
+    def handle_exception(exc):
+        # print(f'{multiprocessing.current_process().name}: {repr(exc)}')
+        logger.exception(exc)
+
+
 class ServerBacklogFull(RuntimeError):
-    pass
+    def __init__(self, n, x=None):
+        super(n, x)
+
+    def __str__(self):
+        n, x = self.args
+        if x is None:
+            return f"Server is at capacity with {n} items in proces; new request is rejected immediately due to back-pressure"
+        return f"Server is at capacity with {n} items in proces; new request is rejected after waiting for {x:.3f} seconds"
 
 
 class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
@@ -317,7 +338,7 @@ class Worker(ABC):
         """
         Private methods of this class wait on the input queue to gather "work orders",
         send them to :meth:`call` for processing,
-        collect the outputs of :meth:`call`,  and put them in the output queue.
+        collect the outputs of :meth:`call`, and put them in the output queue.
 
         If ``self.batch_size == 0``, then ``x`` is a single
         element, and this method returns result for ``x``.
@@ -394,7 +415,7 @@ class Worker(ABC):
                     x = e
 
             # If it's an exception, short-circuit to output.
-            if isinstance(x, Exception):
+            if isinstance(x, Exception):  # `RemteException` is not a subclass of `Exception`.
                 x = RemoteException(x)
             if isinstance(x, RemoteException):
                 q_out.put((uid, x))
@@ -1621,15 +1642,9 @@ class Server:
         with self._pipeline_notfull:
             if len(pipeline) >= self._capacity:
                 if backpressure:
-                    raise ServerBacklogFull(
-                        len(pipeline),
-                        '0 seconds enqueue with back-pressure',
-                    )
+                    raise ServerBacklogFull(len(pipeline))
                 if not self._pipeline_notfull.wait(timeout * 0.99):
-                    raise ServerBacklogFull(
-                        len(pipeline),
-                        f'{perf_counter() - t0:.3f} seconds enqueue',
-                    )
+                    raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
             pipeline[uid] = fut
 
         fut.data = {
@@ -1903,10 +1918,7 @@ class AsyncServer:
         async with self._pipeline_notfull:
             if len(pipeline) >= self._capacity:
                 if backpressure:
-                    raise ServerBacklogFull(
-                        len(pipeline),
-                        '0 seconds enqueue with back-pressure',
-                    )
+                    raise ServerBacklogFull(len(pipeline))
                     # If this is behind a HTTP service, should return
                     # code 503 (Service Unavailable) to client.
                 try:
@@ -1917,10 +1929,7 @@ class AsyncServer:
                     asyncio.TimeoutError,
                     TimeoutError,
                 ):  # should be the first one, but official doc referrs to the second
-                    raise ServerBacklogFull(
-                        len(pipeline),
-                        f'{perf_counter() - t0:.3f} seconds enqueue',
-                    )
+                    raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
             pipeline[uid] = fut
 
         # We can't accept situation that an entry is placed in `pipeline`

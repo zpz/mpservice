@@ -141,7 +141,7 @@ def __getattr__(name):
     elif name in ('ServerProcess',):
         mname = 'mpservice.multiprocessing.server_process'
     else:
-        raise AttributeError(name)
+        raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
     m = import_module(mname)
     o = getattr(m, name)
