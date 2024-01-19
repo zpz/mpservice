@@ -39,7 +39,8 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from .multiprocessing import MP_SPAWN_CTX, Process as _Process
+from .multiprocessing import MP_SPAWN_CTX
+from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
 
@@ -96,8 +97,8 @@ class ServerBacklogFull(RuntimeError):
     def __str__(self):
         n, x = self.args
         if x is None:
-            return f"Server is at capacity with {n} items in proces; new request is rejected immediately due to back-pressure"
-        return f"Server is at capacity with {n} items in proces; new request is rejected after waiting for {x:.3f} seconds"
+            return f'Server is at capacity with {n} items in proces; new request is rejected immediately due to back-pressure'
+        return f'Server is at capacity with {n} items in proces; new request is rejected after waiting for {x:.3f} seconds'
 
 
 class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
@@ -415,7 +416,9 @@ class Worker(ABC):
                     x = e
 
             # If it's an exception, short-circuit to output.
-            if isinstance(x, Exception):  # `RemteException` is not a subclass of `Exception`.
+            if isinstance(
+                x, Exception
+            ):  # `RemteException` is not a subclass of `Exception`.
                 x = RemoteException(x)
             if isinstance(x, RemoteException):
                 q_out.put((uid, x))

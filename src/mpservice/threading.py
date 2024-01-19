@@ -44,7 +44,6 @@ class Thread(threading.Thread):
         super().__init__(*args, **kwargs)
         self._future_: concurrent.futures.Future = None
 
-
     @staticmethod
     def handle_exception(exc):
         # Subclass can customize this to log more info.

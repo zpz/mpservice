@@ -21,8 +21,8 @@ from .._common import TimeoutError
 from ..threading import Thread
 from .remote_exception import RemoteException
 
-
 logger = logging.getLogger(__name__)
+
 
 class SpawnProcess(multiprocessing.context.SpawnProcess):
     """
