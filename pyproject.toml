@@ -41,7 +41,7 @@ test = [
     "Faker",
     "httpx",
     "pytest",
-    "pytest-asyncio",
+    "pytest-asyncio < 0.23.0",
     "requests",
     "starlette",
     "zpz",

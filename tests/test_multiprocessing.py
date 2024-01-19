@@ -192,6 +192,7 @@ def test_terminate():
     p.join()
 
 
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
 def test_wait():
     workers = [
         Process(target=sleeper, args=(2,)),
@@ -205,6 +206,7 @@ def test_wait():
     assert done.pop() is workers[0]
 
 
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnhandledThreadExceptionWarning')
 def test_wait_exc():
     workers = [Process(target=sleeper, args=(x,)) for x in (3, 2, 13)]
     for t in workers:
