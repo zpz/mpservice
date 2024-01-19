@@ -18,7 +18,10 @@ from mpservice.mpserver import (
     Worker,
     make_worker,
 )
-from mpservice.multiprocessing.remote_exception import RemoteException, is_remote_exception
+from mpservice.multiprocessing.remote_exception import (
+    RemoteException,
+    is_remote_exception,
+)
 from mpservice.streamer import Stream
 
 

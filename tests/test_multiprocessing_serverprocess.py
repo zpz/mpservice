@@ -5,7 +5,7 @@ from multiprocessing import active_children
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
-from mpservice.multiprocessing.server_process import MemoryBlock, hosted, ServerProcess
+from mpservice.multiprocessing.server_process import MemoryBlock, ServerProcess, hosted
 from mpservice.threading import Thread
 
 
