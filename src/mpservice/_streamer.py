@@ -129,13 +129,13 @@ class Stream(Generic[Elem]):
 
                 stream = Stream(range(1000)).to_async()
         """
-        self.streamlets: list[Iterable] = [instream]
+        self.streamlets: list[Iterable | AsyncIterable] = [instream]
 
     def to_sync(self):
         """
         Make the stream "sync" iterable only.
         """
-        if isasynciterable(self):
+        if not isiterable(self):
             self.streamlets.append(SyncIter(self.streamlets[-1]))
         return self
 
@@ -143,7 +143,7 @@ class Stream(Generic[Elem]):
         """
         Make the stream "async" iterable only.
         """
-        if isiterable(self):
+        if not isasynciterable(self):
             self.streamlets.append(AsyncIter(self.streamlets[-1]))
         return self
 

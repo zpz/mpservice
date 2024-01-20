@@ -257,6 +257,8 @@ from ._streamer import (
     Stream,
     Unbatcher,
     tee,
+    isiterable,
+    isasynciterable,
 )
 
 __all__ = [
@@ -265,4 +267,6 @@ __all__ = [
     'Batcher',
     'Unbatcher',
     'EagerBatcher',
+    'isiterable',
+    'isasynciterable',
 ]
