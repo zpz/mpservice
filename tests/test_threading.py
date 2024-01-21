@@ -18,11 +18,12 @@ def worker(sleep_seconds):
     return sleep_seconds
 
 
-def test_raise_exc():
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_throw():
     t = Thread(target=worker, args=(2,))
     t.start()
     sleep(0.1)
-    t.raise_exc(ValueError)
+    t.throw(ValueError)
 
     with pytest.raises(ValueError):
         t.result()
@@ -30,7 +31,7 @@ def test_raise_exc():
     assert not t.is_alive()
 
     with pytest.raises(InvalidStateError):
-        t.raise_exc(ValueError)
+        t.throw(ValueError)
 
 
 def test_terminate():
@@ -52,6 +53,7 @@ def test_wait():
     assert done.pop() is threads[1]
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_wait_exc():
     threads = [Thread(target=worker, args=(x,)) for x in (3, 2, 13)]
     for t in threads:

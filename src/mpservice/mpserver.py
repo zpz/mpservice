@@ -631,7 +631,7 @@ class Servlet(ABC):
     Optionally, it can specify exactly which CPU(s) each worker process should use.
     Each input item is passed to and processed by exactly one of the processes (or threads).
 
-    A compound servlet arranges to execute multiple :class:`Servlet`\s as a sequence or an ensemble.
+    A compound servlet arranges to execute multiple :class:`Servlet`\\s as a sequence or an ensemble.
     In addition, there is :class:`SwitchServlet` that acts as a "switch"
     in front of a set of Servlets.
     There's a flavor of recursion in this definition in that a member servlet can very well be
@@ -818,14 +818,14 @@ class ProcessServlet(Servlet):
                 },
             )
             p.start()
+            name = q_out.get()
+            if name is None:
+                p.join()  # this will raise exception b/c worker __init__ failed
             if cpu is not None:
                 if isinstance(cpu, int):
                     cpu = [cpu]
                 os.sched_setaffinity(p.pid, cpu)
             self._workers.append(p)
-            name = q_out.get()
-            if name is None:
-                p.join()  # this will raise exception b/c worker __init__ failed
             logger.debug('   ... worker <%s> is ready', name)
 
         self._q_in = q_in
@@ -940,10 +940,10 @@ class ThreadServlet(Servlet):
                 },
             )
             w.start()
-            self._workers.append(w)
             name = q_out.get()
             if name is None:
                 w.join()  # this will raise exception b/c worker __init__ failed
+            self._workers.append(w)
             logger.debug('   ... worker <%s> is ready', name)
 
         self._q_in = q_in
@@ -1574,7 +1574,7 @@ class Server:
         """
         The main operations conducted in this method include:
 
-        - Place a special sentinel in the pipeline to indicate the end of operations; all :class:`Worker`\s
+        - Place a special sentinel in the pipeline to indicate the end of operations; all :class:`Worker`\\s
           in the servlet will eventually see the sentinel and exit.
         - Wait for the servlet and all helper threads to exit.
         """
