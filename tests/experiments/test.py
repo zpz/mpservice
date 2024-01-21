@@ -1,24 +1,19 @@
-from mpservice.multiprocessing import Process
-import logging
-from zpz.logging import config_logger
-from time import sleep
-
-logger = logging.getLogger(__name__)
-
-
-def worker():
-    sleep(2)
-    logger.info('info')
-    logger.warning('warn')
-
+from mpservice.multiprocessing.remote_exception import RemoteException
+import pickle
 
 def main():
-    p = Process(target=worker, name='myprocess')
-    p.start()
-    p.name = 'yourprocess'
-    p.join()
+    try:
+        raise ValueError(38)
+    except Exception as e:
+        exc = RemoteException(e)
+
+        ee = pickle.loads(pickle.dumps(exc))
+
+        # raise ee
+
+        zz = pickle.loads(pickle.dumps(exc))
+        raise zz
     
 
 if __name__ == '__main__':
-    config_logger(with_process_name=True, with_thread_name=True)
     main()

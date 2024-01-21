@@ -115,7 +115,7 @@ class Thread(threading.Thread):
             raise TimeoutError
         return self._future_.exception()
 
-    def raise_exc(self, exc: BaseException | Type[BaseException]) -> None:
+    def throw(self, exc: BaseException | Type[BaseException]) -> None:
         """
         Raise exception ``exc`` inside the thread.
 
@@ -152,7 +152,7 @@ class Thread(threading.Thread):
         # There's a chance that the exception is missed in the thread.
         # I read about it but now can't find the reference.
         while self.is_alive():
-            self.raise_exc(SystemExit)
+            self.throw(SystemExit)
             super().join(0.01)
 
 
