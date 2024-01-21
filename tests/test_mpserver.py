@@ -24,7 +24,6 @@ from mpservice.multiprocessing.remote_exception import (
 )
 from mpservice.streamer import Stream
 
-
 # NOTE: all calls like `await async_generator.aclose()` in this module is a work around
 # a pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
 
@@ -648,7 +647,7 @@ class FailableWorker(Worker):
         return x + self._x
 
 
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnhandledThreadExceptionWarning')
 def test_worker_init_failure():
     server = Server(ProcessServlet(FailableWorker, x=3))
     with server:
