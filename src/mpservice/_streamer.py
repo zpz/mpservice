@@ -729,6 +729,7 @@ class Stream(Generic[Elem]):
                 cls = AsyncParmapper
             else:
                 cls = Parmapper
+
         self.streamlets.append(
             cls(
                 self.streamlets[-1],
@@ -1546,6 +1547,7 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
                         yield x, y
                     else:
                         yield y
+
         finally:
             self._finalize()
 

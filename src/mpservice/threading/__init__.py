@@ -12,7 +12,7 @@ from typing import Type
 # threads with a trivial worker function:
 #   20000 took 1 sec.
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
-from ._common import TimeoutError
+from .._common import TimeoutError
 
 __all__ = [
     'InvalidStateError',
