@@ -946,7 +946,7 @@ async def test_async_parmap():
     t1 = perf_counter()
     print(t1 - t0)
     assert t1 - t0 < 5
-    # sequential processing would take 500+ sec
+    # sequential processing would take 500+ sec ??
 
     async def data1():
         for x in range(20):
@@ -963,30 +963,35 @@ async def test_async_parmap():
             assert y == x + 2
             x += 1
 
-    # Test premature quit, i.e. GeneratorExit
+    # # Test premature quit, i.e. GeneratorExit
     stream = Stream(data1()).parmap(plus2, executor='process')
     x = 0
-    async for y in stream:
+    # async for y in stream:
+    ss = stream.__aiter__()
+    async for y in ss:
         assert y == x + 2
         x += 1
         if x == 10:
             break
 
+    # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
+    await ss.aclose()
+
 
 @pytest.mark.asyncio
 async def test_async_parmap_async():
-    # print('')
-    # stream = Stream(range(1000))
-    # stream.to_async().parmap(async_plus_2)
-    # t0 = perf_counter()
-    # x = 0
-    # async for y in stream:
-    #     assert y == x + 2
-    #     x += 1
-    # t1 = perf_counter()
-    # print(t1 - t0)
-    # assert t1 - t0 < 5
-    # # sequential processing would take 500+ sec
+    print('')
+    stream = Stream(range(1000))
+    stream.to_async().parmap(async_plus_2)
+    t0 = perf_counter()
+    x = 0
+    async for y in stream:
+        assert y == x + 2
+        x += 1
+    t1 = perf_counter()
+    print(t1 - t0)
+    assert t1 - t0 < 5
+    # sequential processing would take 500+ sec
 
     async def data1():
         for x in range(20):
@@ -995,22 +1000,27 @@ async def test_async_parmap_async():
             else:
                 yield x
 
-    # # Test exception in the worker function
-    # stream = Stream(data1()).parmap(async_plus_2)
-    # with pytest.raises(TypeError):
-    #     x = 0
-    #     async for y in stream:
-    #         assert y == x + 2
-    #         x += 1
+    # Test exception in the worker function
+    stream = Stream(data1()).parmap(async_plus_2)
+    with pytest.raises(TypeError):
+        x = 0
+        async for y in stream:
+            assert y == x + 2
+            x += 1
 
     # Test premature quit, i.e. GeneratorExit
     stream = Stream(data1()).parmap(async_plus_2)
     x = 0
-    async for y in stream:
+    # async for y in stream:
+    data = stream.__aiter__()
+    async for y in data:
         assert y == x + 2
         x += 1
         if x == 10:
             break
+
+    # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
+    await data.aclose()
 
 
 @pytest.mark.asyncio

@@ -1,13 +1,12 @@
 import asyncio
 import contextlib
-import multiprocessing
 import time
 from time import sleep
 
 import httpcore
 import httpx
 import pytest
-from mpservice.http import make_server, start_server, stop_server
+from mpservice.http import start_server, stop_server
 from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
 from mpservice.multiprocessing import Process, Queue
 from starlette.applications import Starlette
@@ -32,44 +31,15 @@ def make_app():
     return a
 
 
-@pytest.mark.asyncio
-async def test_shutdown():
+def _run_app(port):
     app = make_app()
-    server = make_server(app, host=HOST, port=8001)
 
     async def shutdown(request):
-        server.should_exit = True
-        return PlainTextResponse(SHUTDOWN_MSG)
+        await stop_server()
+        return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
 
     app.add_route('/shutdown', shutdown, ['POST'])
-
-    service = asyncio.create_task(server.serve())
-    await asyncio.sleep(1)
-
-    url = 'http://0.0.0.0:8001'
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url + '/simple1')
-        assert response.status_code == 201
-        print('server state tasks:', server.server_state.tasks)
-
-        response = await client.get(url + '/simple2')
-        assert response.status_code == 202
-        print('server state tasks:', server.server_state.tasks)
-
-        response = await client.post(url + '/shutdown')
-        assert response.status_code == 200
-        assert response.text == SHUTDOWN_MSG
-        # print('server state tasks:', server.server_state.tasks)
-
-        await asyncio.sleep(1)
-
-        with pytest.raises(httpx.ConnectError):
-            response = await client.get(url + '/simple1')
-            assert response.status_code == 201
-
-    server.should_exit = True
-    await service
+    start_server(app, host=HOST, port=port)
 
 
 def test_testclient():
@@ -83,23 +53,11 @@ def test_testclient():
         assert response.json() == {'result': 2}
 
 
-def _run_app(port):
-    app = make_app()
-
-    async def shutdown(request):
-        await stop_server()
-        return PlainTextResponse(SHUTDOWN_MSG, status_code=200)
-
-    app.add_route('/shutdown', shutdown, ['POST'])
-    start_server(app, host=HOST, port=port)
-
-
 # This one failed in `./run-tests` but succeeded when run
 # interactively within a container.
 @pytest.mark.asyncio
 async def test_mp():
-    mp = multiprocessing.get_context('spawn')
-    process = mp.Process(target=_run_app, args=(8002,))
+    process = Process(target=_run_app, args=(8002,))
     process.start()
     await asyncio.sleep(2)
 
@@ -129,9 +87,6 @@ async def test_mp():
             assert response.status_code == 201
 
     process.join()
-
-
-# test new code #
 
 
 class MyWorker(Worker):
