@@ -1,6 +1,4 @@
-import asyncio
 
-import pytest
 
 # `pytest-asyncio` event-loop shut-down procedure differs from ``asyncio.run``.
 # It basically shuts down abruptly w/o letting things finish.

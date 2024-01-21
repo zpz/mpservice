@@ -42,7 +42,6 @@ def _run_app(port):
     start_server(app, host=HOST, port=port)
 
 
-
 def test_testclient():
     with TestClient(make_app()) as client:
         response = client.get('/simple1')
@@ -52,7 +51,6 @@ def test_testclient():
         response = client.get('/simple2')
         assert response.status_code == 202
         assert response.json() == {'result': 2}
-
 
 
 # This one failed in `./run-tests` but succeeded when run
@@ -89,7 +87,6 @@ async def test_mp():
             assert response.status_code == 201
 
     process.join()
-
 
 
 class MyWorker(Worker):
