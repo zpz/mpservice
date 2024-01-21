@@ -1,5 +1,3 @@
-
-
 # `pytest-asyncio` event-loop shut-down procedure differs from ``asyncio.run``.
 # It basically shuts down abruptly w/o letting things finish.
 # If you're struggling with asyncio cleanup in your tests with ``try/finally``
