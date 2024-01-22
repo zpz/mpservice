@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Export ``isiterable`` and ``isasynciterable`` in ``mpservice.streamer``.
 - ``mpservice.threading.Thread.raise_exc`` was renamed to ``throw``.
+- Bug fix in ``mpservice.multiprocessing.SimpleQueue``.
 
 
 ## [0.14.5] - 2024-01-18
