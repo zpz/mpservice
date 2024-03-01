@@ -3,8 +3,6 @@ import contextlib
 import time
 from logging import getLogger
 from time import sleep
-import multiprocessing
-import threading
 
 import httpcore
 import httpx
@@ -139,7 +137,6 @@ app = Starlette(
 
 
 def test_server():
-
     port = 8002
     acks = Queue()
     p = Process(

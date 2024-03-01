@@ -6,8 +6,6 @@ import sys
 import warnings
 from typing import Any, Callable, List, Optional, TypeVar
 from weakref import WeakValueDictionary
-import multiprocessing
-import threading
 
 import click
 import uvicorn
@@ -104,11 +102,11 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
             # process.terminate()
             process.join()
 
-        message = "Stopping parent process [{}]".format(str(self.pid))
-        color_message = "Stopping parent process [{}]".format(
-            click.style(str(self.pid), fg="cyan", bold=True)
+        message = 'Stopping parent process [{}]'.format(str(self.pid))
+        color_message = 'Stopping parent process [{}]'.format(
+            click.style(str(self.pid), fg='cyan', bold=True)
         )
-        logger.info(message, extra={"color_message": color_message})
+        logger.info(message, extra={'color_message': color_message})
 
 
 # See `uvicorn`.
@@ -345,7 +343,6 @@ def start_server(
             stop_event=Event(),
         )
         mult.run()
-
 
     if config.uds and os.path.exists(config.uds):
         os.remove(config.uds)  # pragma: py-win32
