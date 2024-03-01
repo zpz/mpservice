@@ -251,10 +251,15 @@ async def test_ensemble_server_async():
         z = await service.call('abcde')
         assert z == 'aeaeaeaeae'
 
+        print(1)
+
         x = ['xyz', 'abc', 'jk', 'opqs']
         tasks = [service.call(v) for v in x]
+        print(2)
+
         y = await asyncio.gather(*tasks)
         assert y == ['xzxzxz', 'acacac', 'jkjk', 'osososos']
+        print(3)
 
 
 def test_ensemble_server():

@@ -403,8 +403,8 @@ class Worker(ABC):
         while True:
             z = q_in.get()
             if z is None:
-                q_out.put(z)
                 q_in.put(z)  # broadcast to one fellow worker
+                q_out.put(z)
                 break
 
             uid, x = z
@@ -1038,9 +1038,6 @@ class SequentialServlet(Servlet):
     def stop(self):
         """Stop the member servlets."""
         assert self._started
-        self._q_in.put(None)
-        for q in self._qs:
-            q.put(None)
         for s in self._servlets:
             s.stop()
         self._qs = []
@@ -1232,9 +1229,9 @@ class EnsembleServlet(Servlet):
     def stop(self):
         # Caller is responsible to put a ``None`` in the input queue.
         assert self._started
-        self._qin.put(None)
         for s in self._servlets:
             s.stop()
+        self._qin.put(None)
         for t in self._threads:
             t.join()
         self._reset()
@@ -1298,11 +1295,10 @@ class SwitchServlet(Servlet):
         self._started = True
 
     def stop(self):
-        # Caller is responsible to put a ``None`` in the input queue.
         assert self._started
-        self._qin.put(None)
         for s in self._servlets:
             s.stop()
+        self._qin.put(None)
         self._thread_enqueue.join()
         self._reset()
         self._started = False
@@ -1578,10 +1574,10 @@ class Server:
           in the servlet will eventually see the sentinel and exit.
         - Wait for the servlet and all helper threads to exit.
         """
-        self._input_buffer.put(None)
-        self._gather_thread.join()
         self.servlet.stop()
+        self._gather_thread.join()
         if self._onboard_thread is not None:
+            self._input_buffer.put(None)
             self._onboard_thread.join()
 
     def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
@@ -1690,25 +1686,27 @@ class Server:
         notification_thread = Thread(target=notify)
         notification_thread.start()
 
-        while True:
-            z = q_out.get()
-            if z is None:
-                q_notify.put(z)
-                notification_thread.join()
-                break
-            uid, y = z
-            fut = pipeline.pop(uid)  # this must exist
-            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-            # However, here we need to acquire the lock because we want to notify.
-            if isinstance(y, RemoteException):
-                y = y.exc
-            if not fut.cancelled():
-                if isinstance(y, BaseException):
-                    fut.set_exception(y)
-                else:
-                    fut.set_result(y)
-            fut.data['t2'] = perf_counter()
-            q_notify.put(1)
+        try:
+            while True:
+                z = q_out.get()
+                if z is None:
+                    break
+                uid, y = z
+                fut = pipeline.pop(uid)  # this must exist
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                # However, here we need to acquire the lock because we want to notify.
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if not fut.cancelled():
+                    if isinstance(y, BaseException):
+                        fut.set_exception(y)
+                    else:
+                        fut.set_result(y)
+                fut.data['t2'] = perf_counter()
+                q_notify.put(1)
+        finally:
+            q_notify.put(None)
+            notification_thread.join()
 
     def debug_info(self) -> dict:
         """
@@ -1888,11 +1886,11 @@ class AsyncServer:
         return self
 
     async def __aexit__(self, *args):
-        self._input_buffer.put(None)
+        self.servlet.stop()
         while self._gather_thread.is_alive():
             await asyncio.sleep(0.1)
-        self.servlet.stop()
         if self._onboard_thread is not None:
+            self._input_buffer.put(None)
             self._onboard_thread.join()
 
     async def call(self, x, /, *, timeout: int | float = 60, backpressure: bool = True):
@@ -1978,25 +1976,29 @@ class AsyncServer:
 
         notifications = {}
 
-        while True:
-            z = q_out.get()
-            if z is None:
-                break
-            uid, y = z
-            fut = pipeline.pop(uid)  # this must exist
-            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-            if not fut.cancelled():
-                if isinstance(y, RemoteException):
-                    y = y.exc
-                if isinstance(y, BaseException):
-                    loop.call_soon_threadsafe(fut.set_exception, y)
-                else:
-                    loop.call_soon_threadsafe(fut.set_result, y)
-                fut.data['t2'] = perf_counter()
+        try:
+            while True:
+                z = q_out.get()
+                if z is None:
+                    break
+                uid, y = z
+                fut = pipeline.pop(uid)  # this must exist
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                if not fut.cancelled():
+                    if isinstance(y, RemoteException):
+                        y = y.exc
+                    if isinstance(y, BaseException):
+                        loop.call_soon_threadsafe(fut.set_exception, y)
+                    else:
+                        loop.call_soon_threadsafe(fut.set_result, y)
+                    fut.data['t2'] = perf_counter()
 
-            f = asyncio.run_coroutine_threadsafe(notify(), loop)
-            notifications[id(f)] = f
-            f.add_done_callback(lambda fut: notifications.pop(id(fut)))
+                f = asyncio.run_coroutine_threadsafe(notify(), loop)
+                notifications[id(f)] = f
+                f.add_done_callback(lambda fut: notifications.pop(id(fut)))
+        finally:
+            while notifications:
+                sleep(0.1)
 
     def debug_info(self) -> dict:
         return _server_debug_info(self)

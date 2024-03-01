@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import time
+from logging import getLogger
 from time import sleep
 
 import httpcore
@@ -13,6 +14,12 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
+from zpz.logging import config_logger
+
+config_logger(with_thread_name=True, with_process_name=True)
+
+logger = getLogger('test')
+
 
 HOST = '0.0.0.0'
 SHUTDOWN_MSG = 'server shutdown'
@@ -114,7 +121,6 @@ async def shutdown(request):
 @contextlib.asynccontextmanager
 async def lifespan(app):
     worker_context = app.worker_context
-    print('worker index:', worker_context['worker_idx'])
     model = MyServer()
     async with model:
         worker_context['q_ack'].put(worker_context['worker_idx'])
@@ -152,7 +158,7 @@ def test_server():
 
     url = f'http://0.0.0.0:{port}'
 
-    with httpx.Client() as client:
+    with httpx.Client(timeout=0.1) as client:
         retry = 0
         while True:
             try:

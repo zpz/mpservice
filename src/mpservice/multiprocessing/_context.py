@@ -520,8 +520,8 @@ class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
 
 
 class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
-    def __init__(self, maxsize=0, *, ctx=None):
-        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
+    def __init__(self, *, ctx=None):
+        super().__init__(ctx=ctx or MP_SPAWN_CTX)
 
 
 class Pool(multiprocessing.pool.Pool):

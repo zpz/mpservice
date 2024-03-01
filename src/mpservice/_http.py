@@ -1,12 +1,11 @@
-import asyncio
 import logging
 import os
 import signal
 import socket
 import sys
-import time
 import warnings
 from typing import Any, Callable, List, Optional, TypeVar
+from weakref import WeakValueDictionary
 
 import click
 import uvicorn
@@ -21,9 +20,10 @@ class Server(uvicorn.Server):
     def run(
         self,
         *,
-        stop_requested: Event,
         sockets: list[socket.socket] | None = None,
         worker_context: Any = None,
+        server_id: str,
+        stop_event: Event = None,
     ) -> None:
         # When there are multiple worker processes, this method is the
         # `target` function that runs in a new process.
@@ -39,35 +39,40 @@ class Server(uvicorn.Server):
         # `app.worker_context` is designed to be used in the "lifespan"
         # of `app`. See Starlette documentation on "lifespan".
 
-        global _stop_requested
-        assert _stop_requested is None, f'{_stop_requested} is None'
-        _stop_requested = stop_requested
-        self._stop_requested = stop_requested  # to be used in `on_tick`.
-
+        global _servers
+        if _servers is None:
+            _servers = WeakValueDictionary()
+        assert server_id not in _servers
+        if stop_event is None:
+            _servers[server_id] = self
+        else:
+            _servers[server_id] = stop_event
+        self._stop_event = stop_event
         return super().run(sockets)
 
     async def on_tick(self, *args, **kwargs):
-        return (await super().on_tick(*args, **kwargs)) or self._stop_requested.is_set()
+        return (await super().on_tick(*args, **kwargs)) or (
+            self._stop_event is not None and self._stop_event.is_set()
+        )
 
 
 # See `uvicorn`.
 class Multiprocess(uvicorn.supervisors.Multiprocess):
-    def run(
-        self,
-        stop_requested: Event,
-        worker_contexts: list[Any],
+    def __init__(
+        self, config, target, sockets, *, worker_contexts, server_id, stop_event
     ):
-        self.startup(stop_requested=stop_requested, worker_contexts=worker_contexts)
-        while True:
-            if self.should_exit.is_set() or stop_requested.is_set():
-                break
-            time.sleep(0.15)
+        super().__init__(config=config, target=target, sockets=sockets)
+        self._worker_contexts = worker_contexts
+        self._server_id = server_id
+        self.should_exit = stop_event  # override the parent one
+
+    def run(self) -> None:
+        self.startup()
+        self.should_exit.wait()
         self.shutdown()
 
     def startup(
         self,
-        stop_requested: Event,
-        worker_contexts: list[Any],
     ) -> None:
         message = 'Started parent process [{}]'.format(str(self.pid))
         color_message = 'Started parent process [{}]'.format(
@@ -83,12 +88,25 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
                 config=self.config,
                 target=self.target,
                 sockets=self.sockets,
-                worker_context=worker_contexts[_idx],
-                stop_requested=stop_requested,
-                # Customization: pass in `worker_context` and `stop_requested`.
+                worker_context=self._worker_contexts[_idx],
+                server_id=self._server_id,
+                stop_event=self.should_exit,
+                # Customization: pass in `worker_context`, `server_id`, and `stop_event`.
             )
             process.start()
             self.processes.append(process)
+
+    def shutdown(self) -> None:
+        for process in self.processes:
+            # Customization: do not call `process.terminate()`
+            # process.terminate()
+            process.join()
+
+        message = 'Stopping parent process [{}]'.format(str(self.pid))
+        color_message = 'Stopping parent process [{}]'.format(
+            click.style(str(self.pid), fg='cyan', bold=True)
+        )
+        logger.info(message, extra={'color_message': color_message})
 
 
 # See `uvicorn`.
@@ -97,7 +115,8 @@ def get_subprocess(
     target: Callable[..., None],
     sockets: List[socket.socket],
     worker_context: Any,
-    stop_requested: Event,
+    server_id: str,
+    stop_event: Event,
 ) -> Process:
     """
     Called in the parent process, to instantiate a new child process instance.
@@ -113,9 +132,8 @@ def get_subprocess(
     # This is required for some debugging environments.
 
     # There are three customizations to this function:
-    #   - take ``worker_idx``
     #   - use ``MP_SPAWN_CTX``
-    #   - use ``stop_requested``
+    #   - pass in ``worker_context``, ``server_id``, and ``stop_event``
 
     stdin_fileno: Optional[int]
     try:
@@ -129,7 +147,8 @@ def get_subprocess(
         'sockets': sockets,
         'stdin_fileno': stdin_fileno,
         'worker_context': worker_context,
-        'stop_requested': stop_requested,
+        'server_id': server_id,
+        'stop_event': stop_event,
     }
 
     return Process(target=subprocess_started, kwargs=kwargs)
@@ -142,7 +161,8 @@ def subprocess_started(
     sockets: List[socket.socket],
     stdin_fileno: Optional[int],
     worker_context: Any,
-    stop_requested: Event,
+    server_id: str,
+    stop_event: Event,
 ) -> None:
     """
     Called when the child process starts.
@@ -167,29 +187,39 @@ def subprocess_started(
 
     # Now we can call into `Server.run(sockets=sockets)`
     target(
-        stop_requested=stop_requested, sockets=sockets, worker_context=worker_context
+        sockets=sockets,
+        worker_context=worker_context,
+        server_id=server_id,
+        stop_event=stop_event,
     )
 
 
-_stop_requested: Event = None
-# When a new process is spawned, this variable will be `None`
-# in that process upon importing this module.
-# This variable is initialized in `start_server` in the "main" process
-# and re-assigned by `Server.run` in the main and child processes.
-
-
-async def stop_server():
+async def stop_server(server_id: str = '0'):
     """
     This function is to be called in a web service endpoint to request termination
     of the service.
     """
-    _stop_requested.set()
-    await asyncio.sleep(0.2)
-    # TODO:
-    # wait and verify things have stopped?
+    # If `start_server` was called with `workers=1`, then the `Server` object runs in the same process/thread
+    # where `start_server` was called. This function is involked in the same process/thread, and we set the
+    # simple `should_exit` flag to stop the server.
+    # If `start_server` was called with `workers > 1`, then multiple `Server` objects run in their own processes.
+    # This function is invoked in the process of one `Server`. If this function is called only once,
+    # then only one `Server` (in the said process) will be stopped. To avoid asking client to call this multiple times,
+    # We use a multiprocessing Event object shared between the server processes to get the signal across.
+
+    s = _servers.get(server_id)
+    if s is None:
+        return
+    if isinstance(s, Server):
+        s.should_exit = True
+    else:
+        s.set()  # this is "propagated" to other worker processes as well as the ``Multiprocess`` object.
 
 
 UNSET = object()
+
+_servers: WeakValueDictionary[str, Server | Event] = None
+
 
 ASGIApplication = TypeVar('ASGIApplication')
 
@@ -204,6 +234,7 @@ def start_server(
     workers: int = 1,
     worker_contexts: list = None,
     log_config=UNSET,
+    server_id: str = '0',
     **kwargs,
 ):
     """
@@ -269,6 +300,11 @@ def start_server(
         The ``app`` object is available to the "lifespan" of a ``Starlette`` object; user can obtain
         ``app.worker_context`` there and decide how to use it to initialize things, save it, as well
         as make it available to endpoint functions via the lifespan's "state". See tests for example usage.
+    server_id
+        If you run multiple services in the same program,
+        you need to use `server_id` to distinguish them and provide the ID to both `start_server` and `stop_server`.
+
+        However, that use case seems extrememly unlikely.
     **kwargs
         Passed to ``uvicorn.Config``.
     """
@@ -294,14 +330,19 @@ def start_server(
         worker_contexts = [None] * workers
 
     server = Server(config=config)
-    stop_requested = Event()
     if workers == 1:
-        server.run(stop_requested=stop_requested, worker_context=worker_contexts[0])
+        server.run(worker_context=worker_contexts[0], server_id=server_id)
     else:
         sock = config.bind_socket()
-        Multiprocess(config, target=server.run, sockets=[sock]).run(
-            stop_requested=stop_requested, worker_contexts=worker_contexts
+        mult = Multiprocess(
+            config,
+            target=server.run,
+            sockets=[sock],
+            worker_contexts=worker_contexts,
+            server_id=server_id,
+            stop_event=Event(),
         )
+        mult.run()
 
     if config.uds and os.path.exists(config.uds):
         os.remove(config.uds)  # pragma: py-win32

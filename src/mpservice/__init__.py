@@ -27,7 +27,7 @@ To install, do
 """
 
 
-__version__ = '0.14.5'
+__version__ = '0.14.6b1'
 
 
 from . import (
