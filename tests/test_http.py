@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import time
 from time import sleep
+from logging import getLogger
 
 import httpcore
 import httpx
@@ -15,9 +16,8 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from zpz.logging import config_logger
 
-config_logger(with_thread_name=True, with_process_name=True)
 
-from logging import getLogger
+config_logger(with_thread_name=True, with_process_name=True)
 
 logger = getLogger('test')
 
