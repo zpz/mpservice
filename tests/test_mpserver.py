@@ -217,7 +217,7 @@ async def test_async_stream_early_quit():
             if n > 33:
                 break
 
-        await ss.aclose()  
+        await ss.aclose()
         # see https://github.com/pytest-dev/pytest-asyncio/issues/759
         # TODO: this should be removed once pytest-asyncio cleans up async generator.
 
