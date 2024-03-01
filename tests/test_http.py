@@ -3,6 +3,8 @@ import contextlib
 import time
 from logging import getLogger
 from time import sleep
+import multiprocessing
+import threading
 
 import httpcore
 import httpx
@@ -137,6 +139,7 @@ app = Starlette(
 
 
 def test_server():
+
     port = 8002
     acks = Queue()
     p = Process(
@@ -188,7 +191,8 @@ def test_server():
 
         sleep(1)
 
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(httpx.ConnectError):
             response = client.post(url + '/double', json={'x': 6})
             assert response.status_code == 201
+
     p.join()
