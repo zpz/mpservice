@@ -9,10 +9,10 @@ from weakref import WeakValueDictionary
 
 import click
 import uvicorn
-from mpservice.multiprocessing import Process, Event
+
+from mpservice.multiprocessing import Event, Process
 
 logger = logging.getLogger(__name__)
-
 
 
 # See `uvicorn`.
@@ -58,7 +58,9 @@ class Server(uvicorn.Server):
 
 # See `uvicorn`.
 class Multiprocess(uvicorn.supervisors.Multiprocess):
-    def __init__(self, config, target, sockets, *, worker_contexts, server_id, stop_event):
+    def __init__(
+        self, config, target, sockets, *, worker_contexts, server_id, stop_event
+    ):
         super().__init__(config=config, target=target, sockets=sockets)
         self._worker_contexts = worker_contexts
         self._server_id = server_id
@@ -167,7 +169,12 @@ def subprocess_started(
     config.configure_logging()
 
     # Now we can call into `Server.run(sockets=sockets)`
-    target(sockets=sockets, worker_context=worker_context, server_id=server_id, stop_event=stop_event)
+    target(
+        sockets=sockets,
+        worker_context=worker_context,
+        server_id=server_id,
+        stop_event=stop_event,
+    )
 
 
 async def stop_server(server_id: str = '0'):
@@ -310,7 +317,14 @@ def start_server(
         server.run(worker_context=worker_contexts[0], server_id=server_id)
     else:
         sock = config.bind_socket()
-        mult = Multiprocess(config, target=server.run, sockets=[sock], worker_contexts=worker_contexts, server_id=server_id, stop_event=Event())
+        mult = Multiprocess(
+            config,
+            target=server.run,
+            sockets=[sock],
+            worker_contexts=worker_contexts,
+            server_id=server_id,
+            stop_event=Event(),
+        )
         mult.run()
 
     if config.uds and os.path.exists(config.uds):

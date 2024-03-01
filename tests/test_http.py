@@ -13,11 +13,12 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
-
 from zpz.logging import config_logger
+
 config_logger(with_thread_name=True, with_process_name=True)
 
 from logging import getLogger
+
 logger = getLogger('test')
 
 
