@@ -1789,9 +1789,6 @@ class Server:
         def shutdown():
             stopped.set()
             while True:
-                worker.join(timeout=0.1)
-                if not worker.is_alive():
-                    break
                 while not tasks.empty():
                     v = tasks.get()
                     if v is None:
@@ -1801,6 +1798,9 @@ class Server:
                     except TypeError:
                         break
                     fut.cancel()
+                worker.join(timeout=0.1)
+                if not worker.is_alive():
+                    break
 
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
@@ -2043,8 +2043,6 @@ class AsyncServer:
         async def shutdown():
             t_enqueue.cancel()
             while True:
-                if t_enqueue.done():
-                    break
                 while not tasks.empty():
                     v = tasks.get_nowait()
                     if v is None:
@@ -2054,6 +2052,8 @@ class AsyncServer:
                     except TypeError:
                         break
                     fut.cancel()
+                if t_enqueue.done():
+                    break
                 await asyncio.sleep(0.1)
 
         tasks = asyncio.Queue(max(1, self.capacity - 2))
