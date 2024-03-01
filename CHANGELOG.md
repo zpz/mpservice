@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Export ``isiterable`` and ``isasynciterable`` in ``mpservice.streamer``.
 - ``mpservice.threading.Thread.raise_exc`` was renamed to ``throw``.
 - Bug fix in ``mpservice.multiprocessing.SimpleQueue``.
+- Bug fix in stopping servlets.
+- Add optional parameter `server_id` to `mpservice.http.{start_server, stop_server}` to allow running multiple servers in one program.
 
 
 ## [0.14.5] - 2024-01-18
