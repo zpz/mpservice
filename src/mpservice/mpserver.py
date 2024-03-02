@@ -390,11 +390,17 @@ class Worker(ABC):
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
         except KeyboardInterrupt:
+            q_in.put(None)  # broadcast to one fellow worker
+            q_out.put(None)
             print(self.name, 'stopped by KeyboardInterrupt')
             # The process or thread will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
             # TODO: do we need to `raise` here?
+        except BaseException:
+            q_in.put(None)
+            q_out.put(None)
+            raise
 
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
@@ -772,7 +778,7 @@ class ProcessServlet(Servlet):
 
         Notes
         -----
-        When the servlet has multiple processes, the output stream does not follow
+        When the servlet has multiple processes, the output stream does not need to follow
         the order of the elements in the input stream.
         """
         self._worker_cls = worker_cls
@@ -891,7 +897,7 @@ class ThreadServlet(Servlet):
 
         Notes
         -----
-        When the servlet has multiple threads, the output stream does not follow
+        When the servlet has multiple threads, the output stream does not need to follow
         the order of the elements in the input stream.
         """
         self._worker_cls = worker_cls
@@ -983,12 +989,13 @@ class SequentialServlet(Servlet):
     a sequence of operations performed in order,
     one operations's output becoming the next operation's input.
 
-    Each operation is performed by a "servlet", that is,
-    a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
-    or :class:`EnsembleServlet`.
+    Each operation is performed by a "servlet", that is, an instance of any subclass
+    of :class:`Servlet`, including :class:`SequentialServlet`.
+    However, a `SequentialServlet` as a direct member of another `SequentialServlet`
+    may not be beneficial---you may as well flatten it out.
 
     If any member servlet has multiple workers (threads or processes),
-    the output stream does not follow the order of the elements in the input stream.
+    the output stream does not need to follow the order of the elements in the input stream.
     """
 
     def __init__(self, *servlets: Servlet):
@@ -1067,17 +1074,21 @@ class EnsembleServlet(Servlet):
     The list of results, corresponding to the order of the operators,
     is returned as the result.
 
-    Each operation is performed by a "servlet", that is,
-    a :class:`ProcessServlet` or :class:`ThreadServlet` or :class:`SequentialServlet`
-    or :class:`EnsembleServlet`.
+    Each operation is performed by a "servlet", that is, an instance of
+    any subclass of :class:`Servlet`.
 
     If ``fail_fast`` is ``True`` (the default), once one ensemble member raises an
-    Exception, an ``EnsembleError`` will be returned. The other ensemble members
-    that arrive after this will be ignored. This is not necessarily "fast"; the main point
+    Exception, an ``EnsembleError`` will be returned. Results of the other ensemble members
+    that arrive afterwards will be ignored. This is not necessarily "fast"; the main point
     is that the item in question results in an Exception rather than a list that contains
-    Exception(s). If ``fail_fast`` is ``False``, then Exception results, if any, are included
+    Exception(s).
+
+    If ``fail_fast`` is ``False``, then Exception results, if any, are included
     in the result list. If all entries in the list are Exceptions, then the result list
-    is replaced by an ``EnsembleError``.
+    is replaced by an ``EnsembleError``. Here is the logic: if the result list contains
+    some valid results and some Exceptions, user may consider it "partially" successful
+    and may choose to make use of the valid results in some way; if every ensemble member has failed,
+    then the ensemble has failed, hence the result is a single ``EnsembleError``.
 
     The output stream does not need to follow the order of the elements in the input stream.
     """
@@ -1227,7 +1238,6 @@ class EnsembleServlet(Servlet):
                 sleep(0.005)  # TODO: what is a good duration?
 
     def stop(self):
-        # Caller is responsible to put a ``None`` in the input queue.
         assert self._started
         for s in self._servlets:
             s.stop()
@@ -1280,6 +1290,12 @@ class SwitchServlet(Servlet):
         self._reset()
         self._qin = q_in
         self._qout = q_out
+
+        # Create one queue for each member servlet.
+        # Any input element received from `q_in` is passed to
+        # `self.switch` to determine which member servlet should
+        # process this input; then the input is placed in
+        # the appropriate queue.
         for s in self._servlets:
             q1 = (
                 _SimpleThreadQueue()
@@ -1288,6 +1304,7 @@ class SwitchServlet(Servlet):
             )
             s.start(q1, q_out)
             self._qins.append(q1)
+
         self._thread_enqueue = Thread(
             target=self._enqueue, name=f'{self.__class__.__name__}._enqueue'
         )
@@ -1320,7 +1337,7 @@ class SwitchServlet(Servlet):
 
           ``x`` is never an instance of Exception or RemoteException.
           That case is already taken care of before this method is called.
-          This class should not be used to handle such exception cases.
+          This method should not be used to handle such exception cases.
 
         Returns
         -------
@@ -1350,6 +1367,8 @@ class SwitchServlet(Servlet):
                 # short circuit exception to the output queue
                 qout.put((uid, x))
                 continue
+
+            # Determine which member servlet should process `x`:
             idx = self.switch(x)
             qins[idx].put((uid, x))
 
@@ -1460,6 +1479,7 @@ class Server:
 
     A typical setup looks like this::
 
+        servlet = SequentialServlet(...)  # or other types of servlets
         server = Server(servlet)
         with server:
             z = server.call('abc')
@@ -1468,7 +1488,7 @@ class Server:
                 print(x, y)
 
 
-    Code in the "workers" should raise exceptions as it normally does, without handling them,
+    Code in the "workers" (of `servlet`) should raise exceptions as it normally does, without handling them,
     if it considers the situation to be non-recoverable, e.g. input is of wrong type.
     The exceptions will be funneled through the pipelines and raised to the end-user
     with useful traceback info.
@@ -1694,7 +1714,6 @@ class Server:
                 uid, y = z
                 fut = pipeline.pop(uid)  # this must exist
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                # However, here we need to acquire the lock because we want to notify.
                 if isinstance(y, RemoteException):
                     y = y.exc
                 if not fut.cancelled():
@@ -1789,9 +1808,6 @@ class Server:
         def shutdown():
             stopped.set()
             while True:
-                worker.join(timeout=0.1)
-                if not worker.is_alive():
-                    break
                 while not tasks.empty():
                     v = tasks.get()
                     if v is None:
@@ -1801,6 +1817,9 @@ class Server:
                     except TypeError:
                         break
                     fut.cancel()
+                worker.join(timeout=0.1)
+                if not worker.is_alive():
+                    break
 
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
@@ -1882,13 +1901,29 @@ class AsyncServer:
 
     async def __aenter__(self):
         self._pipeline_notfull = asyncio.Condition()
+        self._pipeline_notfull_notifications = {}
         _enter_server(self, (asyncio.get_running_loop(),))
         return self
 
     async def __aexit__(self, *args):
         self.servlet.stop()
-        while self._gather_thread.is_alive():
-            await asyncio.sleep(0.1)
+        self._gather_thread.join()
+
+        pipenotfull = self._pipeline_notfull
+        notifs = self._pipeline_notfull_notifications
+        while notifs:
+            # This could happen, e.g. a request has timedout and left,
+            # then after a while its result comes out and `_gather_output` sends
+            # a notification, but no more request is waiting.
+            # If these "pending" notifications are not taken care of, will get warnings like this:
+            #
+            #   sys:1: RuntimeWarning: coroutine 'AsyncServer._gather_output.<locals>.notify' was never awaited
+            async with pipenotfull:
+                try:
+                    await asyncio.wait_for(pipenotfull.wait(), 0.01)
+                except asyncio.TimeoutError:
+                    pass
+
         if self._onboard_thread is not None:
             self._input_buffer.put(None)
             self._onboard_thread.join()
@@ -1974,31 +2009,27 @@ class AsyncServer:
             async with pipeline_notfull:
                 pipeline_notfull.notify()
 
-        notifications = {}
+        notifications = self._pipeline_notfull_notifications  # {}
 
-        try:
-            while True:
-                z = q_out.get()
-                if z is None:
-                    break
-                uid, y = z
-                fut = pipeline.pop(uid)  # this must exist
-                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                if not fut.cancelled():
-                    if isinstance(y, RemoteException):
-                        y = y.exc
-                    if isinstance(y, BaseException):
-                        loop.call_soon_threadsafe(fut.set_exception, y)
-                    else:
-                        loop.call_soon_threadsafe(fut.set_result, y)
-                    fut.data['t2'] = perf_counter()
+        while True:
+            z = q_out.get()
+            if z is None:
+                break
+            uid, y = z
+            fut = pipeline.pop(uid)  # this must exist
+            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+            if not fut.cancelled():
+                if isinstance(y, RemoteException):
+                    y = y.exc
+                if isinstance(y, BaseException):
+                    loop.call_soon_threadsafe(fut.set_exception, y)
+                else:
+                    loop.call_soon_threadsafe(fut.set_result, y)
+                fut.data['t2'] = perf_counter()
 
-                f = asyncio.run_coroutine_threadsafe(notify(), loop)
-                notifications[id(f)] = f
-                f.add_done_callback(lambda fut: notifications.pop(id(fut)))
-        finally:
-            while notifications:
-                sleep(0.1)
+            f = asyncio.run_coroutine_threadsafe(notify(), loop)
+            notifications[id(f)] = f
+            f.add_done_callback(lambda fut: notifications.pop(id(fut)))
 
     def debug_info(self) -> dict:
         return _server_debug_info(self)
@@ -2043,8 +2074,6 @@ class AsyncServer:
         async def shutdown():
             t_enqueue.cancel()
             while True:
-                if t_enqueue.done():
-                    break
                 while not tasks.empty():
                     v = tasks.get_nowait()
                     if v is None:
@@ -2054,6 +2083,8 @@ class AsyncServer:
                     except TypeError:
                         break
                     fut.cancel()
+                if t_enqueue.done():
+                    break
                 await asyncio.sleep(0.1)
 
         tasks = asyncio.Queue(max(1, self.capacity - 2))
