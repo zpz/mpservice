@@ -1081,8 +1081,8 @@ class EnsembleServlet(Servlet):
     Exception, an ``EnsembleError`` will be returned. Results of the other ensemble members
     that arrive afterwards will be ignored. This is not necessarily "fast"; the main point
     is that the item in question results in an Exception rather than a list that contains
-    Exception(s). 
-    
+    Exception(s).
+
     If ``fail_fast`` is ``False``, then Exception results, if any, are included
     in the result list. If all entries in the list are Exceptions, then the result list
     is replaced by an ``EnsembleError``. Here is the logic: if the result list contains
@@ -2009,7 +2009,7 @@ class AsyncServer:
             async with pipeline_notfull:
                 pipeline_notfull.notify()
 
-        notifications = self._pipeline_notfull_notifications  #{}
+        notifications = self._pipeline_notfull_notifications  # {}
 
         while True:
             z = q_out.get()
