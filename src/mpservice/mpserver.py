@@ -1968,7 +1968,7 @@ class AsyncServer:
         # We can't accept situation that an entry is placed in `pipeline`
         # but not in `_input_buffer`, for that entry would be stuck in `pipeline
         # and never taken out.
-        # But I don't thins this will ever happen, because these two lines of sync code
+        # But I don't think this will ever happen, because these two lines of sync code
         # should not be interrupted by `asyncio.CancelledError`.
         #
         # However, if that is ever an issue or concern, there are two solutions:
