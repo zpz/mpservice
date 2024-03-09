@@ -92,7 +92,7 @@ class Process(_Process):
 
 class ServerBacklogFull(RuntimeError):
     def __init__(self, n, x=None):
-        super(n, x)
+        super().__init__(n, x)
 
     def __str__(self):
         n, x = self.args
@@ -1805,22 +1805,6 @@ class Server:
             else:
                 tasks.put(None)
 
-        def shutdown():
-            stopped.set()
-            while True:
-                while not tasks.empty():
-                    v = tasks.get()
-                    if v is None:
-                        break
-                    try:
-                        _, fut = v
-                    except TypeError:
-                        break
-                    fut.cancel()
-                worker.join(timeout=0.1)
-                if not worker.is_alive():
-                    break
-
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
         worker = Thread(
@@ -1859,7 +1843,20 @@ class Server:
                     else:
                         yield y
         finally:
-            shutdown()
+            stopped.set()
+            while True:
+                while not tasks.empty():
+                    v = tasks.get()
+                    if v is None:
+                        break
+                    try:
+                        _, fut = v
+                    except TypeError:
+                        break
+                    fut.cancel()
+                worker.join(timeout=0.1)
+                if not worker.is_alive():
+                    break
 
 
 class AsyncServer:
@@ -2071,22 +2068,6 @@ class AsyncServer:
             else:
                 await tasks.put(None)
 
-        async def shutdown():
-            t_enqueue.cancel()
-            while True:
-                while not tasks.empty():
-                    v = tasks.get_nowait()
-                    if v is None:
-                        break
-                    try:
-                        x, fut = v
-                    except TypeError:
-                        break
-                    fut.cancel()
-                if t_enqueue.done():
-                    break
-                await asyncio.sleep(0.1)
-
         tasks = asyncio.Queue(max(1, self.capacity - 2))
         t_enqueue = asyncio.create_task(
             _enqueue(tasks, timeout),
@@ -2121,7 +2102,20 @@ class AsyncServer:
                     else:
                         yield y
         finally:
-            await shutdown()
+            t_enqueue.cancel()
+            while True:
+                while not tasks.empty():
+                    v = tasks.get_nowait()
+                    if v is None:
+                        break
+                    try:
+                        x, fut = v
+                    except TypeError:
+                        break
+                    fut.cancel()
+                if t_enqueue.done():
+                    break
+                await asyncio.sleep(0.1)
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:

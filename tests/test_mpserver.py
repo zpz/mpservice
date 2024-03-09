@@ -17,6 +17,7 @@ from mpservice.mpserver import (
     ThreadServlet,
     Worker,
     make_worker,
+    ServerBacklogFull,
 )
 from mpservice.multiprocessing.remote_exception import (
     RemoteException,
@@ -664,3 +665,15 @@ def test_worker_init_failure():
     with pytest.raises(ValueError):
         with server:
             assert server.call(8) == 38
+
+
+def test_ServerBacklogFull():
+    print()
+    try:
+        raise ServerBacklogFull(100)
+    except ServerBacklogFull as e:
+        print(e)
+    try:
+        raise ServerBacklogFull(100, 0.3)
+    except ServerBacklogFull as e:
+        print(e)
