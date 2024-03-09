@@ -13,11 +13,11 @@ from mpservice.mpserver import (
     ProcessServlet,
     SequentialServlet,
     Server,
+    ServerBacklogFull,
     SwitchServlet,
     ThreadServlet,
     Worker,
     make_worker,
-    ServerBacklogFull,
 )
 from mpservice.multiprocessing.remote_exception import (
     RemoteException,
