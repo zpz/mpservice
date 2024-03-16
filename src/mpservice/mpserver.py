@@ -1714,7 +1714,10 @@ class Server:
                 if z is None:
                     break
                 uid, y = z
-                fut = pipeline.pop(uid), None  # this should exist, but see comments in `AsyncServer._enqueue`.
+                fut = (
+                    pipeline.pop(uid),
+                    None,
+                )  # this should exist, but see comments in `AsyncServer._enqueue`.
                 if fut is None:
                     continue
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
@@ -1967,7 +1970,7 @@ class AsyncServer:
                     TimeoutError,
                 ):  # should be the first one, but official doc referrs to the second
                     raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
-                
+
             # We can't accept situation that an entry is placed in `pipeline`
             # but not in `_input_buffer`, for that entry would be stuck in `pipeline
             # and never taken out.
@@ -2024,7 +2027,9 @@ class AsyncServer:
             if z is None:
                 break
             uid, y = z
-            fut = pipeline.pop(uid, None)  # this should exist, but see doc of `_enqueue`.
+            fut = pipeline.pop(
+                uid, None
+            )  # this should exist, but see doc of `_enqueue`.
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
             if fut is None:
                 continue
