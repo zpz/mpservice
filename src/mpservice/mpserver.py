@@ -1664,14 +1664,16 @@ class Server:
                     raise ServerBacklogFull(len(pipeline))
                 if not self._pipeline_notfull.wait(timeout * 0.99):
                     raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
-            pipeline[uid] = fut
 
-        fut.data = {
-            't0': t0,
-            't1': perf_counter(),  # end of enqueuing
-            'deadline': t0 + timeout,
-        }
-        self._input_buffer.put((uid, x))
+            fut.data = {
+                't0': t0,
+                't1': perf_counter(),  # end of enqueuing
+                'deadline': t0 + timeout,
+            }
+            self._input_buffer.put((uid, x))
+            pipeline[uid] = fut
+            # See doc of counterpart methods in `AsyncServer`.
+
         return fut
 
     def _wait_for_result(self, fut: concurrent.futures.Future):
@@ -1712,7 +1714,9 @@ class Server:
                 if z is None:
                     break
                 uid, y = z
-                fut = pipeline.pop(uid)  # this must exist
+                fut = pipeline.pop(uid), None  # this should exist, but see comments in `AsyncServer._enqueue`.
+                if fut is None:
+                    continue
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
                 if isinstance(y, RemoteException):
                     y = y.exc
@@ -1963,21 +1967,28 @@ class AsyncServer:
                     TimeoutError,
                 ):  # should be the first one, but official doc referrs to the second
                     raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
+                
+            # We can't accept situation that an entry is placed in `pipeline`
+            # but not in `_input_buffer`, for that entry would be stuck in `pipeline
+            # and never taken out.
+            #
+            # For that to happen, this function's execution needs to be abandoned after
+            # `pipeline[uid] = fut` but before `self._input_buffer.put((uid, x))`.
+            # Although this doesn't seem likely, I can think of one scenario:
+            #
+            #   User imposes a timeout on the call to `_enqueue`. Then timeout
+            #   (and consequently `asyncio.CancelledError`) could happen anywhere,
+            #   I guess.
+            #
+            # If that is ever an issue or concern, there are two solutions:
+            # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
+            #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
+            # (2) in `call`, protect the calll to `_enqueue` by an `asyncio.shield`.
+
+            fut.data['t1'] = perf_counter()
+            self._input_buffer.put((uid, x))
             pipeline[uid] = fut
 
-        # We can't accept situation that an entry is placed in `pipeline`
-        # but not in `_input_buffer`, for that entry would be stuck in `pipeline
-        # and never taken out.
-        # But I don't think this will ever happen, because these two lines of sync code
-        # should not be interrupted by `asyncio.CancelledError`.
-        #
-        # However, if that is ever an issue or concern, there are two solutions:
-        # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
-        #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
-        # (2) in `call`, protect the calll to `_enqueue` by an `asyncio.shield`.
-
-        fut.data['t1'] = perf_counter()
-        self._input_buffer.put((uid, x))
         return fut
 
     async def _wait_for_result(self, fut: asyncio.Future):
@@ -2013,8 +2024,10 @@ class AsyncServer:
             if z is None:
                 break
             uid, y = z
-            fut = pipeline.pop(uid)  # this must exist
+            fut = pipeline.pop(uid, None)  # this should exist, but see doc of `_enqueue`.
             # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+            if fut is None:
+                continue
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
