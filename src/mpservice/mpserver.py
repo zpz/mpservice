@@ -723,14 +723,14 @@ class Servlet(ABC):
                     {
                         'type': ch.__class__.__name__,
                         'name': ch.name,
-                        'is_alive': ch.is_alive()
+                        'is_alive': ch.is_alive(),
                     }
                 )
         return {
             'type': self.__class__.__name__,
             'children': zz,
         }
-    
+
 
 class ProcessServlet(Servlet):
     """
@@ -1074,7 +1074,6 @@ class SequentialServlet(Servlet):
         return self._servlets[-1].output_queue_type
 
 
-
 class EnsembleServlet(Servlet):
     """
     A ``EnsembleServlet`` represents
@@ -1277,7 +1276,6 @@ class EnsembleServlet(Servlet):
         return 'thread'
 
 
-
 class SwitchServlet(Servlet):
     """
     SwitchServlet contains multiple member servlets (which are provided to :meth:`__init__`).
@@ -1454,16 +1452,19 @@ def _enter_server(self, gather_args: tuple = None):
 
 def _server_debug_info(self):
     now = perf_counter()
-    futures = sorted((
-        {
-            **fut.data,
-            'id': k,
-            'age': now - fut.data['t0'],
-            'is_cancelled': fut.cancelled(),
-            'is_done_but_not_cancelled': fut.done() and not fut.cancelled(),
-        }
-        for k, fut in self._uid_to_futures.items()
-    ), key=lambda x: x['age'])
+    futures = sorted(
+        (
+            {
+                **fut.data,
+                'id': k,
+                'age': now - fut.data['t0'],
+                'is_cancelled': fut.cancelled(),
+                'is_done_but_not_cancelled': fut.done() and not fut.cancelled(),
+            }
+            for k, fut in self._uid_to_futures.items()
+        ),
+        key=lambda x: x['age'],
+    )
 
     if self._onboard_thread is None:
         onboard_thread = None
@@ -1738,7 +1739,9 @@ class Server:
                 except KeyError:
                     # This should not happen, but see doc of `_enqueue`
                     # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                    logger.warning(f"the Future object for uid `{uid}` is not found in the backlog ledger")
+                    logger.warning(
+                        f'the Future object for uid `{uid}` is not found in the backlog ledger'
+                    )
                     continue
 
                 if isinstance(y, RemoteException):
@@ -2056,7 +2059,9 @@ class AsyncServer:
             except KeyError:
                 # This should not happen, but see doc of `_enqueue`
                 # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
-                logger.warning(f"the Future object for uid `{uid}` is not found in the backlog ledger")
+                logger.warning(
+                    f'the Future object for uid `{uid}` is not found in the backlog ledger'
+                )
                 continue
 
             if not fut.cancelled():

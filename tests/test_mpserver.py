@@ -6,7 +6,6 @@ from pprint import pprint
 from time import perf_counter, sleep
 
 import pytest
-from mpservice import TimeoutError
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
@@ -18,16 +17,16 @@ from mpservice.mpserver import (
     ServerBacklogFull,
     SwitchServlet,
     ThreadServlet,
+    TimeoutError,
     Worker,
     make_worker,
-    TimeoutError,
 )
 from mpservice.multiprocessing.remote_exception import (
     RemoteException,
     is_remote_exception,
 )
-from mpservice.threading import Thread
 from mpservice.streamer import Stream
+from mpservice.threading import Thread
 
 # NOTE: all calls like `await async_generator.aclose()` in this module is a work around
 # a pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
@@ -713,10 +712,7 @@ def test_ServerBacklogFull():
         for _ in range(5):
             print()
             t0 = perf_counter()
-            ths = [
-                Thread(target=_call_server, args=(service, x))
-                for x in data
-            ]
+            ths = [Thread(target=_call_server, args=(service, x)) for x in data]
             for t in ths:
                 t.start()
             results = [t.result() for t in ths]
@@ -744,7 +740,9 @@ def test_ServerBacklogFull():
     ) as service:
         data = [0.05, object()] + [0.05] * 10
 
-        sleep(0.2)  # somehow let the server "warm up"; results are in the repeats are not totally deterministic
+        sleep(
+            0.2
+        )  # somehow let the server "warm up"; results are in the repeats are not totally deterministic
 
         for _ in range(5):
             print()
@@ -768,4 +766,3 @@ def test_ServerBacklogFull():
             sleep(1)
             print('backlog after sleep')
             pprint(service.debug_info()['backlog'])
-
