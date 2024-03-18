@@ -325,7 +325,7 @@ class Worker(ABC):
         might fail a pre-condition, it is tedious to properly assemble the "good" and "bad" elements to further processing
         or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
-        When a subclass is designed to do non-batching work, this attribute is not needed, because the same
+        When a subclass is designed to do non-batching work, this attribute is not necessary, because the same
         concern can be handled in :meth:`call` directly.
 
         When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
@@ -1702,6 +1702,7 @@ class Server:
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
             t0 = fut.data['t0']
+            fut.data['t_cancelled'] = perf_counter()
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -2018,13 +2019,15 @@ class AsyncServer:
             await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
         except (asyncio.TimeoutError, TimeoutError):
             t0 = fut.data['t0']
-            fut.data['t2'] = perf_counter()  # time of abandonment
+            fut.cancel()
+            fut.data['t_cancelled'] = perf_counter()  # time of abandonment
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
             # `fut` is also cancelled; to confirm
         except asyncio.CancelledError:
-            fut.data['t2'] = perf_counter()  # time of abandonment
+            fut.cancel()
+            fut.data['t_cancelled'] = perf_counter()  # time of abandonment
             raise
 
         # If this call is cancelled by caller, then `fut` is also cancelled.

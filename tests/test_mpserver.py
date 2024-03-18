@@ -744,6 +744,8 @@ def test_ServerBacklogFull():
     ) as service:
         data = [0.05, object()] + [0.05] * 10
 
+        sleep(0.2)  # somehow let the server "warm up"; results are in the repeats are not totally deterministic
+
         for _ in range(5):
             print()
             t0 = perf_counter()
@@ -754,16 +756,16 @@ def test_ServerBacklogFull():
             for t in ths:
                 t.start()
             results = [t.result() for t in ths]
+            di = service.debug_info()
             pprint(results)
             # assert 3 == sum(1 for e in results if isinstance(e, TypeError))
             # assert 3 == sum(1 for e in results if isinstance(e, TimeoutError))
             # assert 4 == sum(1 for e in results if isinstance(e, ServerBacklogFull))
             t1 = perf_counter()
-            info = service.debug_info()
-            pprint(info)
-            # assert 3 == len(info['backlog'])
+            pprint(di)
+            # assert 3 == len(di['backlog'])
             print('time elapsed:', t1 - t0)
             sleep(1)
-            print('backlog')
+            print('backlog after sleep')
             pprint(service.debug_info()['backlog'])
 

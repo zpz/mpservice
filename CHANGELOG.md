@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Minor tweak on `mpserver` detail.
 
+  It happens in one application that some requests get stuck in the server "backlog", whereas by design
+  this should never happen (in reasonable time every input unit flows through the system and comes out of
+  the output queue, at which time clears its bookkeeping entry in the backlog). The tweak hopefully helps
+  debugging this situation.
+
 
 ## [0.14.7] - 2024-03-08
 
