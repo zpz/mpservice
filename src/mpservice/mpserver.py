@@ -32,7 +32,7 @@ import queue
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from queue import Empty
 from time import perf_counter, sleep
 from typing import Any, Callable, Literal, final
@@ -107,9 +107,6 @@ class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
     this class reduces some overhead in a particular use-case in this module,
     where one consumer of the queue greedily grabs elements out of the queue
     towards a batch-size limit.
-
-    It is not "fast" in the general sense, hence the class may not be useful
-    outside of this module.
 
     This queue is meant to be used between two processes or between a process
     and a thread.
@@ -328,7 +325,7 @@ class Worker(ABC):
         might fail a pre-condition, it is tedious to properly assemble the "good" and "bad" elements to further processing
         or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
-        When a subclass is designed to do non-batching work, this attribute is not needed, because the same
+        When a subclass is designed to do non-batching work, this attribute is not necessary, because the same
         concern can be handled in :meth:`call` directly.
 
         When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
@@ -716,13 +713,22 @@ class Servlet(ABC):
     def children(self) -> list:
         raise NotImplementedError
 
-    def _debug_info(self):
+    def _debug_info(self) -> dict:
+        zz = []
+        for ch in self.children:
+            if hasattr(ch, '_debug_info'):
+                zz.append(ch._debug_info())
+            else:
+                zz.append(
+                    {
+                        'type': ch.__class__.__name__,
+                        'name': ch.name,
+                        'is_alive': ch.is_alive(),
+                    }
+                )
         return {
             'type': self.__class__.__name__,
-            'workers': [
-                (w.name, 'is_alive' if w.is_alive() else 'not_alive')
-                for w in self.workers
-            ],
+            'children': zz,
         }
 
 
@@ -1040,6 +1046,7 @@ class SequentialServlet(Servlet):
             s.start(q1, q2)
             q1 = q2
         self._q_in = q_in
+        self._q_out = q_out
         self._started = True
 
     def stop(self):
@@ -1056,7 +1063,7 @@ class SequentialServlet(Servlet):
 
     @property
     def children(self):
-        self._servlets
+        return self._servlets
 
     @property
     def input_queue_type(self):
@@ -1155,7 +1162,7 @@ class EnsembleServlet(Servlet):
             if z is None:  # sentinel for end of input
                 for q in qins:
                     q.put(z)  # send the same sentinel to each servlet
-                qout.put(z)
+                # qout.put(z)
                 return
 
             uid, x = z
@@ -1165,6 +1172,7 @@ class EnsembleServlet(Servlet):
                 # short circuit exception to the output queue
                 qout.put((uid, x))
                 continue
+
             z = {'y': [None] * nn, 'n': 0}
             # `y` is the list of outputs from the servlets, in order.
             # `n` is number of outputs already received.
@@ -1197,6 +1205,10 @@ class EnsembleServlet(Servlet):
                     if v is None:
                         qout.put(v)
                         return
+                        # TODO: this is a little problematic---should we
+                        # wait for all ensemble members to see `None`, thus
+                        # "driving out" all regular work, before exiting?
+
                     uid, y = v
                     # `y` can be an exception object or a regular result.
                     z = catalog.get(uid)
@@ -1357,7 +1369,7 @@ class SwitchServlet(Servlet):
             if v is None:  # sentinel for end of input
                 for q in qins:
                     q.put(v)  # send the same sentinel to each servlet
-                qout.put(v)
+                # qout.put(v)
                 return
 
             uid, x = v
@@ -1440,23 +1452,28 @@ def _enter_server(self, gather_args: tuple = None):
 
 def _server_debug_info(self):
     now = perf_counter()
-    futures = [
-        {
-            **fut.data,
-            'id': k,
-            'age': now - fut.data['t0'],
-            'is_done': fut.done(),
-            'is_cancelled': fut.cancelled(),
-        }
-        for k, fut in self._uid_to_futures.items()
-    ]
+    futures = sorted(
+        (
+            {
+                **fut.data,
+                'id': k,
+                'age': now - fut.data['t0'],
+                'is_cancelled': fut.cancelled(),
+                'is_done_but_not_cancelled': fut.done() and not fut.cancelled(),
+            }
+            for k, fut in self._uid_to_futures.items()
+        ),
+        key=lambda x: x['age'],
+    )
+
     if self._onboard_thread is None:
         onboard_thread = None
     else:
         onboard_thread = 'is_alive' if self._onboard_thread.is_alive() else 'done'
 
     return {
-        'datetime': str(datetime.utcnow()),
+        'type': self.__class__.__name__,
+        'datetime': str(datetime.now(timezone.utc)),
         'perf_counter': now,
         'capacity': self.capacity,
         'active_processes': [str(v) for v in multiprocessing.active_children()],
@@ -1656,6 +1673,11 @@ class Server:
         pipeline = self._uid_to_futures
 
         fut = concurrent.futures.Future()
+        fut.data = {
+            't0': t0,
+            't1': t0,  # end of enqueuing, to be updated
+            'deadline': t0 + timeout,
+        }
         uid = id(fut)
 
         with self._pipeline_notfull:
@@ -1664,14 +1686,12 @@ class Server:
                     raise ServerBacklogFull(len(pipeline))
                 if not self._pipeline_notfull.wait(timeout * 0.99):
                     raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
-            pipeline[uid] = fut
 
-        fut.data = {
-            't0': t0,
-            't1': perf_counter(),  # end of enqueuing
-            'deadline': t0 + timeout,
-        }
-        self._input_buffer.put((uid, x))
+            self._input_buffer.put((uid, x))
+            pipeline[uid] = fut
+            # See doc of counterpart methods in `AsyncServer`.
+
+        fut.data['t1'] = perf_counter()
         return fut
 
     def _wait_for_result(self, fut: concurrent.futures.Future):
@@ -1683,6 +1703,7 @@ class Server:
         except concurrent.futures.TimeoutError as e:
             fut.cancel()
             t0 = fut.data['t0']
+            fut.data['t_cancelled'] = perf_counter()
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             ) from e
@@ -1712,8 +1733,17 @@ class Server:
                 if z is None:
                     break
                 uid, y = z
-                fut = pipeline.pop(uid)  # this must exist
-                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+
+                try:
+                    fut = pipeline.pop(uid)
+                except KeyError:
+                    # This should not happen, but see doc of `_enqueue`
+                    # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                    logger.warning(
+                        f'the Future object for uid `{uid}` is not found in the backlog ledger'
+                    )
+                    continue
+
                 if isinstance(y, RemoteException):
                     y = y.exc
                 if not fut.cancelled():
@@ -1963,21 +1993,28 @@ class AsyncServer:
                     TimeoutError,
                 ):  # should be the first one, but official doc referrs to the second
                     raise ServerBacklogFull(len(pipeline), perf_counter() - t0)
+
+            # We can't accept situation that an entry is placed in `pipeline`
+            # but not in `_input_buffer`, for that entry would be stuck in `pipeline`
+            # and never taken out.
+            #
+            # For that to happen, this function's execution needs to be abandoned after
+            # `pipeline[uid] = fut` but before `self._input_buffer.put((uid, x))`.
+            # Although this doesn't seem likely, I can think of one scenario:
+            #
+            #   User imposes a timeout on the call to `_enqueue`. Then timeout
+            #   (and consequently `asyncio.CancelledError`) could happen anywhere,
+            #   I guess.
+            #
+            # If that is ever an issue or concern, there are two solutions:
+            # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
+            #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
+            # (2) in `call`, protect the calll to `_enqueue` by an `asyncio.shield`.
+
+            self._input_buffer.put((uid, x))
             pipeline[uid] = fut
 
-        # We can't accept situation that an entry is placed in `pipeline`
-        # but not in `_input_buffer`, for that entry would be stuck in `pipeline
-        # and never taken out.
-        # But I don't think this will ever happen, because these two lines of sync code
-        # should not be interrupted by `asyncio.CancelledError`.
-        #
-        # However, if that is ever an issue or concern, there are two solutions:
-        # (1) put the entry in `_input_buffer` first, and `pipeline` second; in combination,
-        #     change `pipeline.pop(uid)` in `_gather_output` to `pipeline.pop(uid, None)`;
-        # (2) in `call`, protect the calll to `_enqueue` by an `asyncio.shield`.
-
-        fut.data['t1'] = perf_counter()
-        self._input_buffer.put((uid, x))
+        fut.data['t1'] = perf_counter()  # enqueing finished if `t1` != `t0`
         return fut
 
     async def _wait_for_result(self, fut: asyncio.Future):
@@ -1985,11 +2022,15 @@ class AsyncServer:
             await asyncio.wait_for(fut, fut.data['deadline'] - perf_counter())
         except (asyncio.TimeoutError, TimeoutError):
             t0 = fut.data['t0']
+            fut.cancel()
+            fut.data['t_cancelled'] = perf_counter()  # time of abandonment
             raise TimeoutError(
                 f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
             )
             # `fut` is also cancelled; to confirm
         except asyncio.CancelledError:
+            fut.cancel()
+            fut.data['t_cancelled'] = perf_counter()  # time of abandonment
             raise
 
         # If this call is cancelled by caller, then `fut` is also cancelled.
@@ -2013,8 +2054,16 @@ class AsyncServer:
             if z is None:
                 break
             uid, y = z
-            fut = pipeline.pop(uid)  # this must exist
-            # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+            try:
+                fut = pipeline.pop(uid)
+            except KeyError:
+                # This should not happen, but see doc of `_enqueue`
+                # `dict.pop` is atomic; see https://stackoverflow.com/a/17326099/6178706
+                logger.warning(
+                    f'the Future object for uid `{uid}` is not found in the backlog ledger'
+                )
+                continue
+
             if not fut.cancelled():
                 if isinstance(y, RemoteException):
                     y = y.exc
