@@ -2,6 +2,8 @@ import asyncio
 import pickle
 import random
 import time
+from pprint import pprint
+from time import perf_counter, sleep
 
 import pytest
 from mpservice import TimeoutError
@@ -18,11 +20,13 @@ from mpservice.mpserver import (
     ThreadServlet,
     Worker,
     make_worker,
+    TimeoutError,
 )
 from mpservice.multiprocessing.remote_exception import (
     RemoteException,
     is_remote_exception,
 )
+from mpservice.threading import Thread
 from mpservice.streamer import Stream
 
 # NOTE: all calls like `await async_generator.aclose()` in this module is a work around
@@ -31,6 +35,8 @@ from mpservice.streamer import Stream
 
 class Double(Worker):
     def call(self, x):
+        if self.batch_size:
+            return [v * 2 for v in x]
         return x * 2
 
 
@@ -55,7 +61,11 @@ class Square(Worker):
 
 class Delay(Worker):
     def call(self, x):
-        time.sleep(x)
+        if self.batch_size:
+            for v in x:
+                time.sleep(v)
+        else:
+            time.sleep(x)
         return x
 
 
@@ -76,13 +86,15 @@ async def test_sequential_server_async():
         z = await service.call(3)
         assert z == 3 * 2 + 3
 
-        print('debug_info:', service.debug_info())
+        print('debug_info:')
+        pprint(service.debug_info())
 
         x = list(range(10))
         tasks = [service.call(v) for v in x]
         y = await asyncio.gather(*tasks)
         assert y == [v * 2 + 3 for v in x]
-        print('debug_info:', service.debug_info())
+        print('debug_info:')
+        pprint(service.debug_info())
 
 
 def test_sequential_server():
@@ -95,12 +107,14 @@ def test_sequential_server():
         z = service.call(3)
         assert z == 3 * 2 + 3
 
-        print('debug_info:', service.debug_info())
+        print('debug_info:')
+        pprint(service.debug_info())
 
         x = list(range(10))
         y = [service.call(v) for v in x]
         assert y == [v * 2 + 3 for v in x]
-        print('debug_info:', service.debug_info())
+        print('debug_info:')
+        pprint(service.debug_info())
 
 
 def test_sequential_batch():
@@ -122,7 +136,8 @@ def test_sequential_error():
         z = service.call(3)
         assert z == 3 * 2 + 4
 
-        print('debug_info:', service.debug_info())
+        print('debug_info:')
+        pprint(service.debug_info())
         with pytest.raises(TypeError):
             z = service.call('a')
 
@@ -677,3 +692,78 @@ def test_ServerBacklogFull():
         raise ServerBacklogFull(100, 0.3)
     except ServerBacklogFull as e:
         print(e)
+
+    def _call_server(server, x, wait=0):
+        if wait:
+            sleep(wait)
+        try:
+            return server.call(x, timeout=0.32)
+        except Exception as e:
+            return e
+
+    with Server(
+        SequentialServlet(
+            ProcessServlet(Double, cpus=[1]),
+            ProcessServlet(Delay, cpus=[2]),
+        ),
+        capacity=8,
+    ) as service:
+        data = [0.05, 'a'] + [0.05] * 8
+
+        for _ in range(5):
+            print()
+            t0 = perf_counter()
+            ths = [
+                Thread(target=_call_server, args=(service, x))
+                for x in data
+            ]
+            for t in ths:
+                t.start()
+            results = [t.result() for t in ths]
+            pprint(results)
+            assert 1 == sum(1 for e in results if isinstance(e, TypeError))
+            assert 2 == sum(1 for e in results if isinstance(e, ServerBacklogFull))
+            assert 4 == sum(1 for e in results if isinstance(e, TimeoutError))
+            t1 = perf_counter()
+            info = service.debug_info()
+            pprint(info)
+            assert 4 == len(info['backlog'])
+            print('time elapsed:', t1 - t0)
+            sleep(0.43)
+
+    print()
+    print()
+    print()
+
+    with Server(
+        SequentialServlet(
+            ProcessServlet(Double, cpus=[1], batch_size=3, batch_wait_time=0.02),
+            ProcessServlet(Delay, cpus=[2], batch_size=2, batch_wait_time=0.015),
+        ),
+        capacity=8,
+    ) as service:
+        data = [0.05, object()] + [0.05] * 10
+
+        for _ in range(5):
+            print()
+            t0 = perf_counter()
+            ths = [
+                Thread(target=_call_server, args=(service, x))
+                for i, x in enumerate(data)
+            ]
+            for t in ths:
+                t.start()
+            results = [t.result() for t in ths]
+            pprint(results)
+            # assert 3 == sum(1 for e in results if isinstance(e, TypeError))
+            # assert 3 == sum(1 for e in results if isinstance(e, TimeoutError))
+            # assert 4 == sum(1 for e in results if isinstance(e, ServerBacklogFull))
+            t1 = perf_counter()
+            info = service.debug_info()
+            pprint(info)
+            # assert 3 == len(info['backlog'])
+            print('time elapsed:', t1 - t0)
+            sleep(1)
+            print('backlog')
+            pprint(service.debug_info()['backlog'])
+

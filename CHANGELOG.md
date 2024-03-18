@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.8] - 2024-03-17
+
+- Minor tweak on `mpserver` detail.
+
+
 ## [0.14.7] - 2024-03-08
 
 - Bug fix in ``ServerBacklogFull`` class definition.
