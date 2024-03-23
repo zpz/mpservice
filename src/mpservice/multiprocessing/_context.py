@@ -13,8 +13,6 @@ import multiprocessing.queues
 import multiprocessing.synchronize
 import os
 import time
-import warnings
-from multiprocessing import util
 from typing import Generic, TypeVar
 
 from .._common import TimeoutError
@@ -146,12 +144,10 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         assert not hasattr(self, '_logger_queue_')
         assert not hasattr(self, '_logger_thread_')
         assert not hasattr(self, '_collector_thread_')
-        assert not hasattr(self, '_finalize_')
         self._result_and_error_ = reader
         self._logger_queue_ = logger_queue
         self._logger_thread_ = None
         self._collector_thread_ = None
-        self._finalize_ = None
 
     def start(self):
         super().start()
@@ -174,18 +170,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._collector_thread_ = Thread(
             target=self._run_collector_thread,
             name='ProcessCollectorThread',
+            daemon=True,
         )
         self._collector_thread_.start()
 
-        self._finalize_ = util.Finalize(
-            self,
-            type(self)._finalize_threads,
-            (self._logger_thread_, self._logger_queue_, self._collector_thread_),
-            exitpriority=5,
-        )
-
-    @staticmethod
-    def _run_logger_thread(q: multiprocessing.queues.Queue):
+    def _run_logger_thread(self, q: multiprocessing.queues.Queue):
         while True:
             record = q.get()
             if record is None:
@@ -199,6 +188,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         try:
             result = self._result_and_error_.recv()
             error = self._result_and_error_.recv()
+
         except EOFError as exc:
             # the process has been terminated by calling ``self.terminate()``
             while self.exitcode is None:
@@ -210,24 +200,16 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                     msg += ': possibly out of memory'
                 error = OSError(exitcode, msg)
                 error.__cause__ = exc
+                logger.error(f'Error in process {self.name}: {error}')
                 print(f'Error in process "{self.name}": {error}')
 
+        self._logger_queue_.put(None)
         self._result_and_error_.close()
         self._result_and_error_ = None
         if error is not None:
             self._future_.set_exception(error)
         else:
             self._future_.set_result(result)
-        self._logger_queue_.put(None)
-        self._logger_thread_.join()
-
-    @staticmethod
-    def _finalize_threads(
-        t_logger: Thread, q: multiprocessing.queues.Queue, t_collector: Thread
-    ):
-        q.put(None)
-        t_logger.join()
-        t_collector.join()
 
     @staticmethod
     def handle_exception(exc):
@@ -246,7 +228,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         # in this order; both may be `None`.
         if self._target:
             logger_queue = self._kwargs.pop('_logger_queue_')
-
             if not logging.getLogger().hasHandlers():
                 # Set up putting all log messages
                 # ever produced in this process into ``logger_queue``,
@@ -265,6 +246,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 # but this is usually not recommended.
                 # This sually happends because logging is configured on the module level rather than
                 # in the ``if __name__ == '__main__':`` block.
+                logger_queue.close()
                 logger_queue = None
                 qh = None
 
@@ -307,7 +289,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         if exitcode is None:
             # Not terminated. Timed out.
             return
-        self._collector_thread_.join()
         if exitcode == 0:
             # Terminated w/o error.
             return
@@ -317,10 +298,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             raise ValueError(f'expecting negative `exitcode` but got {exitcode}')
         exitcode = -exitcode
         if exitcode == errno.ENOTBLK:  # 15
-            warnings.warn(
-                f'process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`',
-                stacklevel=2,
-            )
+            # warnings.warn(
+            #     f'process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`',
+            #     stacklevel=2,
+            # )
+            pass
             # For example, ``self.terminate()`` was called. That's a code smell.
             # ``signal.Signals.SIGTERM`` is 15.
             # ``signal.Signals.SIGKILL`` is 9.
@@ -525,11 +507,5 @@ class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
 
 
 class Pool(multiprocessing.pool.Pool):
-    @staticmethod
-    def Process(*args, ctx=None, **kwargs):
-        if ctx is None:
-            ctx = MP_SPAWN_CTX
-        return ctx.Process(*args, **kwargs)
-
     def __init__(self, *args, context=None, **kwargs):
         super().__init__(*args, context=context or MP_SPAWN_CTX, **kwargs)
