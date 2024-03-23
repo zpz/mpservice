@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.9] - 2024-03-22
+
+- Bug fix in `mpservice.multiprocessing.Pool`.
+- Finetune about shutdown of the background threads supporting `mpservice.multiprocessing.SpawnProcess`.
+
+
 ## [0.14.8] - 2024-03-17
 
 - Minor tweak on `mpserver` detail.
