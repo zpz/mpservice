@@ -1,8 +1,8 @@
 import logging
+import multiprocessing
 import pickle
 import sys
 from types import TracebackType
-import multiprocessing
 
 import pytest
 from mpservice.multiprocessing.remote_exception import (
@@ -92,4 +92,3 @@ def test_remote_exception():
     assert x.__traceback__ is None
     with pytest.raises(ValueError):
         err = RemoteException(x)
-

@@ -5,10 +5,10 @@ import pytest
 from mpservice import TimeoutError
 from mpservice.multiprocessing import (
     FIRST_EXCEPTION,
+    Pool,
     Process,
     as_completed,
     wait,
-    Pool,
 )
 from mpservice.threading import Thread
 
@@ -88,8 +88,6 @@ def test_process():
     _test_thread_process(Process)
 
 
-
-
 def sleeper(sleep_seconds):
     if sleep_seconds > 10:
         sleep(sleep_seconds * 0.1)
@@ -156,16 +154,14 @@ def test_as_completed():
         k += 1
 
 
-
 def pool_f(x):
     return x * x
 
 
 def test_pool():
     with Pool(processes=4) as pool:
-        result = pool.apply_async(pool_f, (10, ))
+        result = pool.apply_async(pool_f, (10,))
         assert result.get(timeout=1) == 100
 
         result = pool.map(pool_f, range(10))
-        assert result == [v*v for v in range(10)]
-
+        assert result == [v * v for v in range(10)]

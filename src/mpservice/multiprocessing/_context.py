@@ -13,8 +13,6 @@ import multiprocessing.queues
 import multiprocessing.synchronize
 import os
 import time
-import warnings
-from multiprocessing import util
 from typing import Generic, TypeVar
 
 from .._common import TimeoutError
@@ -190,7 +188,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         try:
             result = self._result_and_error_.recv()
             error = self._result_and_error_.recv()
-        
+
         except EOFError as exc:
             # the process has been terminated by calling ``self.terminate()``
             while self.exitcode is None:
@@ -202,7 +200,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                     msg += ': possibly out of memory'
                 error = OSError(exitcode, msg)
                 error.__cause__ = exc
-                logger.error(f"Error in process {self.name}: {error}")
+                logger.error(f'Error in process {self.name}: {error}')
                 print(f'Error in process "{self.name}": {error}')
 
         self._logger_queue_.put(None)
@@ -280,7 +278,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.send(None)
             result_and_error.close()
-
 
     def join(self, timeout=None):
         """
