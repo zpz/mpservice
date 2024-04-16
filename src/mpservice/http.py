@@ -64,7 +64,6 @@ from ._http import start_server, stop_server
 __all__ = ['start_server', 'stop_server']
 
 
-
 # About server shutdown:
 #  https://github.com/encode/uvicorn/issues/742
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets
@@ -75,4 +74,3 @@ __all__ = ['start_server', 'stop_server']
 # https://stackoverflow.com/a/12340078
 # https://stackoverflow.com/questions/36594400/what-is-backlog-in-tcp-connections
 # http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
-

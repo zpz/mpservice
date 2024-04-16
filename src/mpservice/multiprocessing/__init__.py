@@ -131,4 +131,3 @@ def as_completed(
     future_to_thread = {id(t._future_): t for t in workers}
     for f in concurrent.futures.as_completed(futures, timeout=timeout):
         yield future_to_thread[id(f)]
-
