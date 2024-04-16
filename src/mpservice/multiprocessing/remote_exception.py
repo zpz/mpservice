@@ -30,7 +30,7 @@ A clear benefit, though, is that we can detect the type of the exception by ``is
 
 The session below shows the basic behaviors of a :class:`RemoteException`.
 
->>> from mpservice.multiprocessing import RemoteException, is_remote_exception, get_remote_traceback
+>>> from mpservice.multiprocessing.remote_exception import RemoteException, is_remote_exception, get_remote_traceback
 >>> import pickle
 >>>
 >>>
