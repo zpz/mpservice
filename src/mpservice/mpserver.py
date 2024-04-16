@@ -374,6 +374,14 @@ class Worker(ABC):
         """
         raise NotImplementedError
 
+    def cleanup(self, exc=None):
+        """
+        This method is called when the object exits its service loop and stops.
+        This is the place for cleanup code, e.g. releasing resources, exiting
+        context managers (that have been entered in :meth:`_init_`), etc.
+        """
+        pass
+
     def start(self, *, q_in, q_out):
         """
         This is called by :meth:`run` to kick off the processing loop.
@@ -386,18 +394,22 @@ class Worker(ABC):
                 self._start_batch(q_in=q_in, q_out=q_out)
             else:
                 self._start_single(q_in=q_in, q_out=q_out)
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
             q_in.put(None)  # broadcast to one fellow worker
             q_out.put(None)
             print(self.name, 'stopped by KeyboardInterrupt')
             # The process or thread will exit. Don't print the usual
             # exception stuff as that's not needed when user
             # pressed Ctrl-C.
+            self.cleanup(e)
             # TODO: do we need to `raise` here?
-        except BaseException:
+        except BaseException as e:
             q_in.put(None)
             q_out.put(None)
+            self.cleanup(e)
             raise
+        else:
+            self.cleanup()
 
     def _start_single(self, *, q_in, q_out):
         batch_size = self.batch_size
