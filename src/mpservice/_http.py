@@ -205,6 +205,7 @@ async def stop_server(server_id: str = '0'):
     # If `start_server` was called with `workers > 1`, then multiple `Server` objects run in their own processes.
     # This function is invoked in the process of one `Server`. If this function is called only once,
     # then only one `Server` (in the said process) will be stopped. To avoid asking client to call this multiple times,
+    # (and the client wouldn't know how many times they should call,)
     # We use a multiprocessing Event object shared between the server processes to get the signal across.
 
     s = _servers.get(server_id)

@@ -4,7 +4,8 @@ using `uvicorn <https://www.uvicorn.org/>`_ and `starlette <https://www.starlett
 
 This utility code is not directly connected to :class:`~mpservice.mpserver.AsyncServer`, because AsyncServer simply
 provides the method :meth:`~mpservice.mpserver.AsyncServer.call` that can be called from an HTTP
-request handler function. The example below shows one way to connect things:
+request handler function; `AsyncServer` itself has nothing to do with HTTP. 
+The example below shows one way to wire things up:
 
 ::
 
@@ -57,19 +58,11 @@ data from the main process (where ``start_server`` is called) to the worker proc
 The use of ``starlette`` is very lightweight: it just handles HTTP
 routing and request acceptance/response.
 """
-from __future__ import annotations
 
-import logging
-
-import uvicorn
-from deprecation import deprecated
-
-from ._http import ASGIApplication, start_server, stop_server
+from ._http import start_server, stop_server
 
 __all__ = ['start_server', 'stop_server']
 
-
-logger = logging.getLogger(__name__)
 
 
 # About server shutdown:
@@ -83,37 +76,3 @@ logger = logging.getLogger(__name__)
 # https://stackoverflow.com/questions/36594400/what-is-backlog-in-tcp-connections
 # http://veithen.io/2014/01/01/how-tcp-backlog-works-in-linux.html
 
-
-@deprecated(
-    deprecated_in='0.14.1', removed_in='0.15.0', details='use ``start_server`` instead'
-)
-def make_server(
-    app: str | ASGIApplication,
-    *,
-    host: str = '0.0.0.0',
-    port: int = 8000,
-    access_log: bool = False,
-    backlog: int = 128,
-    **kwargs,
-) -> uvicorn.Server:
-    """
-    This function is *deprecated* in favor of ``start_server`` and ``stop_server``.
-
-    This function is comparable to ``start_server`` with ``workers=1``.
-
-    NOTE: this function does not work with ``stop_server``; instead, set ``server.should_stop=True`` for that effect,
-    where ``server`` is the output of this function.
-    """
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        access_log=access_log,
-        workers=1,
-        backlog=backlog,
-        **kwargs,
-    )
-
-    server = uvicorn.Server(config=config)
-
-    return server

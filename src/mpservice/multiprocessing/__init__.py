@@ -33,10 +33,8 @@ Besides these fixes to "pain points", the module :mod:`mpservice.multiprocessing
 to the "manager" facility in the standard ``multiprocessing``, especially about "shared memory".
 """
 import concurrent.futures
-import warnings
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
-from importlib import import_module
 
 from mpservice.threading import Thread
 
@@ -134,20 +132,3 @@ def as_completed(
     for f in concurrent.futures.as_completed(futures, timeout=timeout):
         yield future_to_thread[id(f)]
 
-
-def __getattr__(name):
-    if name in ('RemoteException', 'get_remote_traceback', 'is_remote_exception'):
-        mname = 'mpservice.multiprocessing.remote_exception'
-    elif name in ('ServerProcess',):
-        mname = 'mpservice.multiprocessing.server_process'
-    else:
-        raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
-
-    m = import_module(mname)
-    o = getattr(m, name)
-    warnings.warn(
-        f"'mpservice.multiprocessing.{name}' is deprecated in 0.14.3 and may be removed in the future. Please import from '{mname}' instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return o
