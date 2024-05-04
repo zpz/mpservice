@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.15.1] - 2024-05-03
+
+- `mpservice.mpserver.Worker.__init__` loses parameter `batch_size_log_cadence` and gets new parameter `cpu_affinity`,
+  which also becomes an attribute of the worker instance.
+
+
 ## [0.15.0] - 2024-04-15
 
 - Removed some deprecated code.
@@ -139,7 +145,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Do not raise exception if a ``mpservice.multiprocessing.context.SpawnProcess`` was terminated by ``.terminate()``.
   The previous behavior tends to raise exception when a ``ServerProcess`` shuts down.
 - ``mpservice.mpserver.Worker`` adds support for ``preprocess``.
-- Revised implementation of ``mpservice.multiprocessing.context.SpawnProcess`` to use a Future to supper ``wait`` and ``as_completed``.
+- Revised implementation of ``mpservice.multiprocessing.context.SpawnProcess`` to use a Future to support ``wait`` and ``as_completed``.
 - New functions ``mpservice.multiprocessing.{wait, as_completed}``.
 - Renamed ``mpservice._streamer.{IterQueue, IterProcessQueue, AsyncIterQueue}`` to ``{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.
 - Finetune implementation of ``mpservice._stramer.{IterableQueue, IterableProcessQueue, AsyncIterableQueue}``.

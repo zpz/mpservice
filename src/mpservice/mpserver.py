@@ -207,7 +207,7 @@ class Worker(ABC):
         worker_index: int,
         batch_size: int | None = None,
         batch_wait_time: float | None = None,
-        batch_size_log_cadence: int = 1_000_000,
+        cpu_affinity: int | list[int] | None = None,
     ):
         """
         The main concern here is to set up controls for "batching" via
@@ -285,12 +285,13 @@ class Worker(ABC):
             otherwise the only valid value is 0.
 
             If ``batch_size > 1``, then ``batch_wait_time`` is 0.01 by default.
-        batch_size_log_cadence
-            Log batch size statistics every this many batches. If ``None``, this log is turned off.
 
-            This log is for debugging and development purposes.
+        cpu_affinity
+            Which CPUs this worker process is going to be "pinned" to.
+            If `None`, no pinning.
 
-            This is ignored if ``batch_size=0``.
+            If this worker is used in a `ThreadServlet`, this parameter is not specified in the call,
+            and its value is `None` and is unused.
         """
         if batch_size is None or batch_size == 0:
             batch_size = 0
@@ -309,9 +310,22 @@ class Worker(ABC):
 
         self.worker_index = worker_index
         self.batch_size = batch_size
-        self.batch_size_log_cadence = batch_size_log_cadence
+        self.batch_size_log_cadence = 1_000_000
+        # Log batch size statistics every this many batches. If ``None``, this log is turned off.
+        # This log is for debugging and development purposes.
+        # This is ignored if ``batch_size=0``.
+
         self.batch_wait_time = batch_wait_time
         self.name = f'{multiprocessing.current_process().name}-{threading.current_thread().name}'
+
+        if cpu_affinity is not None:
+            if isinstance(cpu_affinity, int):
+                cpu_affinity = [cpu_affinity]
+            else:
+                cpu_affinity = sorted(set(cpu_affinity))
+            os.sched_setaffinity(0, cpu_affinity)
+        self.cpu_affinity = cpu_affinity
+        # If `None`, `os.sched_getaffinity` will return all CPUs.
 
         self.preprocess: Callable[[Any], Any]
         """
@@ -838,6 +852,7 @@ class ProcessServlet(Servlet):
                     'q_in': q_in,
                     'q_out': q_out,
                     'worker_index': worker_index,
+                    'cpu_affinity': cpu,
                     **self._init_kwargs,
                 },
             )
@@ -845,10 +860,6 @@ class ProcessServlet(Servlet):
             name = q_out.get()
             if name is None:
                 p.join()  # this will raise exception b/c worker __init__ failed
-            if cpu is not None:
-                if isinstance(cpu, int):
-                    cpu = [cpu]
-                os.sched_setaffinity(p.pid, cpu)
             self._workers.append(p)
             logger.debug('   ... worker <%s> is ready', name)
 
