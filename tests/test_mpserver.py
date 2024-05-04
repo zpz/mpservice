@@ -1,4 +1,5 @@
 import asyncio
+import os
 import pickle
 import random
 import time
@@ -766,3 +767,19 @@ def test_ServerBacklogFull():
             sleep(1)
             print('backlog after sleep')
             pprint(service.debug_info()['backlog'])
+
+
+class CpuWorker(Worker):
+    def call(self, x):
+        cpus = os.sched_getaffinity(0)
+        if self.cpu_affinity is None:
+            return len(cpus) == os.cpu_count()
+        return self.cpu_affinity == sorted(cpus)
+    
+
+def test_affinity():
+    with Server(ProcessServlet(CpuWorker, cpus=1)) as server:
+        assert server.call(1)
+
+    with Server(ProcessServlet(CpuWorker, cpus=[[0, 1, 3]])) as server:
+        assert server.call(1)
