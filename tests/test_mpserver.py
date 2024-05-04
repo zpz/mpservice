@@ -775,7 +775,7 @@ class CpuWorker(Worker):
         if self.cpu_affinity is None:
             return len(cpus) == os.cpu_count()
         return self.cpu_affinity == sorted(cpus)
-    
+
 
 def test_affinity():
     with Server(ProcessServlet(CpuWorker, cpus=1)) as server:

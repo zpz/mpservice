@@ -317,7 +317,7 @@ class Worker(ABC):
 
         self.batch_wait_time = batch_wait_time
         self.name = f'{multiprocessing.current_process().name}-{threading.current_thread().name}'
-        
+
         if cpu_affinity is not None:
             if isinstance(cpu_affinity, int):
                 cpu_affinity = [cpu_affinity]
