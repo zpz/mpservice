@@ -1,3 +1,5 @@
+# Use this script to verify that ctl-C can cleanly stop the service.
+
 import asyncio
 import random
 import time

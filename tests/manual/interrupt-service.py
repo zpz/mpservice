@@ -1,3 +1,5 @@
+# Use this script to verify that ctl-C can cleanly stop the service.
+
 import asyncio
 import random
 import time
@@ -30,6 +32,16 @@ class Tripler(Worker):
 
 
 
+class Sleeper(Worker):
+    def __init__(self, *, batch_size=5, batch_wait_time=0.01, **kwargs):
+        super().__init__(batch_size=batch_size, batch_wait_time=batch_wait_time, **kwargs)
+        self.num_stream_threads = 4
+
+    def call(self, x):
+        time.sleep(0.5)
+        return x
+
+
 async def stop(request):
     await stop_server()
     return PlainTextResponse("server shutdown as requested", status_code=200)
@@ -41,6 +53,7 @@ async def lifespan(app):
         SequentialServlet(
             ProcessServlet(Doubler, cpus=[1, 2]),
             ProcessServlet(Tripler, cpus=[2, 3, 4], batch_size=100, batch_wait_time=0.01),
+            ProcessServlet(Sleeper, cpus=[0]),
         ),
         capacity=256,
     )
