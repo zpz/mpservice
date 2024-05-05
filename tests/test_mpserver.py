@@ -800,7 +800,7 @@ class IoWorker(Worker):
             else:
                 y.append(v * 2)
         return y
-    
+
 
 def test_worker_stream():
     with Server(ProcessServlet(IoWorker, batch_size=3, batch_wait_time=0.01)) as server:
@@ -832,4 +832,3 @@ def test_worker_stream():
                 assert isinstance(w, ValueError)
             else:
                 assert w == v * 2
-

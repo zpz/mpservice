@@ -39,11 +39,11 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
+from ._streamer import Parmapper
 from .multiprocessing import MP_SPAWN_CTX
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
-from ._streamer import Parmapper
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -421,7 +421,14 @@ class Worker(ABC):
             #
             # To use this branch, a subclass needs to set `self.num_stream_threads` appropriately
             # after calling `super().__init__`. See tests for an example.
-            yield from Parmapper(xx, self.call, executor='thread', num_workers=self.num_stream_threads, return_exceptions=True, parmapper_name=f"{self.__class__.__name__}.stream")
+            yield from Parmapper(
+                xx,
+                self.call,
+                executor='thread',
+                num_workers=self.num_stream_threads,
+                return_exceptions=True,
+                parmapper_name=f'{self.__class__.__name__}.stream',
+            )
 
     def cleanup(self, exc=None):
         """
