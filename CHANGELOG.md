@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.15.2] - in progress
+## [0.15.2] - 2024-05-05
 
 - `mpservice.mpserver.Worker` gets new method `stream` for some special use cases.
 

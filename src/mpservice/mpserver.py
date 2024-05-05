@@ -402,6 +402,10 @@ class Worker(ABC):
         The background loop in :meth:`start` calls this method and does not
         call :meth:`call` directly.
 
+        This method is provided mainly for the special use cases where a subclass wants to
+        set `self.num_stream_threads` to a positive number, thereby use threading concurrency
+        in this method.
+
         If a subclass re-implements this method without calling :meth:`call`,
         then it needs to provide a dummy body for :meth:`call` to satisfy the requirement
         of `abstractmethod`; the method :meth:`call` is then ignored.
@@ -472,7 +476,7 @@ class Worker(ABC):
 
     def _start_single(self, *, q_in, q_out):
         def get_input(q_uid):
-            batch_size = self.batch_size
+            batched = self.batch_size > 0
             preprocess = getattr(self, 'preprocess', None)
 
             while True:
@@ -499,31 +503,25 @@ class Worker(ABC):
                     q_out.put((uid, x))
                     continue
 
-                if batch_size:
-                    q_uid.put([uid])
+                q_uid.put(uid)
+                if batched:
                     yield [x]
                 else:
-                    q_uid.put(uid)
                     yield x
 
         q_uid = queue.SimpleQueue()
-        yy = self.stream(get_input(q_uid))
-        if self.batch_size:
-            for y in yy:
-                y = y[0]
-                if isinstance(y, Exception):
-                    y = RemoteException(y)
-                    # There are opportunities to print traceback
-                    # and details later. Be brief on the logging here.
-                uid = q_uid.get()[0]
-                q_out.put((uid, y))
-                # Element in the output queue is always a 2-tuple, that is, (ID, value).
-        else:
-            for y in yy:
-                if isinstance(y, Exception):
-                    y = RemoteException(y)
-                uid = q_uid.get()
-                q_out.put((uid, y))
+        batched = self.batch_size > 0
+        for y in self.stream(get_input(q_uid)):
+            if isinstance(y, Exception):
+                y = RemoteException(y)
+                # There are opportunities to print traceback
+                # and details later. Be brief on the logging here.
+            else:
+                if batched:
+                    y = y[0]
+            uid = q_uid.get()
+            q_out.put((uid, y))
+            # Element in the output queue is always a 2-tuple, that is, (ID, value).
 
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
@@ -571,7 +569,6 @@ class Worker(ABC):
                     batch_size_mean = 0.0
 
                 uids = q_uids.get()
-                n = len(uids)
                 if isinstance(yy, Exception):
                     err = RemoteException(yy)
                     for u in uids:
@@ -582,6 +579,7 @@ class Worker(ABC):
                 # Each element in the output queue is a (ID, value) tuple.
 
                 if batch_size_log_cadence:
+                    n = len(uids)
                     n_batches += 1
                     batch_size_max = max(batch_size_max, n)
                     batch_size_min = min(batch_size_min, n)
