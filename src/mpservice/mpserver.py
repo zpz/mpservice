@@ -389,18 +389,18 @@ class Worker(ABC):
         raise NotImplementedError
 
     def stream(self, xx: Iterable) -> Iterator:
-        '''
+        """
         `xx` is an iterable of input `x` to :meth:`call`.
         This function yields the results of :meth:`call` for the elements of `xx`,
         in the right order. If any invocation of :meth:`call` raises an exception,
         the exception object is yielded.
 
         In very special situations, a subclass may customize this method to use multiple
-        threads to process `xx`. Usually, the method :meth:`call` is the workhorse 
+        threads to process `xx`. Usually, the method :meth:`call` is the workhorse
         in the threads. However, if the implementation of :meth:`stream` does not use :meth:`call`
         at all, the subclass just needs to provide a dummy body for :meth:`call` to meet
         the requirement of `abstractmethd`, and the method :meth:`call` will be ignored.
-        '''
+        """
         for x in xx:
             try:
                 y = self.call(x)
@@ -533,7 +533,6 @@ class Worker(ABC):
 
                 q_uids.put(us)
                 yield batch
-
 
         n_batches = 0
         batch_size_log_cadence = self.batch_size_log_cadence
