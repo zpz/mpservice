@@ -403,7 +403,7 @@ class Worker(ABC):
         call :meth:`call` directly.
 
         This method is provided mainly for the special use cases where a subclass wants to
-        set `self.num_stream_threads` to a positive number and use threading concurrency
+        set `self.num_stream_threads` to a positive number, thereby use threading concurrency
         in this method.
 
         If a subclass re-implements this method without calling :meth:`call`,
