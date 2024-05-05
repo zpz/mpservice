@@ -43,6 +43,7 @@ from .multiprocessing import MP_SPAWN_CTX
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
+from ._streamer import Parmapper
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -327,6 +328,9 @@ class Worker(ABC):
         self.cpu_affinity = cpu_affinity
         # If `None`, `os.sched_getaffinity` will return all CPUs.
 
+        self.num_stream_threads: int = 0
+        # See :meth:`stream`.
+
         self.preprocess: Callable[[Any], Any]
         """
         If a subclass has a method ``preprocess`` or an attribute ``preprocess`` that is a free-standing
@@ -395,18 +399,29 @@ class Worker(ABC):
         in the right order. If any invocation of :meth:`call` raises an exception,
         the exception object is yielded.
 
-        In very special situations, a subclass may customize this method to use multiple
-        threads to process `xx`. Usually, the method :meth:`call` is the workhorse
-        in the threads. However, if the implementation of :meth:`stream` does not use :meth:`call`
-        at all, the subclass just needs to provide a dummy body for :meth:`call` to meet
-        the requirement of `abstractmethd`, and the method :meth:`call` will be ignored.
+        If a subclass reimplements this method without calling :meth:`call`,
+        then it needs to provide a dummy body for :meth:`call` to satisfy the requirement
+        of `abstractmethod`; the method :meth:`call` is then ignored.
         """
-        for x in xx:
-            try:
-                y = self.call(x)
-            except Exception as e:
-                y = e
-            yield y
+        if self.num_stream_threads < 1:
+            for x in xx:
+                try:
+                    y = self.call(x)
+                except Exception as e:
+                    y = e
+                yield y
+        else:
+            # This branch runs :meth:`call` in threads under these condictions:
+            #
+            #   - the main operations in :meth:`call` is IO bound that releases the GIL
+            #   - the threads share some common context that is set up in this worker's :meth:`__init__`
+            #
+            # If the second condition is not met, one could just use a :class:`ThreadServlet` with multiple
+            # thread workers that run independently of each other.
+            #
+            # To use this branch, a subclass needs to set `self.num_stream_threads` appropriately
+            # after calling `super().__init__`. See tests for an example.
+            yield from Parmapper(xx, self.call, executor='thread', num_workers=self.num_stream_threads, return_exceptions=True, parmapper_name=f"{self.__class__.__name__}.stream")
 
     def cleanup(self, exc=None):
         """

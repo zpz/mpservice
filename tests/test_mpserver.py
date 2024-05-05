@@ -783,3 +783,53 @@ def test_affinity():
 
     with Server(ProcessServlet(CpuWorker, cpus=[[0, 1, 3]])) as server:
         assert server.call(1)
+
+
+class IoWorker(Worker):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.num_stream_threads = 4
+        assert self.batch_size > 0
+
+    def call(self, x):
+        time.sleep(1)
+        y = []
+        for v in x:
+            if v == 13:
+                raise ValueError(v)
+            else:
+                y.append(v * 2)
+        return y
+    
+
+def test_worker_stream():
+    with Server(ProcessServlet(IoWorker, batch_size=3, batch_wait_time=0.01)) as server:
+        t0 = perf_counter()
+        assert server.call(3) == 6
+        assert 1 < perf_counter() - t0 < 1.1
+
+        t0 = perf_counter()
+        assert list(server.stream([1, 2, 3])) == [2, 4, 6]
+        assert 1 < perf_counter() - t0 < 1.1
+
+        x = list(range(12))
+        y = [v * 2 for v in x]
+        t0 = perf_counter()
+        assert list(server.stream(x)) == y
+        assert 1 < perf_counter() - t0 < 1.1
+        # Although there were 4 batches, the total wait time is less than
+        # 2x the single wait time thanks to concurrency.
+
+        x = range(20)
+        t0 = perf_counter()
+        y = list(server.stream(x, return_exceptions=True))
+        assert 2 < perf_counter() - t0 < 2.1
+        # There were 7 batches; the total wait time is less then
+        # 3x the single wait time thanks to the 4 threads.
+        for v, w in zip(x, y):
+            if v in (12, 13, 14):
+                # Single element corrupts the batch.
+                assert isinstance(w, ValueError)
+            else:
+                assert w == v * 2
+

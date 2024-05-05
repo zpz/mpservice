@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.15.2] - in progress
 
-- `mpservice.mpserver.Worker` gets new method `stream` for special and rare needs.
+- `mpservice.mpserver.Worker` gets new method `stream` for some special use cases.
 
 
 ## [0.15.1] - 2024-05-03
