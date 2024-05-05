@@ -399,7 +399,10 @@ class Worker(ABC):
         in the right order. If any invocation of :meth:`call` raises an exception,
         the exception object is yielded.
 
-        If a subclass reimplements this method without calling :meth:`call`,
+        The background loop in :meth:`start` calls this method and does not
+        call :meth:`call` directly.
+
+        If a subclass re-implements this method without calling :meth:`call`,
         then it needs to provide a dummy body for :meth:`call` to satisfy the requirement
         of `abstractmethod`; the method :meth:`call` is then ignored.
         """
