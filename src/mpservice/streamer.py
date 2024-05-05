@@ -254,9 +254,9 @@ which controls how long to wait before yielding an under-sized batch.
 from ._streamer import (
     Batcher,
     EagerBatcher,
+    Parmapper,
     Stream,
     Unbatcher,
-    Parmapper,
     isasynciterable,
     isiterable,
     tee,
