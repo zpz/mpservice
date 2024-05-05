@@ -388,6 +388,26 @@ class Worker(ABC):
         """
         raise NotImplementedError
 
+    def stream(self, xx: Iterable) -> Iterator:
+        '''
+        `xx` is an iterable of input `x` to :meth:`call`.
+        This function yields the results of :meth:`call` for the elements of `xx`,
+        in the right order. If any invocation of :meth:`call` raises an exception,
+        the exception object is yielded.
+
+        In very special situations, a subclass may customize this method to use multiple
+        threads to process `xx`. Usually, the method :meth:`call` is the workhorse 
+        in the threads. However, if the implementation of :meth:`stream` does not use :meth:`call`
+        at all, the subclass just needs to provide a dummy body for :meth:`call` to meet
+        the requirement of `abstractmethd`, and the method :meth:`call` will be ignored.
+        '''
+        for x in xx:
+            try:
+                y = self.call(x)
+            except Exception as e:
+                y = e
+            yield y
+
     def cleanup(self, exc=None):
         """
         This method is called when the object exits its service loop and stops.
@@ -426,45 +446,59 @@ class Worker(ABC):
             self.cleanup()
 
     def _start_single(self, *, q_in, q_out):
-        batch_size = self.batch_size
-        preprocess = getattr(self, 'preprocess', None)
+        def get_input(q_uid):
+            batch_size = self.batch_size
+            preprocess = getattr(self, 'preprocess', None)
 
-        while True:
-            z = q_in.get()
-            if z is None:
-                q_in.put(z)  # broadcast to one fellow worker
-                q_out.put(z)
-                break
+            while True:
+                z = q_in.get()
+                if z is None:
+                    q_in.put(z)  # broadcast to one fellow worker
+                    q_out.put(z)
+                    break
 
-            uid, x = z
+                uid, x = z
 
-            if preprocess is not None:
-                try:
-                    x = preprocess(x)
-                except Exception as e:
-                    x = e
+                if preprocess is not None:
+                    try:
+                        x = preprocess(x)
+                    except Exception as e:
+                        x = e
 
-            # If it's an exception, short-circuit to output.
-            if isinstance(
-                x, Exception
-            ):  # `RemteException` is not a subclass of `Exception`.
-                x = RemoteException(x)
-            if isinstance(x, RemoteException):
-                q_out.put((uid, x))
-                continue
+                # If it's an exception, short-circuit to output.
+                if isinstance(
+                    x, Exception
+                ):  # `RemteException` is not a subclass of `Exception`.
+                    x = RemoteException(x)
+                if isinstance(x, RemoteException):
+                    q_out.put((uid, x))
+                    continue
 
-            try:
                 if batch_size:
-                    y = self.call([x])[0]
+                    q_uid.put([uid])
+                    yield [x]
                 else:
-                    y = self.call(x)
-            except Exception as e:
-                # There are opportunities to print traceback
-                # and details later. Be brief on the logging here.
-                y = RemoteException(e)
+                    q_uid.put(uid)
+                    yield x
 
-            q_out.put((uid, y))
-            # Element in the output queue is always a 2-tuple, that is, (ID, value).
+        q_uid = queue.SimpleQueue()
+        yy = self.stream(get_input(q_uid))
+        if self.batch_size:
+            for y in yy:
+                y = y[0]
+                if isinstance(y, Exception):
+                    y = RemoteException(y)
+                    # There are opportunities to print traceback
+                    # and details later. Be brief on the logging here.
+                uid = q_uid.get()[0]
+                q_out.put((uid, y))
+                # Element in the output queue is always a 2-tuple, that is, (ID, value).
+        else:
+            for y in yy:
+                if isinstance(y, Exception):
+                    y = RemoteException(y)
+                uid = q_uid.get()
+                q_out.put((uid, y))
 
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
@@ -485,16 +519,8 @@ class Worker(ABC):
         )
         collector_thread.start()
 
-        n_batches = 0
-        batch_size_log_cadence = self.batch_size_log_cadence
-
-        try:
+        def get_input(q_uids):
             while True:
-                if batch_size_log_cadence and n_batches == 0:
-                    batch_size_max = -1
-                    batch_size_min = 1000000
-                    batch_size_mean = 0.0
-
                 batch = self._get_input_batch()
                 if batch is None:
                     q_in.put(batch)  # broadcast to fellow workers.
@@ -504,16 +530,30 @@ class Worker(ABC):
                 # The batch is a list of (ID, value) tuples.
                 us = [v[0] for v in batch]
                 batch = [v[1] for v in batch]
-                n = len(batch)
 
-                try:
-                    results = self.call(batch)
-                except Exception as e:
-                    err = RemoteException(e)
-                    for u in us:
+                q_uids.put(us)
+                yield batch
+
+
+        n_batches = 0
+        batch_size_log_cadence = self.batch_size_log_cadence
+        q_uids = queue.SimpleQueue()
+
+        try:
+            for yy in self.stream(get_input(q_uids)):
+                if batch_size_log_cadence and n_batches == 0:
+                    batch_size_max = -1
+                    batch_size_min = 1000000
+                    batch_size_mean = 0.0
+
+                uids = q_uids.get()
+                n = len(uids)
+                if isinstance(yy, Exception):
+                    err = RemoteException(yy)
+                    for u in uids:
                         q_out.put((u, err))
                 else:
-                    for z in zip(us, results):
+                    for z in zip(uids, yy):
                         q_out.put(z)
                 # Each element in the output queue is a (ID, value) tuple.
 
