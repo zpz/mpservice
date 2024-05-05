@@ -254,6 +254,7 @@ which controls how long to wait before yielding an under-sized batch.
 from ._streamer import (
     Batcher,
     EagerBatcher,
+    Parmapper,
     Stream,
     Unbatcher,
     isasynciterable,
@@ -267,6 +268,7 @@ __all__ = [
     'Batcher',
     'Unbatcher',
     'EagerBatcher',
+    'Parmapper',
     'isiterable',
     'isasynciterable',
 ]
