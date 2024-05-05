@@ -476,7 +476,7 @@ class Worker(ABC):
 
     def _start_single(self, *, q_in, q_out):
         def get_input(q_uid):
-            batched = (self.batch_size > 0)
+            batched = self.batch_size > 0
             preprocess = getattr(self, 'preprocess', None)
 
             while True:
@@ -510,7 +510,7 @@ class Worker(ABC):
                     yield x
 
         q_uid = queue.SimpleQueue()
-        batched = (self.batch_size > 0)
+        batched = self.batch_size > 0
         for y in self.stream(get_input(q_uid)):
             if isinstance(y, Exception):
                 y = RemoteException(y)
