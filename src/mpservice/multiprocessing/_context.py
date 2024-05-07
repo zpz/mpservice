@@ -443,6 +443,14 @@ class SyncManager(multiprocessing.managers.SyncManager):
         cpu: int | list[int] | None = None,
         **kwargs,
     ):
+        """
+        Parameters
+        ----------
+        name
+            Name of the server process. If ``None``, a default name will be created.
+        cpu
+            Specify CPU pinning for the server process.
+        """
         super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
         self.start()
         if name:

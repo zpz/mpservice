@@ -320,7 +320,7 @@ from multiprocessing.managers import (
 )
 from traceback import format_exc
 
-from ._context import MP_SPAWN_CTX
+from ._context import MP_SPAWN_CTX, SyncManager
 from .remote_exception import RemoteException
 
 
@@ -397,7 +397,9 @@ def _callmethod(self, methodname, args=(), kwds={}):
 
 
 BaseProxy._callmethod = _callmethod
-
+# TODO: this global hack is undesirable.
+# I've failed to avoid this. The main difficulty that is hard to work around
+# in the hacked code is that `HostedProxy` should not call `decref`.
 
 class PickleThroughProxy(BaseProxy):
     """
@@ -684,7 +686,7 @@ class _ProcessServer(multiprocessing.managers.Server):
         return super().create(c, typeid, *args, **kwds)
 
 
-class ServerProcess(multiprocessing.managers.SyncManager):
+class ServerProcess(SyncManager):
     # In each new thread or process, a proxy object will create a new
     # connection to the server process (see``multiprocessing.managers.Server.accepter``,
     # ...,
@@ -732,22 +734,8 @@ class ServerProcess(multiprocessing.managers.SyncManager):
         The call ``server.Worker(...)`` returns a "proxy" to that object; the proxy is going to be used
         from other processes or threads to communicate with the real object residing inside the server process.
 
-        .. versionchanged:: 0.13.1
-            Now the signature is consistent with that of :meth:`multiprocessing.managers.BaseManager.register`.
-
         .. note:: This method must be called before a :class:`ServerProcess` object is "started".
         """
-        if not isinstance(typeid, str):
-            assert callable is None
-            assert not kwargs
-            callable = typeid
-            typeid = callable.__name__
-            warnings.warn(
-                'the signature of ``register`` has changed; now the first argument should be ``typeid``, which is a str',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if typeid in cls._registry:
             warnings.warn(
                 '"%s" is already registered; the existing registry is being overwritten.'
@@ -755,35 +743,8 @@ class ServerProcess(multiprocessing.managers.SyncManager):
             )
         super().register(typeid=typeid, callable=callable, **kwargs)
 
-    def __init__(
-        self,
-        *,
-        cpu: int | list[int] | None = None,
-        name: str | None = None,
-        **kwargs,
-    ):
-        """
-        Parameters
-        ----------
-        name
-            Name of the server process. If ``None``, a default name will be created.
-        cpu
-            Specify CPU pinning for the server process.
-        """
-        super().__init__(ctx=MP_SPAWN_CTX, **kwargs)
-        self._name = name
-        if isinstance(cpu, int):
-            cpu = [cpu]
-        self._cpu = cpu
-
     def __enter__(self):
         super().__enter__()
-        if self._name:
-            self._process.name = self._name
-
-        if self._cpu is not None:
-            os.sched_setaffinity(self._process.pid, self._cpu)
-
         self._memoryblock_proxies = weakref.WeakValueDictionary()
         return self
 
