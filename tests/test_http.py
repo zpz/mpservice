@@ -14,8 +14,9 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
-from zpz.logging import config_logger
+from zpz.logging import config_logger, unuse_console_handler
 
+unuse_console_handler()
 config_logger(with_thread_name=True, with_process_name=True)
 
 logger = getLogger('test')

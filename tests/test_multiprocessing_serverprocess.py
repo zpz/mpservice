@@ -2,11 +2,19 @@ import multiprocessing as mp
 import threading
 import time
 from multiprocessing import active_children
+import logging
+from traceback import print_exc
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
 from mpservice.multiprocessing.server_process import MemoryBlock, ServerProcess, hosted
 from mpservice.threading import Thread
+from zpz.logging import unuse_console_handler, config_logger
+
+unuse_console_handler()
+config_logger()
+
+logger = logging.getLogger(__name__)
 
 
 class Doubler:
@@ -138,6 +146,36 @@ def test_manager():
 
     with pytest.warns(UserWarning):
         ServerProcess.register('Doubler', Doubler)  # this will trigger a warning log.
+
+
+
+def test_manager_error():
+    with pytest.raises(TypeError):
+        with ServerProcess() as manager:
+            doubler = manager.Doubler('a')
+            assert doubler.scale(3) == 6
+            assert doubler.scale('a') == 'aa'
+            try:
+                doubler.scale(None)
+            except TypeError as e:
+                print()
+                print()
+                print('---- logger.exception ----')
+                logger.exception(e)
+                print('----- end of log ----')
+                print()
+                print()
+                print('---- logger.error ----')
+                logger.error(e)
+                print('----- end of log ----')
+                print()
+                print()
+                print('---- print exc ----')
+                print_exc()
+                print('---- end print exc ----')
+                print()
+                print()
+                raise
 
 
 def worker(sleeper, n):

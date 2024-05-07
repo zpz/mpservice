@@ -321,6 +321,8 @@ from multiprocessing.managers import (
 from traceback import format_exc
 
 from ._context import MP_SPAWN_CTX
+from .remote_exception import RemoteException
+
 
 __all__ = [
     'ServerProcess',
@@ -567,7 +569,11 @@ class _ProcessServer(multiprocessing.managers.Server):
                 try:
                     res = function(*args, **kwds)
                 except Exception as e:
-                    msg = ('#ERROR', e)
+
+                    # FIX
+                    # msg = ('#ERROR', e)
+                    msg = ('#ERROR', RemoteException(e))
+
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if typeid:
