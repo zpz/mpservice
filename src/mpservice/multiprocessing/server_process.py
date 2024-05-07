@@ -323,7 +323,6 @@ from traceback import format_exc
 from ._context import MP_SPAWN_CTX, SyncManager
 from .remote_exception import RemoteException
 
-
 __all__ = [
     'ServerProcess',
     'MemoryBlock',
@@ -400,6 +399,7 @@ BaseProxy._callmethod = _callmethod
 # TODO: this global hack is undesirable.
 # I've failed to avoid this. The main difficulty that is hard to work around
 # in the hacked code is that `HostedProxy` should not call `decref`.
+
 
 class PickleThroughProxy(BaseProxy):
     """
@@ -571,7 +571,6 @@ class _ProcessServer(multiprocessing.managers.Server):
                 try:
                     res = function(*args, **kwds)
                 except Exception as e:
-
                     # FIX
                     # msg = ('#ERROR', e)
                     msg = ('#ERROR', RemoteException(e))

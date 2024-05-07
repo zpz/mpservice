@@ -1,15 +1,15 @@
+import logging
 import multiprocessing as mp
 import threading
 import time
 from multiprocessing import active_children
-import logging
 from traceback import print_exc
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
 from mpservice.multiprocessing.server_process import MemoryBlock, ServerProcess, hosted
 from mpservice.threading import Thread
-from zpz.logging import unuse_console_handler, config_logger
+from zpz.logging import config_logger, unuse_console_handler
 
 unuse_console_handler()
 config_logger()
@@ -146,7 +146,6 @@ def test_manager():
 
     with pytest.warns(UserWarning):
         ServerProcess.register('Doubler', Doubler)  # this will trigger a warning log.
-
 
 
 def test_manager_error():
