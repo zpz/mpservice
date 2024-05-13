@@ -305,22 +305,19 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
 import multiprocessing.queues
-import os
 import sys
 import threading
-import traceback
-import warnings
 import weakref
 from multiprocessing import util
 from multiprocessing.managers import (
     BaseProxy,
     Token,
-    convert_to_error,
     dispatch,
+    listener_client,
 )
 from traceback import format_exc
 
-from ._context import MP_SPAWN_CTX, SyncManager
+from ._context import SyncManager
 from .remote_exception import RemoteException
 
 __all__ = [
@@ -330,202 +327,6 @@ __all__ = [
     'hosted',
 ]
 
-
-# This is based on the 3.10 version.
-def _callmethod(self, methodname, args=(), kwds={}):
-    """
-    Try to call a method of the referent and return a copy of the result
-    """
-    for tries in (0, 1):
-        try:
-            try:
-                conn = self._tls.connection
-            except AttributeError:
-                util.debug(
-                    'thread %r does not own a connection',
-                    threading.current_thread().name,
-                )
-                self._connect()
-                conn = self._tls.connection
-
-            conn.send((self._id, methodname, args, kwds))
-            break
-        except BrokenPipeError as e:
-            # In a few cases I saw ``BrokenPipeError: [Errno 32] Broken pipe``.
-            # A workaround is described here:
-            # https://stackoverflow.com/q/3649458/6178706
-
-            if tries == 0:
-                addr = self._token.address
-                if addr in self._address_to_local:
-                    del self._address_to_local[addr][0].connection
-                    traceback.print_exc()
-                    print(f'Retry once on "{e!r}"')
-                    continue
-            raise
-
-    kind, result = conn.recv()
-
-    if kind == '#RETURN':
-        return result
-    elif kind == '#PROXY':
-        exposed, token = result
-        if token.typeid == 'hosted':
-            return HostedProxy(
-                address=self._token.address,
-                serializer=self._serializer,
-                manager=self._manager,
-                Client=self._Client,
-                authkey=self._authkey,
-                data=exposed,
-            )
-
-        proxytype = self._manager._registry[token.typeid][-1]
-        token.address = self._token.address
-        proxy = proxytype(
-            token,
-            self._serializer,
-            manager=self._manager,
-            authkey=self._authkey,
-            exposed=exposed,
-        )
-        conn = self._Client(token.address, authkey=self._authkey)
-        dispatch(conn, None, 'decref', (token.id,))
-        return proxy
-    raise convert_to_error(kind, result)
-
-
-BaseProxy._callmethod = _callmethod
-# TODO: this global hack is undesirable.
-# I've failed to avoid this. The main difficulty that is hard to work around
-# in the hacked code is that `HostedProxy` should not call `decref`.
-
-
-class PickleThroughProxy(BaseProxy):
-    """
-    With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
-    on the hosted object in the server process. Once the refcount of the hosted object
-    drops to 0, the object is discarded.
-
-    If a proxy object is put in a queue and is removed from the code scope, then this proxy
-    object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
-    of course does not contain a reference to the proxy object. This can lead to gabage collection
-    of the object hosted in the server process.
-
-    In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
-    This proxy classs is designed for this use case. It makes pickled data count as one reference
-    to the server-process-hosted object.
-    """
-
-    def __reduce__(self):
-        # The only sensible case of pickling this proxy object is for
-        # transfering this object between processes in a queue.
-        # (This proxy object is never pickled for storage.)
-        #
-        # Using ``MemoryBlock`` for example,
-        # it is possible that at some time the only "reference"
-        # to a certain shared memory block is in pickled form in
-        # a queue. For example,
-        #
-        #   # main process
-        #   with ServerProcess() as server:
-        #        q = server.Queue()
-        #        w = Process(target=..., args=(q, ))
-        #        w.start()
-        #
-        #        for _ in range(1000):
-        #           mem = server.MemoryBlock(100)
-        #           # ... computations ...
-        #           # ... write data into `mem` ...
-        #           q.put(mem)
-        #           ...
-        #
-        # During the loop, `mem` goes out of scope and only lives on in the queue.
-        # A main design goal is to prevent the ``MemoryBlock`` object in the server process
-        # from being garbage collected. This means we need to do some ref-counting hacks.
-
-        # Inc ref here to represent the pickled object in the queue.
-        # When unpickling, we do not inc ref again. In effect, we move the call
-        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
-        # for this object.
-
-        conn = self._Client(self._token.address, authkey=self._authkey)
-        dispatch(conn, None, 'incref', (self._id,))
-        # NOTE:
-        # calling ``self._incref()`` would not work because it adds another `_decref`;
-        # I don't totally understand that part.
-
-        func, args = super().__reduce__()
-        args[-1]['incref'] = False  # do not inc ref again during unpickling.
-        return RebuildPickleThroughProxy, (func, args)
-
-
-def RebuildPickleThroughProxy(func, args):
-    obj = func(*args)
-
-    # We have called ``incref`` in ``PickleThroughProxy.__reduce__``,
-    # i.e. prior to pickling,
-    # hence we don't call ``incref`` when
-    # reconstructing the proxy here during unpickling.
-    # However, we still need to set up calling of ``decref``
-    # when this reconstructed proxy is garbage collected.
-
-    # The code below is part of ``BaseProxy._incref``.
-    # ``BaseProxy.__init__`` does not do this.
-
-    obj._idset.add(obj._id)
-    state = obj._manager and obj._manager._state
-    obj._close = util.Finalize(
-        obj,
-        BaseProxy._decref,
-        args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
-        exitpriority=10,
-    )
-
-    return obj
-
-
-def HostedProxy(*, address, serializer, manager, Client, authkey=None, data):
-    def make_hosted(value: hosted):
-        ident, exposed = value.value
-        typeid = value.typeid
-
-        tok = Token(typeid, address, ident)
-        proxytype = manager._registry[typeid][-1]
-        proxy = proxytype(
-            tok, serializer, manager=manager, authkey=authkey, exposed=exposed
-        )
-        conn = Client(address, authkey=authkey)
-        dispatch(conn, None, 'decref', (ident,))
-        return proxy
-
-    def make_one(value):
-        if isinstance(value, hosted):
-            return make_hosted(value)
-        if isinstance(value, list):
-            return make_list(value)
-        if isinstance(value, dict):
-            return make_dict(value)
-        if isinstance(value, tuple):
-            return make_tuple(value)
-        return value
-
-    def make_list(value: list):
-        return [make_one(v) for v in value]
-
-    def make_dict(value: dict):
-        return {k: make_one(v) for k, v in value.items()}
-
-    def make_tuple(value: tuple):
-        return tuple(make_one(v) for v in value)
-
-    return make_one(data)
-
-
-class hosted:
-    def __init__(self, value, typeid: str = None):
-        self.value = value
-        self.typeid = typeid or type(value).__name__
 
 
 class _ProcessServer(multiprocessing.managers.Server):
@@ -671,11 +472,20 @@ class _ProcessServer(multiprocessing.managers.Server):
         def convert_tuple(value):
             return tuple(convert_one(v) for v in value)
 
-        return 0, convert_one(data)
-        # The first value, `0`, is in the spot of ``ident`` but is just a placeholder.
-        # The second value is the actual data and takes the spot of ``exposed``.
-        # Refer to ``Server.serve_client``.
-        # This data is received by ``BaseProxy._call_method``.
+        obj = convert_one(data)
+
+        # Replicate some code in `self.create` to inc refcount,
+        # to counter the `decref` that will be called in `BaseProxy._callmethod`
+        # upon receiving this response.
+        with self.mutex:
+            ident = '%x' % id(obj)
+            self.id_to_obj[ident] = (obj, set(), None)
+            if ident not in self.id_to_refcount:
+                self.id_to_refcount[ident] = 0
+        self.incref(c, ident)
+
+        return ident, obj
+
 
     def create(self, c, typeid, /, *args, **kwds):
         if typeid == 'hosted':
@@ -708,39 +518,27 @@ class ServerProcess(SyncManager):
     # the methods can't be ones that return proxy objects, because proxy objects would need a reference to
     # the "manager", while a proxy object does not carry its "manager" attribute during pickling.
 
+
+    # About the classmethod `register`
+
+    # Typically, ``callable`` is a class object (not class instance) and ``typeid`` is the calss's name.
+
+    # Suppose ``Worker`` is a class, then registering ``Worker`` will add a method
+    # named "Worker" to the class ``ServerProcess``. Later on a running ServerProcess object
+    # ``server``, calling::
+
+    #     server.Worker(*args, **kwargs)
+
+    # will run the callable ``Worker`` inside the server process, taking ``args`` and ``kwargs``
+    # as it normally would (since ``Worker`` is a class, treating it as a callable amounts to
+    # calling its ``__init__``). The object resulted from that call will stay in the server process.
+    # (In this, the call ``Worker(...)`` will result in an *instance* of the ``Worker`` class.)
+    # The call ``server.Worker(...)`` returns a "proxy" to that object; the proxy is going to be used
+    # from other processes or threads to communicate with the real object residing inside the server process.
+
+    # .. note:: This method must be called before a :class:`ServerProcess` object is "started".
+
     _Server = _ProcessServer
-
-    @classmethod
-    def register(
-        cls,
-        typeid: str,
-        callable=None,
-        **kwargs,
-    ):
-        """
-        Typically, ``callable`` is a class object (not class instance) and ``typeid`` is the calss's name.
-
-        Suppose ``Worker`` is a class, then registering ``Worker`` will add a method
-        named "Worker" to the class ``ServerProcess``. Later on a running ServerProcess object
-        ``server``, calling::
-
-            server.Worker(*args, **kwargs)
-
-        will run the callable ``Worker`` inside the server process, taking ``args`` and ``kwargs``
-        as it normally would (since ``Worker`` is a class, treating it as a callable amounts to
-        calling its ``__init__``). The object resulted from that call will stay in the server process.
-        (In this, the call ``Worker(...)`` will result in an *instance* of the ``Worker`` class.)
-        The call ``server.Worker(...)`` returns a "proxy" to that object; the proxy is going to be used
-        from other processes or threads to communicate with the real object residing inside the server process.
-
-        .. note:: This method must be called before a :class:`ServerProcess` object is "started".
-        """
-        if typeid in cls._registry:
-            warnings.warn(
-                '"%s" is already registered; the existing registry is being overwritten.'
-                % typeid
-            )
-        super().register(typeid=typeid, callable=callable, **kwargs)
 
     def __enter__(self):
         super().__enter__()
@@ -766,6 +564,139 @@ class ServerProcess(SyncManager):
         # ``self._memoryblock_proxies``.
 
         super().__exit__(*args)
+
+
+class PickleThroughProxy(BaseProxy):
+    """
+    With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
+    on the hosted object in the server process. Once the refcount of the hosted object
+    drops to 0, the object is discarded.
+
+    If a proxy object is put in a queue and is removed from the code scope, then this proxy
+    object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
+    of course does not contain a reference to the proxy object. This can lead to gabage collection
+    of the object hosted in the server process.
+
+    In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
+    This proxy classs is designed for this use case. It makes pickled data count as one reference
+    to the server-process-hosted object.
+    """
+
+    def __reduce__(self):
+        # The only sensible case of pickling this proxy object is for
+        # transfering this object between processes in a queue.
+        # (This proxy object is never pickled for storage.)
+        #
+        # Using ``MemoryBlock`` for example,
+        # it is possible that at some time the only "reference"
+        # to a certain shared memory block is in pickled form in
+        # a queue. For example,
+        #
+        #   # main process
+        #   with ServerProcess() as server:
+        #        q = server.Queue()
+        #        w = Process(target=..., args=(q, ))
+        #        w.start()
+        #
+        #        for _ in range(1000):
+        #           mem = server.MemoryBlock(100)
+        #           # ... computations ...
+        #           # ... write data into `mem` ...
+        #           q.put(mem)
+        #           ...
+        #
+        # During the loop, `mem` goes out of scope and only lives on in the queue.
+        # A main design goal is to prevent the ``MemoryBlock`` object in the server process
+        # from being garbage collected. This means we need to do some ref-counting hacks.
+
+        # Inc ref here to represent the pickled object in the queue.
+        # When unpickling, we do not inc ref again. In effect, we move the call
+        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
+        # for this object.
+
+        conn = self._Client(self._token.address, authkey=self._authkey)
+        dispatch(conn, None, 'incref', (self._id,))
+        # NOTE:
+        # calling ``self._incref()`` would not work because it adds another `_decref`;
+        # I don't totally understand that part.
+
+        func, args = super().__reduce__()
+        args[-1]['incref'] = False  # do not inc ref again during unpickling.
+        return RebuildPickleThroughProxy, (func, args)
+
+
+def RebuildPickleThroughProxy(func, args):
+    obj = func(*args)
+
+    # We have called ``incref`` in ``PickleThroughProxy.__reduce__``,
+    # i.e. prior to pickling,
+    # hence we don't call ``incref`` when
+    # reconstructing the proxy here during unpickling.
+    # However, we still need to set up calling of ``decref``
+    # when this reconstructed proxy is garbage collected.
+
+    # The code below is part of ``BaseProxy._incref``.
+    # ``BaseProxy.__init__`` does not do this.
+
+    obj._idset.add(obj._id)
+    state = obj._manager and obj._manager._state
+    obj._close = util.Finalize(
+        obj,
+        BaseProxy._decref,
+        args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
+        exitpriority=10,
+    )
+
+    return obj
+
+
+def HostedProxy(token, serializer, manager, authkey, exposed):
+    address = token.address
+    data = exposed
+
+    def make_hosted(value: hosted):
+        ident, exposed = value.value
+        typeid = value.typeid
+
+        tok = Token(typeid, address, ident)
+        proxytype = manager._registry[typeid][-1]
+        proxy = proxytype(
+            tok, serializer, manager=manager, authkey=authkey, exposed=exposed
+        )
+        Client = listener_client[serializer][1]
+        conn = Client(address, authkey=authkey)
+        dispatch(conn, None, 'decref', (ident,))
+        return proxy
+
+    def make_one(value):
+        if isinstance(value, hosted):
+            return make_hosted(value)
+        if isinstance(value, list):
+            return make_list(value)
+        if isinstance(value, dict):
+            return make_dict(value)
+        if isinstance(value, tuple):
+            return make_tuple(value)
+        return value
+
+    def make_list(value: list):
+        return [make_one(v) for v in value]
+
+    def make_dict(value: dict):
+        return {k: make_one(v) for k, v in value.items()}
+
+    def make_tuple(value: tuple):
+        return tuple(make_one(v) for v in value)
+
+    z = make_one(data)
+    return z
+
+
+class hosted:
+    def __init__(self, value, typeid: str = None):
+        self.value = value
+        self.typeid = typeid or type(value).__name__
+
 
 
 ServerProcess.register(
@@ -850,7 +781,7 @@ else:
             self.__class__._blocks_.remove(name)
 
         def __repr__(self):
-            return f'<{self.__class__.__name__} {self.name()}, size {self.size()}>'
+            return f'<{self.__class__.__name__} {self.name}, size {self.size}>'
 
     class MemoryBlockProxy(PickleThroughProxy):
         _exposed_ = ('_list_memory_blocks', '_name')

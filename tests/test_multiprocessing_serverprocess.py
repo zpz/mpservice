@@ -144,9 +144,6 @@ def test_manager():
 
             assert doubler3.get_mp() == doubler2.get_mp()
 
-    with pytest.warns(UserWarning):
-        ServerProcess.register('Doubler', Doubler)  # this will trigger a warning log.
-
 
 def test_manager_error():
     with pytest.raises(TypeError):
