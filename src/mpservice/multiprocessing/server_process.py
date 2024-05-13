@@ -328,7 +328,6 @@ __all__ = [
 ]
 
 
-
 class _ProcessServer(multiprocessing.managers.Server):
     # This is the cpython code in versions 3.7-3.12.
     # My fix is labeled "FIX".
@@ -486,7 +485,6 @@ class _ProcessServer(multiprocessing.managers.Server):
 
         return ident, obj
 
-
     def create(self, c, typeid, /, *args, **kwds):
         if typeid == 'hosted':
             assert not kwds
@@ -517,7 +515,6 @@ class ServerProcess(SyncManager):
     # As a result, if you pass a proxy object to another process and call its methods in the other process,
     # the methods can't be ones that return proxy objects, because proxy objects would need a reference to
     # the "manager", while a proxy object does not carry its "manager" attribute during pickling.
-
 
     # About the classmethod `register`
 
@@ -696,7 +693,6 @@ class hosted:
     def __init__(self, value, typeid: str = None):
         self.value = value
         self.typeid = typeid or type(value).__name__
-
 
 
 ServerProcess.register(
