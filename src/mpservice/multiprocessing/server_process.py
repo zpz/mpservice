@@ -318,8 +318,6 @@ class _ProcessServer(multiprocessing.managers.Server):
         send = conn.send
         id_to_obj = self.id_to_obj
 
-        Token = multiprocessing.managers.Token
-
         while not self.stop_event.is_set():
             try:
                 methodname = obj = None
