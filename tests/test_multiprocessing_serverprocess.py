@@ -7,7 +7,12 @@ from traceback import print_exc
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
-from mpservice.multiprocessing.server_process import MemoryBlock, MemoryBlockProxy, ServerProcess, managed, managed_list, managed_dict, managed_memoryblock
+from mpservice.multiprocessing.server_process import (
+    MemoryBlock,
+    ServerProcess,
+    managed_list,
+    managed_memoryblock,
+)
 from mpservice.threading import Thread
 from zpz.logging import config_logger, unuse_console_handler
 
@@ -352,4 +357,3 @@ def test_managed():
         del m
         data[0] = None
         data[2] = None
-

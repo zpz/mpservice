@@ -301,6 +301,7 @@ from __future__ import annotations
 
 import functools
 import multiprocessing
+
 # import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
@@ -313,10 +314,11 @@ from multiprocessing import util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
     BaseProxy,
+    DictProxy,
+    ListProxy,
     Token,
     dispatch,
     listener_client,
-    ListProxy, DictProxy,
 )
 from traceback import format_exc
 
@@ -325,7 +327,9 @@ from .remote_exception import RemoteException
 
 __all__ = [
     'ServerProcess',
-    'managed', 'managed_list', 'managed_dict',
+    'managed',
+    'managed_list',
+    'managed_dict',
 ]
 
 
@@ -434,7 +438,6 @@ class _ProcessServer(multiprocessing.managers.Server):
                 util.info(' ... exception was %r', e)
                 conn.close()
                 sys.exit(1)
-
 
 
 class ServerProcess(SyncManager):
@@ -556,7 +559,6 @@ def _picklethrough_reduce_(self):
     # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
     # for this object.
 
-
     conn = self._Client(self._token.address, authkey=self._authkey)
     dispatch(conn, None, 'incref', (self._id,))
     # TODO: not calling `self._incref` here b/c I don't understand the impact
@@ -584,7 +586,7 @@ def managed(obj, *, typeid: str = None):
     server = getattr(multiprocessing.current_process(), '_manager_server', None)
     if not server:
         return obj
-    
+
     if not typeid:
         typeid = type(obj).__name__
         callable, *_ = server.registry[typeid]  # If KeyError, it's user's fault
@@ -619,13 +621,16 @@ def managed(obj, *, typeid: str = None):
     #  (3) unpickling by `RebuildPickleThroughProxy` keeps ref count unchanged
 
 
-ServerProcess.register('ManagedList', callable=None, proxytype=ListProxy, create_method=False)
-ServerProcess.register('ManagedDict', callable=None, proxytype=DictProxy, create_method=False)
+ServerProcess.register(
+    'ManagedList', callable=None, proxytype=ListProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedDict', callable=None, proxytype=DictProxy, create_method=False
+)
 
 
 managed_list = functools.partial(managed, typeid='ManagedList')
 managed_dict = functools.partial(managed, typeid='ManagedDict')
-
 
 
 # Think through ref count dynamics in these scenarios:
@@ -640,8 +645,6 @@ managed_dict = functools.partial(managed, typeid='ManagedDict')
 #   - the `b` above gets passed to user again, i.e. client calls
 #
 #           z = data['a']
-
-
 
 
 try:
@@ -727,7 +730,9 @@ else:
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
 
-        def __init__(self, *args, name: str = None, size: int = None, incref=True, **kwargs):
+        def __init__(
+            self, *args, name: str = None, size: int = None, incref=True, **kwargs
+        ):
             super().__init__(*args, incref=incref, **kwargs)
             self._name = name
             self._size = size
@@ -789,7 +794,7 @@ else:
             You can call this method on any memoryblock proxy object.
             If for some reason there's no such proxy handy, you can create a tiny, temporary member block
             for this purpose:
-            
+
                 blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
             """
             blocks = self._callmethod('_list_memory_blocks')
@@ -800,9 +805,10 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
-    ServerProcess.register('ManagedMemoryBlock', None, proxytype=MemoryBlockProxy, create_method=False)
+    ServerProcess.register(
+        'ManagedMemoryBlock', None, proxytype=MemoryBlockProxy, create_method=False
+    )
 
     managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')
 
