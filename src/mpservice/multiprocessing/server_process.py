@@ -531,9 +531,9 @@ def rebuild_picklethrough_proxy(func, args):
 
 
 def managed(obj, *, typeid: str = None):
-    '''
+    """
     This function wraps part of a data structure, such as one value in a dict, as a proxy.
-    '''
+    """
     server = getattr(multiprocessing.current_process(), '_manager_server', None)
     if not server:
         return obj
