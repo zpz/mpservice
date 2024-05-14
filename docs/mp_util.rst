@@ -90,4 +90,4 @@ Server Process
 
 .. autoclass:: mpservice.multiprocessing.server_process.MemoryBlockProxy
 
-.. autoclass:: mpservice.multiprocessing.server_process.hosted
+.. autofunction:: mpservice.multiprocessing.server_process.managed
