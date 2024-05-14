@@ -354,6 +354,43 @@ def test_managed():
         assert len(data[1]['b']) == 1
         assert data[1]['b'][0] == 1
 
-        del m
-        data[0] = None
-        data[2] = None
+
+class Zoomer:
+    def __init__(self, factor):
+        self._factor = factor
+
+    def scale(self, x):
+        return x * self._factor
+    
+    def spawn(self, factor):
+        return factor
+    
+
+ServerProcess.register('Zoomer', Zoomer, method_to_typeid={'spawn': 'Zoomer'})
+
+
+def zoomer_worker(zoomer, factor):
+    assert zoomer.scale(3) == 3 * factor
+
+    spawn = zoomer.spawn(5)
+    assert spawn.scale(5) == 25
+
+    return True
+
+
+def test_proxy_in_other_process():
+    # This test would fail with the official code, but will pass in our code, which
+    # modifies the method `_ProcessServer.serve_client`.
+    with ServerProcess() as server:
+        zoomer = server.Zoomer(2)
+        assert zoomer.scale(10) == 20
+
+        spawn = zoomer.spawn(8)
+        assert spawn.scale(8) == 64
+
+        p = Process(target=zoomer_worker, args=(spawn, 8))
+        p.start()
+        p.join()
+
+        assert p.result()
+
