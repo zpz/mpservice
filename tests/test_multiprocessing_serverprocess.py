@@ -361,10 +361,10 @@ class Zoomer:
 
     def scale(self, x):
         return x * self._factor
-    
+
     def spawn(self, factor):
         return factor
-    
+
 
 ServerProcess.register('Zoomer', Zoomer, method_to_typeid={'spawn': 'Zoomer'})
 
@@ -393,4 +393,3 @@ def test_proxy_in_other_process():
         p.join()
 
         assert p.result()
-

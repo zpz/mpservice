@@ -275,12 +275,17 @@ import weakref
 from multiprocessing import util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
+    Array,
+    ArrayProxy,
     BaseProxy,
     DictProxy,
     ListProxy,
+    Namespace,
+    NamespaceProxy,
     Token,
+    Value,
+    ValueProxy,
     dispatch,
-    ValueProxy, Value, ArrayProxy, Array, Namespace, NamespaceProxy,
 )
 from traceback import format_exc
 
@@ -573,15 +578,21 @@ ServerProcess.register(
 ServerProcess.register(
     'ManagedDict', callable=None, proxytype=DictProxy, create_method=False
 )
-ServerProcess.register('ManagedValue', callable=None, proxytype=ValueProxy, create_method=False)
-ServerProcess.register('ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False)
-ServerProcess.register('ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False)
+ServerProcess.register(
+    'ManagedValue', callable=None, proxytype=ValueProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False
+)
 
 
 managed_list = functools.partial(managed, typeid='ManagedList')
 managed_dict = functools.partial(managed, typeid='ManagedDict')
 managed_value = functools.partial(managed, typeid='ManagedValue')
-managed_array = functools.partial(managed,  typeid='ManagedArray')
+managed_array = functools.partial(managed, typeid='ManagedArray')
 managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
 
 
@@ -615,7 +626,9 @@ else:
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
 
-            server = multiprocessing.current_process()._manager_server  # this attribute must exist
+            server = (
+                multiprocessing.current_process()._manager_server
+            )  # this attribute must exist
             all_blocks = getattr(server, '_memoryblocks_', None)
             if all_blocks is None:
                 all_blocks = server._memoryblocks_ = weakref.WeakSet()
@@ -651,8 +664,7 @@ else:
             """
             return [
                 m.name
-                for m in
-                multiprocessing.current_process()._manager_server._memoryblocks_
+                for m in multiprocessing.current_process()._manager_server._memoryblocks_
             ]
 
         def __del__(self):
@@ -729,7 +741,6 @@ else:
 
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
-
 
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
     ServerProcess.register(
