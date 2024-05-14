@@ -299,8 +299,9 @@ and it is found that it contains a plain string and a ``hosted`` list.
 """
 from __future__ import annotations
 
+import functools
 import multiprocessing
-import multiprocessing.connection
+# import multiprocessing.connection
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
@@ -309,11 +310,13 @@ import sys
 import threading
 import weakref
 from multiprocessing import util
+from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
     BaseProxy,
     Token,
     dispatch,
     listener_client,
+    ListProxy, DictProxy,
 )
 from traceback import format_exc
 
@@ -322,9 +325,7 @@ from .remote_exception import RemoteException
 
 __all__ = [
     'ServerProcess',
-    'MemoryBlock',
-    'MemoryBlockProxy',
-    'hosted',
+    'managed', 'managed_list', 'managed_dict',
 ]
 
 
@@ -434,63 +435,6 @@ class _ProcessServer(multiprocessing.managers.Server):
                 conn.close()
                 sys.exit(1)
 
-    def _create_hosted(self, c, data):
-        # Construct the return value of a method that has been registered in
-        # `method_to_typeid` as 'hosted'.
-
-        def convert_hosted(value):
-            value, typeid = value.value, value.typeid
-            typeid_nocall = f'{typeid}-nocall'
-            if typeid_nocall not in self.registry:
-                self.registry[typeid_nocall] = (
-                    None,
-                    *self.registry[typeid][1:],
-                )  # replace `callable` by `None`
-
-            ident, exposed = self.create(c, typeid_nocall, value)
-            # By now `value` has been referenced in ``self._id_to_obj``.
-            return hosted((ident, exposed), typeid)
-
-        def convert_one(value):
-            if isinstance(value, hosted):
-                return convert_hosted(value)
-            if isinstance(value, list):
-                return convert_list(value)
-            if isinstance(value, dict):
-                return convert_dict(value)
-            if isinstance(value, tuple):
-                return convert_tuple(value)
-            return value  # any other type is returned as is, not hosted
-
-        def convert_list(value):
-            return [convert_one(v) for v in value]
-
-        def convert_dict(value):
-            return {k: convert_one(v) for k, v in value.items()}
-
-        def convert_tuple(value):
-            return tuple(convert_one(v) for v in value)
-
-        obj = convert_one(data)
-
-        # Replicate some code in `self.create` to inc refcount,
-        # to counter the `decref` that will be called in `BaseProxy._callmethod`
-        # upon receiving this response.
-        with self.mutex:
-            ident = '%x' % id(obj)
-            self.id_to_obj[ident] = (obj, set(), None)
-            if ident not in self.id_to_refcount:
-                self.id_to_refcount[ident] = 0
-        self.incref(c, ident)
-
-        return ident, obj
-
-    def create(self, c, typeid, /, *args, **kwds):
-        if typeid == 'hosted':
-            assert not kwds
-            assert len(args) == 1
-            return self._create_hosted(c, args[0])
-        return super().create(c, typeid, *args, **kwds)
 
 
 class ServerProcess(SyncManager):
@@ -563,147 +507,148 @@ class ServerProcess(SyncManager):
         super().__exit__(*args)
 
 
-class PickleThroughProxy(BaseProxy):
-    """
-    With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
-    on the hosted object in the server process. Once the refcount of the hosted object
-    drops to 0, the object is discarded.
+"""
+With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
+on the hosted object in the server process. Once the refcount of the hosted object
+drops to 0, the object is discarded.
 
-    If a proxy object is put in a queue and is removed from the code scope, then this proxy
-    object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
-    of course does not contain a reference to the proxy object. This can lead to gabage collection
-    of the object hosted in the server process.
+If a proxy object is put in a queue and is removed from the code scope, then this proxy
+object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
+of course does not contain a reference to the proxy object. This can lead to gabage collection
+of the object hosted in the server process.
 
-    In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
-    This proxy classs is designed for this use case. It makes pickled data count as one reference
-    to the server-process-hosted object.
-    """
+In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
+This hack makes pickled data count as one reference to the server-process-hosted object.
+"""
 
-    def __reduce__(self):
-        # The only sensible case of pickling this proxy object is for
-        # transfering this object between processes in a queue.
-        # (This proxy object is never pickled for storage.)
-        #
-        # Using ``MemoryBlock`` for example,
-        # it is possible that at some time the only "reference"
-        # to a certain shared memory block is in pickled form in
-        # a queue. For example,
-        #
-        #   # main process
-        #   with ServerProcess() as server:
-        #        q = server.Queue()
-        #        w = Process(target=..., args=(q, ))
-        #        w.start()
-        #
-        #        for _ in range(1000):
-        #           mem = server.MemoryBlock(100)
-        #           # ... computations ...
-        #           # ... write data into `mem` ...
-        #           q.put(mem)
-        #           ...
-        #
-        # During the loop, `mem` goes out of scope and only lives on in the queue.
-        # A main design goal is to prevent the ``MemoryBlock`` object in the server process
-        # from being garbage collected. This means we need to do some ref-counting hacks.
+_BaseProxy_reduce_orig = BaseProxy.__reduce__
 
-        # Inc ref here to represent the pickled object in the queue.
-        # When unpickling, we do not inc ref again. In effect, we move the call
-        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
-        # for this object.
 
-        conn = self._Client(self._token.address, authkey=self._authkey)
-        dispatch(conn, None, 'incref', (self._id,))
-        # NOTE:
-        # calling ``self._incref()`` would not work because it adds another `_decref`;
-        # I don't totally understand that part.
+def _picklethrough_reduce_(self):
+    # The only sensible case of pickling this proxy object is for
+    # transfering this object between processes, e.g., in a queue.
+    # (This proxy object is never pickled for storage.)
+    #
+    # Using ``MemoryBlock`` for example,
+    # it is possible that at some time the only "reference"
+    # to a certain shared memory block is in pickled form in
+    # a queue. For example,
+    #
+    #   # main process
+    #   with ServerProcess() as server:
+    #        q = server.Queue()
+    #        w = Process(target=..., args=(q, ))
+    #        w.start()
+    #
+    #        for _ in range(1000):
+    #           mem = server.MemoryBlock(100)
+    #           # ... computations ...
+    #           # ... write data into `mem` ...
+    #           q.put(mem)
+    #           ...
+    #
+    # During the loop, `mem` goes out of scope and only lives on in the queue.
+    # A main design goal is to prevent the ``MemoryBlock`` object in the server process
+    # from being garbage collected. This means we need to do some ref-counting hacks.
 
-        func, args = super().__reduce__()
-        args[-1]['incref'] = False  # do not inc ref again during unpickling.
-        return RebuildPickleThroughProxy, (func, args)
+    # Inc ref here to represent the pickled object in the queue.
+    # When unpickling, we do not inc ref again. In effect, we move the call
+    # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
+    # for this object.
+
+
+    conn = self._Client(self._token.address, authkey=self._authkey)
+    dispatch(conn, None, 'incref', (self._id,))
+    # TODO: not calling `self._incref` here b/c I don't understand the impact
+    # of `self._idset`. Maybe we should use `self._decref`?
+
+    func, args = _BaseProxy_reduce_orig(self)
+    return RebuildPickleThroughProxy, (func, args)
+
+
+# Hack
+BaseProxy.__reduce__ = _picklethrough_reduce_
 
 
 def RebuildPickleThroughProxy(func, args):
     obj = func(*args)
 
-    # We have called ``incref`` in ``PickleThroughProxy.__reduce__``,
-    # i.e. prior to pickling,
-    # hence we don't call ``incref`` when
-    # reconstructing the proxy here during unpickling.
-    # However, we still need to set up calling of ``decref``
-    # when this reconstructed proxy is garbage collected.
-
-    # The code below is part of ``BaseProxy._incref``.
-    # ``BaseProxy.__init__`` does not do this.
-
-    obj._idset.add(obj._id)
-    state = obj._manager and obj._manager._state
-    obj._close = util.Finalize(
-        obj,
-        BaseProxy._decref,
-        args=(obj._token, obj._authkey, state, obj._tls, obj._idset, obj._Client),
-        exitpriority=10,
-    )
+    # Counter the extra `incref` that's done in `BaseProxy.__init__`.
+    conn = obj._Client(obj._token.address, authkey=obj._authkey)
+    dispatch(conn, None, 'decref', (obj._id,))
 
     return obj
 
 
-def HostedProxy(token, serializer, manager, authkey, exposed):
-    address = token.address
-    data = exposed
+def managed(obj, *, typeid: str = None):
+    server = getattr(multiprocessing.current_process(), '_manager_server', None)
+    if not server:
+        return obj
+    
+    if not typeid:
+        typeid = type(obj).__name__
+        callable, *_ = server.registry[typeid]  # If KeyError, it's user's fault
+        assert callable is None
+    rident, rexposed = server.create(None, typeid, obj)
+    # This has called `incref` once. Ref count is 1.
 
-    def make_hosted(value: hosted):
-        ident, exposed = value.value
-        typeid = value.typeid
+    token = Token(typeid, server.address, rident)
+    proxytype = server.registry[typeid][-1]
+    serializer = 'xmlrpclib' if isinstance(server.listener, XmlListener) else 'pickle'
 
-        tok = Token(typeid, address, ident)
-        proxytype = manager._registry[typeid][-1]
-        proxy = proxytype(
-            tok, serializer, manager=manager, authkey=authkey, exposed=exposed
-        )
-        Client = listener_client[serializer][1]
-        conn = Client(address, authkey=authkey)
-        dispatch(conn, None, 'decref', (ident,))
-        return proxy
+    proxy = proxytype(
+        token,
+        serializer=serializer,
+        authkey=server.authkey,
+        incref=True,
+        exposed=rexposed,
+        manager_owned=False,
+    )
+    # TODO:
+    # `manager_owned=True` would suppress incref in proxy init.
+    # I feel `manager_owned=False` is more correct.
+    # This proxy object called `incref` once in its `__init__`. Ref count is 2.
 
-    def make_one(value):
-        if isinstance(value, hosted):
-            return make_hosted(value)
-        if isinstance(value, list):
-            return make_list(value)
-        if isinstance(value, dict):
-            return make_dict(value)
-        if isinstance(value, tuple):
-            return make_tuple(value)
-        return value
+    server.decref(None, rident)
+    # Now ref count is 1.
 
-    def make_list(value: list):
-        return [make_one(v) for v in value]
-
-    def make_dict(value: dict):
-        return {k: make_one(v) for k, v in value.items()}
-
-    def make_tuple(value: tuple):
-        return tuple(make_one(v) for v in value)
-
-    z = make_one(data)
-    return z
+    return proxy
+    # When this object is sent back to the request:
+    #  (1) pickling (i.e. `__reduce__`) inc ref count to 2;
+    #  (2) this proxy object goes out of scope, its finalizer is triggered, ref count becomes 1;
+    #  (3) unpickling by `RebuildPickleThroughProxy` keeps ref count unchanged
 
 
-class hosted:
-    def __init__(self, value, typeid: str = None):
-        self.value = value
-        self.typeid = typeid or type(value).__name__
+ServerProcess.register('ManagedList', callable=None, proxytype=ListProxy, create_method=False)
+ServerProcess.register('ManagedDict', callable=None, proxytype=DictProxy, create_method=False)
 
 
-ServerProcess.register(
-    'hosted', callable=None, proxytype=HostedProxy, create_method=False
-)
+managed_list = functools.partial(managed, typeid='ManagedList')
+managed_dict = functools.partial(managed, typeid='ManagedDict')
+
+
+
+# Think through ref count dynamics in these scenarios:
+#
+#   - output of `managed(...)` gets sent to client; the output proxy then goes away in server
+#   - output of `managed(...)` is put in something (say a dict), which is sent to client as proxy
+#   - a proxy out side of server gets added to a proxy-ed object in server, e.g. client calls
+#
+#           data['a'] = b
+#
+#     where `data` is a dict proxy, and `b` is some proxy.
+#   - the `b` above gets passed to user again, i.e. client calls
+#
+#           z = data['a']
+
+
 
 
 try:
     from multiprocessing.shared_memory import SharedMemory
 except ImportError:
-    pass
+    MemoryBlock = None
+    MemoryBlockProxy = None
 else:
 
     class MemoryBlock:
@@ -779,37 +724,34 @@ else:
         def __repr__(self):
             return f'<{self.__class__.__name__} {self.name}, size {self.size}>'
 
-    class MemoryBlockProxy(PickleThroughProxy):
+    class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
 
-        def __init__(self, *args, incref=True, manager=None, **kwargs):
-            super().__init__(*args, incref=incref, manager=manager, **kwargs)
-            self._name = None
-            self._size = None
+        def __init__(self, *args, name: str = None, size: int = None, incref=True, **kwargs):
+            super().__init__(*args, incref=incref, **kwargs)
+            self._name = name
+            self._size = size
             self._mem = None
 
-            if incref:
-                # Since ``incref`` is ``True``,
-                # ``self`` is being constructed out of the return of either
-                # ``ServerProcess.MemoryBlock`` or a method of some proxy (
-                # and the method's return value contains a ``MemoryBlock``).
-                # ``self`` is not being constructed due to unpickling.
-                #
-                # We only place such objects under this tracking, and don't place
-                # unpickled objects (in other processes) under this tracking, because
-                # those objects in other processes should explicitly reach end of life.
-                if self._manager is not None:
-                    self._manager._memoryblock_proxies[self._id] = self
+            # if incref:
+            #     # Since ``incref`` is ``True``,
+            #     # ``self`` is being constructed out of the return of either
+            #     # ``ServerProcess.MemoryBlock`` or a method of some proxy (
+            #     # and the method's return value contains a ``MemoryBlock``).
+            #     # ``self`` is not being constructed due to unpickling.
+            #     #
+            #     # We only place such objects under this tracking, and don't place
+            #     # unpickled objects (in other processes) under this tracking, because
+            #     # those objects in other processes should explicitly reach end of life.
+            #     if self._manager is not None:
+            #         self._manager._memoryblock_proxies[self._id] = self
 
         def __reduce__(self):
             func, args = super().__reduce__()
-            return _rebuild_memory_block_proxy, (
-                func,
-                args,
-                self._name,
-                self._size,
-                self._mem,
-            )
+            kwds = args[-1][-1]
+            kwds['name'] = self._name
+            kwds['size'] = self._size
+            return func, args
 
         @property
         def name(self):
@@ -838,31 +780,30 @@ else:
                 self._mem = SharedMemory(name=self.name, create=False)
             return self._mem.buf
 
-        def _list_memory_blocks(self) -> list[str]:
+        def _list_memory_blocks(self, *, include_self=True) -> list[str]:
             """
             Return names of shared memory blocks being
             tracked by the ``ServerProcess`` that "ownes" the current
             proxy object.
+
+            You can call this method on any memoryblock proxy object.
+            If for some reason there's no such proxy handy, you can create a tiny, temporary member block
+            for this purpose:
+            
+                blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
             """
-            return self._callmethod('_list_memory_blocks')
+            blocks = self._callmethod('_list_memory_blocks')
+            if not include_self:
+                blocks.remove(self.name)
+            return blocks
 
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-    def _rebuild_memory_block_proxy(func, args, name, size, mem):
-        obj = func(*args)
-        obj._name, obj._size, obj._mem = name, size, mem
-        return obj
 
     ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
+    ServerProcess.register('ManagedMemoryBlock', None, proxytype=MemoryBlockProxy, create_method=False)
 
-    def list_memory_blocks(self):
-        """
-        List names of MemoryBlock objects being tracked in the server process.
-        """
-        m = self.MemoryBlock(1)
-        blocks = m._list_memory_blocks()
-        blocks.remove(m.name)
-        return blocks
+    managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')
 
-    ServerProcess.list_memory_blocks = list_memory_blocks
+    __all__.extend(('MemoryBlock', 'MemoryBlockProxy', 'managed_memoryblock'))

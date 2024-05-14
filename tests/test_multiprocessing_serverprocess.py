@@ -7,7 +7,7 @@ from traceback import print_exc
 
 import pytest
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
-from mpservice.multiprocessing.server_process import MemoryBlock, ServerProcess, hosted
+from mpservice.multiprocessing.server_process import MemoryBlock, MemoryBlockProxy, ServerProcess, managed, managed_list, managed_dict, managed_memoryblock
 from mpservice.threading import Thread
 from zpz.logging import config_logger, unuse_console_handler
 
@@ -247,7 +247,7 @@ def test_shared_memory():
         assert len(mem.buf) == 10
         mem.buf[4] = 100
 
-        blocks = manager.list_memory_blocks()
+        blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
         print('memory blocks in main:', blocks)
         assert len(blocks) == 1
 
@@ -255,19 +255,19 @@ def test_shared_memory():
         q.put(mem)
         del mem
 
-        blocks = manager.list_memory_blocks()
+        blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
         assert len(blocks) == 1
 
         p = Process(target=inc_worker, args=(q,))
         p.start()
         p.join()
 
-        assert len(manager.list_memory_blocks()) == 0
+        assert len(manager.MemoryBlock(1)._list_memory_blocks(include_self=False)) == 0
 
 
 class MemoryWorker:
     def memory_block(self, size):
-        return hosted(MemoryBlock(size))
+        return managed_memoryblock(MemoryBlock(size))
 
     def make_dict(self, size):
         mem = MemoryBlock(size)
@@ -275,16 +275,16 @@ class MemoryWorker:
 
         return {
             'size': size,
-            'block': hosted(mem),
-            'list': hosted([1, 2]),
-            'tuple': ('first', hosted([1, 2]), 'third'),
+            'block': managed_memoryblock(mem),
+            'list': managed_list([1, 2]),
+            'tuple': ('first', managed_list([1, 2]), 'third'),
         }
 
     def make_list(self):
         return [
-            hosted(MemoryBlock(10)),
-            {'a': 3, 'b': hosted([1, 2])},
-            hosted(MemoryBlock(20)),
+            managed_memoryblock(MemoryBlock(10)),
+            {'a': 3, 'b': managed_list([1, 2])},
+            managed_memoryblock(MemoryBlock(20)),
         ]
 
 
@@ -308,15 +308,10 @@ def worker_mem(data):
     data.buf[10] = 10
 
 
-def test_hosted():
+def test_managed():
     ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
-        method_to_typeid={
-            'memory_block': 'hosted',
-            'make_dict': 'hosted',
-            'make_list': 'hosted',
-        },
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
@@ -353,3 +348,8 @@ def test_hosted():
         assert data[2].buf[8] == 88
         assert len(data[1]['b']) == 1
         assert data[1]['b'][0] == 1
+
+        del m
+        data[0] = None
+        data[2] = None
+
