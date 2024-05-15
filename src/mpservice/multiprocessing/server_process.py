@@ -269,27 +269,27 @@ import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
 import multiprocessing.queues
+import os
 import sys
 import threading
 import weakref
-from multiprocessing import util
+from multiprocessing import util, current_process
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
+    BaseManager as _BaseManager_,
+    Server as _Server_,
     Array,
-    ArrayProxy,
-    BaseProxy,
-    DictProxy,
-    ListProxy,
+    BaseProxy as _BaseProxy_,
     Namespace,
-    NamespaceProxy,
     Token,
     Value,
-    ValueProxy,
     dispatch,
+    listener_client,
 )
 from traceback import format_exc
+import types
 
-from ._context import SyncManager
+from ._context import MP_SPAWN_CTX
 from .remote_exception import RemoteException
 
 __all__ = [
@@ -300,10 +300,12 @@ __all__ = [
     'managed_value',
     'managed_array',
     'managed_namespace',
+    'managed_iterator',
+    'BaseProxy',
 ]
 
 
-class _ProcessServer(multiprocessing.managers.Server):
+class Server(_Server_):
     # This is the cpython code in versions 3.7-3.12.
     # My fix is labeled "FIX".
     def serve_client(self, conn):
@@ -438,7 +440,8 @@ class _ProcessServer(multiprocessing.managers.Server):
         super().shutdown(c)
 
 
-class ServerProcess(SyncManager):
+
+class ServerProcess(_BaseManager_):
     # Overhead:
     #
     # I made a naive example, where the registered class just returns ``x + x``.
@@ -450,84 +453,209 @@ class ServerProcess(SyncManager):
     # the "manager", while a proxy object does not carry its "manager" attribute during pickling.
     # However, this restriction is removed by our code hack in `_ProcessServer.serve_client`.
 
-    _Server = _ProcessServer
+    _Server = Server
+
+    def __init__(
+        self,
+        address=None, authkey=None, serializer='pickle',
+        name: str | None = None,
+        cpu: int | list[int] | None = None,
+    ):
+        """
+        Parameters
+        ----------
+        name
+            Name of the server process. If ``None``, a default name will be created.
+        cpu
+            Specify CPU pinning for the server process.
+        """
+        super().__init__(address=address, authkey=authkey, serializer=serializer, ctx=MP_SPAWN_CTX)
+        self.start()
+        if name:
+            self._process.name = name
+        if cpu is not None:
+            if isinstance(cpu, int):
+                cpu = [cpu]
+            os.sched_setaffinity(self._process.pid, cpu)
+
+    # Changes to the standard version:
+    #    - remove parameter `method_to_typeid` b/c its functionality is achieved by `managed`
+    #    - use our custom `AutoProxy`
+    @classmethod
+    def register(cls, typeid, callable=None, proxytype=None, exposed=None, create_method=True):
+        if not proxytype:
+            proxytype = AutoProxy
+        assert not getattr(proxytype, '_method_to_typeid_', None)
+
+        return super().register(typeid, callable=callable, proxytype=proxytype, exposed=exposed, method_to_typeid=None, create_method=create_method)
+    
 
 
-"""
-With ``BaseProxy``, whenever a proxy object is garbage collected, ``decref`` is called
-on the hosted object in the server process. Once the refcount of the hosted object
-drops to 0, the object is discarded.
+class BaseProxy(_BaseProxy_):
+    # Changes to the standard version:
+    #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
+    #      to skip `incref` when `manager_owned` would be True.
+    def __init__(self, token, serializer, manager=None, authkey=None, exposed=None, incref=True):
+        super().__init__(
+            token, serializer, manager=manager, authkey=authkey, exposed=exposed,
+            incref=incref, manager_owned=False,
+        )
 
-If a proxy object is put in a queue and is removed from the code scope, then this proxy
-object is garbage collected once ``pickle.dumps`` is finished in the queue. The "data-in-pickle-form"
-of course does not contain a reference to the proxy object. This can lead to gabage collection
-of the object hosted in the server process.
+    # Changes to the standard version:
+    #   1. call `incref` before returning
+    #   2. use our custome `RebuildProxy` and `AutoProxy` in place of the standard versions
+    def __reduce__(self):
+        # The only sensible case of pickling this proxy object is for
+        # transfering this object between processes, e.g., in a queue.
+        # (This proxy object is never pickled for storage.)
+        #
+        # Using ``MemoryBlock`` for example,
+        # it is possible that at some time the only "reference"
+        # to a certain shared memory block is in pickled form in
+        # a queue. For example,
+        #
+        #   # main process
+        #   with ServerProcess() as server:
+        #        q = server.Queue()
+        #        w = Process(target=..., args=(q, ))
+        #        w.start()
+        #
+        #        for _ in range(1000):
+        #           mem = server.MemoryBlock(100)
+        #           # ... computations ...
+        #           # ... write data into `mem` ...
+        #           q.put(mem)
+        #           ...
+        #
+        # During the loop, `mem` goes out of scope and only lives on in the queue.
+        # When `mem` gets re-assigned in the next iteration, the previous proxy object
+        # is garbage collected, causing the target object to be deleted in the server
+        # because its ref count drops to 0 (the pickled stuff in the queue is "dead wood").
+        #
+        # This revised `__reduce__` fixes this problem.
 
-In some use cases, this may be undesirable. (See ``MemoryBlock`` and ``MemoryBlockProxy`` for an example.)
-This hack makes pickled data count as one reference to the server-process-hosted object.
-"""
+        # Inc ref here to represent the pickled object in the queue.
+        # When unpickling, we do not inc ref again. In effect, we move the call
+        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
+        # for this object.
 
-_BaseProxy_reduce_orig = BaseProxy.__reduce__
+        conn = self._Client(self._token.address, authkey=self._authkey)
+        dispatch(conn, None, 'incref', (self._id,))
+        # TODO: not calling `self._incref` here b/c I don't understand the impact
+        # of `self._idset`. Maybe we should use `self._incref`?
 
+        func, args = super().__reduce__()
 
-def _picklethrough_reduce_(self):
-    # The only sensible case of pickling this proxy object is for
-    # transfering this object between processes, e.g., in a queue.
-    # (This proxy object is never pickled for storage.)
-    #
-    # Using ``MemoryBlock`` for example,
-    # it is possible that at some time the only "reference"
-    # to a certain shared memory block is in pickled form in
-    # a queue. For example,
-    #
-    #   # main process
-    #   with ServerProcess() as server:
-    #        q = server.Queue()
-    #        w = Process(target=..., args=(q, ))
-    #        w.start()
-    #
-    #        for _ in range(1000):
-    #           mem = server.MemoryBlock(100)
-    #           # ... computations ...
-    #           # ... write data into `mem` ...
-    #           q.put(mem)
-    #           ...
-    #
-    # During the loop, `mem` goes out of scope and only lives on in the queue.
-    # When `mem` gets re-assigned in the next iteration, the previous proxy object
-    # is garbage collected, causing the target object to be deleted in the server
-    # because its ref count drops to 0 (the pickled stuff in the queue is "dead wood").
-    #
-    # This revised `__reduct__` fixes this problem.
-
-    # Inc ref here to represent the pickled object in the queue.
-    # When unpickling, we do not inc ref again. In effect, we move the call
-    # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
-    # for this object.
-
-    conn = self._Client(self._token.address, authkey=self._authkey)
-    dispatch(conn, None, 'incref', (self._id,))
-    # TODO: not calling `self._incref` here b/c I don't understand the impact
-    # of `self._idset`. Maybe we should use `self._incref`?
-
-    func, args = _BaseProxy_reduce_orig(self)
-    return rebuild_picklethrough_proxy, (func, args)
-
-
-# Hack
-BaseProxy.__reduce__ = _picklethrough_reduce_
+        func = RebuildProxy
+        if getattr(self, '_isauto', False):
+            args = (AutoProxy, *args[1:])
+        return func, args
 
 
-def rebuild_picklethrough_proxy(func, args):
-    obj = func(*args)
+
+#
+# Function used for unpickling
+#
+
+
+# Changes to the standard version:
+#  1. do not add 'manager_owned' to `kwds`
+#  2. call `decref` after object creation
+def RebuildProxy(func, token, serializer, kwds):
+    '''
+    Function used for unpickling proxy objects.
+    '''
+    server = getattr(current_process(), '_manager_server', None)
+    if server and server.address == token.address:
+        util.debug('Rebuild a proxy owned by manager, token=%r', token)
+
+        # FIX:
+        # kwds['manager_owned'] = True
+
+        if token.id not in server.id_to_local_proxy_obj:
+            server.id_to_local_proxy_obj[token.id] = \
+                server.id_to_obj[token.id]
+            
+    assert 'incref' not in kwds
+    incref = not getattr(current_process(), '_inheriting', False)
+    obj = func(token, serializer, incref=incref, **kwds)
+    # TODO: it appears `incref` is True some times and False some others.
+    # Understand the `'_inheriting'` thing.
 
     # Counter the extra `incref` that's done in `BaseProxy.__init__`.
-    kwds = args[-1]
-    if kwds.get('incref', True) and not kwds.get('manager_owned', False):
-        conn = obj._Client(obj._token.address, authkey=obj._authkey)
-        dispatch(conn, None, 'decref', (obj._id,))
+    conn = obj._Client(obj._token.address, authkey=obj._authkey)
+    dispatch(conn, None, 'decref', (obj._id,))
 
     return obj
+
+
+
+#
+# Functions to create proxies and proxy types
+#
+
+
+# No change in code to the standard version, but it will use
+# the `BaseProxy` defined in this module.
+# The redef also avoids some tricky issues with the `_cache`.
+def MakeProxyType(name, exposed, _cache={}):
+    '''
+    Return a proxy type whose methods are given by `exposed`
+    '''
+    exposed = tuple(exposed)
+    try:
+        return _cache[(name, exposed)]
+    except KeyError:
+        pass
+
+    dic = {}
+
+    for meth in exposed:
+        exec('''def %s(self, /, *args, **kwds):
+        return self._callmethod(%r, args, kwds)''' % (meth, meth), dic)
+
+    ProxyType = type(name, (BaseProxy,), dic)
+    ProxyType._exposed_ = exposed
+    _cache[(name, exposed)] = ProxyType
+    return ProxyType
+
+
+# Changes to the standard version:
+#   1. use our custom `MakeProxyType`
+#   2. remove parameter `manager_owned`
+def AutoProxy(token, serializer, manager=None, authkey=None,
+              exposed=None, incref=True):
+    '''
+    Return an auto-proxy for `token`
+    '''
+    _Client = listener_client[serializer][1]
+
+    if exposed is None:
+        conn = _Client(token.address, authkey=authkey)
+        try:
+            exposed = dispatch(conn, None, 'get_methods', (token,))
+        finally:
+            conn.close()
+
+    if authkey is None and manager is not None:
+        authkey = manager._authkey
+    if authkey is None:
+        authkey = current_process().authkey
+
+    ProxyType = MakeProxyType('AutoProxy[%s]' % token.typeid, exposed)
+    # This uses our custome `MakeProxyType`
+
+    # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
+                    #   incref=incref, manager_owned=manager_owned)
+    proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref)
+
+    proxy._isauto = True
+    return proxy
+
+
+#
+# Functions for nested proxies
+#
 
 
 def managed(obj, *, typeid: str = None):
@@ -553,13 +681,8 @@ def managed(obj, *, typeid: str = None):
         token,
         serializer=serializer,
         authkey=server.authkey,
-        incref=True,
         exposed=rexposed,
-        manager_owned=False,
     )
-    # TODO:
-    # `manager_owned=True` would suppress incref in proxy init; it also means there's no `decref` when the proxy dies.
-    # I feel `manager_owned=False` is the right way to go.
 
     # This proxy object called `incref` once in its `__init__`. Ref count is 2.
 
@@ -573,28 +696,104 @@ def managed(obj, *, typeid: str = None):
     #  (3) unpickling by `rebuild_picklethrough_proxy` keeps ref count unchanged
 
 
-ServerProcess.register(
-    'ManagedList', callable=None, proxytype=ListProxy, create_method=False
-)
-ServerProcess.register(
-    'ManagedDict', callable=None, proxytype=DictProxy, create_method=False
-)
-ServerProcess.register(
-    'ManagedValue', callable=None, proxytype=ValueProxy, create_method=False
-)
-ServerProcess.register(
-    'ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False
-)
-ServerProcess.register(
-    'ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False
-)
+#
+# Define and register some common classes
+#
+# Redefine the proxy classes to use our custom base class.
+#
+# Can not monkey-patch the proxy class objects in the standard lib, as that would
+# cause errors like this:
+#
+#   _pickle.PicklingError: Can't pickle <class 'multiprocessing.managers.DictProxy'>: it's not the same object as multiprocessing.managers.DictProxy
+#
+# Do not register Lock, Queue, Event, etc. I don't see advanages of them compared to the standard solution from `multiprocessing` directly.
 
 
-managed_list = functools.partial(managed, typeid='ManagedList')
-managed_dict = functools.partial(managed, typeid='ManagedDict')
-managed_value = functools.partial(managed, typeid='ManagedValue')
-managed_array = functools.partial(managed, typeid='ManagedArray')
-managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
+class IteratorProxy(BaseProxy):
+    _exposed_ = ('__next__', 'send', 'throw', 'close')
+    def __iter__(self):
+        return self
+    def __next__(self, *args):
+        return self._callmethod('__next__', args)
+    def send(self, *args):
+        return self._callmethod('send', args)
+    def throw(self, *args):
+        return self._callmethod('throw', args)
+    def close(self, *args):
+        return self._callmethod('close', args)
+
+
+class NamespaceProxy(BaseProxy):
+    _exposed_ = ('__getattribute__', '__setattr__', '__delattr__')
+    def __getattr__(self, key):
+        if key[0] == '_':
+            return object.__getattribute__(self, key)
+        callmethod = object.__getattribute__(self, '_callmethod')
+        return callmethod('__getattribute__', (key,))
+    def __setattr__(self, key, value):
+        if key[0] == '_':
+            return object.__setattr__(self, key, value)
+        callmethod = object.__getattribute__(self, '_callmethod')
+        return callmethod('__setattr__', (key, value))
+    def __delattr__(self, key):
+        if key[0] == '_':
+            return object.__delattr__(self, key)
+        callmethod = object.__getattribute__(self, '_callmethod')
+        return callmethod('__delattr__', (key,))
+
+
+class ValueProxy(BaseProxy):
+    _exposed_ = ('get', 'set')
+    def get(self):
+        return self._callmethod('get')
+    def set(self, value):
+        return self._callmethod('set', (value,))
+    value = property(get, set)
+
+    __class_getitem__ = classmethod(types.GenericAlias)
+
+
+BaseListProxy = MakeProxyType('BaseListProxy', (
+    '__add__', '__contains__', '__delitem__', '__getitem__', '__len__',
+    '__mul__', '__reversed__', '__rmul__', '__setitem__',
+    'append', 'count', 'extend', 'index', 'insert', 'pop', 'remove',
+    'reverse', 'sort', '__imul__'
+    ))
+class ListProxy(BaseListProxy):
+    def __iadd__(self, value):
+        self._callmethod('extend', (value,))
+        return self
+    def __imul__(self, value):
+        self._callmethod('__imul__', (value,))
+        return self
+
+
+# Changes to the standard version:
+#   - remove method `__iter__`, because it uses `method_to_typeid`, which we don't support
+DictProxy = MakeProxyType('DictProxy', (
+    '__contains__', '__delitem__', '__getitem__', '__len__',
+    '__setitem__', 'clear', 'copy', 'get', 'items',
+    'keys', 'pop', 'popitem', 'setdefault', 'update', 'values'
+    ))
+
+
+ArrayProxy = MakeProxyType('ArrayProxy', (
+    '__len__', '__getitem__', '__setitem__'
+    ))
+
+
+ServerProcess.register('list', list, ListProxy)
+ServerProcess.register('dict', dict, DictProxy)
+ServerProcess.register('Value', Value, ValueProxy)
+ServerProcess.register('Array', Array, ArrayProxy)
+ServerProcess.register('Namespace', Namespace, NamespaceProxy)
+
+# Register 'ManagedList', 'ManagedDict', 'ManagedValue', 'ManagedArray', 'ManagedNamespace', 'ManagedIterator'.
+# Define functions `managed_list`, `managed_dict`, `managed_value`, `managed_array`, `managed_namespace`, `managed_iterator`.
+for cls in (ListProxy, ValueProxy, ArrayProxy, NamespaceProxy, IteratorProxy):
+    typeid = 'Managed' + cls.__name__.removeprefix('Proxy')  # ManagedList, ManagedDict, ...
+    ServerProcess.register(typeid, callable=None, proxytype=cls, create_method=False)
+    exec(f"managed_{cls.__name__.removesuffix('Proxy').lower()} = functools.partial(managed, typeid='{typeid}')")
 
 
 # Think through ref count dynamics in these scenarios:
@@ -610,6 +809,10 @@ managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
 #
 #           z = data['a']
 
+
+#
+# Support shared memory
+#
 
 try:
     from multiprocessing.shared_memory import SharedMemory
@@ -682,16 +885,16 @@ else:
         _exposed_ = ('_list_memory_blocks', '_name')
 
         def __init__(
-            self, *args, name: str = None, size: int = None, incref=True, **kwargs
+            self, *args, name: str = None, size: int = None, **kwargs
         ):
-            super().__init__(*args, incref=incref, **kwargs)
+            super().__init__(*args, **kwargs)
             self._name = name
             self._size = size
             self._mem = None
 
         def __reduce__(self):
             func, args = super().__reduce__()
-            kwds = args[-1][-1]
+            kwds = args[-1]
             kwds['name'] = self._name
             kwds['size'] = self._size
             return func, args

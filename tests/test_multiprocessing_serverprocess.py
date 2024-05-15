@@ -10,6 +10,7 @@ from mpservice.multiprocessing import Process, Queue, SpawnProcess
 from mpservice.multiprocessing.server_process import (
     MemoryBlock,
     ServerProcess,
+    managed,
     managed_list,
     managed_memoryblock,
 )
@@ -363,10 +364,10 @@ class Zoomer:
         return x * self._factor
 
     def spawn(self, factor):
-        return factor
+        return managed(factor, typeid='Zoomer')
 
 
-ServerProcess.register('Zoomer', Zoomer, method_to_typeid={'spawn': 'Zoomer'})
+ServerProcess.register('Zoomer', Zoomer)
 
 
 def zoomer_worker(zoomer, factor):
