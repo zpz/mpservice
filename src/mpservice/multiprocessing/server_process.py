@@ -272,22 +272,28 @@ import multiprocessing.queues
 import os
 import sys
 import threading
+import types
 import weakref
-from multiprocessing import util, current_process
+from multiprocessing import current_process, util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
-    BaseManager as _BaseManager_,
-    Server as _Server_,
     Array,
-    BaseProxy as _BaseProxy_,
     Namespace,
     Token,
     Value,
     dispatch,
     listener_client,
 )
+from multiprocessing.managers import (
+    BaseManager as _BaseManager_,
+)
+from multiprocessing.managers import (
+    BaseProxy as _BaseProxy_,
+)
+from multiprocessing.managers import (
+    Server as _Server_,
+)
 from traceback import format_exc
-import types
 
 from ._context import MP_SPAWN_CTX
 from .remote_exception import RemoteException
@@ -440,7 +446,6 @@ class Server(_Server_):
         super().shutdown(c)
 
 
-
 class ServerProcess(_BaseManager_):
     # Overhead:
     #
@@ -457,7 +462,9 @@ class ServerProcess(_BaseManager_):
 
     def __init__(
         self,
-        address=None, authkey=None, serializer='pickle',
+        address=None,
+        authkey=None,
+        serializer='pickle',
         name: str | None = None,
         cpu: int | list[int] | None = None,
     ):
@@ -469,7 +476,9 @@ class ServerProcess(_BaseManager_):
         cpu
             Specify CPU pinning for the server process.
         """
-        super().__init__(address=address, authkey=authkey, serializer=serializer, ctx=MP_SPAWN_CTX)
+        super().__init__(
+            address=address, authkey=authkey, serializer=serializer, ctx=MP_SPAWN_CTX
+        )
         self.start()
         if name:
             self._process.name = name
@@ -482,23 +491,38 @@ class ServerProcess(_BaseManager_):
     #    - remove parameter `method_to_typeid` b/c its functionality is achieved by `managed`
     #    - use our custom `AutoProxy`
     @classmethod
-    def register(cls, typeid, callable=None, proxytype=None, exposed=None, create_method=True):
+    def register(
+        cls, typeid, callable=None, proxytype=None, exposed=None, create_method=True
+    ):
         if not proxytype:
             proxytype = AutoProxy
         assert not getattr(proxytype, '_method_to_typeid_', None)
 
-        return super().register(typeid, callable=callable, proxytype=proxytype, exposed=exposed, method_to_typeid=None, create_method=create_method)
-    
+        return super().register(
+            typeid,
+            callable=callable,
+            proxytype=proxytype,
+            exposed=exposed,
+            method_to_typeid=None,
+            create_method=create_method,
+        )
 
 
 class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
-    def __init__(self, token, serializer, manager=None, authkey=None, exposed=None, incref=True):
+    def __init__(
+        self, token, serializer, manager=None, authkey=None, exposed=None, incref=True
+    ):
         super().__init__(
-            token, serializer, manager=manager, authkey=authkey, exposed=exposed,
-            incref=incref, manager_owned=False,
+            token,
+            serializer,
+            manager=manager,
+            authkey=authkey,
+            exposed=exposed,
+            incref=incref,
+            manager_owned=False,
         )
 
     # Changes to the standard version:
@@ -552,7 +576,6 @@ class BaseProxy(_BaseProxy_):
         return func, args
 
 
-
 #
 # Function used for unpickling
 #
@@ -562,9 +585,9 @@ class BaseProxy(_BaseProxy_):
 #  1. do not add 'manager_owned' to `kwds`
 #  2. call `decref` after object creation
 def RebuildProxy(func, token, serializer, kwds):
-    '''
+    """
     Function used for unpickling proxy objects.
-    '''
+    """
     server = getattr(current_process(), '_manager_server', None)
     if server and server.address == token.address:
         util.debug('Rebuild a proxy owned by manager, token=%r', token)
@@ -573,9 +596,8 @@ def RebuildProxy(func, token, serializer, kwds):
         # kwds['manager_owned'] = True
 
         if token.id not in server.id_to_local_proxy_obj:
-            server.id_to_local_proxy_obj[token.id] = \
-                server.id_to_obj[token.id]
-            
+            server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
+
     assert 'incref' not in kwds
     incref = not getattr(current_process(), '_inheriting', False)
     obj = func(token, serializer, incref=incref, **kwds)
@@ -589,7 +611,6 @@ def RebuildProxy(func, token, serializer, kwds):
     return obj
 
 
-
 #
 # Functions to create proxies and proxy types
 #
@@ -599,9 +620,9 @@ def RebuildProxy(func, token, serializer, kwds):
 # the `BaseProxy` defined in this module.
 # The redef also avoids some tricky issues with the `_cache`.
 def MakeProxyType(name, exposed, _cache={}):
-    '''
+    """
     Return a proxy type whose methods are given by `exposed`
-    '''
+    """
     exposed = tuple(exposed)
     try:
         return _cache[(name, exposed)]
@@ -611,8 +632,12 @@ def MakeProxyType(name, exposed, _cache={}):
     dic = {}
 
     for meth in exposed:
-        exec('''def %s(self, /, *args, **kwds):
-        return self._callmethod(%r, args, kwds)''' % (meth, meth), dic)
+        exec(
+            """def %s(self, /, *args, **kwds):
+        return self._callmethod(%r, args, kwds)"""
+            % (meth, meth),
+            dic,
+        )
 
     ProxyType = type(name, (BaseProxy,), dic)
     ProxyType._exposed_ = exposed
@@ -623,11 +648,10 @@ def MakeProxyType(name, exposed, _cache={}):
 # Changes to the standard version:
 #   1. use our custom `MakeProxyType`
 #   2. remove parameter `manager_owned`
-def AutoProxy(token, serializer, manager=None, authkey=None,
-              exposed=None, incref=True):
-    '''
+def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incref=True):
+    """
     Return an auto-proxy for `token`
-    '''
+    """
     _Client = listener_client[serializer][1]
 
     if exposed is None:
@@ -646,8 +670,10 @@ def AutoProxy(token, serializer, manager=None, authkey=None,
     # This uses our custome `MakeProxyType`
 
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
-                    #   incref=incref, manager_owned=manager_owned)
-    proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref)
+    #   incref=incref, manager_owned=manager_owned)
+    proxy = ProxyType(
+        token, serializer, manager=manager, authkey=authkey, incref=incref
+    )
 
     proxy._isauto = True
     return proxy
@@ -711,30 +737,38 @@ def managed(obj, *, typeid: str = None):
 
 class IteratorProxy(BaseProxy):
     _exposed_ = ('__next__', 'send', 'throw', 'close')
+
     def __iter__(self):
         return self
+
     def __next__(self, *args):
         return self._callmethod('__next__', args)
+
     def send(self, *args):
         return self._callmethod('send', args)
+
     def throw(self, *args):
         return self._callmethod('throw', args)
+
     def close(self, *args):
         return self._callmethod('close', args)
 
 
 class NamespaceProxy(BaseProxy):
     _exposed_ = ('__getattribute__', '__setattr__', '__delattr__')
+
     def __getattr__(self, key):
         if key[0] == '_':
             return object.__getattribute__(self, key)
         callmethod = object.__getattribute__(self, '_callmethod')
         return callmethod('__getattribute__', (key,))
+
     def __setattr__(self, key, value):
         if key[0] == '_':
             return object.__setattr__(self, key, value)
         callmethod = object.__getattribute__(self, '_callmethod')
         return callmethod('__setattr__', (key, value))
+
     def __delattr__(self, key):
         if key[0] == '_':
             return object.__delattr__(self, key)
@@ -744,25 +778,49 @@ class NamespaceProxy(BaseProxy):
 
 class ValueProxy(BaseProxy):
     _exposed_ = ('get', 'set')
+
     def get(self):
         return self._callmethod('get')
+
     def set(self, value):
         return self._callmethod('set', (value,))
+
     value = property(get, set)
 
     __class_getitem__ = classmethod(types.GenericAlias)
 
 
-BaseListProxy = MakeProxyType('BaseListProxy', (
-    '__add__', '__contains__', '__delitem__', '__getitem__', '__len__',
-    '__mul__', '__reversed__', '__rmul__', '__setitem__',
-    'append', 'count', 'extend', 'index', 'insert', 'pop', 'remove',
-    'reverse', 'sort', '__imul__'
-    ))
+BaseListProxy = MakeProxyType(
+    'BaseListProxy',
+    (
+        '__add__',
+        '__contains__',
+        '__delitem__',
+        '__getitem__',
+        '__len__',
+        '__mul__',
+        '__reversed__',
+        '__rmul__',
+        '__setitem__',
+        'append',
+        'count',
+        'extend',
+        'index',
+        'insert',
+        'pop',
+        'remove',
+        'reverse',
+        'sort',
+        '__imul__',
+    ),
+)
+
+
 class ListProxy(BaseListProxy):
     def __iadd__(self, value):
         self._callmethod('extend', (value,))
         return self
+
     def __imul__(self, value):
         self._callmethod('__imul__', (value,))
         return self
@@ -770,16 +828,29 @@ class ListProxy(BaseListProxy):
 
 # Changes to the standard version:
 #   - remove method `__iter__`, because it uses `method_to_typeid`, which we don't support
-DictProxy = MakeProxyType('DictProxy', (
-    '__contains__', '__delitem__', '__getitem__', '__len__',
-    '__setitem__', 'clear', 'copy', 'get', 'items',
-    'keys', 'pop', 'popitem', 'setdefault', 'update', 'values'
-    ))
+DictProxy = MakeProxyType(
+    'DictProxy',
+    (
+        '__contains__',
+        '__delitem__',
+        '__getitem__',
+        '__len__',
+        '__setitem__',
+        'clear',
+        'copy',
+        'get',
+        'items',
+        'keys',
+        'pop',
+        'popitem',
+        'setdefault',
+        'update',
+        'values',
+    ),
+)
 
 
-ArrayProxy = MakeProxyType('ArrayProxy', (
-    '__len__', '__getitem__', '__setitem__'
-    ))
+ArrayProxy = MakeProxyType('ArrayProxy', ('__len__', '__getitem__', '__setitem__'))
 
 
 ServerProcess.register('list', list, ListProxy)
@@ -791,9 +862,13 @@ ServerProcess.register('Namespace', Namespace, NamespaceProxy)
 # Register 'ManagedList', 'ManagedDict', 'ManagedValue', 'ManagedArray', 'ManagedNamespace', 'ManagedIterator'.
 # Define functions `managed_list`, `managed_dict`, `managed_value`, `managed_array`, `managed_namespace`, `managed_iterator`.
 for cls in (ListProxy, ValueProxy, ArrayProxy, NamespaceProxy, IteratorProxy):
-    typeid = 'Managed' + cls.__name__.removeprefix('Proxy')  # ManagedList, ManagedDict, ...
+    typeid = 'Managed' + cls.__name__.removeprefix(
+        'Proxy'
+    )  # ManagedList, ManagedDict, ...
     ServerProcess.register(typeid, callable=None, proxytype=cls, create_method=False)
-    exec(f"managed_{cls.__name__.removesuffix('Proxy').lower()} = functools.partial(managed, typeid='{typeid}')")
+    exec(
+        f"managed_{cls.__name__.removesuffix('Proxy').lower()} = functools.partial(managed, typeid='{typeid}')"
+    )
 
 
 # Think through ref count dynamics in these scenarios:
@@ -884,9 +959,7 @@ else:
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
 
-        def __init__(
-            self, *args, name: str = None, size: int = None, **kwargs
-        ):
+        def __init__(self, *args, name: str = None, size: int = None, **kwargs):
             super().__init__(*args, **kwargs)
             self._name = name
             self._size = size
