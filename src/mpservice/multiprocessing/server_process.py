@@ -859,16 +859,20 @@ ServerProcess.register('Value', Value, ValueProxy)
 ServerProcess.register('Array', Array, ArrayProxy)
 ServerProcess.register('Namespace', Namespace, NamespaceProxy)
 
-# Register 'ManagedList', 'ManagedDict', 'ManagedValue', 'ManagedArray', 'ManagedNamespace', 'ManagedIterator'.
-# Define functions `managed_list`, `managed_dict`, `managed_value`, `managed_array`, `managed_namespace`, `managed_iterator`.
-for cls in (ListProxy, ValueProxy, ArrayProxy, NamespaceProxy, IteratorProxy):
-    typeid = 'Managed' + cls.__name__.removeprefix(
-        'Proxy'
-    )  # ManagedList, ManagedDict, ...
-    ServerProcess.register(typeid, callable=None, proxytype=cls, create_method=False)
-    exec(
-        f"managed_{cls.__name__.removesuffix('Proxy').lower()} = functools.partial(managed, typeid='{typeid}')"
-    )
+ServerProcess.register('ManagedList', callable=None, proxytype=ListProxy, create_method=False)
+ServerProcess.register('ManagedDict', callable=None, proxytype=DictProxy, create_method=False)
+ServerProcess.register('ManagedValue', callable=None, proxytype=ValueProxy, create_method=False)
+ServerProcess.register('ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False)
+ServerProcess.register('ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False)
+ServerProcess.register('ManagedIterator', callable=None, proxytype=IteratorProxy, create_method=False)
+
+managed_list = functools.partial(managed, typeid='ManagedList')
+managed_dict = functools.partial(managed, typeid='ManagedDict')
+managed_value = functools.partial(managed, typeid='ManagedValue')
+managed_arrray = functools.partial(managed, typeid='ManagedArray')
+managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
+managed_iterator = functools.partial(managed, typeid='ManagedIterator')
+
 
 
 # Think through ref count dynamics in these scenarios:
