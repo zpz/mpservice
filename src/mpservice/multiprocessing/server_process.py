@@ -859,20 +859,31 @@ ServerProcess.register('Value', Value, ValueProxy)
 ServerProcess.register('Array', Array, ArrayProxy)
 ServerProcess.register('Namespace', Namespace, NamespaceProxy)
 
-ServerProcess.register('ManagedList', callable=None, proxytype=ListProxy, create_method=False)
-ServerProcess.register('ManagedDict', callable=None, proxytype=DictProxy, create_method=False)
-ServerProcess.register('ManagedValue', callable=None, proxytype=ValueProxy, create_method=False)
-ServerProcess.register('ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False)
-ServerProcess.register('ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False)
-ServerProcess.register('ManagedIterator', callable=None, proxytype=IteratorProxy, create_method=False)
+ServerProcess.register(
+    'ManagedList', callable=None, proxytype=ListProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedDict', callable=None, proxytype=DictProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedValue', callable=None, proxytype=ValueProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedArray', callable=None, proxytype=ArrayProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedNamespace', callable=None, proxytype=NamespaceProxy, create_method=False
+)
+ServerProcess.register(
+    'ManagedIterator', callable=None, proxytype=IteratorProxy, create_method=False
+)
 
 managed_list = functools.partial(managed, typeid='ManagedList')
 managed_dict = functools.partial(managed, typeid='ManagedDict')
 managed_value = functools.partial(managed, typeid='ManagedValue')
-managed_arrray = functools.partial(managed, typeid='ManagedArray')
+managed_array = functools.partial(managed, typeid='ManagedArray')
 managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
 managed_iterator = functools.partial(managed, typeid='ManagedIterator')
-
 
 
 # Think through ref count dynamics in these scenarios:
