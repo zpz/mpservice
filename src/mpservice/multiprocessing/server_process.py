@@ -311,7 +311,18 @@ __all__ = [
 ]
 
 
+def get_server():
+    return getattr(current_process(), '_manager_server', None)
+    # If `None`, the caller is not running in the manager server process.
+    # Otherwise, the return is the `Server` object that is running.
+
+
+
 class Server(_Server_):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.id_to_local_proxy_obj = None  # disable this
+
     # This is the cpython code in versions 3.7-3.12.
     # My fix is labeled "FIX".
     def serve_client(self, conn):
@@ -332,13 +343,15 @@ class Server(_Server_):
                 request = recv()
                 ident, methodname, args, kwds = request
 
-                try:
-                    obj, exposed, gettypeid = id_to_obj[ident]
-                except KeyError as ke:
-                    try:
-                        obj, exposed, gettypeid = self.id_to_local_proxy_obj[ident]
-                    except KeyError:
-                        raise ke
+                # FIX
+                # try:
+                #     obj, exposed, gettypeid = id_to_obj[ident]
+                # except KeyError as ke:
+                #     try:
+                #         obj, exposed, gettypeid = self.id_to_local_proxy_obj[ident]
+                #     except KeyError:
+                #         raise ke
+                obj, exposed, gettypeid = id_to_obj[ident]
 
                 if methodname not in exposed:
                     raise AttributeError(
@@ -357,22 +370,24 @@ class Server(_Server_):
                     msg = ('#ERROR', RemoteException(e))
 
                 else:
-                    typeid = gettypeid and gettypeid.get(methodname, None)
-                    if typeid:
-                        # FIX:
-                        # In the official version, the return received in `BaseProxy._callmethod`
-                        # will need the `manager` object to assemble the proxy object.
-                        # For this reason, such proxy-returning methods can not be called on a proxy
-                        # that is passed to another process, b/c the original manager object is not available.
-                        #
-                        # The hacked version below works in this situation.
+                    msg = ('#RETURN', res)
+                    # FIX:
+                    # typeid = gettypeid and gettypeid.get(methodname, None)
+                    # if typeid:
+                    #     # FIX:
+                    #     # In the official version, the return received in `BaseProxy._callmethod`
+                    #     # will need the `manager` object to assemble the proxy object.
+                    #     # For this reason, such proxy-returning methods can not be called on a proxy
+                    #     # that is passed to another process, b/c the original manager object is not available.
+                    #     #
+                    #     # The hacked version below works in this situation.
 
-                        # rident, rexposed = self.create(conn, typeid, res)
-                        # token = Token(typeid, self.address, rident)
-                        # msg = ('#PROXY', (rexposed, token))
-                        msg = ('#RETURN', managed(res, typeid=typeid))
-                    else:
-                        msg = ('#RETURN', res)
+                    #     # rident, rexposed = self.create(conn, typeid, res)
+                    #     # token = Token(typeid, self.address, rident)
+                    #     # msg = ('#PROXY', (rexposed, token))
+                    #     msg = ('#RETURN', managed(res, typeid=typeid))
+                    # else:
+                    #     msg = ('#RETURN', res)
 
                     # FIX
                     # del res
@@ -425,25 +440,50 @@ class Server(_Server_):
                 sys.exit(1)
 
     def shutdown(self, c):
-        memoryblocks = getattr(self, '_memoryblocks_', None)
-        if memoryblocks:
-            # If there are `MemoryBlockProxy` objects alive when the manager exists its context manager,
-            # the corresponding shared memory blocks will live beyond the server process, leading to
-            # warnings like this:
-            #
-            #    UserWarning: resource_tracker: There appear to be 3 leaked shared_memory objects to clean up at shutdown
-            #
-            # Because we intend to use this server process as a central manager of the shared memory blocks,
-            # there shouldn't be any user beyond the lifespan of this server, hence we release these memory blocks.
-            #
-            # If may be good practice to explicitly `del` `MemoryBlockProxy` objects before the manager shuts down.
-            # However, this may be unpractical if there are many proxies, esp if they are nested in other objects.
-            #
-            # TODO: print some warning or info?
-            for m in memoryblocks:
-                m.__del__()  # `del m` may not be enough b/c its ref count could be > 1.
+        # If there are `MemoryBlockProxy` objects alive when the manager exists its context manager,
+        # the corresponding shared memory blocks will live beyond the server process, leading to
+        # warnings like this:
+        #
+        #    UserWarning: resource_tracker: There appear to be 3 leaked shared_memory objects to clean up at shutdown
+        #
+        # Because we intend to use this server process as a central manager of the shared memory blocks,
+        # there shouldn't be any user beyond the lifespan of this server, hence we release these memory blocks.
+        #
+        # If may be good practice to explicitly `del` `MemoryBlockProxy` objects before the manager shuts down.
+        # However, this may be unpractical if there are many proxies, esp if they are nested in other objects.
+        #
+        # TODO: print some warning or info?
+        for ident in self.id_to_refcount.keys():
+            z = self.id_to_obj[ident][0]
+            if type(z).__name__ == 'MemoryBlock':
+                z.__del__()  # `del z` may not be enough b/c its ref count could be > 1.
 
         super().shutdown(c)
+
+    def incref(self, c, ident):
+        with self.mutex:
+            # FIX
+            # try:
+            #     self.id_to_refcount[ident] += 1
+            # except KeyError as ke:
+            #     # If no external references exist but an internal (to the
+            #     # manager) still does and a new external reference is created
+            #     # from it, restore the manager's tracking of it from the
+            #     # previously stashed internal ref.
+            #     if ident in self.id_to_local_proxy_obj:
+            #         self.id_to_refcount[ident] = 1
+            #         self.id_to_obj[ident] = \
+            #             self.id_to_local_proxy_obj[ident]
+            #         obj, exposed, gettypeid = self.id_to_obj[ident]
+            #         util.debug('Server re-enabled tracking & INCREF %r', ident)
+            #     else:
+            #         raise ke
+            self.id_to_refcount[ident] += 1
+                
+
+    def decref(self, c, ident):
+        assert ident in self.id_to_refcount  # disable the use of `self.id_to_local_proxy_obj`
+        super().decref(c, ident)
 
 
 class ServerProcess(_BaseManager_):
@@ -465,8 +505,11 @@ class ServerProcess(_BaseManager_):
         address=None,
         authkey=None,
         serializer='pickle',
+        ctx=None,
+        *,
         name: str | None = None,
         cpu: int | list[int] | None = None,
+        **kwargs,
     ):
         """
         Parameters
@@ -477,7 +520,7 @@ class ServerProcess(_BaseManager_):
             Specify CPU pinning for the server process.
         """
         super().__init__(
-            address=address, authkey=authkey, serializer=serializer, ctx=MP_SPAWN_CTX
+            address=address, authkey=authkey, serializer=serializer, ctx=ctx or MP_SPAWN_CTX, **kwargs
         )
         self.start()
         if name:
@@ -496,7 +539,7 @@ class ServerProcess(_BaseManager_):
     ):
         if not proxytype:
             proxytype = AutoProxy
-        assert not getattr(proxytype, '_method_to_typeid_', None)
+        assert not hasattr(proxytype, '_method_to_typeid_')
 
         return super().register(
             typeid,
@@ -527,7 +570,7 @@ class BaseProxy(_BaseProxy_):
 
     # Changes to the standard version:
     #   1. call `incref` before returning
-    #   2. use our custome `RebuildProxy` and `AutoProxy` in place of the standard versions
+    #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
     def __reduce__(self):
         # The only sensible case of pickling this proxy object is for
         # transfering this object between processes, e.g., in a queue.
@@ -588,15 +631,15 @@ def RebuildProxy(func, token, serializer, kwds):
     """
     Function used for unpickling proxy objects.
     """
-    server = getattr(current_process(), '_manager_server', None)
+    server = get_server()
     if server and server.address == token.address:
         util.debug('Rebuild a proxy owned by manager, token=%r', token)
 
         # FIX:
         # kwds['manager_owned'] = True
 
-        if token.id not in server.id_to_local_proxy_obj:
-            server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
+        # if token.id not in server.id_to_local_proxy_obj:
+        #     server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
 
     assert 'incref' not in kwds
     incref = not getattr(current_process(), '_inheriting', False)
@@ -667,7 +710,7 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
         authkey = current_process().authkey
 
     ProxyType = MakeProxyType('AutoProxy[%s]' % token.typeid, exposed)
-    # This uses our custome `MakeProxyType`
+    # This uses our custom `MakeProxyType`
 
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
     #   incref=incref, manager_owned=manager_owned)
@@ -684,11 +727,14 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
 #
 
 
-def managed(obj, *, typeid: str = None):
+def managed(obj, *, typeid: str = None) -> BaseProxy:
     """
-    This function wraps part of a data structure, such as one value in a dict, as a proxy.
+    This function is used within a server process.
+    It creates a proxy for the input `obj`.
+    The resultant proxy can be sent back to a requester outside of the server process.
+    The proxy may also be saved in another data structure, e.g. as an element in a managed list or dict.
     """
-    server = getattr(multiprocessing.current_process(), '_manager_server', None)
+    server = get_server()
     if not server:
         return obj
 
@@ -703,12 +749,23 @@ def managed(obj, *, typeid: str = None):
     proxytype = server.registry[typeid][-1]
     serializer = 'xmlrpclib' if isinstance(server.listener, XmlListener) else 'pickle'
 
-    proxy = proxytype(
-        token,
-        serializer=serializer,
-        authkey=server.authkey,
-        exposed=rexposed,
-    )
+    if typeid == 'ManagedMemoryBlock':
+        mem = server.id_to_obj[rident][0]
+        proxy = proxytype(
+            token,
+            serializer=serializer,
+            authkey=server.authkey,
+            exposed=rexposed,
+            name=mem.name,
+            size=mem.size,
+        )
+    else:
+        proxy = proxytype(
+            token,
+            serializer=serializer,
+            authkey=server.authkey,
+            exposed=rexposed,
+        )
 
     # This proxy object called `incref` once in its `__init__`. Ref count is 2.
 
@@ -912,21 +969,17 @@ else:
 
     class MemoryBlock:
         """
-        This class is used within the "server process" of a ``ServerProcess`` to
-        create and track shared memory blocks.
+        This class provides a simple tracker for a block of shared memory.
+
+        User can use this class ONLY within a server process.
+        They must wrap this object with `managed_memoryblock`.
+
+        Outside of a server process, use `manager.MemoryBlock`.
         """
 
         def __init__(self, size: int):
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
-
-            server = (
-                multiprocessing.current_process()._manager_server
-            )  # this attribute must exist
-            all_blocks = getattr(server, '_memoryblocks_', None)
-            if all_blocks is None:
-                all_blocks = server._memoryblocks_ = weakref.WeakSet()
-            all_blocks.add(self)
 
         def _name(self):
             # This is for use by ``MemoryBlockProxy``.
@@ -935,12 +988,11 @@ else:
         @property
         def name(self):
             return self._mem.name
-
+        
         @property
         def size(self):
-            # This could be slightly larger than the ``size`` passed in to :meth:`__init__`.
             return self._mem.size
-
+        
         @property
         def buf(self):
             return self._mem.buf
@@ -956,10 +1008,13 @@ else:
             This is for use by ``MemoryBlockProxy``.
             This is mainly for debugging purposes.
             """
-            return [
-                m.name
-                for m in multiprocessing.current_process()._manager_server._memoryblocks_
-            ]
+            server = get_server()
+            blocks = []
+            for z in server.id_to_obj.values():
+                obj = z[0]
+                if type(obj).__name__ == 'MemoryBlock':
+                    blocks.append(obj.name)
+            return blocks
 
         def __del__(self):
             """
@@ -968,8 +1023,13 @@ else:
             self._mem.close()
             self._mem.unlink()
 
+        def __reduce__(self):
+            # Block pickling to prevent user from accidentally using this class w/o
+            # wrapping it by `managed_memoryblock`.
+            raise NotImplementedError(f"cannot pickle instances of type '{self.__class__.__name__}")
+
         def __repr__(self):
-            return f'<{self.__class__.__name__} {self.name}, size {self.size}>'
+            return f'<{self.__class__.__name__} {self._mem.name}, size {self._mem.size}>'
 
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
@@ -1017,7 +1077,7 @@ else:
         def _list_memory_blocks(self, *, include_self=True) -> list[str]:
             """
             Return names of shared memory blocks being
-            tracked by the ``ServerProcess`` that "ownes" the current
+            tracked by the ``ServerProcess`` that "owns" the current
             proxy object.
 
             You can call this method on any memoryblock proxy object.
@@ -1041,4 +1101,4 @@ else:
 
     managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')
 
-    __all__.extend(('MemoryBlock', 'MemoryBlockProxy', 'managed_memoryblock'))
+    __all__.extend(('MemoryBlock', 'managed_memoryblock'))

@@ -316,7 +316,7 @@ __call__ = [
 
 # This class should be in the module `mpserver`.
 # It is here because the class `RemoteException` needs to handle it.
-# User should import it from `mpserver`.
+# User should import `EnsembleError` from `mpserver`.
 class EnsembleError(RuntimeError):
     def __init__(self, results: dict):
         nerr = sum(
@@ -448,6 +448,7 @@ class RemoteException:
             z = exc.args[1]['y']
             for i in range(len(z)):
                 if isinstance(z[i], BaseException):
+                    # Wrap a nested Exception by RemoteException.
                     z[i] = self.__class__(z[i])
 
         self.exc = exc
