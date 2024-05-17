@@ -317,7 +317,6 @@ def get_server():
     # Otherwise, the return is the `Server` object that is running.
 
 
-
 class Server(_Server_):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -479,10 +478,11 @@ class Server(_Server_):
             #     else:
             #         raise ke
             self.id_to_refcount[ident] += 1
-                
 
     def decref(self, c, ident):
-        assert ident in self.id_to_refcount  # disable the use of `self.id_to_local_proxy_obj`
+        assert (
+            ident in self.id_to_refcount
+        )  # disable the use of `self.id_to_local_proxy_obj`
         super().decref(c, ident)
 
 
@@ -520,7 +520,11 @@ class ServerProcess(_BaseManager_):
             Specify CPU pinning for the server process.
         """
         super().__init__(
-            address=address, authkey=authkey, serializer=serializer, ctx=ctx or MP_SPAWN_CTX, **kwargs
+            address=address,
+            authkey=authkey,
+            serializer=serializer,
+            ctx=ctx or MP_SPAWN_CTX,
+            **kwargs,
         )
         self.start()
         if name:
@@ -988,11 +992,11 @@ else:
         @property
         def name(self):
             return self._mem.name
-        
+
         @property
         def size(self):
             return self._mem.size
-        
+
         @property
         def buf(self):
             return self._mem.buf
@@ -1026,10 +1030,14 @@ else:
         def __reduce__(self):
             # Block pickling to prevent user from accidentally using this class w/o
             # wrapping it by `managed_memoryblock`.
-            raise NotImplementedError(f"cannot pickle instances of type '{self.__class__.__name__}")
+            raise NotImplementedError(
+                f"cannot pickle instances of type '{self.__class__.__name__}"
+            )
 
         def __repr__(self):
-            return f'<{self.__class__.__name__} {self._mem.name}, size {self._mem.size}>'
+            return (
+                f'<{self.__class__.__name__} {self._mem.name}, size {self._mem.size}>'
+            )
 
     class MemoryBlockProxy(BaseProxy):
         _exposed_ = ('_list_memory_blocks', '_name')
