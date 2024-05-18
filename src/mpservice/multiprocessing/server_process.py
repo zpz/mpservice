@@ -536,7 +536,14 @@ class ServerProcess(_BaseManager_):
     #    - use our custom `AutoProxy`
     @classmethod
     def register(
-        cls, typeid, callable=None, proxytype=None, *, exposed=None, method_to_typeid=None, create_method=True
+        cls,
+        typeid,
+        callable=None,
+        proxytype=None,
+        *,
+        exposed=None,
+        method_to_typeid=None,
+        create_method=True,
     ):
         if typeid in getattr(cls, '_registry', {}):
             raise ValueError(f"typeid '{typeid}' is already registered")
@@ -1106,9 +1113,14 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-    ServerProcess.register('MemoryBlock', callable=MemoryBlock, proxytype=MemoryBlockProxy)
     ServerProcess.register(
-        'ManagedMemoryBlock', callable=None, proxytype=MemoryBlockProxy, create_method=False
+        'MemoryBlock', callable=MemoryBlock, proxytype=MemoryBlockProxy
+    )
+    ServerProcess.register(
+        'ManagedMemoryBlock',
+        callable=None,
+        proxytype=MemoryBlockProxy,
+        create_method=False,
     )
 
     managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')

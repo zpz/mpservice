@@ -316,9 +316,7 @@ def worker_mem(data):
 
 def test_managed():
     ServerProcess.register(
-        'MemoryWorker',
-        MemoryWorker,
-        method_to_typeid={'memory_block': 'MemoryBlock'}
+        'MemoryWorker', MemoryWorker, method_to_typeid={'memory_block': 'MemoryBlock'}
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
