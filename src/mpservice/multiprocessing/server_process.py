@@ -536,7 +536,7 @@ class ServerProcess(_BaseManager_):
     #    - use our custom `AutoProxy`
     @classmethod
     def register(
-        cls, typeid, *, callable=None, proxytype=None, exposed=None, method_to_typeid=None, create_method=True
+        cls, typeid, callable=None, proxytype=None, *, exposed=None, method_to_typeid=None, create_method=True
     ):
         if typeid in getattr(cls, '_registry', {}):
             raise ValueError(f"typeid '{typeid}' is already registered")
@@ -918,11 +918,11 @@ DictProxy = MakeProxyType(
 ArrayProxy = MakeProxyType('ArrayProxy', ('__len__', '__getitem__', '__setitem__'))
 
 
-ServerProcess.register('list', list, ListProxy)
-ServerProcess.register('dict', dict, DictProxy)
-ServerProcess.register('Value', Value, ValueProxy)
-ServerProcess.register('Array', Array, ArrayProxy)
-ServerProcess.register('Namespace', Namespace, NamespaceProxy)
+ServerProcess.register('list', callable=list, proxytype=ListProxy)
+ServerProcess.register('dict', callable=dict, proxytype=DictProxy)
+ServerProcess.register('Value', callable=Value, proxytype=ValueProxy)
+ServerProcess.register('Array', callable=Array, proxytype=ArrayProxy)
+ServerProcess.register('Namespace', callable=Namespace, proxytype=NamespaceProxy)
 
 ServerProcess.register(
     'ManagedList', callable=None, proxytype=ListProxy, create_method=False
@@ -1106,9 +1106,9 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-    ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
+    ServerProcess.register('MemoryBlock', callable=MemoryBlock, proxytype=MemoryBlockProxy)
     ServerProcess.register(
-        'ManagedMemoryBlock', None, proxytype=MemoryBlockProxy, create_method=False
+        'ManagedMemoryBlock', callable=None, proxytype=MemoryBlockProxy, create_method=False
     )
 
     managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')

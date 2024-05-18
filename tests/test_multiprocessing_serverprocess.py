@@ -109,8 +109,8 @@ class Tripler:
         return n
 
 
-ServerProcess.register('Doubler', Doubler)
-ServerProcess.register('Tripler', Tripler)
+ServerProcess.register('Doubler', callable=Doubler)
+ServerProcess.register('Tripler', callable=Tripler)
 
 
 def test_manager():
