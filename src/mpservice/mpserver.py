@@ -396,6 +396,7 @@ class Worker(ABC):
     def stream(self, xx: Iterable) -> Iterator:
         """
         `xx` is an iterable of input `x` to :meth:`call`.
+        (If `self.batch_size > 0, then `xx` is an iterable of batches.)
         This function yields the results of :meth:`call` for the elements of `xx`,
         in the right order. If any invocation of :meth:`call` raises an exception,
         the exception object is yielded.
