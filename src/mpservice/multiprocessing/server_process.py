@@ -369,27 +369,25 @@ class Server(_Server_):
                     msg = ('#ERROR', RemoteException(e))
 
                 else:
-                    msg = ('#RETURN', res)
-                    # FIX:
-                    # typeid = gettypeid and gettypeid.get(methodname, None)
-                    # if typeid:
-                    #     # FIX:
-                    #     # In the official version, the return received in `BaseProxy._callmethod`
-                    #     # will need the `manager` object to assemble the proxy object.
-                    #     # For this reason, such proxy-returning methods can not be called on a proxy
-                    #     # that is passed to another process, b/c the original manager object is not available.
-                    #     #
-                    #     # The hacked version below works in this situation.
+                    typeid = gettypeid and gettypeid.get(methodname, None)
+                    if typeid:
+                        # FIX:
+                        # In the official version, the return received in `BaseProxy._callmethod`
+                        # will need the `manager` object to assemble the proxy object.
+                        # For this reason, such proxy-returning methods can not be called on a proxy
+                        # that is passed to another process, b/c the original manager object is not available.
+                        #
+                        # The hacked version below works in this situation.
 
-                    #     # rident, rexposed = self.create(conn, typeid, res)
-                    #     # token = Token(typeid, self.address, rident)
-                    #     # msg = ('#PROXY', (rexposed, token))
-                    #     msg = ('#RETURN', managed(res, typeid=typeid))
-                    # else:
-                    #     msg = ('#RETURN', res)
+                        # rident, rexposed = self.create(conn, typeid, res)
+                        # token = Token(typeid, self.address, rident)
+                        # msg = ('#PROXY', (rexposed, token))
+                        msg = ('#RETURN', managed(res, typeid=typeid))
+                    else:
+                        msg = ('#RETURN', res)
 
                     # FIX
-                    # del res
+                    del res
 
                 # FIX:
                 # If no more request is coming, then `function` and `res` will stay around.
@@ -398,8 +396,8 @@ class Server(_Server_):
                 # and "returned" to the requester.
                 # The extra reference to `obj` and `res` lingering here have no use, yet can cause
                 # sutble bugs in applications that make use of their ref counts.
-                # del function
-                # del obj
+                del function
+                del obj
 
             except AttributeError:
                 if methodname is None:
@@ -535,24 +533,32 @@ class ServerProcess(_BaseManager_):
             os.sched_setaffinity(self._process.pid, cpu)
 
     # Changes to the standard version:
-    #    - remove parameter `method_to_typeid` b/c its functionality is achieved by `managed`
     #    - use our custom `AutoProxy`
     @classmethod
     def register(
-        cls, typeid, callable=None, proxytype=None, exposed=None, create_method=True
+        cls,
+        typeid,
+        callable=None,
+        proxytype=None,
+        *,
+        exposed=None,
+        method_to_typeid=None,
+        create_method=True,
     ):
-        if not proxytype:
-            proxytype = AutoProxy
-        assert not hasattr(proxytype, '_method_to_typeid_')
-
+        if typeid in getattr(cls, '_registry', {}):
+            raise ValueError(f"typeid '{typeid}' is already registered")
         return super().register(
             typeid,
             callable=callable,
-            proxytype=proxytype,
+            proxytype=proxytype or AutoProxy,
             exposed=exposed,
-            method_to_typeid=None,
+            method_to_typeid=method_to_typeid,
             create_method=create_method,
         )
+
+    @classmethod
+    def unregister(cls, typeid):
+        del cls._registry[typeid]
 
 
 class BaseProxy(_BaseProxy_):
@@ -744,8 +750,13 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
 
     if not typeid:
         typeid = type(obj).__name__
-        callable, *_ = server.registry[typeid]  # If KeyError, it's user's fault
-        assert callable is None
+        try:
+            callable, *_ = server.registry[typeid]
+            assert callable is None
+        except KeyError:
+            server.registry[typeid] = (None, None, None, AutoProxy)
+            # TODO: delete after this single use?
+
     rident, rexposed = server.create(None, typeid, obj)
     # This has called `incref` once. Ref count is 1.
 
@@ -914,11 +925,11 @@ DictProxy = MakeProxyType(
 ArrayProxy = MakeProxyType('ArrayProxy', ('__len__', '__getitem__', '__setitem__'))
 
 
-ServerProcess.register('list', list, ListProxy)
-ServerProcess.register('dict', dict, DictProxy)
-ServerProcess.register('Value', Value, ValueProxy)
-ServerProcess.register('Array', Array, ArrayProxy)
-ServerProcess.register('Namespace', Namespace, NamespaceProxy)
+ServerProcess.register('list', callable=list, proxytype=ListProxy)
+ServerProcess.register('dict', callable=dict, proxytype=DictProxy)
+ServerProcess.register('Value', callable=Value, proxytype=ValueProxy)
+ServerProcess.register('Array', callable=Array, proxytype=ArrayProxy)
+ServerProcess.register('Namespace', callable=Namespace, proxytype=NamespaceProxy)
 
 ServerProcess.register(
     'ManagedList', callable=None, proxytype=ListProxy, create_method=False
@@ -1102,9 +1113,14 @@ else:
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
 
-    ServerProcess.register('MemoryBlock', MemoryBlock, proxytype=MemoryBlockProxy)
     ServerProcess.register(
-        'ManagedMemoryBlock', None, proxytype=MemoryBlockProxy, create_method=False
+        'MemoryBlock', callable=MemoryBlock, proxytype=MemoryBlockProxy
+    )
+    ServerProcess.register(
+        'ManagedMemoryBlock',
+        callable=None,
+        proxytype=MemoryBlockProxy,
+        create_method=False,
     )
 
     managed_memoryblock = functools.partial(managed, typeid='ManagedMemoryBlock')

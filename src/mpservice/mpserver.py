@@ -68,6 +68,7 @@ __all__ = [
     'EnsembleServlet',
     'SwitchServlet',
     'Server',
+    'AsyncServer',
     'TimeoutError',
 ]
 

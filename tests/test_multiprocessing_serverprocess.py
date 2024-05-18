@@ -109,8 +109,8 @@ class Tripler:
         return n
 
 
-ServerProcess.register('Doubler', Doubler)
-ServerProcess.register('Tripler', Tripler)
+ServerProcess.register('Doubler', callable=Doubler)
+ServerProcess.register('Tripler', callable=Tripler)
 
 
 def test_manager():
@@ -273,7 +273,7 @@ def test_shared_memory():
 
 class MemoryWorker:
     def memory_block(self, size):
-        return managed_memoryblock(MemoryBlock(size))
+        return size
 
     def make_dict(self, size):
         mem = MemoryBlock(size)
@@ -316,8 +316,7 @@ def worker_mem(data):
 
 def test_managed():
     ServerProcess.register(
-        'MemoryWorker',
-        MemoryWorker,
+        'MemoryWorker', MemoryWorker, method_to_typeid={'memory_block': 'MemoryBlock'}
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()

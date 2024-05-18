@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
-## [0.15.3] - in progress
+## [0.15.3] - 2024-05-17
 
 - `mpservice.multiprocessing.server_process.ServerProcess` enhancement: if a proxy function raises exception in the server process, a `mpservice.multiprocessing.remote_exception.RemoteException` is returned to the request and then raised to the user, hence the user (outside of the server process) gets more useful traceback info.
 - `mpservice.multiprocessing.server_process` is heavily refactored for enhancements and simplifications.
