@@ -273,7 +273,7 @@ def test_shared_memory():
 
 class MemoryWorker:
     def memory_block(self, size):
-        return managed_memoryblock(MemoryBlock(size))
+        return size
 
     def make_dict(self, size):
         mem = MemoryBlock(size)
@@ -318,6 +318,7 @@ def test_managed():
     ServerProcess.register(
         'MemoryWorker',
         MemoryWorker,
+        method_to_typeid={'memory_block': 'MemoryBlock'}
     )
     with ServerProcess() as server:
         worker = server.MemoryWorker()
