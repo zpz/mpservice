@@ -264,7 +264,6 @@ Then we may use it like so::
 from __future__ import annotations
 
 import functools
-import multiprocessing
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
@@ -273,7 +272,6 @@ import os
 import sys
 import threading
 import types
-import weakref
 from multiprocessing import current_process, util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
@@ -293,6 +291,7 @@ from multiprocessing.managers import (
 from multiprocessing.managers import (
     Server as _Server_,
 )
+from multiprocessing.managers import convert_to_error
 from traceback import format_exc
 
 from ._context import MP_SPAWN_CTX
@@ -379,10 +378,16 @@ class Server(_Server_):
                         #
                         # The hacked version below works in this situation.
 
-                        # rident, rexposed = self.create(conn, typeid, res)
-                        # token = Token(typeid, self.address, rident)
+                        rident, rexposed = self.create(conn, typeid, res)
+                        token = Token(typeid, self.address, rident)
                         # msg = ('#PROXY', (rexposed, token))
-                        msg = ('#RETURN', managed(res, typeid=typeid))
+
+                        # FIX: return `proxytype` so that client-size does not need to get it
+                        # from the registry in the manager object.
+                        proxytype = self.registry[typeid][-1]
+                        msg = ('#PROXY', (rexposed, token, proxytype))
+
+                        # msg = ('#RETURN', managed(res, typeid=typeid))
                     else:
                         msg = ('#RETURN', res)
 
@@ -459,22 +464,6 @@ class Server(_Server_):
 
     def incref(self, c, ident):
         with self.mutex:
-            # FIX
-            # try:
-            #     self.id_to_refcount[ident] += 1
-            # except KeyError as ke:
-            #     # If no external references exist but an internal (to the
-            #     # manager) still does and a new external reference is created
-            #     # from it, restore the manager's tracking of it from the
-            #     # previously stashed internal ref.
-            #     if ident in self.id_to_local_proxy_obj:
-            #         self.id_to_refcount[ident] = 1
-            #         self.id_to_obj[ident] = \
-            #             self.id_to_local_proxy_obj[ident]
-            #         obj, exposed, gettypeid = self.id_to_obj[ident]
-            #         util.debug('Server re-enabled tracking & INCREF %r', ident)
-            #     else:
-            #         raise ke
             self.id_to_refcount[ident] += 1
 
     def decref(self, c, ident):
@@ -578,6 +567,38 @@ class BaseProxy(_BaseProxy_):
             manager_owned=False,
         )
 
+    def _callmethod(self, methodname, args=(), kwds={}):
+        '''
+        Try to call a method of the referent and return a copy of the result
+        '''
+        try:
+            conn = self._tls.connection
+        except AttributeError:
+            util.debug('thread %r does not own a connection',
+                       threading.current_thread().name)
+            self._connect()
+            conn = self._tls.connection
+
+        conn.send((self._id, methodname, args, kwds))
+        kind, result = conn.recv()
+
+        if kind == '#RETURN':
+            return result
+        elif kind == '#PROXY':
+            # exposed, token = result
+            # proxytype = self._manager._registry[token.typeid][-1]
+            exposed, token, proxytype = result
+            # FIX: get `proxytype` from server instead of from `self._manager`.
+            token.address = self._token.address
+            proxy = proxytype(
+                token, self._serializer, manager=self._manager,
+                authkey=self._authkey, exposed=exposed
+                )
+            conn = self._Client(token.address, authkey=self._authkey)
+            dispatch(conn, None, 'decref', (token.id,))
+            return proxy
+        raise convert_to_error(kind, result)
+
     # Changes to the standard version:
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
@@ -641,18 +662,10 @@ def RebuildProxy(func, token, serializer, kwds):
     """
     Function used for unpickling proxy objects.
     """
-    server = get_server()
-    if server and server.address == token.address:
-        util.debug('Rebuild a proxy owned by manager, token=%r', token)
-
-        # FIX:
-        # kwds['manager_owned'] = True
-
-        # if token.id not in server.id_to_local_proxy_obj:
-        #     server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
-
-    assert 'incref' not in kwds
-    incref = not getattr(current_process(), '_inheriting', False)
+    incref = (
+        kwds.pop('incref', True) and
+        not getattr(current_process(), '_inheriting', False)
+    )
     obj = func(token, serializer, incref=incref, **kwds)
     # TODO: it appears `incref` is True some times and False some others.
     # Understand the `'_inheriting'` thing.
