@@ -279,6 +279,7 @@ from multiprocessing.managers import (
     Namespace,
     Token,
     Value,
+    convert_to_error,
     dispatch,
     listener_client,
 )
@@ -291,7 +292,6 @@ from multiprocessing.managers import (
 from multiprocessing.managers import (
     Server as _Server_,
 )
-from multiprocessing.managers import convert_to_error
 from traceback import format_exc
 
 from ._context import MP_SPAWN_CTX
@@ -568,14 +568,15 @@ class BaseProxy(_BaseProxy_):
         )
 
     def _callmethod(self, methodname, args=(), kwds={}):
-        '''
+        """
         Try to call a method of the referent and return a copy of the result
-        '''
+        """
         try:
             conn = self._tls.connection
         except AttributeError:
-            util.debug('thread %r does not own a connection',
-                       threading.current_thread().name)
+            util.debug(
+                'thread %r does not own a connection', threading.current_thread().name
+            )
             self._connect()
             conn = self._tls.connection
 
@@ -591,9 +592,12 @@ class BaseProxy(_BaseProxy_):
             # FIX: get `proxytype` from server instead of from `self._manager`.
             token.address = self._token.address
             proxy = proxytype(
-                token, self._serializer, manager=self._manager,
-                authkey=self._authkey, exposed=exposed
-                )
+                token,
+                self._serializer,
+                manager=self._manager,
+                authkey=self._authkey,
+                exposed=exposed,
+            )
             conn = self._Client(token.address, authkey=self._authkey)
             dispatch(conn, None, 'decref', (token.id,))
             return proxy
@@ -662,9 +666,8 @@ def RebuildProxy(func, token, serializer, kwds):
     """
     Function used for unpickling proxy objects.
     """
-    incref = (
-        kwds.pop('incref', True) and
-        not getattr(current_process(), '_inheriting', False)
+    incref = kwds.pop('incref', True) and not getattr(
+        current_process(), '_inheriting', False
     )
     obj = func(token, serializer, incref=incref, **kwds)
     # TODO: it appears `incref` is True some times and False some others.
