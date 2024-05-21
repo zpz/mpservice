@@ -283,9 +283,7 @@ from multiprocessing.managers import (
     dispatch,
     listener_client,
 )
-from multiprocessing.managers import (
-    BaseManager as _BaseManager_,
-)
+from multiprocessing.managers import BaseManager
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
 )
@@ -370,24 +368,15 @@ class Server(_Server_):
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if typeid:
-                        # FIX:
-                        # In the official version, the return received in `BaseProxy._callmethod`
-                        # will need the `manager` object to assemble the proxy object.
-                        # For this reason, such proxy-returning methods can not be called on a proxy
-                        # that is passed to another process, b/c the original manager object is not available.
-                        #
-                        # The hacked version below works in this situation.
-
                         rident, rexposed = self.create(conn, typeid, res)
                         token = Token(typeid, self.address, rident)
                         # msg = ('#PROXY', (rexposed, token))
 
-                        # FIX: return `proxytype` so that client-size does not need to get it
+                        # FIX:
+                        # Return `proxytype` so that client-size does not need to get it
                         # from the registry in the manager object.
                         proxytype = self.registry[typeid][-1]
                         msg = ('#PROXY', (rexposed, token, proxytype))
-
-                        # msg = ('#RETURN', managed(res, typeid=typeid))
                     else:
                         msg = ('#RETURN', res)
 
@@ -401,6 +390,8 @@ class Server(_Server_):
                 # and "returned" to the requester.
                 # The extra reference to `obj` and `res` lingering here have no use, yet can cause
                 # sutble bugs in applications that make use of their ref counts.
+                #
+                # This fix does not seem to be critical.
                 del function
                 del obj
 
@@ -473,7 +464,7 @@ class Server(_Server_):
         super().decref(c, ident)
 
 
-class ServerProcess(_BaseManager_):
+class ServerProcess(BaseManager):
     # Overhead:
     #
     # I made a naive example, where the registered class just returns ``x + x``.
@@ -534,16 +525,37 @@ class ServerProcess(_BaseManager_):
         method_to_typeid=None,
         create_method=True,
     ):
+        # FIX: disallow overwriting existing registry.
         if typeid in getattr(cls, '_registry', {}):
             raise ValueError(f"typeid '{typeid}' is already registered")
-        return super().register(
+
+        if proxytype is None:
+            proxytype = AutoProxy
+
+        super().register(
             typeid,
             callable=callable,
-            proxytype=proxytype or AutoProxy,
+            proxytype=proxytype,
             exposed=exposed,
             method_to_typeid=method_to_typeid,
             create_method=create_method,
         )
+
+        # FIX: re-assign the method to not pass `manager`.
+        if create_method:
+            def temp(self, /, *args, **kwds):
+                util.debug('requesting creation of a shared %r object', typeid)
+                token, exp = self._create(typeid, *args, **kwds)
+                proxy = proxytype(
+                    token, self._serializer,
+                    authkey=self._authkey, exposed=exp
+                    )
+                conn = self._Client(token.address, authkey=self._authkey)
+                dispatch(conn, None, 'decref', (token.id,))
+                return proxy
+            temp.__name__ = typeid
+            setattr(cls, typeid, temp)
+
 
     @classmethod
     def unregister(cls, typeid):
@@ -554,13 +566,14 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
+    #    - remove parameter `manager`
     def __init__(
-        self, token, serializer, manager=None, authkey=None, exposed=None, incref=True
+        self, token, serializer, authkey=None, exposed=None, incref=True
     ):
         super().__init__(
             token,
             serializer,
-            manager=manager,
+            manager=None,
             authkey=authkey,
             exposed=exposed,
             incref=incref,
@@ -594,7 +607,6 @@ class BaseProxy(_BaseProxy_):
             proxy = proxytype(
                 token,
                 self._serializer,
-                manager=self._manager,
                 authkey=self._authkey,
                 exposed=exposed,
             )
@@ -644,7 +656,7 @@ class BaseProxy(_BaseProxy_):
         conn = self._Client(self._token.address, authkey=self._authkey)
         dispatch(conn, None, 'incref', (self._id,))
         # TODO: not calling `self._incref` here b/c I don't understand the impact
-        # of `self._idset`. Maybe we should use `self._incref`?
+        # of `self._idset`, and we don't need to reassign the finalizer.
 
         func, args = super().__reduce__()
 
@@ -717,7 +729,7 @@ def MakeProxyType(name, exposed, _cache={}):
 # Changes to the standard version:
 #   1. use our custom `MakeProxyType`
 #   2. remove parameter `manager_owned`
-def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incref=True):
+def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     """
     Return an auto-proxy for `token`
     """
@@ -730,8 +742,6 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
         finally:
             conn.close()
 
-    if authkey is None and manager is not None:
-        authkey = manager._authkey
     if authkey is None:
         authkey = current_process().authkey
 
@@ -741,7 +751,7 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
     #   incref=incref, manager_owned=manager_owned)
     proxy = ProxyType(
-        token, serializer, manager=manager, authkey=authkey, incref=incref
+        token, serializer, authkey=authkey, incref=incref
     )
 
     proxy._isauto = True
