@@ -11,14 +11,14 @@ with its ``send`` and ``recv`` methods.
 
 The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerProcess`,
 with mainly several enhancements to the standard ``Manager`` from ``multiprocessing.managers``, namely:
-    
+
     - If a proxy method fails in ther server, the same exception is raised on the client side with useful trackback.
     - Proxy methods that return proxies can be called without access to the "manager", i.e. can be called on a proxy that has been passed from the original process into another process.
     - Nested proxies via function `managed`.
     - Support for shared memory blocks.
 
-    
-If you do not make use of these enhancements, you may as well use the 
+
+If you do not make use of these enhancements, you may as well use the
 :class:`Manager` that is imported
 from ``mpservice.multiprocessing``.
 
@@ -171,7 +171,7 @@ that returns a :class:`~mpservice.multiprocessing.server_process.MemoryBlockProx
         # Since it's a "shared" block of memory, any process can modify the data
         # via the memoryview.
 
-Usually you will use the three methods 
+Usually you will use the three methods
 :meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.name`,
 :meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.size`,
 and
@@ -261,10 +261,10 @@ Then we may use it like so::
         assert isinstance(mem, MomeryBlockProxy)
         assert mem.size == 80
 """
+
 from __future__ import annotations
 
 import functools
-import multiprocessing
 import multiprocessing.context
 import multiprocessing.managers
 import multiprocessing.pool
@@ -273,19 +273,17 @@ import os
 import sys
 import threading
 import types
-import weakref
 from multiprocessing import current_process, util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
     Array,
+    BaseManager,
     Namespace,
     Token,
     Value,
+    convert_to_error,
     dispatch,
     listener_client,
-)
-from multiprocessing.managers import (
-    BaseManager as _BaseManager_,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -371,18 +369,15 @@ class Server(_Server_):
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if typeid:
-                        # FIX:
-                        # In the official version, the return received in `BaseProxy._callmethod`
-                        # will need the `manager` object to assemble the proxy object.
-                        # For this reason, such proxy-returning methods can not be called on a proxy
-                        # that is passed to another process, b/c the original manager object is not available.
-                        #
-                        # The hacked version below works in this situation.
-
-                        # rident, rexposed = self.create(conn, typeid, res)
-                        # token = Token(typeid, self.address, rident)
+                        rident, rexposed = self.create(conn, typeid, res)
+                        token = Token(typeid, self.address, rident)
                         # msg = ('#PROXY', (rexposed, token))
-                        msg = ('#RETURN', managed(res, typeid=typeid))
+
+                        # FIX:
+                        # Return `proxytype` so that client-size does not need to get it
+                        # from the registry in the manager object.
+                        proxytype = self.registry[typeid][-1]
+                        msg = ('#PROXY', (rexposed, token, proxytype))
                     else:
                         msg = ('#RETURN', res)
 
@@ -396,6 +391,8 @@ class Server(_Server_):
                 # and "returned" to the requester.
                 # The extra reference to `obj` and `res` lingering here have no use, yet can cause
                 # sutble bugs in applications that make use of their ref counts.
+                #
+                # This fix does not seem to be critical.
                 del function
                 del obj
 
@@ -459,22 +456,6 @@ class Server(_Server_):
 
     def incref(self, c, ident):
         with self.mutex:
-            # FIX
-            # try:
-            #     self.id_to_refcount[ident] += 1
-            # except KeyError as ke:
-            #     # If no external references exist but an internal (to the
-            #     # manager) still does and a new external reference is created
-            #     # from it, restore the manager's tracking of it from the
-            #     # previously stashed internal ref.
-            #     if ident in self.id_to_local_proxy_obj:
-            #         self.id_to_refcount[ident] = 1
-            #         self.id_to_obj[ident] = \
-            #             self.id_to_local_proxy_obj[ident]
-            #         obj, exposed, gettypeid = self.id_to_obj[ident]
-            #         util.debug('Server re-enabled tracking & INCREF %r', ident)
-            #     else:
-            #         raise ke
             self.id_to_refcount[ident] += 1
 
     def decref(self, c, ident):
@@ -484,7 +465,7 @@ class Server(_Server_):
         super().decref(c, ident)
 
 
-class ServerProcess(_BaseManager_):
+class ServerProcess(BaseManager):
     # Overhead:
     #
     # I made a naive example, where the registered class just returns ``x + x``.
@@ -545,16 +526,37 @@ class ServerProcess(_BaseManager_):
         method_to_typeid=None,
         create_method=True,
     ):
+        # FIX: disallow overwriting existing registry.
         if typeid in getattr(cls, '_registry', {}):
             raise ValueError(f"typeid '{typeid}' is already registered")
-        return super().register(
+
+        if proxytype is None:
+            proxytype = AutoProxy
+
+        super().register(
             typeid,
             callable=callable,
-            proxytype=proxytype or AutoProxy,
+            proxytype=proxytype,
             exposed=exposed,
             method_to_typeid=method_to_typeid,
             create_method=create_method,
         )
+
+        # FIX: re-assign the method to not pass `manager`.
+        if create_method:
+
+            def temp(self, /, *args, **kwds):
+                util.debug('requesting creation of a shared %r object', typeid)
+                token, exp = self._create(typeid, *args, **kwds)
+                proxy = proxytype(
+                    token, self._serializer, authkey=self._authkey, exposed=exp
+                )
+                conn = self._Client(token.address, authkey=self._authkey)
+                dispatch(conn, None, 'decref', (token.id,))
+                return proxy
+
+            temp.__name__ = typeid
+            setattr(cls, typeid, temp)
 
     @classmethod
     def unregister(cls, typeid):
@@ -565,18 +567,52 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
-    def __init__(
-        self, token, serializer, manager=None, authkey=None, exposed=None, incref=True
-    ):
+    #    - remove parameter `manager`
+    def __init__(self, token, serializer, authkey=None, exposed=None, incref=True):
         super().__init__(
             token,
             serializer,
-            manager=manager,
+            manager=None,
             authkey=authkey,
             exposed=exposed,
             incref=incref,
             manager_owned=False,
         )
+
+    def _callmethod(self, methodname, args=(), kwds={}):
+        """
+        Try to call a method of the referent and return a copy of the result
+        """
+        try:
+            conn = self._tls.connection
+        except AttributeError:
+            util.debug(
+                'thread %r does not own a connection', threading.current_thread().name
+            )
+            self._connect()
+            conn = self._tls.connection
+
+        conn.send((self._id, methodname, args, kwds))
+        kind, result = conn.recv()
+
+        if kind == '#RETURN':
+            return result
+        elif kind == '#PROXY':
+            # exposed, token = result
+            # proxytype = self._manager._registry[token.typeid][-1]
+            exposed, token, proxytype = result
+            # FIX: get `proxytype` from server instead of from `self._manager`.
+            token.address = self._token.address
+            proxy = proxytype(
+                token,
+                self._serializer,
+                authkey=self._authkey,
+                exposed=exposed,
+            )
+            conn = self._Client(token.address, authkey=self._authkey)
+            dispatch(conn, None, 'decref', (token.id,))
+            return proxy
+        raise convert_to_error(kind, result)
 
     # Changes to the standard version:
     #   1. call `incref` before returning
@@ -619,7 +655,7 @@ class BaseProxy(_BaseProxy_):
         conn = self._Client(self._token.address, authkey=self._authkey)
         dispatch(conn, None, 'incref', (self._id,))
         # TODO: not calling `self._incref` here b/c I don't understand the impact
-        # of `self._idset`. Maybe we should use `self._incref`?
+        # of `self._idset`, and we don't need to reassign the finalizer.
 
         func, args = super().__reduce__()
 
@@ -641,18 +677,9 @@ def RebuildProxy(func, token, serializer, kwds):
     """
     Function used for unpickling proxy objects.
     """
-    server = get_server()
-    if server and server.address == token.address:
-        util.debug('Rebuild a proxy owned by manager, token=%r', token)
-
-        # FIX:
-        # kwds['manager_owned'] = True
-
-        # if token.id not in server.id_to_local_proxy_obj:
-        #     server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
-
-    assert 'incref' not in kwds
-    incref = not getattr(current_process(), '_inheriting', False)
+    incref = kwds.pop('incref', True) and not getattr(
+        current_process(), '_inheriting', False
+    )
     obj = func(token, serializer, incref=incref, **kwds)
     # TODO: it appears `incref` is True some times and False some others.
     # Understand the `'_inheriting'` thing.
@@ -701,7 +728,7 @@ def MakeProxyType(name, exposed, _cache={}):
 # Changes to the standard version:
 #   1. use our custom `MakeProxyType`
 #   2. remove parameter `manager_owned`
-def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incref=True):
+def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     """
     Return an auto-proxy for `token`
     """
@@ -714,8 +741,6 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
         finally:
             conn.close()
 
-    if authkey is None and manager is not None:
-        authkey = manager._authkey
     if authkey is None:
         authkey = current_process().authkey
 
@@ -724,9 +749,7 @@ def AutoProxy(token, serializer, manager=None, authkey=None, exposed=None, incre
 
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
     #   incref=incref, manager_owned=manager_owned)
-    proxy = ProxyType(
-        token, serializer, manager=manager, authkey=authkey, incref=incref
-    )
+    proxy = ProxyType(token, serializer, authkey=authkey, incref=incref)
 
     proxy._isauto = True
     return proxy
