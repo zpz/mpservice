@@ -4,7 +4,7 @@ using `uvicorn <https://www.uvicorn.org/>`_ and `starlette <https://www.starlett
 
 This utility code is not directly connected to :class:`~mpservice.mpserver.AsyncServer`, because AsyncServer simply
 provides the method :meth:`~mpservice.mpserver.AsyncServer.call` that can be called from an HTTP
-request handler function; `AsyncServer` itself has nothing to do with HTTP. 
+request handler function; `AsyncServer` itself has nothing to do with HTTP.
 The example below shows one way to wire things up:
 
 ::

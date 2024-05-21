@@ -11,14 +11,14 @@ with its ``send`` and ``recv`` methods.
 
 The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerProcess`,
 with mainly several enhancements to the standard ``Manager`` from ``multiprocessing.managers``, namely:
-    
+
     - If a proxy method fails in ther server, the same exception is raised on the client side with useful trackback.
     - Proxy methods that return proxies can be called without access to the "manager", i.e. can be called on a proxy that has been passed from the original process into another process.
     - Nested proxies via function `managed`.
     - Support for shared memory blocks.
 
-    
-If you do not make use of these enhancements, you may as well use the 
+
+If you do not make use of these enhancements, you may as well use the
 :class:`Manager` that is imported
 from ``mpservice.multiprocessing``.
 
@@ -171,7 +171,7 @@ that returns a :class:`~mpservice.multiprocessing.server_process.MemoryBlockProx
         # Since it's a "shared" block of memory, any process can modify the data
         # via the memoryview.
 
-Usually you will use the three methods 
+Usually you will use the three methods
 :meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.name`,
 :meth:`~mpservice.multiprocessing.server_process.MemoryBlockProxy.size`,
 and
@@ -261,6 +261,7 @@ Then we may use it like so::
         assert isinstance(mem, MomeryBlockProxy)
         assert mem.size == 80
 """
+
 from __future__ import annotations
 
 import functools

@@ -131,7 +131,7 @@ One-to-one (will not change the elements' count or order):
 
 One-to-one (will change the elements' order, but not count):
     - :meth:`~Stream.shuffle`
-    
+
 Many-to-one (may shrink the stream):
     - :meth:`~Stream.groupby`
     - :meth:`~Stream.batch`
@@ -152,7 +152,7 @@ Read-only (will not change the elements):
     - :meth:`~Stream.buffer` (speed stabilizing)
     - :meth:`~Stream.peek` (info printing)
 
-All these methods preserve the order of the elements, with the only exception 
+All these methods preserve the order of the elements, with the only exception
 :meth:`~Stream.shuffle`.
 
 The operation in ``parmap`` is supposedly heavy and expensive.
@@ -251,6 +251,7 @@ There is a module function :func:`tee`, which is analogous to the standard
 The class :class:`EagerBatcher` is analogous to :class:`Batcher` but has a timeout,
 which controls how long to wait before yielding an under-sized batch.
 """
+
 from ._streamer import (
     Batcher,
     EagerBatcher,

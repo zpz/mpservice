@@ -22,10 +22,9 @@ The package `mpservice <https://github.com/zpz/mpservice>`_ provides utilities f
 To install, do
 
 ::
-   
+
    python3 -m pip install mpservice
 """
-
 
 __version__ = '0.15.3'
 
