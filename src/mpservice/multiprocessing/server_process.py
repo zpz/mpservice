@@ -276,6 +276,7 @@ from multiprocessing import current_process, util
 from multiprocessing.connection import XmlListener
 from multiprocessing.managers import (
     Array,
+    BaseManager,
     Namespace,
     Token,
     Value,
@@ -283,7 +284,6 @@ from multiprocessing.managers import (
     dispatch,
     listener_client,
 )
-from multiprocessing.managers import BaseManager
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
 )
@@ -543,19 +543,19 @@ class ServerProcess(BaseManager):
 
         # FIX: re-assign the method to not pass `manager`.
         if create_method:
+
             def temp(self, /, *args, **kwds):
                 util.debug('requesting creation of a shared %r object', typeid)
                 token, exp = self._create(typeid, *args, **kwds)
                 proxy = proxytype(
-                    token, self._serializer,
-                    authkey=self._authkey, exposed=exp
-                    )
+                    token, self._serializer, authkey=self._authkey, exposed=exp
+                )
                 conn = self._Client(token.address, authkey=self._authkey)
                 dispatch(conn, None, 'decref', (token.id,))
                 return proxy
+
             temp.__name__ = typeid
             setattr(cls, typeid, temp)
-
 
     @classmethod
     def unregister(cls, typeid):
@@ -567,9 +567,7 @@ class BaseProxy(_BaseProxy_):
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
     #    - remove parameter `manager`
-    def __init__(
-        self, token, serializer, authkey=None, exposed=None, incref=True
-    ):
+    def __init__(self, token, serializer, authkey=None, exposed=None, incref=True):
         super().__init__(
             token,
             serializer,
@@ -750,9 +748,7 @@ def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
 
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
     #   incref=incref, manager_owned=manager_owned)
-    proxy = ProxyType(
-        token, serializer, authkey=authkey, incref=incref
-    )
+    proxy = ProxyType(token, serializer, authkey=authkey, incref=incref)
 
     proxy._isauto = True
     return proxy
