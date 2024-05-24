@@ -337,6 +337,12 @@ def test_managed():
         assert data['size'] == 64
         assert data['block'].size == 64
         assert data['block'].buf[3] == 26
+
+        print()
+        print(data['tuple'][1])
+        print(type(data['tuple'][1]))
+        print()
+
         assert len(data['tuple'][1]) == 2
         p = Process(target=worker_dict, args=(data, 64))
         p.start()
