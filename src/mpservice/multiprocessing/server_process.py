@@ -131,7 +131,7 @@ Basic workflow
 
    It follows that, if the method mutates some shared state, you may need to use locks to guard things.
 
-   
+
 Shared memory
 =============
 
@@ -535,7 +535,10 @@ class ServerProcess(BaseManager):
                 token, exp = self._create(typeid, *args, **kwds)
                 proxy = make_proxy(
                     proxytype,
-                    token, serializer=self._serializer, authkey=self._authkey, exposed=exp
+                    token,
+                    serializer=self._serializer,
+                    authkey=self._authkey,
+                    exposed=exp,
                 )
                 conn = self._Client(token.address, authkey=self._authkey)
                 dispatch(conn, None, 'decref', (token.id,))
@@ -591,7 +594,13 @@ class BaseProxy(_BaseProxy_):
             exposed, token, proxytype = result
             # FIX: get `proxytype` from server instead of from `self._manager`.
             token.address = self._token.address
-            proxy = make_proxy(proxytype, token, serializer=self._serializer, authkey=self._authkey, exposed=exposed)
+            proxy = make_proxy(
+                proxytype,
+                token,
+                serializer=self._serializer,
+                authkey=self._authkey,
+                exposed=exposed,
+            )
             conn = self._Client(token.address, authkey=self._authkey)
             dispatch(conn, None, 'decref', (token.id,))
             return proxy
@@ -644,12 +653,13 @@ def RebuildProxy(func, token, serializer, kwds):
 # Functions to create proxies and proxy types
 #
 
+
 def make_proxy(proxytype, token, *, serializer, authkey, exposed=None):
-    '''
+    """
     This function creates a proxy object, i.e. an instance of a BaseProxy subclass.
 
     `proxytype` is either a BaseProxy subclass or `AutoProxy`.
-    '''
+    """
     try:
         is_cls = issubclass(proxytype, BaseProxy)
     except TypeError:
@@ -666,22 +676,25 @@ def make_proxy(proxytype, token, *, serializer, authkey, exposed=None):
         authkey=authkey,
         exposed=exposed,
     )
-    
 
 
 def add_proxy_methods(*method_names: str):
-    '''
+    """
     Custom BaseProxy subclasses can use this as a class decorator
     to add methods that simply call `_callmethod`. The subclass may
     have other methods that address special concerns (besides calling
     `_callmethod`, if applicable).
-    '''
+    """
+
     def decorator(cls):
         for meth in method_names:
             dic = {}
             exec(
-                '''def %s(self, /, *args, **kwargs):
-                return self._callmethod(%r, args, kwargs)''' % (meth, meth), dic)
+                """def %s(self, /, *args, **kwargs):
+                return self._callmethod(%r, args, kwargs)"""
+                % (meth, meth),
+                dic,
+            )
             setattr(cls, meth, dic[meth])
 
         return cls
@@ -865,26 +878,26 @@ class ValueProxy(BaseProxy):
 
 
 @add_proxy_methods(
-        '__add__',
-        '__contains__',
-        '__delitem__',
-        '__getitem__',
-        '__len__',
-        '__mul__',
-        '__reversed__',
-        '__rmul__',
-        '__setitem__',
-        'append',
-        'count',
-        'extend',
-        'index',
-        'insert',
-        'pop',
-        'remove',
-        'reverse',
-        'sort',
-        '__imul__',
-    )
+    '__add__',
+    '__contains__',
+    '__delitem__',
+    '__getitem__',
+    '__len__',
+    '__mul__',
+    '__reversed__',
+    '__rmul__',
+    '__setitem__',
+    'append',
+    'count',
+    'extend',
+    'index',
+    'insert',
+    'pop',
+    'remove',
+    'reverse',
+    'sort',
+    '__imul__',
+)
 class ListProxy(BaseProxy):
     def __iadd__(self, value):
         self._callmethod('extend', (value,))
@@ -898,22 +911,22 @@ class ListProxy(BaseProxy):
 # Changes to the standard version:
 #   - remove method `__iter__`
 @add_proxy_methods(
-        '__contains__',
-        '__delitem__',
-        '__getitem__',
-        '__len__',
-        '__setitem__',
-        'clear',
-        'copy',
-        'get',
-        'items',
-        'keys',
-        'pop',
-        'popitem',
-        'setdefault',
-        'update',
-        'values',
-    )
+    '__contains__',
+    '__delitem__',
+    '__getitem__',
+    '__len__',
+    '__setitem__',
+    'clear',
+    'copy',
+    'get',
+    'items',
+    'keys',
+    'pop',
+    'popitem',
+    'setdefault',
+    'update',
+    'values',
+)
 class DictProxy(BaseProxy):
     pass
 

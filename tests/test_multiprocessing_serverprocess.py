@@ -338,7 +338,6 @@ def test_managed():
         assert data['block'].size == 64
         assert data['block'].buf[3] == 26
 
-
         print()
         print(data['tuple'][1])
         print(type(data['tuple'][1]))
