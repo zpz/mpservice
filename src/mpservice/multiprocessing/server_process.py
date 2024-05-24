@@ -1,27 +1,13 @@
 """
-The standard `Managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_
-provide a mechanism to interactively
-communicate with a "server" that runs in another process.
+The module `mpservice.multiprocessing.server_process` contains some fixes and enhancements to the
+standard module `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_.
 
-The keyword is "interactively"---just like a client to a HTTP server.
-The interactivity is achieved by a "proxy": an object is created and *hosted* in a "server process";
-the hosted object is represented by a "proxy", which is passed to and used in other processes
-to communicate with the hosted object. The backbone of the communication is ``multiprocessing.connection.Connection``
-with its ``send`` and ``recv`` methods.
+Some of the changes/additions to the standard module are:
 
-The module ``mpservice.multiprocessing.server_process`` provides :class:`ServerProcess`,
-with mainly several enhancements to the standard ``Manager`` from ``multiprocessing.managers``, namely:
-
-    - If a proxy method fails in ther server, the same exception is raised on the client side with useful trackback.
+    - If a proxy method fails in the server, the same exception is raised on the client side with useful traceback.
     - Proxy methods that return proxies can be called without access to the "manager", i.e. can be called on a proxy that has been passed from the original process into another process.
     - Nested proxies via function `managed`.
     - Support for shared memory blocks.
-
-
-If you do not make use of these enhancements, you may as well use the
-:class:`Manager` that is imported
-from ``mpservice.multiprocessing``.
-
 
 Basic workflow
 ==============
@@ -145,17 +131,7 @@ Basic workflow
 
    It follows that, if the method mutates some shared state, you may need to use locks to guard things.
 
-:class:`ServerProcess` inherits from the standard :class:`multiprocessing.managers.SyncManager`.
-If you don't need the enhancements (except for using :class:`mpservice.multiprocessing.SpawnProcess`
-in place of the standard :class:`multiprocessing.process.BaseProcess`), you can import ``Manager`` from
-``mpservice.multiprocessing`` like this::
-
-    from mpservice.multiprocessing import Manager
-
-    with Manager() as manager:
-        q = manager.Event()
-        ...
-
+   
 Shared memory
 =============
 
@@ -260,15 +236,13 @@ Then we may use it like so::
         mem = worker.get_memory(80)
         assert isinstance(mem, MomeryBlockProxy)
         assert mem.size == 80
+
+Reference: https://zpz.github.io/blog/python-mp-manager-1/
 """
 
 from __future__ import annotations
 
 import functools
-import multiprocessing.context
-import multiprocessing.managers
-import multiprocessing.pool
-import multiprocessing.queues
 import os
 import sys
 import threading
@@ -320,6 +294,9 @@ class Server(_Server_):
         super().__init__(*args, **kwargs)
         self.id_to_local_proxy_obj = None  # disable this
 
+    def _wrap_user_exc(self, exc):
+        return RemoteException(exc)
+
     # This is the cpython code in versions 3.7-3.12.
     # My fix is labeled "FIX".
     def serve_client(self, conn):
@@ -350,11 +327,12 @@ class Server(_Server_):
                 #         raise ke
                 obj, exposed, gettypeid = id_to_obj[ident]
 
-                if methodname not in exposed:
-                    raise AttributeError(
-                        'method %r of %r object is not in exposed=%r'
-                        % (methodname, type(obj), exposed)
-                    )
+                # FIX: now `exposed` in the registry is not used.
+                # if methodname not in exposed:
+                #     raise AttributeError(
+                #         'method %r of %r object is not in exposed=%r'
+                #         % (methodname, type(obj), exposed)
+                #     )
 
                 function = getattr(obj, methodname)
                 # `function` carries a ref to ``obj``.
@@ -364,7 +342,7 @@ class Server(_Server_):
                 except Exception as e:
                     # FIX
                     # msg = ('#ERROR', e)
-                    msg = ('#ERROR', RemoteException(e))
+                    msg = ('#ERROR', self._wrap_user_exc(e))
 
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
@@ -432,6 +410,13 @@ class Server(_Server_):
                 util.info(' ... exception was %r', e)
                 conn.close()
                 sys.exit(1)
+
+    def debug_info(self, c):
+        with self.mutex:
+            return [
+                (k, self.id_to_refcount[k], str(v[0])[:75])
+                for k, v in self.id_to_obj.items()
+            ]  # in order of object creation
 
     def shutdown(self, c):
         # If there are `MemoryBlockProxy` objects alive when the manager exists its context manager,
@@ -514,7 +499,8 @@ class ServerProcess(BaseManager):
             os.sched_setaffinity(self._process.pid, cpu)
 
     # Changes to the standard version:
-    #    - use our custom `AutoProxy`
+    #   - use our custom `AutoProxy`
+    #   - remove parameter `exposed`
     @classmethod
     def register(
         cls,
@@ -522,7 +508,6 @@ class ServerProcess(BaseManager):
         callable=None,
         proxytype=None,
         *,
-        exposed=None,
         method_to_typeid=None,
         create_method=True,
     ):
@@ -537,7 +522,7 @@ class ServerProcess(BaseManager):
             typeid,
             callable=callable,
             proxytype=proxytype,
-            exposed=exposed,
+            exposed=None,
             method_to_typeid=method_to_typeid,
             create_method=create_method,
         )
@@ -548,8 +533,9 @@ class ServerProcess(BaseManager):
             def temp(self, /, *args, **kwds):
                 util.debug('requesting creation of a shared %r object', typeid)
                 token, exp = self._create(typeid, *args, **kwds)
-                proxy = proxytype(
-                    token, self._serializer, authkey=self._authkey, exposed=exp
+                proxy = make_proxy(
+                    proxytype,
+                    token, serializer=self._serializer, authkey=self._authkey, exposed=exp
                 )
                 conn = self._Client(token.address, authkey=self._authkey)
                 dispatch(conn, None, 'decref', (token.id,))
@@ -567,14 +553,15 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
-    #    - remove parameter `manager`
-    def __init__(self, token, serializer, authkey=None, exposed=None, incref=True):
+    #    - remove parameter `manager`.
+    #    - remove parameter `exposed`.
+    def __init__(self, token, serializer, authkey=None, incref=True):
         super().__init__(
             token,
             serializer,
             manager=None,
             authkey=authkey,
-            exposed=exposed,
+            exposed=None,
             incref=incref,
             manager_owned=False,
         )
@@ -583,6 +570,7 @@ class BaseProxy(_BaseProxy_):
         """
         Try to call a method of the referent and return a copy of the result
         """
+
         try:
             conn = self._tls.connection
         except AttributeError:
@@ -603,12 +591,7 @@ class BaseProxy(_BaseProxy_):
             exposed, token, proxytype = result
             # FIX: get `proxytype` from server instead of from `self._manager`.
             token.address = self._token.address
-            proxy = proxytype(
-                token,
-                self._serializer,
-                authkey=self._authkey,
-                exposed=exposed,
-            )
+            proxy = make_proxy(proxytype, token, serializer=self._serializer, authkey=self._authkey, exposed=exposed)
             conn = self._Client(token.address, authkey=self._authkey)
             dispatch(conn, None, 'decref', (token.id,))
             return proxy
@@ -618,44 +601,9 @@ class BaseProxy(_BaseProxy_):
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
     def __reduce__(self):
-        # The only sensible case of pickling this proxy object is for
-        # transfering this object between processes, e.g., in a queue.
-        # (This proxy object is never pickled for storage.)
-        #
-        # Using ``MemoryBlock`` for example,
-        # it is possible that at some time the only "reference"
-        # to a certain shared memory block is in pickled form in
-        # a queue. For example,
-        #
-        #   # main process
-        #   with ServerProcess() as server:
-        #        q = server.Queue()
-        #        w = Process(target=..., args=(q, ))
-        #        w.start()
-        #
-        #        for _ in range(1000):
-        #           mem = server.MemoryBlock(100)
-        #           # ... computations ...
-        #           # ... write data into `mem` ...
-        #           q.put(mem)
-        #           ...
-        #
-        # During the loop, `mem` goes out of scope and only lives on in the queue.
-        # When `mem` gets re-assigned in the next iteration, the previous proxy object
-        # is garbage collected, causing the target object to be deleted in the server
-        # because its ref count drops to 0 (the pickled stuff in the queue is "dead wood").
-        #
-        # This revised `__reduce__` fixes this problem.
-
-        # Inc ref here to represent the pickled object in the queue.
-        # When unpickling, we do not inc ref again. In effect, we move the call
-        # to ``incref`` earlier from ``pickle.loads`` into ``pickle.dumps``
-        # for this object.
-
+        # Inc refcount in case the remote object is gone before unpickling happens.
         conn = self._Client(self._token.address, authkey=self._authkey)
         dispatch(conn, None, 'incref', (self._id,))
-        # TODO: not calling `self._incref` here b/c I don't understand the impact
-        # of `self._idset`, and we don't need to reassign the finalizer.
 
         func, args = super().__reduce__()
 
@@ -684,9 +632,10 @@ def RebuildProxy(func, token, serializer, kwds):
     # TODO: it appears `incref` is True some times and False some others.
     # Understand the `'_inheriting'` thing.
 
-    # Counter the extra `incref` that's done in `BaseProxy.__init__`.
-    conn = obj._Client(obj._token.address, authkey=obj._authkey)
-    dispatch(conn, None, 'decref', (obj._id,))
+    if incref:
+        # Counter the extra `incref` that's done in `BaseProxy.__init__`.
+        conn = obj._Client(obj._token.address, authkey=obj._authkey)
+        dispatch(conn, None, 'decref', (obj._id,))
 
     return obj
 
@@ -695,46 +644,66 @@ def RebuildProxy(func, token, serializer, kwds):
 # Functions to create proxies and proxy types
 #
 
+def make_proxy(proxytype, token, *, serializer, authkey, exposed=None):
+    '''
+    This function creates a proxy object, i.e. an instance of a BaseProxy subclass.
 
-# No change in code to the standard version, but it will use
-# the `BaseProxy` defined in this module.
-# The redef also avoids some tricky issues with the `_cache`.
-def MakeProxyType(name, exposed, _cache={}):
-    """
-    Return a proxy type whose methods are given by `exposed`
-    """
-    exposed = tuple(exposed)
+    `proxytype` is either a BaseProxy subclass or `AutoProxy`.
+    '''
     try:
-        return _cache[(name, exposed)]
-    except KeyError:
-        pass
-
-    dic = {}
-
-    for meth in exposed:
-        exec(
-            """def %s(self, /, *args, **kwds):
-        return self._callmethod(%r, args, kwds)"""
-            % (meth, meth),
-            dic,
+        is_cls = issubclass(proxytype, BaseProxy)
+    except TypeError:
+        is_cls = False
+    if is_cls:
+        return proxytype(
+            token,
+            serializer,
+            authkey=authkey,
         )
+    return proxytype(
+        token,
+        serializer,
+        authkey=authkey,
+        exposed=exposed,
+    )
+    
 
-    ProxyType = type(name, (BaseProxy,), dic)
-    ProxyType._exposed_ = exposed
-    _cache[(name, exposed)] = ProxyType
-    return ProxyType
+
+def add_proxy_methods(*method_names: str):
+    '''
+    Custom BaseProxy subclasses can use this as a class decorator
+    to add methods that simply call `_callmethod`. The subclass may
+    have other methods that address special concerns (besides calling
+    `_callmethod`, if applicable).
+    '''
+    def decorator(cls):
+        for meth in method_names:
+            dic = {}
+            exec(
+                '''def %s(self, /, *args, **kwargs):
+                return self._callmethod(%r, args, kwargs)''' % (meth, meth), dic)
+            setattr(cls, meth, dic[meth])
+
+        return cls
+
+    return decorator
 
 
 # Changes to the standard version:
-#   1. use our custom `MakeProxyType`
+#   1. use our custom `make_proxy_type`
 #   2. remove parameter `manager_owned`
+#   3. call `ProxyType` with `exposed`
 def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     """
-    Return an auto-proxy for `token`
+    This function creates an instance of a BaseProxy subclass that is
+    dynamically defined inside this function.
+
+    This function is used when the argument `proxytype` to `BaseManager.register` or `ServerProcess.register`
+    is not provided.
     """
     _Client = listener_client[serializer][1]
 
-    if exposed is None:
+    if exposed is None:  # TODO: does this ever happen?
         conn = _Client(token.address, authkey=authkey)
         try:
             exposed = dispatch(conn, None, 'get_methods', (token,))
@@ -744,14 +713,28 @@ def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     if authkey is None:
         authkey = current_process().authkey
 
-    ProxyType = MakeProxyType('AutoProxy[%s]' % token.typeid, exposed)
-    # This uses our custom `MakeProxyType`
+    def make_proxy_type(name, exposed, _cache={}):
+        """
+        Return a proxy type whose methods are given by `exposed`
+        """
+        exposed = tuple(exposed)
+        try:
+            return _cache[(name, exposed)]
+        except KeyError:
+            pass
+
+        ProxyType = add_proxy_methods(*exposed)(type(name, (BaseProxy,), {}))
+        _cache[(name, exposed)] = ProxyType
+        return ProxyType
+
+    ProxyType = make_proxy_type('AutoProxy[%s]' % token.typeid, exposed)
 
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
     #   incref=incref, manager_owned=manager_owned)
     proxy = ProxyType(token, serializer, authkey=authkey, incref=incref)
 
     proxy._isauto = True
+    proxy._exposed_ = exposed
     return proxy
 
 
@@ -765,7 +748,8 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
     This function is used within a server process.
     It creates a proxy for the input `obj`.
     The resultant proxy can be sent back to a requester outside of the server process.
-    The proxy may also be saved in another data structure, e.g. as an element in a managed list or dict.
+    The proxy may also be saved in another data structure (either residing in the server or sent back to
+    the client), e.g. as an element in a managed list or dict.
     """
     server = get_server()
     if not server:
@@ -793,12 +777,12 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
             token,
             serializer=serializer,
             authkey=server.authkey,
-            exposed=rexposed,
             name=mem.name,
             size=mem.size,
         )
     else:
-        proxy = proxytype(
+        proxy = make_proxy(
+            proxytype,
             token,
             serializer=serializer,
             authkey=server.authkey,
@@ -827,12 +811,10 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
 #
 #   _pickle.PicklingError: Can't pickle <class 'multiprocessing.managers.DictProxy'>: it's not the same object as multiprocessing.managers.DictProxy
 #
-# Do not register Lock, Queue, Event, etc. I don't see advanages of them compared to the standard solution from `multiprocessing` directly.
+# Do not register Lock, Queue, Event, etc. I don't see advantages of them compared to the standard solution from `multiprocessing` directly.
 
 
 class IteratorProxy(BaseProxy):
-    _exposed_ = ('__next__', 'send', 'throw', 'close')
-
     def __iter__(self):
         return self
 
@@ -849,9 +831,8 @@ class IteratorProxy(BaseProxy):
         return self._callmethod('close', args)
 
 
+@add_proxy_methods('__getattribute__')
 class NamespaceProxy(BaseProxy):
-    _exposed_ = ('__getattribute__', '__setattr__', '__delattr__')
-
     def __getattr__(self, key):
         if key[0] == '_':
             return object.__getattribute__(self, key)
@@ -872,8 +853,6 @@ class NamespaceProxy(BaseProxy):
 
 
 class ValueProxy(BaseProxy):
-    _exposed_ = ('get', 'set')
-
     def get(self):
         return self._callmethod('get')
 
@@ -885,9 +864,7 @@ class ValueProxy(BaseProxy):
     __class_getitem__ = classmethod(types.GenericAlias)
 
 
-BaseListProxy = MakeProxyType(
-    'BaseListProxy',
-    (
+@add_proxy_methods(
         '__add__',
         '__contains__',
         '__delitem__',
@@ -907,11 +884,8 @@ BaseListProxy = MakeProxyType(
         'reverse',
         'sort',
         '__imul__',
-    ),
-)
-
-
-class ListProxy(BaseListProxy):
+    )
+class ListProxy(BaseProxy):
     def __iadd__(self, value):
         self._callmethod('extend', (value,))
         return self
@@ -922,10 +896,8 @@ class ListProxy(BaseListProxy):
 
 
 # Changes to the standard version:
-#   - remove method `__iter__`, because it uses `method_to_typeid`, which we don't support
-DictProxy = MakeProxyType(
-    'DictProxy',
-    (
+#   - remove method `__iter__`
+@add_proxy_methods(
         '__contains__',
         '__delitem__',
         '__getitem__',
@@ -941,11 +913,14 @@ DictProxy = MakeProxyType(
         'setdefault',
         'update',
         'values',
-    ),
-)
+    )
+class DictProxy(BaseProxy):
+    pass
 
 
-ArrayProxy = MakeProxyType('ArrayProxy', ('__len__', '__getitem__', '__setitem__'))
+@add_proxy_methods('__len__', '__getitem__', '__setitem__')
+class ArrayProxy(BaseProxy):
+    pass
 
 
 ServerProcess.register('list', callable=list, proxytype=ListProxy)
@@ -979,20 +954,6 @@ managed_value = functools.partial(managed, typeid='ManagedValue')
 managed_array = functools.partial(managed, typeid='ManagedArray')
 managed_namespace = functools.partial(managed, typeid='ManagedNamespace')
 managed_iterator = functools.partial(managed, typeid='ManagedIterator')
-
-
-# Think through ref count dynamics in these scenarios:
-#
-#   - output of `managed(...)` gets sent to client; the output proxy then goes away in server
-#   - output of `managed(...)` is put in something (say a dict), which is sent to client as proxy
-#   - a proxy out side of server gets added to a proxy-ed object in server, e.g. client calls
-#
-#           data['a'] = b
-#
-#     where `data` is a dict proxy, and `b` is some proxy.
-#   - the `b` above gets passed to user again, i.e. client calls
-#
-#           z = data['a']
 
 
 #
@@ -1074,8 +1035,6 @@ else:
             )
 
     class MemoryBlockProxy(BaseProxy):
-        _exposed_ = ('_list_memory_blocks', '_name')
-
         def __init__(self, *args, name: str = None, size: int = None, **kwargs):
             super().__init__(*args, **kwargs)
             self._name = name
