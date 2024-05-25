@@ -253,12 +253,12 @@ from multiprocessing.managers import (
     Array,
     BaseManager,
     Namespace,
+    State,
     Token,
     Value,
     convert_to_error,
     dispatch,
     listener_client,
-    State,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -292,7 +292,9 @@ def get_server():
 
 class Server(_Server_):
     def __init__(self, registry, address, authkey, serializer):
-        super().__init__(registry=registry, address=address, authkey=authkey, serializer=serializer)
+        super().__init__(
+            registry=registry, address=address, authkey=authkey, serializer=serializer
+        )
         self.serializer = serializer
         self.id_to_local_proxy_obj = None  # disable this
 
@@ -550,22 +552,21 @@ class ServerProcess(BaseManager):
             proxytype = AutoProxy
 
         if method_to_typeid:
-            for key, value in list(method_to_typeid.items()): # isinstance?
-                assert type(key) is str, '%r is not a string' % key
-                assert type(value) is str, '%r is not a string' % value
+            for key, value in list(method_to_typeid.items()):  # isinstance?
+                assert type(key) is str, '%r is not a string' % key  # noqa: E721
+                assert type(value) is str, '%r is not a string' % value  # noqa: E721
 
-        cls._registry[typeid] = (
-            callable, None, method_to_typeid, proxytype
-            )
+        cls._registry[typeid] = (callable, None, method_to_typeid, proxytype)
 
         if create_method:
+
             def temp(self, /, *args, **kwds):
                 util.debug('requesting creation of a shared %r object', typeid)
 
                 assert self._state.value == State.STARTED, 'server not yet started'
                 conn = self._Client(self._address, authkey=self._authkey)
                 try:
-                    proxy = dispatch(conn, None, 'create', (typeid,)+args, kwds)
+                    proxy = dispatch(conn, None, 'create', (typeid,) + args, kwds)
                 finally:
                     conn.close()
 
@@ -637,7 +638,7 @@ class BaseProxy(_BaseProxy_):
             args = (AutoProxy, *args[1:])
         return func, args
 
-        
+
 #
 # Function used for unpickling
 #
