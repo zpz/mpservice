@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.15.4] - in progress
 
-- `mpservice.multiprocessing.server_process` finetuning.
+- Refactored and enhanced `mpservice.multiprocessing.server_process`.
 
 
 ## [0.15.3] - 2024-05-17
