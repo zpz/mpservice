@@ -253,6 +253,7 @@ from multiprocessing.managers import (
     Array,
     BaseManager,
     Namespace,
+    State,
     Token,
     Value,
     convert_to_error,
@@ -290,8 +291,11 @@ def get_server():
 
 
 class Server(_Server_):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, registry, address, authkey, serializer):
+        super().__init__(
+            registry=registry, address=address, authkey=authkey, serializer=serializer
+        )
+        self.serializer = serializer
         self.id_to_local_proxy_obj = None  # disable this
 
     def _wrap_user_exc(self, exc):
@@ -347,15 +351,8 @@ class Server(_Server_):
                 else:
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if typeid:
-                        rident, rexposed = self.create(conn, typeid, res)
-                        token = Token(typeid, self.address, rident)
-                        # msg = ('#PROXY', (rexposed, token))
-
-                        # FIX:
-                        # Return `proxytype` so that client-size does not need to get it
-                        # from the registry in the manager object.
-                        proxytype = self.registry[typeid][-1]
-                        msg = ('#PROXY', (rexposed, token, proxytype))
+                        proxy = self.create(conn, typeid, res)
+                        msg = ('#PROXY', proxy)
                     else:
                         msg = ('#RETURN', res)
 
@@ -439,6 +436,38 @@ class Server(_Server_):
 
         super().shutdown(c)
 
+    # Changes to the original version:
+    #   - return proxy object
+    def create(self, c, typeid, /, *args, **kwargs):
+        ident, exposed = super().create(c, typeid, *args, **kwargs)
+        # This has called `incref` once
+
+        token = Token(typeid, self.address, ident)
+        proxytype = self.registry[typeid][-1]
+
+        if typeid == 'ManagedMemoryBlock':
+            mem = self.id_to_obj[ident][0]
+            proxy = proxytype(
+                token,
+                serializer=self.serializer,
+                authkey=self.authkey,
+                name=mem.name,
+                size=mem.size,
+            )
+        else:
+            proxy = make_proxy(
+                proxytype,
+                token,
+                serializer=self.serializer,
+                authkey=self.authkey,
+                exposed=exposed,
+            )
+        # This has called `incref` once
+
+        self.decref(None, ident)
+
+        return proxy
+
     def incref(self, c, ident):
         with self.mutex:
             self.id_to_refcount[ident] += 1
@@ -501,6 +530,7 @@ class ServerProcess(BaseManager):
     # Changes to the standard version:
     #   - use our custom `AutoProxy`
     #   - remove parameter `exposed`
+    #   - simplify the created method
     @classmethod
     def register(
         cls,
@@ -511,37 +541,35 @@ class ServerProcess(BaseManager):
         method_to_typeid=None,
         create_method=True,
     ):
+        if '_registry' not in cls.__dict__:
+            cls._registry = cls._registry.copy()
+
         # FIX: disallow overwriting existing registry.
-        if typeid in getattr(cls, '_registry', {}):
+        if typeid in cls._registry:
             raise ValueError(f"typeid '{typeid}' is already registered")
 
         if proxytype is None:
             proxytype = AutoProxy
 
-        super().register(
-            typeid,
-            callable=callable,
-            proxytype=proxytype,
-            exposed=None,
-            method_to_typeid=method_to_typeid,
-            create_method=create_method,
-        )
+        if method_to_typeid:
+            for key, value in list(method_to_typeid.items()):  # isinstance?
+                assert type(key) is str, '%r is not a string' % key  # noqa: E721
+                assert type(value) is str, '%r is not a string' % value  # noqa: E721
 
-        # FIX: re-assign the method to not pass `manager`.
+        cls._registry[typeid] = (callable, None, method_to_typeid, proxytype)
+
         if create_method:
 
             def temp(self, /, *args, **kwds):
                 util.debug('requesting creation of a shared %r object', typeid)
-                token, exp = self._create(typeid, *args, **kwds)
-                proxy = make_proxy(
-                    proxytype,
-                    token,
-                    serializer=self._serializer,
-                    authkey=self._authkey,
-                    exposed=exp,
-                )
-                conn = self._Client(token.address, authkey=self._authkey)
-                dispatch(conn, None, 'decref', (token.id,))
+
+                assert self._state.value == State.STARTED, 'server not yet started'
+                conn = self._Client(self._address, authkey=self._authkey)
+                try:
+                    proxy = dispatch(conn, None, 'create', (typeid,) + args, kwds)
+                finally:
+                    conn.close()
+
                 return proxy
 
             temp.__name__ = typeid
@@ -569,6 +597,8 @@ class BaseProxy(_BaseProxy_):
             manager_owned=False,
         )
 
+    # Changes to the original version:
+    #   - simplify the `kind == 'PROXY'` case
     def _callmethod(self, methodname, args=(), kwds={}):
         """
         Try to call a method of the referent and return a copy of the result
@@ -589,21 +619,8 @@ class BaseProxy(_BaseProxy_):
         if kind == '#RETURN':
             return result
         elif kind == '#PROXY':
-            # exposed, token = result
-            # proxytype = self._manager._registry[token.typeid][-1]
-            exposed, token, proxytype = result
-            # FIX: get `proxytype` from server instead of from `self._manager`.
-            token.address = self._token.address
-            proxy = make_proxy(
-                proxytype,
-                token,
-                serializer=self._serializer,
-                authkey=self._authkey,
-                exposed=exposed,
-            )
-            conn = self._Client(token.address, authkey=self._authkey)
-            dispatch(conn, None, 'decref', (token.id,))
-            return proxy
+            return result
+
         raise convert_to_error(kind, result)
 
     # Changes to the standard version:
@@ -777,41 +794,13 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
             server.registry[typeid] = (None, None, None, AutoProxy)
             # TODO: delete after this single use?
 
-    rident, rexposed = server.create(None, typeid, obj)
-    # This has called `incref` once. Ref count is 1.
-
-    token = Token(typeid, server.address, rident)
-    proxytype = server.registry[typeid][-1]
-    serializer = 'xmlrpclib' if isinstance(server.listener, XmlListener) else 'pickle'
-
-    if typeid == 'ManagedMemoryBlock':
-        mem = server.id_to_obj[rident][0]
-        proxy = proxytype(
-            token,
-            serializer=serializer,
-            authkey=server.authkey,
-            name=mem.name,
-            size=mem.size,
-        )
-    else:
-        proxy = make_proxy(
-            proxytype,
-            token,
-            serializer=serializer,
-            authkey=server.authkey,
-            exposed=rexposed,
-        )
-
-    # This proxy object called `incref` once in its `__init__`. Ref count is 2.
-
-    server.decref(None, rident)
-    # Now ref count is 1.
+    proxy = server.create(None, typeid, obj)
 
     return proxy
     # When this object is sent back to the request:
     #  (1) pickling (i.e. `__reduce__`) inc ref count to 2;
     #  (2) this proxy object goes out of scope, its finalizer is triggered, ref count becomes 1;
-    #  (3) unpickling by `rebuild_picklethrough_proxy` keeps ref count unchanged
+    #  (3) unpickling by `RebuildProxy` keeps ref count unchanged
 
 
 #
