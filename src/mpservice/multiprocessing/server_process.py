@@ -287,14 +287,6 @@ def get_server(address=None):
     return None
 
 
-
-
-
-
-
-
-
-
 class Server(_Server_):
     def __init__(self, registry, address, authkey, serializer):
         super().__init__(
@@ -354,7 +346,7 @@ class Server(_Server_):
 
         while not self.stop_event.is_set():
             try:
-                methodname = obj = None
+                methodname = None
                 request = recv()
                 ident, methodname, args, kwds = request
 
