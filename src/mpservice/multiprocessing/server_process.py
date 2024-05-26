@@ -12,7 +12,7 @@ The most visible enhancements are:
     - Server-side proxies via function `managed`.
     - Support for shared memory blocks.
 
-    
+
 Basic workflow
 ==============
 
@@ -249,8 +249,8 @@ from multiprocessing.managers import (
     Value,
     convert_to_error,
     dispatch,
-    listener_client,
     get_spawning_popen,
+    listener_client,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -287,7 +287,6 @@ def get_server(address=None):
     if address is None or server.address == address:
         return server
     return None
-
 
 
 class Server(_Server_):
@@ -579,13 +578,16 @@ class BaseProxy(_BaseProxy_):
 
         server = self._server
         if server:
-            kind, result = server._callmethod(None, self._token.id, methodname, args, kwds)
+            kind, result = server._callmethod(
+                None, self._token.id, methodname, args, kwds
+            )
         else:
             try:
                 conn = self._tls.connection
             except AttributeError:
                 util.debug(
-                    'thread %r does not own a connection', threading.current_thread().name
+                    'thread %r does not own a connection',
+                    threading.current_thread().name,
                 )
                 self._connect()
                 conn = self._tls.connection
@@ -617,11 +619,18 @@ class BaseProxy(_BaseProxy_):
         self._idset.add(self._id)
 
         self._close = util.Finalize(
-            self, BaseProxy._decref,
-            args=(self._token, self._authkey,
-                  self._tls, self._idset, self._Client, self._server),
-            exitpriority=10
-            )
+            self,
+            BaseProxy._decref,
+            args=(
+                self._token,
+                self._authkey,
+                self._tls,
+                self._idset,
+                self._Client,
+                self._server,
+            ),
+            exitpriority=10,
+        )
 
     # Changes to the original version:
     #   - no parameter `state`
@@ -643,8 +652,10 @@ class BaseProxy(_BaseProxy_):
         # check whether we can close this thread's connection because
         # the process owns no more references to objects for this manager
         if not idset and hasattr(tls, 'connection'):
-            util.debug('thread %r has no more proxies so closing conn',
-                       threading.current_thread().name)
+            util.debug(
+                'thread %r has no more proxies so closing conn',
+                threading.current_thread().name,
+            )
             tls.connection.close()
             del tls.connection
 
@@ -830,7 +841,9 @@ def managed(obj, *, typeid: str = None):
             try:
                 callable, *_ = server.registry[typeid]
                 if callable is not None:
-                    raise ValueError("`typeid` is not provided and a suitable registry is not found")
+                    raise ValueError(
+                        '`typeid` is not provided and a suitable registry is not found'
+                    )
             except KeyError:
                 server.registry[typeid] = (None, None, None, AutoProxy)
                 # TODO: delete after this single use?
@@ -840,7 +853,9 @@ def managed(obj, *, typeid: str = None):
                 try:
                     callable, *_ = server.registry[typeid]
                     if callable is not None:
-                        raise ValueError("`typeid` is not provided and a suitable registry is not found")
+                        raise ValueError(
+                            '`typeid` is not provided and a suitable registry is not found'
+                        )
                 except KeyError:
                     server.registry[typeid] = (None, None, None, proxytype)
                     # TODO: delete after this single use?
