@@ -2,13 +2,17 @@
 The module `mpservice.multiprocessing.server_process` contains some fixes and enhancements to the
 standard module `multiprocessing.managers <https://docs.python.org/3/library/multiprocessing.html#managers>`_.
 
-Some of the changes/additions to the standard module are:
+For general understanding of the standard module, see `this blog <https://zpz.github.io/blog/python-mp-manager-1>`_.
+Most of the fixes are discussed in `this blog <https://zpz.github.io/blog/python-mp-manager-2>`_.
+Most of the enhances are discussed in `this blog <https://zpz.github.io/blog/python-mp-manager-3>`_.
+
+The most visible enhancements are:
 
     - If a proxy method fails in the server, the same exception is raised on the client side with useful traceback.
-    - Proxy methods that return proxies can be called without access to the "manager", i.e. can be called on a proxy that has been passed from the original process into another process.
-    - Nested proxies via function `managed`.
+    - Server-side proxies via function `managed`.
     - Support for shared memory blocks.
 
+    
 Basic workflow
 ==============
 
@@ -36,10 +40,11 @@ Basic workflow
     with ServerProcess() as server:
             ...
 
-   By now, ``server`` has started a "server process". We interact with things
-   running in the server process via methods that have been "registered" on ``server``.
+   By now, ``server`` has started a "server process". We create things in the server process
+   via methods that have been "registered" on ``server``. Then we interact with these "remote" things
+   via their "proxies".
 
-3. Instances of the registered classes can be created within the server process::
+   Create instances of the registered classes within the server process::
 
         doubler = server.Doubler(...)
         tripler = server.Tripler(...)
@@ -63,10 +68,10 @@ Basic workflow
 
    will create independent objects in the server process.
 
-   Multiple ``ServerProcess`` objects will run their corresponding
+   Multiple ``ServerProcess`` objects would run their corresponding
    server processes independently.
 
-4. Pass the proxy objects to any process and use them there.
+3. Pass the proxy objects to any process and use them there.
 
    By default, public methods (minus "properties") defined by the registered classes
    can be invoked on a proxy and will return the expected
@@ -84,21 +89,7 @@ Basic workflow
 
    Between the server process and the proxy object in a particular client process or thread,
    a connection is established, which starts a new thread in the server process
-   to handle all requests from that proxy object (in said client process or thread).
-   These "requests" include calling all methods of the proxy, not just one particular method.
-
-   For example,
-
-   ::
-
-        th = Thread(target=foo, args=(prox1,))
-        th.start()
-        ...
-
-   Suppose in function ``foo`` the first parameter is called ``p`` (which is ``prox1`` passed in),
-   then ``p`` will communicate with the ``Doubler`` object (which runs in the server process)
-   via its new dedicated thread in the server process, separate from the connection thread for ``prox1``
-   in the "current" thread.
+   to handle all requests from that proxy object.
 
    Consequently, calls on a particular method of the proxy from multiple processes or threads
    become multi-threaded concurrent calls in the server process.
@@ -158,6 +149,7 @@ The property ``buf`` returns a ``memoryview`` of the shared memory.
 The block of shared memory is released/destroyed once all references to the ``MemoryBlockProxy``
 object have been garbage collected, or when the server process terminates.
 
+
 Nested proxies
 ==============
 
@@ -176,8 +168,9 @@ For example,
 Now, the first element of ``lst`` is a dict proxy. You may pass ``lst`` to another process
 and manipulate its first element; the changes are reflected in the dict that resides in the server process.
 
-Return proxies from methods of hosted objects
-=============================================
+
+Server-side proxies
+===================
 
 By default, when you call a method of a proxy, the returned value is plain old data passed from
 the server process to the caller in the client process via pickling.
@@ -209,7 +202,7 @@ proxies in some others. We can do something like this::
 
     ServerProcess.register('Worker', Worker)
 
-Then we may use it like so::
+Then we may use it like this::
 
     from mpservice.multiprocessing import Process
 
@@ -236,8 +229,6 @@ Then we may use it like so::
         mem = worker.get_memory(80)
         assert isinstance(mem, MomeryBlockProxy)
         assert mem.size == 80
-
-Reference: https://zpz.github.io/blog/python-mp-manager-1/
 """
 
 from __future__ import annotations
@@ -259,6 +250,7 @@ from multiprocessing.managers import (
     convert_to_error,
     dispatch,
     listener_client,
+    get_spawning_popen,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -273,6 +265,7 @@ from .remote_exception import RemoteException
 
 __all__ = [
     'ServerProcess',
+    'add_proxy_methods',
     'managed',
     'managed_list',
     'managed_dict',
@@ -281,13 +274,20 @@ __all__ = [
     'managed_namespace',
     'managed_iterator',
     'BaseProxy',
+    'AutoProxy',
 ]
 
 
-def get_server():
-    return getattr(current_process(), '_manager_server', None)
+def get_server(address=None):
     # If `None`, the caller is not running in the manager server process.
     # Otherwise, the return is the `Server` object that is running.
+    server = getattr(current_process(), '_manager_server', None)
+    if server is None:
+        return None
+    if address is None or server.address == address:
+        return server
+    return None
+
 
 
 class Server(_Server_):
@@ -301,8 +301,41 @@ class Server(_Server_):
     def _wrap_user_exc(self, exc):
         return RemoteException(exc)
 
-    # This is the cpython code in versions 3.7-3.12.
-    # My fix is labeled "FIX".
+    def _callmethod(self, conn, ident, methodname, args, kwds):
+        obj, exposed, gettypeid = self.id_to_obj[ident]
+
+        try:
+            function = getattr(obj, methodname)
+            # `function` carries a ref to ``obj``.
+        except AttributeError:
+            if methodname is None:
+                msg = ('#TRACEBACK', format_exc())
+            else:
+                try:
+                    fallback_func = self.fallback_mapping[methodname]
+                    result = fallback_func(self, conn, ident, obj, *args, **kwds)
+                    msg = ('#RETURN', result)
+                except Exception:
+                    msg = ('#TRACEBACK', format_exc())
+            return msg
+
+        try:
+            res = function(*args, **kwds)
+        except Exception as e:
+            msg = ('#ERROR', self._wrap_user_exc(e))
+            return msg
+
+        typeid = gettypeid and gettypeid.get(methodname, None)
+        if typeid:
+            proxy = self.create(conn, typeid, res)
+            msg = ('#PROXY', proxy)
+        else:
+            msg = ('#RETURN', res)
+
+        return msg
+
+    # This is the cpython code in versions 3.7-3.12, with my changes,
+    # including factoring out a helper method `_callmethod`.
     def serve_client(self, conn):
         """
         Handle requests from the proxies in a particular process/thread
@@ -313,7 +346,6 @@ class Server(_Server_):
 
         recv = conn.recv
         send = conn.send
-        id_to_obj = self.id_to_obj
 
         while not self.stop_event.is_set():
             try:
@@ -321,68 +353,7 @@ class Server(_Server_):
                 request = recv()
                 ident, methodname, args, kwds = request
 
-                # FIX
-                # try:
-                #     obj, exposed, gettypeid = id_to_obj[ident]
-                # except KeyError as ke:
-                #     try:
-                #         obj, exposed, gettypeid = self.id_to_local_proxy_obj[ident]
-                #     except KeyError:
-                #         raise ke
-                obj, exposed, gettypeid = id_to_obj[ident]
-
-                # FIX: now `exposed` in the registry is not used.
-                # if methodname not in exposed:
-                #     raise AttributeError(
-                #         'method %r of %r object is not in exposed=%r'
-                #         % (methodname, type(obj), exposed)
-                #     )
-
-                function = getattr(obj, methodname)
-                # `function` carries a ref to ``obj``.
-
-                try:
-                    res = function(*args, **kwds)
-                except Exception as e:
-                    # FIX
-                    # msg = ('#ERROR', e)
-                    msg = ('#ERROR', self._wrap_user_exc(e))
-
-                else:
-                    typeid = gettypeid and gettypeid.get(methodname, None)
-                    if typeid:
-                        proxy = self.create(conn, typeid, res)
-                        msg = ('#PROXY', proxy)
-                    else:
-                        msg = ('#RETURN', res)
-
-                    # FIX
-                    del res
-
-                # FIX:
-                # If no more request is coming, then `function` and `res` will stay around.
-                # If `function` is a instance method of `obj`, then it carries a reference to `obj`.
-                # Also, `res` is a refernce to the object that has been tracked in `self.id_to_obj`
-                # and "returned" to the requester.
-                # The extra reference to `obj` and `res` lingering here have no use, yet can cause
-                # sutble bugs in applications that make use of their ref counts.
-                #
-                # This fix does not seem to be critical.
-                del function
-                del obj
-
-            except AttributeError:
-                if methodname is None:
-                    msg = ('#TRACEBACK', format_exc())
-                else:
-                    try:
-                        fallback_func = self.fallback_mapping[methodname]
-                        result = fallback_func(self, conn, ident, obj, *args, **kwds)
-                        msg = ('#RETURN', result)
-
-                        del obj  # HACK
-                    except Exception:
-                        msg = ('#TRACEBACK', format_exc())
+                msg = self._callmethod(conn, ident, methodname, args, kwds)
 
             except EOFError:
                 util.debug(
@@ -581,12 +552,13 @@ class ServerProcess(BaseManager):
 
 
 class BaseProxy(_BaseProxy_):
-    # Changes to the standard version:
+    # Changes to the original version:
     #    - remove parameter `manager_owned`--fixing it at False, because I don't want the `__init__`
     #      to skip `incref` when `manager_owned` would be True.
     #    - remove parameter `manager`.
     #    - remove parameter `exposed`.
     def __init__(self, token, serializer, authkey=None, incref=True):
+        self._server = get_server(token.address)
         super().__init__(
             token,
             serializer,
@@ -598,23 +570,28 @@ class BaseProxy(_BaseProxy_):
         )
 
     # Changes to the original version:
+    #   - shortcut if running in server
     #   - simplify the `kind == 'PROXY'` case
     def _callmethod(self, methodname, args=(), kwds={}):
         """
         Try to call a method of the referent and return a copy of the result
         """
 
-        try:
-            conn = self._tls.connection
-        except AttributeError:
-            util.debug(
-                'thread %r does not own a connection', threading.current_thread().name
-            )
-            self._connect()
-            conn = self._tls.connection
+        server = self._server
+        if server:
+            kind, result = server._callmethod(None, self._token.id, methodname, args, kwds)
+        else:
+            try:
+                conn = self._tls.connection
+            except AttributeError:
+                util.debug(
+                    'thread %r does not own a connection', threading.current_thread().name
+                )
+                self._connect()
+                conn = self._tls.connection
 
-        conn.send((self._id, methodname, args, kwds))
-        kind, result = conn.recv()
+            conn.send((self._id, methodname, args, kwds))
+            kind, result = conn.recv()
 
         if kind == '#RETURN':
             return result
@@ -623,13 +600,65 @@ class BaseProxy(_BaseProxy_):
 
         raise convert_to_error(kind, result)
 
+    # Changes to the original version:
+    #   - do not check `self._owned_by_manager`
+    #   - use shortcut if this is running inside the server process
+    #   - do not use `self._manager`, hence the finalizer does not take `state`
+    #   - the finalizer takes `server`
+    def _incref(self):
+        server = self._server
+        if server:
+            server.incref(None, self._token.id)
+        else:
+            conn = self._Client(self._token.address, authkey=self._authkey)
+            dispatch(conn, None, 'incref', (self._id,))
+            util.debug('INCREF %r', self._token.id)
+
+        self._idset.add(self._id)
+
+        self._close = util.Finalize(
+            self, BaseProxy._decref,
+            args=(self._token, self._authkey,
+                  self._tls, self._idset, self._Client, self._server),
+            exitpriority=10
+            )
+
+    # Changes to the original version:
+    #   - no parameter `state`
+    #   - use shortcut if this is running in server
+    @staticmethod
+    def _decref(token, authkey, tls, idset, _Client, server):
+        idset.discard(token.id)
+
+        if server:
+            server.decref(None, token.id)
+        else:
+            try:
+                util.debug('DECREF %r', token.id)
+                conn = _Client(token.address, authkey=authkey)
+                dispatch(conn, None, 'decref', (token.id,))
+            except Exception as e:
+                util.debug('... decref failed %s', e)
+
+        # check whether we can close this thread's connection because
+        # the process owns no more references to objects for this manager
+        if not idset and hasattr(tls, 'connection'):
+            util.debug('thread %r has no more proxies so closing conn',
+                       threading.current_thread().name)
+            tls.connection.close()
+            del tls.connection
+
     # Changes to the standard version:
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
     def __reduce__(self):
         # Inc refcount in case the remote object is gone before unpickling happens.
-        conn = self._Client(self._token.address, authkey=self._authkey)
-        dispatch(conn, None, 'incref', (self._id,))
+        server = self._server
+        if server:
+            server.incref(None, self._token.id)
+        else:
+            conn = self._Client(self._token.address, authkey=self._authkey)
+            dispatch(conn, None, 'incref', (self._id,))
 
         func, args = super().__reduce__()
 
@@ -655,13 +684,18 @@ def RebuildProxy(func, token, serializer, kwds):
         current_process(), '_inheriting', False
     )
     obj = func(token, serializer, incref=incref, **kwds)
+    # `func` is either `AutoProxy` or a subclass of `BaseProxy`.
     # TODO: it appears `incref` is True some times and False some others.
     # Understand the `'_inheriting'` thing.
 
     if incref:
         # Counter the extra `incref` that's done in `BaseProxy.__init__`.
-        conn = obj._Client(obj._token.address, authkey=obj._authkey)
-        dispatch(conn, None, 'decref', (obj._id,))
+        server = get_server(token.address)
+        if server:
+            server.decref(None, token.id)
+        else:
+            conn = obj._Client(obj._token.address, authkey=obj._authkey)
+            dispatch(conn, None, 'decref', (obj._id,))
 
     return obj
 
@@ -732,13 +766,17 @@ def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     is not provided.
     """
     _Client = listener_client[serializer][1]
+    server = get_server(token.address)
 
     if exposed is None:  # TODO: does this ever happen?
-        conn = _Client(token.address, authkey=authkey)
-        try:
-            exposed = dispatch(conn, None, 'get_methods', (token,))
-        finally:
-            conn.close()
+        if server:
+            exposed = server.get_methods(None, token)
+        else:
+            conn = _Client(token.address, authkey=authkey)
+            try:
+                exposed = dispatch(conn, None, 'get_methods', (token,))
+            finally:
+                conn.close()
 
     if authkey is None:
         authkey = current_process().authkey
@@ -759,8 +797,6 @@ def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
 
     ProxyType = make_proxy_type('AutoProxy[%s]' % token.typeid, exposed)
 
-    # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
-    #   incref=incref, manager_owned=manager_owned)
     proxy = ProxyType(token, serializer, authkey=authkey, incref=incref)
 
     proxy._isauto = True
@@ -773,7 +809,7 @@ def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
 #
 
 
-def managed(obj, *, typeid: str = None) -> BaseProxy:
+def managed(obj, *, typeid: str = None):
     """
     This function is used within a server process.
     It creates a proxy for the input `obj`.
@@ -788,11 +824,26 @@ def managed(obj, *, typeid: str = None) -> BaseProxy:
     if not typeid:
         typeid = type(obj).__name__
         try:
-            callable, *_ = server.registry[typeid]
-            assert callable is None
+            callable, *_, proxytype = server.registry[typeid]
         except KeyError:
-            server.registry[typeid] = (None, None, None, AutoProxy)
-            # TODO: delete after this single use?
+            typeid = 'Managed' + typeid.title()
+            try:
+                callable, *_ = server.registry[typeid]
+                if callable is not None:
+                    raise ValueError("`typeid` is not provided and a suitable registry is not found")
+            except KeyError:
+                server.registry[typeid] = (None, None, None, AutoProxy)
+                # TODO: delete after this single use?
+        else:
+            if callable is not None:
+                typeid = 'Managed' + typeid.title()
+                try:
+                    callable, *_ = server.registry[typeid]
+                    if callable is not None:
+                        raise ValueError("`typeid` is not provided and a suitable registry is not found")
+                except KeyError:
+                    server.registry[typeid] = (None, None, None, proxytype)
+                    # TODO: delete after this single use?
 
     proxy = server.create(None, typeid, obj)
 
