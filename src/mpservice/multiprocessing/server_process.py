@@ -496,7 +496,7 @@ class ServerProcess(BaseManager):
             os.sched_setaffinity(self._process.pid, cpu)
 
     def _create(self, *args, **kwargs):
-        raise RuntimeError("the method `_create` has been removed")
+        raise RuntimeError('the method `_create` has been removed')
 
     # Changes to the standard version:
     #   - use our custom `AutoProxy`
