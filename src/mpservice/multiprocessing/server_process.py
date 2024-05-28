@@ -278,7 +278,7 @@ __all__ = [
 
 def get_server(address=None):
     # If `None`, the caller is not running in the manager server process.
-    # Otherwise, the return is the `Server` object that is running.
+    # Otherwise, the return is the `Server` object that is running in the current process.
     server = getattr(current_process(), '_manager_server', None)
     if server is None:
         return None
@@ -494,6 +494,9 @@ class ServerProcess(BaseManager):
             if isinstance(cpu, int):
                 cpu = [cpu]
             os.sched_setaffinity(self._process.pid, cpu)
+
+    def _create(self, *args, **kwargs):
+        raise RuntimeError("the method `_create` has been removed")
 
     # Changes to the standard version:
     #   - use our custom `AutoProxy`
