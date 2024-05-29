@@ -379,7 +379,12 @@ class Server(_Server_):
     def debug_info(self, c):
         with self.mutex:
             return [
-                {'id': k, 'refcount:': self.id_to_refcount[k], 'type': type(v[0]).__name__, 'preview': str(v[0])[:75]}
+                {
+                    'id': k,
+                    'refcount:': self.id_to_refcount[k],
+                    'type': type(v[0]).__name__,
+                    'preview': str(v[0])[:75],
+                }
                 for k, v in self.id_to_obj.items()
                 if k != '0'
             ]  # in order of object creation
@@ -1028,7 +1033,9 @@ else:
         def __init__(self, size: int):
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
-            self.release = util.Finalize(self, type(self)._release, args=(self._mem, ), exitpriority=10)
+            self.release = util.Finalize(
+                self, type(self)._release, args=(self._mem,), exitpriority=10
+            )
 
         def _name(self):
             # This is for use by ``MemoryBlockProxy``.

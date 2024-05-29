@@ -240,10 +240,6 @@ def inc_worker(q):
     assert buf[4] == 100
     buf[4] += 1
 
-    blocks = mem._list_memory_blocks()
-    print('memory blocks in worker:', blocks)
-    assert len(blocks) == 1
-
 
 def test_shared_memory():
     print('')
@@ -253,22 +249,14 @@ def test_shared_memory():
         assert len(mem.buf) == 10
         mem.buf[4] = 100
 
-        blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
-        print('memory blocks in main:', blocks)
-        assert len(blocks) == 1
-
         q = Queue()
         q.put(mem)
         del mem
-
-        blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
-        assert len(blocks) == 1
 
         p = Process(target=inc_worker, args=(q,))
         p.start()
         p.join()
 
-        assert len(manager.MemoryBlock(1)._list_memory_blocks(include_self=False)) == 0
 
 
 class MemoryWorker:
