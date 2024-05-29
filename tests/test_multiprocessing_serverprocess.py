@@ -327,6 +327,10 @@ def test_managed():
 
         print(m)
 
+        print()
+        print(server._debug_info())
+        print()
+
         print(m.buf[10])
         p = Process(target=worker_mem, args=(m,))
         p.start()
