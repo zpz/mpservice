@@ -4,13 +4,16 @@ import signal
 import socket
 import sys
 import warnings
+import threading
 from typing import Any, Callable, List, Optional, TypeVar
 from weakref import WeakValueDictionary
 
 import click
 import uvicorn
+from uvicorn.main import STARTUP_FAILURE
 
-from mpservice.multiprocessing import Event, Process
+
+from mpservice.multiprocessing import Event, SpawnProcess
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,7 @@ class Server(uvicorn.Server):
         else:
             _servers[server_id] = stop_event
         self._stop_event = stop_event
+
         return super().run(sockets)
 
     async def on_tick(self, *args, **kwargs):
@@ -55,6 +59,31 @@ class Server(uvicorn.Server):
             self._stop_event is not None and self._stop_event.is_set()
         )
 
+
+class Process(uvicorn.supervisors.multiprocess.Process):
+    def __init__(self, config, target, sockets, *, worker_context, server_id, stop_event):
+        super().__init__(config, target, sockets)
+
+        self._worker_context = worker_context
+        self._server_id = server_id
+        self._stop_event = stop_event
+
+        target, args, kwargs = self.process._target, self.process._args, self.process._kwargs
+        self.process = SpawnProcess(target=target, args=args, kwargs=kwargs)
+
+    def target(self, sockets: list[socket.socket] | None = None) -> Any:  # pragma: no cover
+        if os.name == "nt":  # pragma: py-not-win32
+            # Windows doesn't support SIGTERM, so we use SIGBREAK instead.
+            # And then we raise SIGTERM when SIGBREAK is received.
+            # https://learn.microsoft.com/zh-cn/cpp/c-runtime-library/reference/signal?view=msvc-170
+            signal.signal(
+                signal.SIGBREAK,  # type: ignore[attr-defined]
+                lambda sig, frame: signal.raise_signal(signal.SIGTERM),
+            )
+
+        threading.Thread(target=self.always_pong, daemon=True).start()
+        return self.real_target(sockets=sockets, worker_context=self._worker_context, server_id=self._server_id, stop_event=self._stop_event)
+    
 
 # See `uvicorn`.
 class Multiprocess(uvicorn.supervisors.Multiprocess):
@@ -66,132 +95,19 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
         self._server_id = server_id
         self.should_exit = stop_event  # override the parent one
 
-    def run(self) -> None:
-        self.startup()
-        self.should_exit.wait()
-        self.shutdown()
-
-    def startup(
-        self,
-    ) -> None:
-        message = 'Started parent process [{}]'.format(str(self.pid))
-        color_message = 'Started parent process [{}]'.format(
-            click.style(str(self.pid), fg='cyan', bold=True)
-        )
-        logger.info(message, extra={'color_message': color_message})
-
-        for sig in uvicorn.supervisors.multiprocess.HANDLED_SIGNALS:
-            signal.signal(sig, self.signal_handler)
-
-        for _idx in range(self.config.workers):
-            process = get_subprocess(
-                config=self.config,
-                target=self.target,
-                sockets=self.sockets,
-                worker_context=self._worker_contexts[_idx],
-                server_id=self._server_id,
-                stop_event=self.should_exit,
-                # Customization: pass in `worker_context`, `server_id`, and `stop_event`.
-            )
+    def init_processes(self):
+        for _idx in range(self.processes_num):
+            process = Process(self.config, self.target, self.sockets,
+                              worker_context=self._worker_contexts[_idx],
+                              server_id=self._server_id,
+                              stop_event=self.should_exit,
+                              )
             process.start()
             self.processes.append(process)
 
-    def shutdown(self) -> None:
-        for process in self.processes:
-            # Customization: do not call `process.terminate()`
-            # process.terminate()
-            process.join()
-
-        message = 'Stopping parent process [{}]'.format(str(self.pid))
-        color_message = 'Stopping parent process [{}]'.format(
-            click.style(str(self.pid), fg='cyan', bold=True)
-        )
-        logger.info(message, extra={'color_message': color_message})
-
-
-# See `uvicorn`.
-def get_subprocess(
-    config: uvicorn.Config,
-    target: Callable[..., None],
-    sockets: List[socket.socket],
-    worker_context: Any,
-    server_id: str,
-    stop_event: Event,
-) -> Process:
-    """
-    Called in the parent process, to instantiate a new child process instance.
-    The child is not yet started at this point.
-
-    * config - The Uvicorn configuration instance.
-    * target - A callable that accepts a list of sockets. In practice this will
-               be the `Server.run()` method.
-    * sockets - A list of sockets to pass to the server. Sockets are bound once
-                by the parent process, and then passed to the child processes.
-    """
-    # We pass across the stdin fileno, and reopen it in the child process.
-    # This is required for some debugging environments.
-
-    # There are three customizations to this function:
-    #   - use ``MP_SPAWN_CTX``
-    #   - pass in ``worker_context``, ``server_id``, and ``stop_event``
-
-    stdin_fileno: Optional[int]
-    try:
-        stdin_fileno = sys.stdin.fileno()
-    except OSError:
-        stdin_fileno = None
-
-    kwargs = {
-        'config': config,
-        'target': target,
-        'sockets': sockets,
-        'stdin_fileno': stdin_fileno,
-        'worker_context': worker_context,
-        'server_id': server_id,
-        'stop_event': stop_event,
-    }
-
-    return Process(target=subprocess_started, kwargs=kwargs)
-
-
-# See `uvicorn`.
-def subprocess_started(
-    config: uvicorn.Config,
-    target: Callable[..., None],
-    sockets: List[socket.socket],
-    stdin_fileno: Optional[int],
-    worker_context: Any,
-    server_id: str,
-    stop_event: Event,
-) -> None:
-    """
-    Called when the child process starts.
-
-    * config - The Uvicorn configuration instance.
-    * target - A callable that accepts a list of sockets. In practice this will
-               be the `Server.run()` method.
-    * sockets - A list of sockets to pass to the server. Sockets are bound once
-                by the parent process, and then passed to the child processes.
-    * stdin_fileno - The file number of sys.stdin, so that it can be reattached
-                     to the child process.
-    """
-    # There is one customization to this function:
-    #   - take and use ``worker_idx``
-
-    # Re-open stdin.
-    if stdin_fileno is not None:
-        sys.stdin = os.fdopen(stdin_fileno)
-
-    # Logging needs to be setup again for each child.
-    config.configure_logging()
-
-    # Now we can call into `Server.run(sockets=sockets)`
-    target(
-        sockets=sockets,
-        worker_context=worker_context,
-        server_id=server_id,
-        stop_event=stop_event,
-    )
+    def terminate_all(self):
+        # Do not force terminate
+        return
 
 
 async def stop_server(server_id: str = '0'):
@@ -217,8 +133,6 @@ async def stop_server(server_id: str = '0'):
         s.set()  # this is "propagated" to other worker processes as well as the ``Multiprocess`` object.
 
 
-UNSET = object()
-
 _servers: WeakValueDictionary[str, Server | Event] = None
 
 
@@ -234,12 +148,12 @@ def start_server(
     backlog: int = 128,
     workers: int = 1,
     worker_contexts: list = None,
-    log_config=UNSET,
+    log_config=None,
     server_id: str = '0',
     **kwargs,
 ):
     """
-    This function is intended for lauching a service that uses :mod:`mpservice.mpserver`.
+    This function is intended for launching a service that uses :mod:`mpservice.mpserver`.
 
     This function is adapted from ``uvicorn.main.run``.
 
@@ -309,12 +223,8 @@ def start_server(
     **kwargs
         Passed to ``uvicorn.Config``.
     """
-    if log_config is not UNSET:
-        warnings.warn(
-            '`log_config` is ignored since 0.14.1 and will be an error in 0.15.0',
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    assert log_config is None
+    # `log_config` is ignored since 0.14.1.
 
     config = uvicorn.Config(
         app,
@@ -331,19 +241,23 @@ def start_server(
         worker_contexts = [None] * workers
 
     server = Server(config=config)
-    if workers == 1:
-        server.run(worker_context=worker_contexts[0], server_id=server_id)
-    else:
-        sock = config.bind_socket()
-        mult = Multiprocess(
-            config,
-            target=server.run,
-            sockets=[sock],
-            worker_contexts=worker_contexts,
-            server_id=server_id,
-            stop_event=Event(),
-        )
-        mult.run()
+    try:
+        if workers == 1:
+            server.run(worker_context=worker_contexts[0], server_id=server_id)
+        else:
+            sock = config.bind_socket()
+            mult = Multiprocess(
+                config,
+                target=server.run,
+                sockets=[sock],
+                worker_contexts=worker_contexts,
+                server_id=server_id,
+                stop_event=Event(),
+            )
+            mult.run()
+    finally:
+        if config.uds and os.path.exists(config.uds):
+            os.remove(config.uds)  # pragma: py-win32
 
-    if config.uds and os.path.exists(config.uds):
-        os.remove(config.uds)  # pragma: py-win32
+    if not server.started and not config.should_reload and config.workers == 1:
+        sys.exit(STARTUP_FAILURE)

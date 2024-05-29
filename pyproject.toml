@@ -13,7 +13,7 @@ dependencies = [
     "deprecation",
     "psutil",
     "typing-extensions",
-    "uvicorn[standard] >=0.15.0,<1.0",
+    "uvicorn[standard] >=0.30.0,<1.0",
 ]
 requires-python = ">=3.8"
 readme = "README.rst"

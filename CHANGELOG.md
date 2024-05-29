@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.15.5] - 2024-05-28
 
 - Minor improvement to `mpservice.multiprocessing.server_process`.
+- Upgraded `uvicorn` to 0.30.0; revised `mpservice._http` accordingly.
 
 
 ## [0.15.4] - 2024-05-25
