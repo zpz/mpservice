@@ -278,7 +278,7 @@ __all__ = [
 
 def get_server(address=None):
     # If `None`, the caller is not running in the manager server process.
-    # Otherwise, the return is the `Server` object that is running.
+    # Otherwise, the return is the `Server` object that is running in the current process.
     server = getattr(current_process(), '_manager_server', None)
     if server is None:
         return None
@@ -379,30 +379,15 @@ class Server(_Server_):
     def debug_info(self, c):
         with self.mutex:
             return [
-                (k, self.id_to_refcount[k], str(v[0])[:75])
+                {
+                    'id': k,
+                    'refcount:': self.id_to_refcount[k],
+                    'type': type(v[0]).__name__,
+                    'preview': str(v[0])[:75],
+                }
                 for k, v in self.id_to_obj.items()
+                if k != '0'
             ]  # in order of object creation
-
-    def shutdown(self, c):
-        # If there are `MemoryBlockProxy` objects alive when the manager exists its context manager,
-        # the corresponding shared memory blocks will live beyond the server process, leading to
-        # warnings like this:
-        #
-        #    UserWarning: resource_tracker: There appear to be 3 leaked shared_memory objects to clean up at shutdown
-        #
-        # Because we intend to use this server process as a central manager of the shared memory blocks,
-        # there shouldn't be any user beyond the lifespan of this server, hence we release these memory blocks.
-        #
-        # If may be good practice to explicitly `del` `MemoryBlockProxy` objects before the manager shuts down.
-        # However, this may be unpractical if there are many proxies, esp if they are nested in other objects.
-        #
-        # TODO: print some warning or info?
-        for ident in self.id_to_refcount.keys():
-            z = self.id_to_obj[ident][0]
-            if type(z).__name__ == 'MemoryBlock':
-                z.__del__()  # `del z` may not be enough b/c its ref count could be > 1.
-
-        super().shutdown(c)
 
     # Changes to the original version:
     #   - return proxy object
@@ -495,6 +480,9 @@ class ServerProcess(BaseManager):
                 cpu = [cpu]
             os.sched_setaffinity(self._process.pid, cpu)
 
+    def _create(self, *args, **kwargs):
+        raise RuntimeError('the method `_create` has been removed')
+
     # Changes to the standard version:
     #   - use our custom `AutoProxy`
     #   - remove parameter `exposed`
@@ -515,6 +503,7 @@ class ServerProcess(BaseManager):
         # FIX: disallow overwriting existing registry.
         if typeid in cls._registry:
             raise ValueError(f"typeid '{typeid}' is already registered")
+            # See method `unregister`.
 
         if proxytype is None:
             proxytype = AutoProxy
@@ -765,7 +754,6 @@ def add_proxy_methods(*method_names: str):
 # Changes to the standard version:
 #   1. use our custom `make_proxy_type`
 #   2. remove parameter `manager_owned`
-#   3. call `ProxyType` with `exposed`
 def AutoProxy(token, serializer, authkey=None, exposed=None, incref=True):
     """
     This function creates an instance of a BaseProxy subclass that is
@@ -1036,8 +1024,8 @@ else:
         """
         This class provides a simple tracker for a block of shared memory.
 
-        User can use this class ONLY within a server process.
-        They must wrap this object with `managed_memoryblock`.
+        User is expected to use this class ONLY within a server process.
+        They should wrap this object with `managed_memoryblock`.
 
         Outside of a server process, use `manager.MemoryBlock`.
         """
@@ -1045,6 +1033,9 @@ else:
         def __init__(self, size: int):
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
+            self.release = util.Finalize(
+                self, type(self)._release, args=(self._mem,), exitpriority=10
+            )
 
         def _name(self):
             # This is for use by ``MemoryBlockProxy``.
@@ -1062,31 +1053,16 @@ else:
         def buf(self):
             return self._mem.buf
 
-        def _list_memory_blocks(self):
-            """
-            Return a list of the names of the shared memory blocks
-            created and tracked by this class.
-            This list includes the memory block created by the current
-            ``MemoryBlock`` instance; in other words, the list
-            includes ``self.name``.
-
-            This is for use by ``MemoryBlockProxy``.
-            This is mainly for debugging purposes.
-            """
-            server = get_server()
-            blocks = []
-            for z in server.id_to_obj.values():
-                obj = z[0]
-                if type(obj).__name__ == 'MemoryBlock':
-                    blocks.append(obj.name)
-            return blocks
+        @staticmethod
+        def _release(mem):
+            mem.close()
+            mem.unlink()
 
         def __del__(self):
             """
             Release the shared memory when this object is garbage collected.
             """
-            self._mem.close()
-            self._mem.unlink()
+            self.release()
 
         def __reduce__(self):
             # Block pickling to prevent user from accidentally using this class w/o
@@ -1097,7 +1073,7 @@ else:
 
         def __repr__(self):
             return (
-                f'<{self.__class__.__name__} {self._mem.name}, size {self._mem.size}>'
+                f"<{self.__class__.__name__} '{self._mem.name}', size {self._mem.size}>"
             )
 
     class MemoryBlockProxy(BaseProxy):
@@ -1128,9 +1104,11 @@ else:
             """
             Return size of the memory block in bytes.
             """
-            if self._mem is None:
-                self._mem = SharedMemory(name=self.name, create=False)
-            return self._mem.size
+            if self._size is None:
+                if self._mem is None:
+                    self._mem = SharedMemory(name=self.name, create=False)
+                self._size = self._mem.size
+            return self._size
 
         @property
         def buf(self) -> memoryview:
@@ -1140,23 +1118,6 @@ else:
             if self._mem is None:
                 self._mem = SharedMemory(name=self.name, create=False)
             return self._mem.buf
-
-        def _list_memory_blocks(self, *, include_self=True) -> list[str]:
-            """
-            Return names of shared memory blocks being
-            tracked by the ``ServerProcess`` that "owns" the current
-            proxy object.
-
-            You can call this method on any memoryblock proxy object.
-            If for some reason there's no such proxy handy, you can create a tiny, temporary member block
-            for this purpose:
-
-                blocks = manager.MemoryBlock(1)._list_memory_blocks(include_self=False)
-            """
-            blocks = self._callmethod('_list_memory_blocks')
-            if not include_self:
-                blocks.remove(self.name)
-            return blocks
 
         def __str__(self):
             return f"<{self.__class__.__name__} '{self.name}' at {self._id}, size {self.size}>"
