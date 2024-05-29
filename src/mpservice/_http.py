@@ -74,9 +74,7 @@ class Process(uvicorn.supervisors.multiprocess.Process):  # pragma: no cover
         )
         self.process = SpawnProcess(target=target, args=args, kwargs=kwargs)
 
-    def target(
-        self, sockets: list[socket.socket] | None = None
-    ) -> Any:
+    def target(self, sockets: list[socket.socket] | None = None) -> Any:
         if os.name == 'nt':  # pragma: py-not-win32
             # Windows doesn't support SIGTERM, so we use SIGBREAK instead.
             # And then we raise SIGTERM when SIGBREAK is received.
