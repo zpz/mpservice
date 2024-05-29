@@ -3,15 +3,12 @@ import os
 import signal
 import socket
 import sys
-import warnings
 import threading
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, TypeVar
 from weakref import WeakValueDictionary
 
-import click
 import uvicorn
 from uvicorn.main import STARTUP_FAILURE
-
 
 from mpservice.multiprocessing import Event, SpawnProcess
 
@@ -61,18 +58,26 @@ class Server(uvicorn.Server):
 
 
 class Process(uvicorn.supervisors.multiprocess.Process):
-    def __init__(self, config, target, sockets, *, worker_context, server_id, stop_event):
+    def __init__(
+        self, config, target, sockets, *, worker_context, server_id, stop_event
+    ):
         super().__init__(config, target, sockets)
 
         self._worker_context = worker_context
         self._server_id = server_id
         self._stop_event = stop_event
 
-        target, args, kwargs = self.process._target, self.process._args, self.process._kwargs
+        target, args, kwargs = (
+            self.process._target,
+            self.process._args,
+            self.process._kwargs,
+        )
         self.process = SpawnProcess(target=target, args=args, kwargs=kwargs)
 
-    def target(self, sockets: list[socket.socket] | None = None) -> Any:  # pragma: no cover
-        if os.name == "nt":  # pragma: py-not-win32
+    def target(
+        self, sockets: list[socket.socket] | None = None
+    ) -> Any:  # pragma: no cover
+        if os.name == 'nt':  # pragma: py-not-win32
             # Windows doesn't support SIGTERM, so we use SIGBREAK instead.
             # And then we raise SIGTERM when SIGBREAK is received.
             # https://learn.microsoft.com/zh-cn/cpp/c-runtime-library/reference/signal?view=msvc-170
@@ -82,8 +87,13 @@ class Process(uvicorn.supervisors.multiprocess.Process):
             )
 
         threading.Thread(target=self.always_pong, daemon=True).start()
-        return self.real_target(sockets=sockets, worker_context=self._worker_context, server_id=self._server_id, stop_event=self._stop_event)
-    
+        return self.real_target(
+            sockets=sockets,
+            worker_context=self._worker_context,
+            server_id=self._server_id,
+            stop_event=self._stop_event,
+        )
+
 
 # See `uvicorn`.
 class Multiprocess(uvicorn.supervisors.Multiprocess):
@@ -97,11 +107,14 @@ class Multiprocess(uvicorn.supervisors.Multiprocess):
 
     def init_processes(self):
         for _idx in range(self.processes_num):
-            process = Process(self.config, self.target, self.sockets,
-                              worker_context=self._worker_contexts[_idx],
-                              server_id=self._server_id,
-                              stop_event=self.should_exit,
-                              )
+            process = Process(
+                self.config,
+                self.target,
+                self.sockets,
+                worker_context=self._worker_contexts[_idx],
+                server_id=self._server_id,
+                stop_event=self.should_exit,
+            )
             process.start()
             self.processes.append(process)
 
