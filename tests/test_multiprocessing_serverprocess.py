@@ -258,7 +258,6 @@ def test_shared_memory():
         p.join()
 
 
-
 class MemoryWorker:
     def memory_block(self, size):
         return size
