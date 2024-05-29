@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 # See `uvicorn`.
-class Server(uvicorn.Server):
+class Server(uvicorn.Server):  # pragma: no cover
     def run(
         self,
         *,
@@ -57,7 +57,7 @@ class Server(uvicorn.Server):
         )
 
 
-class Process(uvicorn.supervisors.multiprocess.Process):
+class Process(uvicorn.supervisors.multiprocess.Process):  # pragma: no cover
     def __init__(
         self, config, target, sockets, *, worker_context, server_id, stop_event
     ):
@@ -76,7 +76,7 @@ class Process(uvicorn.supervisors.multiprocess.Process):
 
     def target(
         self, sockets: list[socket.socket] | None = None
-    ) -> Any:  # pragma: no cover
+    ) -> Any:
         if os.name == 'nt':  # pragma: py-not-win32
             # Windows doesn't support SIGTERM, so we use SIGBREAK instead.
             # And then we raise SIGTERM when SIGBREAK is received.
@@ -96,7 +96,7 @@ class Process(uvicorn.supervisors.multiprocess.Process):
 
 
 # See `uvicorn`.
-class Multiprocess(uvicorn.supervisors.Multiprocess):
+class Multiprocess(uvicorn.supervisors.Multiprocess):  # pragma: no cover
     def __init__(
         self, config, target, sockets, *, worker_contexts, server_id, stop_event
     ):
