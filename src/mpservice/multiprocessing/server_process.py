@@ -238,6 +238,7 @@ import os
 import sys
 import threading
 import types
+import multiprocessing
 from multiprocessing import current_process, util
 from multiprocessing.managers import (
     Array,
@@ -479,6 +480,22 @@ class ServerProcess(BaseManager):
             if isinstance(cpu, int):
                 cpu = [cpu]
             os.sched_setaffinity(self._process.pid, cpu)
+
+    def __getstate__(self):
+        return (
+            self._address,
+            self._authkey,
+            self._serializer,
+            self._registry,
+        )
+    
+    def __setstate__(self, data):
+        self._address, auth, self._serializer, reg = data
+        self._authkey = multiprocessing.process.AuthenticationString(auth)
+        self.__class__._registry = reg
+        self._Listener, self._Client = listener_client[self._serializer]
+        self._state = State()
+        self.connect()
 
     def _create(self, *args, **kwargs):
         raise RuntimeError('the method `_create` has been removed')
