@@ -234,11 +234,11 @@ Then we may use it like this::
 from __future__ import annotations
 
 import functools
+import multiprocessing
 import os
 import sys
 import threading
 import types
-import multiprocessing
 from multiprocessing import current_process, util
 from multiprocessing.managers import (
     Array,
@@ -488,7 +488,7 @@ class ServerProcess(BaseManager):
             self._serializer,
             self._registry,
         )
-    
+
     def __setstate__(self, data):
         self._address, auth, self._serializer, reg = data
         self._authkey = multiprocessing.process.AuthenticationString(auth)
