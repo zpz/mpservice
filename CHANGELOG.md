@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.15.6] - in progress
+
+- Finetune `mpservice.multiprocessing.server_process`: 
+    - support pickling of `ServerProcess` objects.
+    - buf fix regarding custom authkey to `ServerProcess`
+
+
 ## [0.15.5] - 2024-05-28
 
 - Minor improvement to `mpservice.multiprocessing.server_process`.

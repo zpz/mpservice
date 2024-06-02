@@ -234,6 +234,7 @@ Then we may use it like this::
 from __future__ import annotations
 
 import functools
+import multiprocessing
 import os
 import sys
 import threading
@@ -438,12 +439,6 @@ class ServerProcess(BaseManager):
     # I made a naive example, where the registered class just returns ``x + x``.
     # I was able to finish 13K calls per second.
 
-    # ``ServerProcess`` instances can't be (naively) pickled, hence can't be passed to other processes.
-    # As a result, with the official code, if you pass a proxy object to another process and call its methods in the other process,
-    # the methods can't be ones that return proxy objects, because proxy objects would need a reference to
-    # the "manager", while a proxy object does not carry its "manager" attribute during pickling.
-    # However, this restriction is removed by our code hack in `_ProcessServer.serve_client`.
-
     _Server = Server
 
     def __init__(
@@ -472,13 +467,54 @@ class ServerProcess(BaseManager):
             ctx=ctx or MP_SPAWN_CTX,
             **kwargs,
         )
-        self.start()
-        if name:
-            self._process.name = name
-        if cpu is not None:
+        self._name = name
+        self._cpu = cpu
+
+    def start(self, *args, **kwargs):
+        z = super().start(*args, **kwargs)
+        if self._name:
+            self._process.name = self._name
+        if self._cpu is not None:
+            cpu = self._cpu
             if isinstance(cpu, int):
                 cpu = [cpu]
             os.sched_setaffinity(self._process.pid, cpu)
+        return z
+
+    def __reduce__(self):
+        return (
+            self._rebuild_manager,
+            (self.__class__, self._address, self._authkey, self._serializer),
+        )
+
+    @staticmethod
+    def _rebuild_manager(cls, address, authkey, serializer):
+        # The rebuilt manager object should be used to create registered class instances in the server
+        # and nothing else. Do not use its context manager and do not "start" it (as it's already running).
+        # Its lifetime should be contained in the original object.
+        #
+        # It seems that changes to a class object within a function are not carried in pickles,
+        # hence you can't register a custom class within a function and hope to use that class on a manager
+        # out of unpickling, e.g., the following will not work:
+        #
+        #   def worker(manager):
+        #       myclass = manager.MyClass()
+        #       ....
+        #
+        #   def myfunc():
+        #       ServerProcess.register('MyClass', MyClass)
+        #       with ServerProcess() as manager:
+        #           p = Process(target=worker, args=(manager,))
+        #           p.start()
+        #           p.join()
+        #
+        # Instead, do registration in the global scope.
+
+        obj = cls(address, authkey, serializer)
+        obj._ctx = None
+        obj.connect()
+        obj.start = None
+        return obj
 
     def _create(self, *args, **kwargs):
         raise RuntimeError('the method `_create` has been removed')
@@ -649,6 +685,7 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
+    #   3. always include authkey
     def __reduce__(self):
         # Inc refcount in case the remote object is gone before unpickling happens.
         server = self._server
@@ -658,12 +695,20 @@ class BaseProxy(_BaseProxy_):
             conn = self._Client(self._token.address, authkey=self._authkey)
             dispatch(conn, None, 'incref', (self._id,))
 
-        func, args = super().__reduce__()
+        # kwds = {}
+        # if get_spawning_popen() is not None:
+        #     kwds['authkey'] = self._authkey
+        kwds = {'authkey': bytes(self._authkey)}
+        # TODO: this bypasses a security check, hence must be not quite right.
+        # This authkey is needed if user has specified a custom authkey to `BaseManager.__init__`.
+        # If this authkey is not included, the rebuilt proxy object would not be able to communicate
+        # with the server.
 
-        func = RebuildProxy
         if getattr(self, '_isauto', False):
-            args = (AutoProxy, *args[1:])
-        return func, args
+            kwds['exposed'] = self._exposed_
+            return (RebuildProxy, (AutoProxy, self._token, self._serializer, kwds))
+        else:
+            return (RebuildProxy, (type(self), self._token, self._serializer, kwds))
 
 
 #

@@ -114,7 +114,7 @@ ServerProcess.register('Tripler', callable=Tripler)
 
 
 def test_manager():
-    with ServerProcess(name='test_server_process') as manager:
+    with ServerProcess(name='test_server_process', cpu=1) as manager:
         assert manager._process.name == 'test_server_process'
 
         doubler = manager.Doubler('d')
@@ -390,3 +390,30 @@ def test_proxy_in_other_process():
         p.join()
 
         assert p.result()
+
+
+# Define a new class to be sure it has not been registered
+class PickleManagerDoubler:
+    def __init__(self, factor=2):
+        self._factor = factor
+
+    def scale(self, x):
+        return x * self._factor
+
+
+def pickle_manager_worker(manager, factor, x):
+    doubler = manager.PickleManagerDoubler(factor)
+    return doubler.scale(x)
+
+
+ServerProcess.register('PickleManagerDoubler', PickleManagerDoubler)
+
+
+def test_manager_pickle():
+    with ServerProcess(authkey=b'abc') as manager:
+        doubler = manager.PickleManagerDoubler(2)
+        assert doubler.scale(3) == 6
+
+        worker = Process(target=pickle_manager_worker, args=(manager, 3, 8))
+        worker.start()
+        assert worker.result() == 3 * 8
