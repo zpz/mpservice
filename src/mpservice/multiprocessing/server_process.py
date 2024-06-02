@@ -249,6 +249,7 @@ from multiprocessing.managers import (
     Value,
     convert_to_error,
     dispatch,
+    get_spawning_popen,
     listener_client,
 )
 from multiprocessing.managers import (
@@ -482,9 +483,13 @@ class ServerProcess(BaseManager):
         return z
 
     def __reduce__(self):
+        if get_spawning_popen() is not None:
+            auth = self._authkey
+        else:
+            auth = None
         return (
             self._rebuild_manager,
-            (self.__class__, self._address, self._authkey, self._serializer),
+            (type(self), self._address, auth, self._serializer),
         )
 
     @staticmethod
@@ -685,7 +690,7 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
-    #   3. always include authkey
+    #   3. changes about returning authkey
     def __reduce__(self):
         # Inc refcount in case the remote object is gone before unpickling happens.
         server = self._server
@@ -695,14 +700,13 @@ class BaseProxy(_BaseProxy_):
             conn = self._Client(self._token.address, authkey=self._authkey)
             dispatch(conn, None, 'incref', (self._id,))
 
-        # kwds = {}
-        # if get_spawning_popen() is not None:
-        #     kwds['authkey'] = self._authkey
-        kwds = {'authkey': bytes(self._authkey)}
-        # TODO: this bypasses a security check, hence must be not quite right.
-        # This authkey is needed if user has specified a custom authkey to `BaseManager.__init__`.
-        # If this authkey is not included, the rebuilt proxy object would not be able to communicate
-        # with the server.
+        kwds = {}
+        if get_spawning_popen() is not None:
+            kwds['authkey'] = self._authkey
+        elif self._server:
+            kwds = {'authkey': bytes(self._authkey)}
+            # Bypass a security check of `multiprocessing.process.AuthenticationString`,
+            # because returning a proxy from the server is safe.
 
         if getattr(self, '_isauto', False):
             kwds['exposed'] = self._exposed_
