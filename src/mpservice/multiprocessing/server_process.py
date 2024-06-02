@@ -250,6 +250,7 @@ from multiprocessing.managers import (
     convert_to_error,
     dispatch,
     listener_client,
+    get_spawning_popen,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -685,7 +686,7 @@ class BaseProxy(_BaseProxy_):
     # Changes to the standard version:
     #   1. call `incref` before returning
     #   2. use our custom `RebuildProxy` and `AutoProxy` in place of the standard versions
-    #   3. always include authkey
+    #   3. changes about returning authkey
     def __reduce__(self):
         # Inc refcount in case the remote object is gone before unpickling happens.
         server = self._server
@@ -695,14 +696,13 @@ class BaseProxy(_BaseProxy_):
             conn = self._Client(self._token.address, authkey=self._authkey)
             dispatch(conn, None, 'incref', (self._id,))
 
-        # kwds = {}
-        # if get_spawning_popen() is not None:
-        #     kwds['authkey'] = self._authkey
-        kwds = {'authkey': bytes(self._authkey)}
-        # TODO: this bypasses a security check, hence must be not quite right.
-        # This authkey is needed if user has specified a custom authkey to `BaseManager.__init__`.
-        # If this authkey is not included, the rebuilt proxy object would not be able to communicate
-        # with the server.
+        kwds = {}
+        if get_spawning_popen() is not None:
+            kwds['authkey'] = self._authkey
+        elif get_server(self._token.address):
+            kwds = {'authkey': bytes(self._authkey)}
+            # Bypass a security check of `multiprocessing.process.AuthenticationString`,
+            # because returning a proxy from the server is safe.
 
         if getattr(self, '_isauto', False):
             kwds['exposed'] = self._exposed_
