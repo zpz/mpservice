@@ -482,7 +482,10 @@ class ServerProcess(BaseManager):
         return z
 
     def __reduce__(self):
-        return (self._rebuild_manager, (self.__class__, self._address, self._authkey, self._serializer))
+        return (
+            self._rebuild_manager,
+            (self.__class__, self._address, self._authkey, self._serializer),
+        )
 
     @staticmethod
     def _rebuild_manager(cls, address, authkey, serializer):
@@ -703,12 +706,9 @@ class BaseProxy(_BaseProxy_):
 
         if getattr(self, '_isauto', False):
             kwds['exposed'] = self._exposed_
-            return (RebuildProxy,
-                    (AutoProxy, self._token, self._serializer, kwds))
+            return (RebuildProxy, (AutoProxy, self._token, self._serializer, kwds))
         else:
-            return (RebuildProxy,
-                    (type(self), self._token, self._serializer, kwds))
-        
+            return (RebuildProxy, (type(self), self._token, self._serializer, kwds))
 
 
 #

@@ -392,7 +392,6 @@ def test_proxy_in_other_process():
         assert p.result()
 
 
-
 # Define a new class to be sure it has not been registered
 class PickleManagerDoubler:
     def __init__(self, factor=2):
@@ -400,7 +399,7 @@ class PickleManagerDoubler:
 
     def scale(self, x):
         return x * self._factor
-    
+
 
 def pickle_manager_worker(manager, factor, x):
     doubler = manager.PickleManagerDoubler(factor)
@@ -408,6 +407,7 @@ def pickle_manager_worker(manager, factor, x):
 
 
 ServerProcess.register('PickleManagerDoubler', PickleManagerDoubler)
+
 
 def test_manager_pickle():
     with ServerProcess(authkey=b'abc') as manager:
