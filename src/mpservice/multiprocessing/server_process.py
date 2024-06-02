@@ -249,8 +249,8 @@ from multiprocessing.managers import (
     Value,
     convert_to_error,
     dispatch,
-    listener_client,
     get_spawning_popen,
+    listener_client,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
