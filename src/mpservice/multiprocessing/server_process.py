@@ -483,9 +483,13 @@ class ServerProcess(BaseManager):
         return z
 
     def __reduce__(self):
+        if get_spawning_popen() is not None:
+            auth = self._authkey
+        else:
+            auth = None
         return (
             self._rebuild_manager,
-            (self.__class__, self._address, self._authkey, self._serializer),
+            (type(self), self._address, auth, self._serializer),
         )
 
     @staticmethod
@@ -699,7 +703,7 @@ class BaseProxy(_BaseProxy_):
         kwds = {}
         if get_spawning_popen() is not None:
             kwds['authkey'] = self._authkey
-        elif get_server(self._token.address):
+        elif self._server:
             kwds = {'authkey': bytes(self._authkey)}
             # Bypass a security check of `multiprocessing.process.AuthenticationString`,
             # because returning a proxy from the server is safe.
