@@ -54,13 +54,13 @@ from ._context import (
     SimpleQueue,
     SpawnContext,
     SpawnProcess,
-)
-from ._context import (
-    SyncManager as Manager,
+    SyncManager,
 )
 
 Process = SpawnProcess
 # ``SpawnProcess`` can be imported and used, but ``Process`` is preferred.
+
+Manager = SyncManager
 
 RawValue = MP_SPAWN_CTX.RawValue
 RawArray = MP_SPAWN_CTX.RawArray
@@ -75,6 +75,7 @@ __all__ = [
     'MP_SPAWN_CTX',
     'Process',
     'Manager',
+    'SyncManager',
     'Lock',
     'RLock',
     'Condition',

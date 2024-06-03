@@ -420,9 +420,6 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 
     Process = SpawnProcess
 
-    def Manager(self, *args, **kwargs):
-        return SyncManager(*args, ctx=self.get_context(), **kwargs)
-
     def get_context(self, method=None):
         if method is None or method == 'spawn':
             return self

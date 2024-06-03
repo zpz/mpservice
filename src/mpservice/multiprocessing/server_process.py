@@ -732,16 +732,20 @@ def RebuildProxy(func, token, serializer, kwds):
     )
     obj = func(token, serializer, incref=incref, **kwds)
     # `func` is either `AutoProxy` or a subclass of `BaseProxy`.
-    # TODO: it appears `incref` is True some times and False some others.
+    # TODO: it appears `incref` is True some times and False some others, affecting by the '_inheriting` condition.
     # Understand the `'_inheriting'` thing.
 
     if incref:
         # Counter the extra `incref` that's done in `BaseProxy.__init__`.
-        server = get_server(token.address)
+        server = obj._server
         if server:
             server.decref(None, token.id)
         else:
-            conn = obj._Client(obj._token.address, authkey=obj._authkey)
+            try:
+                conn = obj._tls.connection
+            except AttributeError:
+                obj._connect()
+                conn = obj._tls.connection
             dispatch(conn, None, 'decref', (obj._id,))
 
     return obj
