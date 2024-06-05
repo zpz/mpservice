@@ -234,7 +234,6 @@ Then we may use it like this::
 from __future__ import annotations
 
 import functools
-import multiprocessing
 import os
 import sys
 import threading
