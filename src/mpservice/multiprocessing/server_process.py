@@ -234,7 +234,6 @@ Then we may use it like this::
 from __future__ import annotations
 
 import functools
-import multiprocessing
 import os
 import sys
 import threading
@@ -251,6 +250,7 @@ from multiprocessing.managers import (
     dispatch,
     get_spawning_popen,
     listener_client,
+    public_methods,
 )
 from multiprocessing.managers import (
     BaseProxy as _BaseProxy_,
@@ -295,7 +295,7 @@ class Server(_Server_):
             registry=registry, address=address, authkey=authkey, serializer=serializer
         )
         self.serializer = serializer
-        self.id_to_local_proxy_obj = None  # disable this
+        delattr(self, 'id_to_local_proxy_obj')  # disable this
 
     def _wrap_user_exc(self, exc):
         return RemoteException(exc)
@@ -351,7 +351,6 @@ class Server(_Server_):
                 methodname = None
                 request = recv()
                 ident, methodname, args, kwds = request
-
                 msg = self._callmethod(conn, ident, methodname, args, kwds)
 
             except EOFError:
@@ -391,14 +390,8 @@ class Server(_Server_):
                 if k != '0'
             ]  # in order of object creation
 
-    # Changes to the original version:
-    #   - return proxy object
-    def create(self, c, typeid, /, *args, **kwargs):
-        ident, exposed = super().create(c, typeid, *args, **kwargs)
-        # This has called `incref` once
-
+    def _make_proxy(self, typeid, proxytype, ident, exposed):
         token = Token(typeid, self.address, ident)
-        proxytype = self.registry[typeid][-1]
 
         if typeid == 'ManagedMemoryBlock':
             mem = self.id_to_obj[ident][0]
@@ -410,18 +403,69 @@ class Server(_Server_):
                 size=mem.size,
             )
         else:
-            proxy = make_proxy(
-                proxytype,
-                token,
-                serializer=self.serializer,
-                authkey=self.authkey,
-                exposed=exposed,
-            )
-        # This has called `incref` once
+            try:
+                is_cls = issubclass(proxytype, BaseProxy)
+            except TypeError:
+                is_cls = False
+            if is_cls:
+                proxy = proxytype(
+                    token,
+                    self.serializer,
+                    authkey=self.authkey,
+                )
+            else:
+                proxy = proxytype(
+                    token,
+                    self.serializer,
+                    authkey=self.authkey,
+                    exposed=exposed,
+                )
 
-        self.decref(None, ident)
+        # This calls `incref` once
 
         return proxy
+
+    # Changes to the original version:
+    #   - return proxy object
+    #   - do not use `exposed` in registry
+    #   - do not call `incref` as proxy-initiation calls that
+    def create(self, c, typeid, /, *args, **kwds):
+        """
+        Create a new shared object and return its id
+        """
+        with self.mutex:
+            callable, exposed, method_to_typeid, proxytype = self.registry[typeid]
+
+            if callable is None:
+                if kwds or (len(args) != 1):
+                    raise ValueError(
+                        'Without callable, must have one non-keyword argument'
+                    )
+                obj = args[0]
+            else:
+                obj = callable(*args, **kwds)
+
+            # `exposed` in registry is always None as this module has removed that
+            # from registration.
+            exposed = public_methods(obj)
+            if method_to_typeid is not None:
+                if not isinstance(method_to_typeid, dict):
+                    raise TypeError(
+                        'Method_to_typeid {0!r}: type {1!s}, not dict'.format(
+                            method_to_typeid, type(method_to_typeid)
+                        )
+                    )
+                exposed = list(exposed) + list(method_to_typeid)
+
+            ident = '%x' % id(obj)  # convert to string because xmlrpclib
+            # only has 32 bit signed integers
+            util.debug('%r callable returned object with id %r', typeid, ident)
+
+            self.id_to_obj[ident] = (obj, set(exposed), method_to_typeid)
+            if ident not in self.id_to_refcount:
+                self.id_to_refcount[ident] = 0
+
+        return self._make_proxy(typeid, proxytype, ident, tuple(exposed))
 
     def incref(self, c, ident):
         with self.mutex:
@@ -630,6 +674,10 @@ class BaseProxy(_BaseProxy_):
 
         raise convert_to_error(kind, result)
 
+    def _dispatch(self, methodname):
+        conn = self._Client(self._token.address, authkey=self._authkey)
+        dispatch(conn, None, methodname, (self._id,))
+
     # Changes to the original version:
     #   - do not check `self._owned_by_manager`
     #   - use shortcut if this is running inside the server process
@@ -640,9 +688,7 @@ class BaseProxy(_BaseProxy_):
         if server:
             server.incref(None, self._token.id)
         else:
-            conn = self._Client(self._token.address, authkey=self._authkey)
-            dispatch(conn, None, 'incref', (self._id,))
-            util.debug('INCREF %r', self._token.id)
+            self._dispatch('incref')
 
         self._idset.add(self._id)
 
@@ -732,17 +778,16 @@ def RebuildProxy(func, token, serializer, kwds):
     )
     obj = func(token, serializer, incref=incref, **kwds)
     # `func` is either `AutoProxy` or a subclass of `BaseProxy`.
-    # TODO: it appears `incref` is True some times and False some others.
+    # TODO: it appears `incref` is True some times and False some others, affecting by the '_inheriting` condition.
     # Understand the `'_inheriting'` thing.
 
     if incref:
         # Counter the extra `incref` that's done in `BaseProxy.__init__`.
-        server = get_server(token.address)
+        server = obj._server
         if server:
             server.decref(None, token.id)
         else:
-            conn = obj._Client(obj._token.address, authkey=obj._authkey)
-            dispatch(conn, None, 'decref', (obj._id,))
+            obj._dispatch('decref')
 
     return obj
 
@@ -750,30 +795,6 @@ def RebuildProxy(func, token, serializer, kwds):
 #
 # Functions to create proxies and proxy types
 #
-
-
-def make_proxy(proxytype, token, *, serializer, authkey, exposed=None):
-    """
-    This function creates a proxy object, i.e. an instance of a BaseProxy subclass.
-
-    `proxytype` is either a BaseProxy subclass or `AutoProxy`.
-    """
-    try:
-        is_cls = issubclass(proxytype, BaseProxy)
-    except TypeError:
-        is_cls = False
-    if is_cls:
-        return proxytype(
-            token,
-            serializer,
-            authkey=authkey,
-        )
-    return proxytype(
-        token,
-        serializer,
-        authkey=authkey,
-        exposed=exposed,
-    )
 
 
 def add_proxy_methods(*method_names: str):
