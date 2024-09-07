@@ -298,7 +298,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.close()
 
-
     def join(self, timeout=None):
         """
         Same behavior as the standard lib, except that if the process
