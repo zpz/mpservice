@@ -1,6 +1,7 @@
 from time import sleep
 
 import pytest
+
 from mpservice.threading import (
     FIRST_EXCEPTION,
     InvalidStateError,

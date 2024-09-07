@@ -7,6 +7,7 @@ from pprint import pprint
 from time import perf_counter, sleep
 
 import pytest
+
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,

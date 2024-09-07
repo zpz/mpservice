@@ -5,6 +5,7 @@ import sys
 from types import TracebackType
 
 import pytest
+
 from mpservice.multiprocessing.remote_exception import (
     RemoteException,
     get_remote_traceback,

@@ -1103,9 +1103,7 @@ else:
         def __init__(self, size: int):
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
-            self.release = util.Finalize(
-                self, type(self)._release, args=(self._mem,)
-            )
+            self.release = util.Finalize(self, type(self)._release, args=(self._mem,))
 
         def _name(self):
             # This is for use by ``MemoryBlockProxy``.

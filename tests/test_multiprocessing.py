@@ -2,6 +2,7 @@ import logging
 from time import sleep
 
 import pytest
+
 from mpservice import TimeoutError
 from mpservice.multiprocessing import (
     FIRST_EXCEPTION,
