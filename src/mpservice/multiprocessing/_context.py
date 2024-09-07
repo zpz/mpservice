@@ -11,6 +11,7 @@ import multiprocessing.managers
 import multiprocessing.pool
 import multiprocessing.queues
 import multiprocessing.synchronize
+import multiprocessing.util
 import os
 import time
 from typing import Generic, TypeVar
@@ -162,17 +163,23 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._logger_thread_ = Thread(
             target=self._run_logger_thread,
             args=(self._logger_queue_,),
-            name='ProcessLoggerThread',
-            daemon=True,
+            name=f'{self.name}-LoggerThread',
+            daemon=self.daemon,
         )
         self._logger_thread_.start()
 
         self._collector_thread_ = Thread(
             target=self._run_collector_thread,
-            name='ProcessCollectorThread',
-            daemon=True,
+            name=f'{self.name}-CollectorThread',
+            daemon=self.daemon,
         )
         self._collector_thread_.start()
+
+        self._finalizer_ = multiprocessing.util.Finalize(
+            self,
+            type(self)._finalize,
+            args=(self._logger_thread_, self._collector_thread_),
+        )
 
     def _run_logger_thread(self, q: multiprocessing.queues.Queue):
         while True:
@@ -203,6 +210,8 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                 logger.error(f'Error in process {self.name}: {error}')
                 print(f'Error in process "{self.name}": {error}')
 
+                raise  # TODO: should we raise here? An earlier version did not.
+
         self._logger_queue_.put(None)
         self._result_and_error_.close()
         self._result_and_error_ = None
@@ -210,6 +219,11 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             self._future_.set_exception(error)
         else:
             self._future_.set_result(result)
+
+    @staticmethod
+    def _finalize(logger_thread, collector_thread):
+        logger_thread.join()
+        collector_thread.join()
 
     @staticmethod
     def handle_exception(exc):
