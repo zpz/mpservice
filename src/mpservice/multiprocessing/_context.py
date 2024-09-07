@@ -148,7 +148,6 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._result_and_error_ = reader
         self._logger_queue_ = logger_queue
         self._logger_thread_ = None
-        self._collector_thread_ = None
 
     def start(self):
         super().start()
@@ -161,27 +160,27 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         self._future_ = concurrent.futures.Future()
 
         self._logger_thread_ = Thread(
-            target=self._run_logger_thread,
+            target=self._run_logger,
             args=(self._logger_queue_,),
             name=f'{self.name}-LoggerThread',
             daemon=self.daemon,
         )
         self._logger_thread_.start()
 
-        self._collector_thread_ = Thread(
-            target=self._run_collector_thread,
-            name=f'{self.name}-CollectorThread',
-            daemon=self.daemon,
+        self._result_collector_thread_ = Thread(
+            target=self._collect_result,
+            name=f'{self.name}-ResultCollectorThread',
         )
-        self._collector_thread_.start()
+        self._result_collector_thread_.start()
 
         self._finalizer_ = multiprocessing.util.Finalize(
             self,
             type(self)._finalize,
-            args=(self._logger_thread_, self._collector_thread_),
+            args=(self._logger_thread_, self._logger_queue_),
         )
 
-    def _run_logger_thread(self, q: multiprocessing.queues.Queue):
+    @staticmethod
+    def _run_logger(q: multiprocessing.queues.Queue):
         while True:
             record = q.get()
             if record is None:
@@ -190,7 +189,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             if record.levelno >= logger.getEffectiveLevel():
                 logger.handle(record)
 
-    def _run_collector_thread(self):
+    def _collect_result(self):
         result, error = None, None
         try:
             result = self._result_and_error_.recv()
@@ -200,17 +199,23 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             # the process has been terminated by calling ``self.terminate()``
             while self.exitcode is None:
                 time.sleep(0.001)
+
             exitcode = -self.exitcode
-            if exitcode != 15:
+            if exitcode == errno.ENOTBLK:  # 15
+                # warnings.warn(
+                #     f'process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`',
+                #     stacklevel=2,
+                # )
+                pass
+                # For example, ``self.terminate()`` was called. That's a code smell.
+                # ``signal.Signals.SIGTERM`` is 15.
+                # ``signal.Signals.SIGKILL`` is 9.
+                # ``signal.Signals.SIGINT`` is 2.
+            else:
                 msg = os.strerror(exitcode)
                 if exitcode == 9:
                     msg += ': possibly out of memory'
-                error = OSError(exitcode, msg)
-                error.__cause__ = exc
-                logger.error(f'Error in process {self.name}: {error}')
-                print(f'Error in process "{self.name}": {error}')
-
-                raise  # TODO: should we raise here? An earlier version did not.
+                raise OSError(exitcode, msg) from exc
 
         self._logger_queue_.put(None)
         self._result_and_error_.close()
@@ -221,9 +226,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             self._future_.set_result(result)
 
     @staticmethod
-    def _finalize(logger_thread, collector_thread):
+    def _finalize(logger_thread, q):
+        q.put(None)
         logger_thread.join()
-        collector_thread.join()
 
     @staticmethod
     def handle_exception(exc):
@@ -293,41 +298,37 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.close()
 
+
     def join(self, timeout=None):
         """
         Same behavior as the standard lib, except that if the process
         terminates with an exception, the exception is raised.
         """
         super().join(timeout=timeout)
-        exitcode = self.exitcode
-        if exitcode is None:
-            # Not terminated. Timed out.
+        if not self.done():
+            # timed out
             return
-        if exitcode == 0:
-            # Terminated w/o error.
-            return
-        if exitcode == 1:
+
+        self._result_collector_thread_.join()
+
+        # exitcode = self.exitcode
+        # if exitcode is None:
+        #     # Not terminated. Timed out.
+        #     return
+        # if exitcode == 0:
+        #     # Terminated w/o error.
+        #     return
+        # if exitcode == 1:
+        #     raise self._future_.exception()
+        # if exitcode >= 0:
+        #     raise ValueError(f'expecting negative `exitcode` but got {exitcode}')
+
+        if self._future_.exception():
             raise self._future_.exception()
-        if exitcode >= 0:
-            raise ValueError(f'expecting negative `exitcode` but got {exitcode}')
-        exitcode = -exitcode
-        if exitcode == errno.ENOTBLK:  # 15
-            # warnings.warn(
-            #     f'process exitcode {exitcode}, {errno.errorcode[exitcode]}; likely due to a forced termination by calling `.terminate()`',
-            #     stacklevel=2,
-            # )
-            pass
-            # For example, ``self.terminate()`` was called. That's a code smell.
-            # ``signal.Signals.SIGTERM`` is 15.
-            # ``signal.Signals.SIGKILL`` is 9.
-            # ``signal.Signals.SIGINT`` is 2.
-        else:
-            if self._future_.exception():
-                raise self._future_.exception()
-            else:
-                raise ChildProcessError(
-                    f'child process failed with exitcode {exitcode}, {errno.errorcode[exitcode]}'
-                )
+        # else:
+        #     raise ChildProcessError(
+        #         f'child process failed with exitcode {exitcode}, {errno.errorcode[exitcode]}'
+        #     )
         # For a little more info on the error codes, see
         #   https://www.gnu.org/software/libc/manual/html_node/Error-Codes.html
 
@@ -342,7 +343,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         """
         Behavior is similar to ``concurrent.futures.Future.result``.
         """
-        super().join(timeout)
+        self.join(timeout)
         if not self.done():
             raise TimeoutError
         return self._future_.result()
@@ -354,6 +355,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         super().join(timeout)
         if not self.done():
             raise TimeoutError
+        self._result_collector_thread_.join()
         return self._future_.exception()
 
 

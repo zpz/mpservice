@@ -129,14 +129,21 @@ def test_wait_exc():
     assert len(done) == 1
     assert done.pop() is workers[2]
 
+    print(2)
+
     workers = [Process(target=sleeper, args=(x,)) for x in (3, 2)] + [
         Thread(target=sleeper, args=(25,))
     ]
     for t in workers:
         t.start()
+
+    print(3)
+
     done, notdone = wait(workers, return_when=FIRST_EXCEPTION)
     assert len(done) in (1, 2)  # TODO: should be == 2, but that fails release build
     assert notdone.pop() is workers[0]
+
+    print(5)
 
 
 def test_as_completed():
