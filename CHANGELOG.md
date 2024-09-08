@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.15.7] - in progress
 
 - Finetune `mpservice.multiprocessing.SpawnProcess` regarding termination, background threads, and error handling.
+- `mpservice.multiprocessing.Queue` gets property `maxsize`, making it aligned with `queue.Queue`, which has attribute `maxsize`.
 
 
 ## [0.15.6] - 2024-06-02

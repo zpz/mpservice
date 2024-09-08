@@ -499,6 +499,12 @@ class Queue(multiprocessing.queues.Queue, Generic[Elem]):
     def __init__(self, maxsize=0, *, ctx=None):
         super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
 
+    @property
+    def maxsize(self):
+        # `queue.Queue` has attribute `maxsize`.
+        # `multiprocessing.queues.Queue` has attribute `_maxsize`.
+        return self._maxsize
+
 
 class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
     def __init__(self, maxsize=0, *, ctx=None):
