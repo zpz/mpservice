@@ -3,6 +3,7 @@ import concurrent.futures
 import time
 
 import pytest
+
 from mpservice.background_task import BackgroundTask
 
 

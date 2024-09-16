@@ -694,7 +694,7 @@ class BaseProxy(_BaseProxy_):
 
         self._close = util.Finalize(
             self,
-            BaseProxy._decref,
+            type(self)._decref,
             args=(
                 self._token,
                 self._authkey,
@@ -703,7 +703,7 @@ class BaseProxy(_BaseProxy_):
                 self._Client,
                 self._server,
             ),
-            exitpriority=10,
+            # exitpriority=10,
         )
 
     # Changes to the original version:
@@ -1103,9 +1103,7 @@ else:
         def __init__(self, size: int):
             assert size > 0
             self._mem = SharedMemory(create=True, size=size)
-            self.release = util.Finalize(
-                self, type(self)._release, args=(self._mem,), exitpriority=10
-            )
+            self.release = util.Finalize(self, type(self)._release, args=(self._mem,))
 
         def _name(self):
             # This is for use by ``MemoryBlockProxy``.

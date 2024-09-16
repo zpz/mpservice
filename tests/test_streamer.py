@@ -6,6 +6,7 @@ import random
 from time import perf_counter, sleep
 
 import pytest
+
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (

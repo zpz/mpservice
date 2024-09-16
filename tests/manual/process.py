@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 def worker(n):
     sleep(n)
-    raise BaseException(f'slept for {n} seconds!')
+    # raise BaseException(f'slept for {n} seconds!')
+    return 3
 
 
 def main():

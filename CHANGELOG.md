@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.15.7] - 2024-09-15
+
+- Finetune `mpservice.multiprocessing.SpawnProcess` regarding termination, background threads, and error handling.
+- `mpservice.multiprocessing.Queue` gets property `maxsize`, making it aligned with `queue.Queue`, which has attribute `maxsize`.
+
+
 ## [0.15.6] - 2024-06-02
 
 - Finetune `mpservice.multiprocessing.server_process`: 
