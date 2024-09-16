@@ -1563,12 +1563,12 @@ def _server_debug_info(self):
         'datetime': str(datetime.now(timezone.utc)),
         'perf_counter': now,
         'capacity': self.capacity,
+        'servlet': self.servlet._debug_info(),
         'active_processes': [str(v) for v in multiprocessing.active_children()],
         'active_threads': [str(v) for v in threading.enumerate()],
-        'backlog': futures,
-        'servlet': self.servlet._debug_info(),
         'onboard_thread': onboard_thread,
         'gather_thread': 'is_alive' if self._gather_thread.is_alive() else 'done',
+        'backlog': futures,
     }
 
 
