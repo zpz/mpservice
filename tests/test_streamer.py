@@ -11,9 +11,9 @@ from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
+    IterableQueue,
     Stream,
     tee,
-    IterableQueue,
 )
 from mpservice.threading import Thread
 
@@ -1140,18 +1140,13 @@ def test_iterable_queue_multi_parties():
             sleep(random.uniform(0.001, 0.01))
         qout.put_end()
 
-
     n_suppliers = 3
     n_consumers = 4
     q1 = IterableQueue(queue.Queue(maxsize=1000), num_suppliers=n_suppliers)
     q2 = IterableQueue(queue.Queue(maxsize=200), num_suppliers=n_consumers)
 
-    producers = [
-        Thread(target=produce, args=(q0, q1)) for _ in range(n_suppliers)
-    ]
-    consumers = [
-        Thread(target=consume, args=(q1, q2)) for _ in range(n_consumers)
-    ]
+    producers = [Thread(target=produce, args=(q0, q1)) for _ in range(n_suppliers)]
+    consumers = [Thread(target=consume, args=(q1, q2)) for _ in range(n_consumers)]
 
     for w in producers + consumers:
         w.start()
@@ -1163,5 +1158,3 @@ def test_iterable_queue_multi_parties():
         zz.append(z)
 
     assert sorted(zz) == list(range(80))
-
-    

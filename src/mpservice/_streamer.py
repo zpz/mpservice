@@ -58,6 +58,7 @@ from typing import (
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
+from ._common import StopRequested
 from ._queues import SingleLane
 from .concurrent.futures import (
     ProcessPoolExecutor,
@@ -68,8 +69,6 @@ from .concurrent.futures import (
 from .multiprocessing import Event
 from .multiprocessing.remote_exception import get_remote_traceback, is_remote_exception
 from .threading import Thread
-from ._common import StopRequested
-
 
 logger = logging.getLogger(__name__)
 
@@ -2184,12 +2183,19 @@ class EagerBatcher(Iterable):
 
 
 class IterableQueue(Iterable, Generic[T]):
-    def __init__(self, q: queue.Queue | queue.SimpleQueue | multiprocessing.queues.Queue | multiprocessing.queues.SimpleQueue, *, 
-                 num_suppliers: int = 1,
-                 to_shutdown: threading.Event | multiprocessing.synchronize.Event = None):
-        '''
+    def __init__(
+        self,
+        q: queue.Queue
+        | queue.SimpleQueue
+        | multiprocessing.queues.Queue
+        | multiprocessing.queues.SimpleQueue,
+        *,
+        num_suppliers: int = 1,
+        to_shutdown: threading.Event | multiprocessing.synchronize.Event = None,
+    ):
+        """
         `num_suppliers`: number of parties that will supply data elements to the queue by calling :meth:`put`.
-            The parties are typically in different threads or processes. 
+            The parties are typically in different threads or processes.
             Each supplier should call :meth:`put_end` exactly once to indicate it is done supplying data.
         `to_shutdown`: this is used by other parts of the application to tell this queue to exit (because
             some error has happened); e.g. stop waiting on `get` or `put`.
@@ -2215,10 +2221,12 @@ class IterableQueue(Iterable, Generic[T]):
                 use(z)
 
         The consumers collectively consume the data elements that have been put in the queue.
-        '''
+        """
         if isinstance(q, multiprocessing.queues.SimpleQueue):
             if to_shutdown is not None:
-                raise ValueError(f"`to_shutdown` is not compatible with `q` of type {type(q).__name__}")
+                raise ValueError(
+                    f'`to_shutdown` is not compatible with `q` of type {type(q).__name__}'
+                )
                 # Because `multiprocessing.queues.SimpleQueue.{get, put}` do not take argument `timeout`.
         self._q = q
         self._to_shutdown = to_shutdown
@@ -2232,7 +2240,7 @@ class IterableQueue(Iterable, Generic[T]):
         else:
             self._spare_lids = multiprocessing.queues.Queue(maxsize=0)
             self._applied_lids = multiprocessing.queues.Queue(maxsize=num_suppliers)
-            self._removed_lids = multiprocessing.queues.Queue(maxsize=num_suppliers) 
+            self._removed_lids = multiprocessing.queues.Queue(maxsize=num_suppliers)
         for _ in range(num_suppliers):
             self._spare_lids.put(None)
 
@@ -2242,16 +2250,16 @@ class IterableQueue(Iterable, Generic[T]):
             return self._q.maxsize
         except AttributeError:
             return self._q._maxsize
-        
+
     def qsize(self) -> int:
         return self._q.qsize()
 
     def put(self, x: T) -> None:
-        '''
+        """
         User should never call `put(None)`.
         That is reserved to be called within `put_end()`
         for special purposes.
-        '''
+        """
         Full = queue.Full
         while True:
             try:
@@ -2261,16 +2269,16 @@ class IterableQueue(Iterable, Generic[T]):
                 if self._to_shutdown is not None and self._to_shutdown.is_set():
                     raise StopRequested
                 time.sleep
-                
+
     def get(self) -> T:
-        '''
+        """
         Usually you should not use `get` directly. Instead, use :meth:`__iter__` or :meth:`__next__`.
 
         If you do use `get` directly, then you need to interpret the meaning of `None` yourself.
         Correspondingly, you may have used `put(None)` instead of `put_end()`.
         However, you would be ignoring most of this class's facilities, and you may as well
         not use this class to begin with.
-        '''
+        """
         Empty = queue.Empty
         while True:
             try:
@@ -2280,12 +2288,12 @@ class IterableQueue(Iterable, Generic[T]):
                 if self._to_shutdown is not None and self._to_shutdown.is_set():
                     raise StopRequested
                 time.sleep()  # force a context switch
-        
+
     def put_end(self) -> None:
-        '''
+        """
         Each "supplier" must call this method exactly once, after it is done putting
         data in the queue. Do not use `put(None)` for this purpose.
-        '''
+        """
         self._spare_lids.get_nowait()  # error if `put_end` is called more than `num_suppliers` times
         self._applied_lids.put_nowait(None)
         self.put(None)
@@ -2295,7 +2303,7 @@ class IterableQueue(Iterable, Generic[T]):
         if z is None:
             if self._removed_lids.full():
                 # Another consumer has seen the end marker earlier.
-                self.put(None)  
+                self.put(None)
                 # Let there always be an end marker so that other consumers
                 # can still iterate over this queue and see it's finished.
                 raise StopIteration
@@ -2309,7 +2317,7 @@ class IterableQueue(Iterable, Generic[T]):
             # `put_end()` yet.
             return self.__next__()
         return z
-    
+
     def __iter__(self) -> Iterator[T]:
         while True:
             try:

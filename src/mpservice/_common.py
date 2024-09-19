@@ -7,4 +7,3 @@ class TimeoutError(builtins.TimeoutError):
 
 class StopRequested(Exception):
     pass
-
