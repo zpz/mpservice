@@ -33,9 +33,12 @@ import functools
 import inspect
 import itertools
 import logging
+import multiprocessing.queues
+import multiprocessing.synchronize
 import queue
 import random
 import threading
+import time
 import traceback
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
@@ -65,6 +68,8 @@ from .concurrent.futures import (
 from .multiprocessing import Event
 from .multiprocessing.remote_exception import get_remote_traceback, is_remote_exception
 from .threading import Thread
+from ._common import StopRequested
+
 
 logger = logging.getLogger(__name__)
 
@@ -2176,3 +2181,138 @@ class EagerBatcher(Iterable):
                 n += 1
 
             yield batch
+
+
+class IterableQueue(Iterable, Generic[T]):
+    def __init__(self, q: queue.Queue | queue.SimpleQueue | multiprocessing.queues.Queue | multiprocessing.queues.SimpleQueue, *, 
+                 num_suppliers: int = 1,
+                 to_shutdown: threading.Event | multiprocessing.synchronize.Event = None):
+        '''
+        `num_suppliers`: number of parties that will supply data elements to the queue by calling :meth:`put`.
+            The parties are typically in different threads or processes. 
+            Each supplier should call :meth:`put_end` exactly once to indicate it is done supplying data.
+        `to_shutdown`: this is used by other parts of the application to tell this queue to exit (because
+            some error has happened); e.g. stop waiting on `get` or `put`.
+            If the queue is to be passed between processes, `to_shutdown` should be a
+            `multiprocessing.synchronize.Event`; otherwise, `to_shutdown` can be either `threading.Event`
+            or `multiprocessing.synchronize.Event` (the latter may be required because the object `to_shutdown`
+            needs to be passed between processes in other parts of the application).
+
+        `None` is used internally as a special indicator. It must not be a valid value in the user application.
+
+        Typical use case:
+
+        In each of the (one or more) supplier threads or processes, do
+
+            q.put(x)
+            q.put(y)
+            ...
+            q.put_end()
+
+        In each of the (one or more) consumer threads or processes, do
+
+            for z in q:
+                use(z)
+
+        The consumers collectively consume the data elements that have been put in the queue.
+        '''
+        if isinstance(q, multiprocessing.queues.SimpleQueue):
+            if to_shutdown is not None:
+                raise ValueError(f"`to_shutdown` is not compatible with `q` of type {type(q).__name__}")
+                # Because `multiprocessing.queues.SimpleQueue.{get, put}` do not take argument `timeout`.
+        self._q = q
+        self._to_shutdown = to_shutdown
+        self._wait_interval = 1.0
+
+        self._num_suppliers = num_suppliers
+        if isinstance(q, (queue.Queue, queue.SimpleQueue)):
+            self._spare_lids = queue.Queue(maxsize=0)
+            self._applied_lids = queue.Queue(maxsize=num_suppliers)
+            self._removed_lids = queue.Queue(maxsize=num_suppliers)
+        else:
+            self._spare_lids = multiprocessing.queues.Queue(maxsize=0)
+            self._applied_lids = multiprocessing.queues.Queue(maxsize=num_suppliers)
+            self._removed_lids = multiprocessing.queues.Queue(maxsize=num_suppliers) 
+        for _ in range(num_suppliers):
+            self._spare_lids.put(None)
+
+    @property
+    def maxsize(self) -> int:
+        try:
+            return self._q.maxsize
+        except AttributeError:
+            return self._q._maxsize
+        
+    def qsize(self) -> int:
+        return self._q.qsize()
+
+    def put(self, x: T) -> None:
+        '''
+        User should never call `put(None)`.
+        That is reserved to be called within `put_end()`
+        for special purposes.
+        '''
+        Full = queue.Full
+        while True:
+            try:
+                self._q.put(x, timeout=self._wait_interval)
+                return
+            except Full:
+                if self._to_shutdown is not None and self._to_shutdown.is_set():
+                    raise StopRequested
+                time.sleep
+                
+    def get(self) -> T:
+        '''
+        Usually you should not use `get` directly. Instead, use :meth:`__iter__` or :meth:`__next__`.
+
+        If you do use `get` directly, then you need to interpret the meaning of `None` yourself.
+        Correspondingly, you may have used `put(None)` instead of `put_end()`.
+        However, you would be ignoring most of this class's facilities, and you may as well
+        not use this class to begin with.
+        '''
+        Empty = queue.Empty
+        while True:
+            try:
+                z = self._q.get(timeout=self._wait_interval)
+                return z
+            except Empty:
+                if self._to_shutdown is not None and self._to_shutdown.is_set():
+                    raise StopRequested
+                time.sleep()  # force a context switch
+        
+    def put_end(self) -> None:
+        '''
+        Each "supplier" must call this method exactly once, after it is done putting
+        data in the queue. Do not use `put(None)` for this purpose.
+        '''
+        self._spare_lids.get_nowait()  # error if `put_end` is called more than `num_suppliers` times
+        self._applied_lids.put_nowait(None)
+        self.put(None)
+
+    def __next__(self) -> T:
+        z = self.get()
+        if z is None:
+            if self._removed_lids.full():
+                # Another consumer has seen the end marker earlier.
+                self.put(None)  
+                # Let there always be an end marker so that other consumers
+                # can still iterate over this queue and see it's finished.
+                raise StopIteration
+            self._applied_lids.get_nowait()
+            self._removed_lids.put_nowait(None)
+            if self._removed_lids.full():
+                # This is the first consumer that sees the queue is exhausted.
+                self.put(None)
+                raise StopIteration
+            # The queue is not exhausted because all suppliers have not called
+            # `put_end()` yet.
+            return self.__next__()
+        return z
+    
+    def __iter__(self) -> Iterator[T]:
+        while True:
+            try:
+                yield self.__next__()
+            except StopIteration:
+                break

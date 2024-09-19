@@ -13,6 +13,7 @@ from mpservice.streamer import (
     EagerBatcher,
     Stream,
     tee,
+    IterableQueue,
 )
 from mpservice.threading import Thread
 
@@ -1102,3 +1103,65 @@ def test_eager_batcher():
     zz = list(walker)
     print(zz)
     assert zz == [[1, 2, 3], [4, 5], [6], [7]]
+
+
+def test_iterable_queue_basic():
+    data = [1, 2, 3, 4, 5]
+    q = IterableQueue(queue.Queue(maxsize=10))
+    for d in data:
+        q.put(d)
+    q.put_end()
+
+    z = []
+    for d in q:
+        z.append(d)
+
+    assert z == [1, 2, 3, 4, 5]
+
+
+def test_iterable_queue_multi_parties():
+    q0 = queue.Queue()
+    for d in range(80):
+        q0.put(d)
+
+    def produce(qin, qout):
+        while True:
+            sleep(random.uniform(0.001, 0.02))
+            try:
+                z = qin.get_nowait()
+                qout.put(z)
+            except queue.Empty:
+                break
+        qout.put_end()
+
+    def consume(qin, qout):
+        for z in qin:
+            qout.put(z)
+            sleep(random.uniform(0.001, 0.01))
+        qout.put_end()
+
+
+    n_suppliers = 3
+    n_consumers = 4
+    q1 = IterableQueue(queue.Queue(maxsize=1000), num_suppliers=n_suppliers)
+    q2 = IterableQueue(queue.Queue(maxsize=200), num_suppliers=n_consumers)
+
+    producers = [
+        Thread(target=produce, args=(q0, q1)) for _ in range(n_suppliers)
+    ]
+    consumers = [
+        Thread(target=consume, args=(q1, q2)) for _ in range(n_consumers)
+    ]
+
+    for w in producers + consumers:
+        w.start()
+    for w in producers + consumers:
+        w.join()
+
+    zz = []
+    for z in q2:
+        zz.append(z)
+
+    assert sorted(zz) == list(range(80))
+
+    
