@@ -2191,17 +2191,17 @@ class IterableQueue(Iterable, Generic[T]):
         | multiprocessing.queues.SimpleQueue,
         *,
         num_suppliers: int = 1,
-        to_shutdown: threading.Event | multiprocessing.synchronize.Event = None,
+        to_stop: threading.Event | multiprocessing.synchronize.Event = None,
     ):
         """
         `num_suppliers`: number of parties that will supply data elements to the queue by calling :meth:`put`.
             The parties are typically in different threads or processes.
             Each supplier should call :meth:`put_end` exactly once to indicate it is done supplying data.
-        `to_shutdown`: this is used by other parts of the application to tell this queue to exit (because
+        `to_stop`: this is used by other parts of the application to tell this queue to exit (because
             some error has happened); e.g. stop waiting on `get` or `put`.
-            If the queue is to be passed between processes, `to_shutdown` should be a
-            `multiprocessing.synchronize.Event`; otherwise, `to_shutdown` can be either `threading.Event`
-            or `multiprocessing.synchronize.Event` (the latter may be required because the object `to_shutdown`
+            If the queue is to be passed between processes, `to_stop` should be a
+            `multiprocessing.synchronize.Event`; otherwise, `to_stop` can be either `threading.Event`
+            or `multiprocessing.synchronize.Event` (the latter may be required because the object `to_stop`
             needs to be passed between processes in other parts of the application).
 
         `None` is used internally as a special indicator. It must not be a valid value in the user application.
@@ -2223,13 +2223,13 @@ class IterableQueue(Iterable, Generic[T]):
         The consumers collectively consume the data elements that have been put in the queue.
         """
         if isinstance(q, multiprocessing.queues.SimpleQueue):
-            if to_shutdown is not None:
+            if to_stop is not None:
                 raise ValueError(
-                    f'`to_shutdown` is not compatible with `q` of type {type(q).__name__}'
+                    f'`to_stop` is not compatible with `q` of type {type(q).__name__}'
                 )
                 # Because `multiprocessing.queues.SimpleQueue.{get, put}` do not take argument `timeout`.
         self._q = q
-        self._to_shutdown = to_shutdown
+        self._to_stop = to_stop
         self._wait_interval = 1.0
 
         self._num_suppliers = num_suppliers
@@ -2266,7 +2266,7 @@ class IterableQueue(Iterable, Generic[T]):
                 self._q.put(x, timeout=self._wait_interval)
                 return
             except Full:
-                if self._to_shutdown is not None and self._to_shutdown.is_set():
+                if self._to_stop is not None and self._to_stop.is_set():
                     raise StopRequested
                 time.sleep
 
@@ -2285,7 +2285,7 @@ class IterableQueue(Iterable, Generic[T]):
                 z = self._q.get(timeout=self._wait_interval)
                 return z
             except Empty:
-                if self._to_shutdown is not None and self._to_shutdown.is_set():
+                if self._to_stop is not None and self._to_stop.is_set():
                     raise StopRequested
                 time.sleep()  # force a context switch
 
