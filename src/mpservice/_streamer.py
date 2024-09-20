@@ -2285,6 +2285,13 @@ class IterableQueue(Iterator[T]):
             self._spare_lids.put(None)
         self._spare_lids.put('')
 
+    def __getstate__(self):
+        # This will fail if the queues are not pickle-able. That would be a user mistake.
+        return self._q, self._to_stop, self._wait_interval, self._num_suppliers, self._spare_lids, self._applied_lids, self._removed_lids
+    
+    def __setstate__(self, zz):
+        self._q, self._to_stop, self._wait_interval, self._num_suppliers, self._spare_lids, self._applied_lids, self._removed_lids = zz
+
     @property
     def maxsize(self) -> int:
         try:
