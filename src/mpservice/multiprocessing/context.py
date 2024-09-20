@@ -14,7 +14,6 @@ import multiprocessing.synchronize
 import multiprocessing.util
 import os
 import time
-from typing import Generic, TypeVar
 
 from .._common import TimeoutError
 from ..threading import Thread
@@ -444,4 +443,3 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
 # The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.
 MP_SPAWN_CTX = SpawnContext()
-

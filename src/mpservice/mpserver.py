@@ -40,9 +40,8 @@ from typing import Any, Callable, Literal, final
 from ._common import TimeoutError
 from ._queues import SingleLane
 from ._streamer import Parmapper
-from .multiprocessing import MP_SPAWN_CTX
+from .multiprocessing import MP_SPAWN_CTX, Event
 from .multiprocessing import Process as _Process
-from .multiprocessing import Event
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
 

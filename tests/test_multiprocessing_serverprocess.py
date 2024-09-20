@@ -39,7 +39,7 @@ class Doubler:
         try:
             return x * 2
         except TypeError as e:
-            raise TypeError(f"intentional error: {e}")
+            raise TypeError(f'intentional error: {e}')
 
     def get_mp(self):
         return mp.current_process().name

@@ -12,4 +12,3 @@ class SyncManager(multiprocessing.managers.SyncManager):
         **kwargs,
     ):
         super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
-

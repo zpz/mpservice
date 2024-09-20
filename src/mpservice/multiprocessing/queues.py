@@ -1,9 +1,7 @@
-
 import multiprocessing
 from typing import Generic, TypeVar
 
 from .context import MP_SPAWN_CTX
-
 
 Elem = TypeVar('Elem')
 
@@ -27,5 +25,3 @@ class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
 class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
     def __init__(self, *, ctx=None):
         super().__init__(ctx=ctx or MP_SPAWN_CTX)
-
-

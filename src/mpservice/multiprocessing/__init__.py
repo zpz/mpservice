@@ -41,7 +41,6 @@ to the "manager" facility in the standard ``multiprocessing``, especially about 
 # e.g. `remote_exception` and `server_process`,
 # you need to import from the individual modules.
 
-
 import concurrent.futures
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
@@ -53,6 +52,9 @@ from .context import (
     SpawnContext,
     SpawnProcess,
 )
+from .managers import SyncManager
+from .pool import Pool
+from .queues import JoinableQueue, Queue, SimpleQueue
 from .synchronize import (
     Barrier,
     BoundedSemaphore,
@@ -62,10 +64,6 @@ from .synchronize import (
     RLock,
     Semaphore,
 )
-from .queues import JoinableQueue, Queue, SimpleQueue
-from .pool import Pool
-from .managers import SyncManager
-
 
 Process = SpawnProcess
 # ``SpawnProcess`` can be imported and used, but ``Process`` is preferred.

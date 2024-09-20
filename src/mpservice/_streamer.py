@@ -56,6 +56,9 @@ from typing import (
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
+import mpservice.multiprocessing
+import mpservice.threading
+
 from ._common import StopRequested
 from ._queues import SingleLane
 from .concurrent.futures import (
@@ -64,10 +67,7 @@ from .concurrent.futures import (
     get_shared_process_pool,
     get_shared_thread_pool,
 )
-import mpservice.multiprocessing
-import mpservice.threading
 from .multiprocessing.remote_exception import get_remote_traceback, is_remote_exception
-
 
 logger = logging.getLogger(__name__)
 
@@ -1156,7 +1156,13 @@ class AsyncShuffler(AsyncIterable):
 
 
 class Buffer(Iterable):
-    def __init__(self, instream: Iterable, /, maxsize: int, to_stop: threading.Event | mpservice.multiprocessing.Event = None):
+    def __init__(
+        self,
+        instream: Iterable,
+        /,
+        maxsize: int,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
+    ):
         self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
@@ -1165,7 +1171,9 @@ class Buffer(Iterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = mpservice.threading.Thread(target=self._run_worker, name='Buffer-worker-thread')
+        self._worker = mpservice.threading.Thread(
+            target=self._run_worker, name='Buffer-worker-thread'
+        )
         self._worker.start()
 
     def _run_worker(self):
@@ -1217,7 +1225,13 @@ class Buffer(Iterable):
 
 
 class AsyncBuffer(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, /, maxsize: int, to_stop: threading.Event | mpservice.multiprocessing.Event = None):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        /,
+        maxsize: int,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
+    ):
         self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
@@ -1226,7 +1240,9 @@ class AsyncBuffer(AsyncIterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = mpservice.threading.Thread(target=self._run_worker, name='AsyncBuffer-worker-thread')
+        self._worker = mpservice.threading.Thread(
+            target=self._run_worker, name='AsyncBuffer-worker-thread'
+        )
         self._worker.start()
 
     def _run_worker(self):

@@ -1141,7 +1141,10 @@ def test_iterable_queue_multi_parties():
     n_suppliers = 3
     n_consumers = 4
 
-    for qcls, wcls in [(mpservice.queue.Queue, mpservice.threading.Thread), (mpservice.multiprocessing.Queue, mpservice.multiprocessing.Process)]:
+    for qcls, wcls in [
+        (mpservice.queue.Queue, mpservice.threading.Thread),
+        (mpservice.multiprocessing.Queue, mpservice.multiprocessing.Process),
+    ]:
         # print()
         # print(qcls, wcls)
         q0 = qcls()
