@@ -7,6 +7,7 @@ from time import perf_counter, sleep
 
 import pytest
 
+import mpservice
 from mpservice._streamer import AsyncIter, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
@@ -15,7 +16,6 @@ from mpservice.streamer import (
     Stream,
     tee,
 )
-from mpservice.threading import Thread
 
 
 async def agen(n=10):
@@ -1096,7 +1096,7 @@ def test_eager_batcher():
         q.put(None)
 
     q = queue.Queue()
-    stuffer = Thread(target=stuff, args=(q,))
+    stuffer = mpservice.threading.Thread(target=stuff, args=(q,))
     stuffer.start()
     walker = EagerBatcher(q, batch_size=3, timeout=0.2)
     q.get()
@@ -1119,42 +1119,47 @@ def test_iterable_queue_basic():
     assert z == [1, 2, 3, 4, 5]
 
 
-def test_iterable_queue_multi_parties():
-    q0 = queue.Queue()
-    for d in range(80):
-        q0.put(d)
-
-    def produce(qin, qout):
-        while True:
-            sleep(random.uniform(0.001, 0.02))
-            try:
-                z = qin.get_nowait()
-                qout.put(z)
-            except queue.Empty:
-                break
-        qout.put_end()
-
-    def consume(qin, qout):
-        for z in qin:
+def _produce(qin, qout):
+    while True:
+        sleep(random.uniform(0.001, 0.02))
+        try:
+            z = qin.get_nowait()
             qout.put(z)
-            sleep(random.uniform(0.001, 0.01))
-        qout.put_end()
+        except queue.Empty:
+            break
+    qout.put_end()
 
+
+def _consume(qin, qout):
+    for z in qin:
+        qout.put(z)
+        sleep(random.uniform(0.001, 0.01))
+    qout.put_end()
+
+
+def test_iterable_queue_multi_parties():
     n_suppliers = 3
     n_consumers = 4
-    q1 = IterableQueue(queue.Queue(maxsize=1000), num_suppliers=n_suppliers)
-    q2 = IterableQueue(queue.Queue(maxsize=200), num_suppliers=n_consumers)
 
-    producers = [Thread(target=produce, args=(q0, q1)) for _ in range(n_suppliers)]
-    consumers = [Thread(target=consume, args=(q1, q2)) for _ in range(n_consumers)]
+    for qcls, wcls in [(mpservice.queue.Queue, mpservice.threading.Thread), (mpservice.multiprocessing.Queue, mpservice.multiprocessing.Process)]:
+        # print()
+        # print(qcls, wcls)
+        q0 = qcls()
+        for d in range(80):
+            q0.put(d)
 
-    for w in producers + consumers:
-        w.start()
-    for w in producers + consumers:
-        w.join()
+        q1 = IterableQueue(qcls(maxsize=1000), num_suppliers=n_suppliers)
+        q2 = IterableQueue(qcls(maxsize=200), num_suppliers=n_consumers)
 
-    zz = []
-    for z in q2:
-        zz.append(z)
+        producers = [wcls(target=_produce, args=(q0, q1)) for _ in range(n_suppliers)]
+        consumers = [wcls(target=_consume, args=(q1, q2)) for _ in range(n_consumers)]
 
-    assert sorted(zz) == list(range(80))
+        for w in producers + consumers:
+            w.start()
+        for w in producers + consumers:
+            w.join()
+
+        zz = []
+        for z in q2:
+            zz.append(z)
+        assert sorted(zz) == list(range(80))

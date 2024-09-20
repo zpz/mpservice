@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.15.8] - in progress
 
 - Added new class `mpservice.streamer.IterableQueue`.
+- The directory structure under `mpservice.multiprocessing` better mirrors that of the standard lib.
+- `Parmapper` and `Server.stream` get new parameter `to_stop` to allow the stream to be stopped by external forces.
 
 
 ## [0.15.7] - 2024-09-15

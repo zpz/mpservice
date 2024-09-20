@@ -260,8 +260,9 @@ from multiprocessing.managers import (
 )
 from traceback import format_exc
 
-from ._context import MP_SPAWN_CTX
+from .context import MP_SPAWN_CTX
 from .remote_exception import RemoteException
+
 
 __all__ = [
     'ServerProcess',

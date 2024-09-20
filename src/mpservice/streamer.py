@@ -257,6 +257,7 @@ from ._streamer import (
     EagerBatcher,
     IterableQueue,
     Parmapper,
+    StopRequested,
     Stream,
     Unbatcher,
     isasynciterable,
@@ -265,13 +266,14 @@ from ._streamer import (
 )
 
 __all__ = [
-    'Stream',
-    'tee',
     'Batcher',
-    'Unbatcher',
     'EagerBatcher',
     'IterableQueue',
     'Parmapper',
-    'isiterable',
+    'StopRequested',
+    'Stream',
+    'Unbatcher',
     'isasynciterable',
+    'isiterable',
+    'tee',
 ]
