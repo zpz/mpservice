@@ -14,7 +14,6 @@ import multiprocessing.synchronize
 import multiprocessing.util
 import os
 import time
-from typing import Generic, TypeVar
 
 from .._common import TimeoutError
 from ..threading import Thread
@@ -444,78 +443,3 @@ class SpawnContext(multiprocessing.context.SpawnContext):
 # MP_SPAWN_CTX = multiprocessing.context.DefaultContext(SpawnContext())
 # The version above would fail `tests/test_streamer.py::test_parmap`. I don't know why.
 MP_SPAWN_CTX = SpawnContext()
-
-
-class SyncManager(multiprocessing.managers.SyncManager):
-    # Use this in its context manager.
-    def __init__(
-        self,
-        *args,
-        ctx=None,
-        **kwargs,
-    ):
-        super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
-
-
-class Lock(multiprocessing.synchronize.Lock):
-    def __init__(self, *, ctx=None):
-        super().__init__(ctx=ctx or MP_SPAWN_CTX)
-
-
-class RLock(multiprocessing.synchronize.RLock):
-    def __init__(self, *, ctx=None):
-        super().__init__(ctx=ctx or MP_SPAWN_CTX)
-
-
-class Condition(multiprocessing.synchronize.Condition):
-    def __init__(self, lock=None, *, ctx=None):
-        super().__init__(lock=lock, ctx=ctx or MP_SPAWN_CTX)
-
-
-class Semaphore(multiprocessing.synchronize.Semaphore):
-    def __init__(self, value=1, *, ctx=None):
-        super().__init__(value=value, ctx=ctx or MP_SPAWN_CTX)
-
-
-class BoundedSemaphore(multiprocessing.synchronize.BoundedSemaphore):
-    def __init__(self, value=1, *, ctx=None):
-        super().__init__(value=value, ctx=ctx or MP_SPAWN_CTX)
-
-
-class Event(multiprocessing.synchronize.Event):
-    def __init__(self, *, ctx=None):
-        super().__init__(ctx=ctx or MP_SPAWN_CTX)
-
-
-class Barrier(multiprocessing.synchronize.Barrier):
-    def __init__(self, *args, ctx=None, **kwargs):
-        super().__init__(*args, ctx=ctx or MP_SPAWN_CTX, **kwargs)
-
-
-Elem = TypeVar('Elem')
-
-
-class Queue(multiprocessing.queues.Queue, Generic[Elem]):
-    def __init__(self, maxsize=0, *, ctx=None):
-        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
-
-    @property
-    def maxsize(self):
-        # `queue.Queue` has attribute `maxsize`.
-        # `multiprocessing.queues.Queue` has attribute `_maxsize`.
-        return self._maxsize
-
-
-class JoinableQueue(multiprocessing.queues.JoinableQueue, Generic[Elem]):
-    def __init__(self, maxsize=0, *, ctx=None):
-        super().__init__(maxsize, ctx=ctx or MP_SPAWN_CTX)
-
-
-class SimpleQueue(multiprocessing.queues.SimpleQueue, Generic[Elem]):
-    def __init__(self, *, ctx=None):
-        super().__init__(ctx=ctx or MP_SPAWN_CTX)
-
-
-class Pool(multiprocessing.pool.Pool):
-    def __init__(self, *args, context=None, **kwargs):
-        super().__init__(*args, context=context or MP_SPAWN_CTX, **kwargs)

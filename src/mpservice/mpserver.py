@@ -40,7 +40,7 @@ from typing import Any, Callable, Literal, final
 from ._common import TimeoutError
 from ._queues import SingleLane
 from ._streamer import Parmapper
-from .multiprocessing import MP_SPAWN_CTX
+from .multiprocessing import MP_SPAWN_CTX, Event
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
@@ -1862,6 +1862,7 @@ class Server:
         return_x: bool = False,
         return_exceptions: bool = False,
         timeout: int | float = 3600,
+        to_stop: threading.Event | Event = None,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1900,7 +1901,7 @@ class Server:
             even larger as needed.
         """
 
-        def _enqueue(tasks, stopped, timeout):
+        def _enqueue(tasks, stopped, timeout, extern_stopped):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -1911,6 +1912,8 @@ class Server:
                         # If user prematurally aborts the stream, then it could end up
                         # waiting for a while to exit, because `_enq` may wait up to
                         # `timeout`.
+                    if extern_stopped is not None and extern_stopped.is_set():
+                        break
                     fut = _enq(x, timeout, False)
                     tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
@@ -1924,9 +1927,10 @@ class Server:
 
         tasks = queue.Queue(max(1, self.capacity - 2))
         stopped = threading.Event()
+        extern_stopped = to_stop
         worker = Thread(
             target=_enqueue,
-            args=(tasks, stopped, timeout),
+            args=(tasks, stopped, timeout, extern_stopped),
             name=f'{self.__class__.__name__}.stream._enqueue',
         )
         worker.start()

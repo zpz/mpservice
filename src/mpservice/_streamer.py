@@ -33,8 +33,6 @@ import functools
 import inspect
 import itertools
 import logging
-import multiprocessing.queues
-import multiprocessing.synchronize
 import queue
 import random
 import threading
@@ -58,6 +56,9 @@ from typing import (
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
+import mpservice.multiprocessing
+import mpservice.threading
+
 from ._common import StopRequested
 from ._queues import SingleLane
 from .concurrent.futures import (
@@ -66,9 +67,7 @@ from .concurrent.futures import (
     get_shared_process_pool,
     get_shared_thread_pool,
 )
-from .multiprocessing import Event
 from .multiprocessing.remote_exception import get_remote_traceback, is_remote_exception
-from .threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -780,7 +779,7 @@ class SyncIter(Iterable):
     def _start(self):
         self._q = queue.Queue(2)
         self._stopped = threading.Event()
-        self._worker_thread = Thread(target=self._worker)
+        self._worker_thread = mpservice.threading.Thread(target=self._worker)
         self._worker_thread.start()
 
     def _finalize(self):
@@ -1157,22 +1156,35 @@ class AsyncShuffler(AsyncIterable):
 
 
 class Buffer(Iterable):
-    def __init__(self, instream: Iterable, /, maxsize: int):
+    def __init__(
+        self,
+        instream: Iterable,
+        /,
+        maxsize: int,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
+    ):
         self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
+        self._externally_stopped = to_stop
 
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(target=self._run_worker, name='Buffer-worker-thread')
+        self._worker = mpservice.threading.Thread(
+            target=self._run_worker, name='Buffer-worker-thread'
+        )
         self._worker.start()
 
     def _run_worker(self):
         q = self._tasks
+        stopped = self._stopped
+        extern_stopped = self._externally_stopped
         try:
             for x in self._instream:
-                if self._stopped.is_set():
+                if stopped.is_set():
+                    break
+                if extern_stopped is not None and extern_stopped.is_set():
                     break
                 q.put(x)  # if `q` is full, will wait here
             q.put(FINISHED)
@@ -1213,23 +1225,36 @@ class Buffer(Iterable):
 
 
 class AsyncBuffer(AsyncIterable):
-    def __init__(self, instream: AsyncIterable, /, maxsize: int):
+    def __init__(
+        self,
+        instream: AsyncIterable,
+        /,
+        maxsize: int,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
+    ):
         self._instream = instream
         assert 1 <= maxsize <= 10_000
         self.maxsize = maxsize
+        self._externally_stopped = to_stop
 
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(target=self._run_worker, name='AsyncBuffer-worker-thread')
+        self._worker = mpservice.threading.Thread(
+            target=self._run_worker, name='AsyncBuffer-worker-thread'
+        )
         self._worker.start()
 
     def _run_worker(self):
         async def main():
             q = self._tasks
+            stopped = self._stopped
+            extern_stopped = self._externally_stopped
             try:
                 async for x in self._instream:
-                    if self._stopped.is_set():
+                    if stopped.is_set():
+                        break
+                    if extern_stopped is not None and extern_stopped.is_set():
                         break
                     q.put(x)  # if `q` is full, will wait here
                 q.put(FINISHED)
@@ -1294,7 +1319,7 @@ class ParmapperMixin:
                     thread_name_prefix=self._name + '-thread',
                 )
         else:
-            self._stopped = Event()
+            self._stopped = mpservice.multiprocessing.Event()
             if num_workers is None and self._executor_initializer is None:
                 self._executor = get_shared_process_pool('_mpservice_streamer_')
                 self._executor_is_shared = True
@@ -1308,7 +1333,7 @@ class ParmapperMixin:
 
         num_workers = self._executor._max_workers
         self._tasks = SingleLane(num_workers + 1)
-        self._worker = Thread(
+        self._worker = mpservice.threading.Thread(
             target=self._run_worker,
             name=self._name + '-thread-runner',
         )
@@ -1354,6 +1379,7 @@ class Parmapper(Iterable, ParmapperMixin):
         executor_initializer=None,
         executor_init_args=(),
         parmapper_name='parmapper-sync-sync',
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
         **kwargs,
     ):
         """
@@ -1388,16 +1414,20 @@ class Parmapper(Iterable, ParmapperMixin):
         self._tasks = None
         self._worker = None
         self._stopped = None
+        self._externally_stopped = to_stop
 
     def _run_worker(self):
         func = self._func
         kwargs = self._func_kwargs
         to_stop = self._stopped
+        extern_to_stop = self._externally_stopped
         executor = self._executor
         tasks = self._tasks
         try:
             for x in self._instream:
                 if to_stop.is_set():
+                    break
+                if extern_to_stop is not None and extern_to_stop.is_set():
                     break
                 t = executor.submit(func, x, loud_exception=False, **kwargs)
                 tasks.put((x, t))
@@ -1464,6 +1494,7 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         executor_initializer=None,
         executor_init_args=(),
         parmapper_name='parmapper-async-sync',
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
         **kwargs,
     ):
         assert executor in ('thread', 'process')
@@ -1484,17 +1515,21 @@ class AsyncParmapper(AsyncIterable, ParmapperMixin):
         self._tasks = None
         self._worker = None
         self._stopped = None
+        self._externally_stopped = to_stop
 
     def _run_worker(self):
         async def enqueue():
             func = self._func
             kwargs = self._func_kwargs
             to_stop = self._stopped
+            extern_to_stop = self._externally_stopped
             executor = self._executor
             tasks = self._tasks
             try:
                 async for x in self._instream:
                     if to_stop.is_set():
+                        break
+                    if extern_to_stop is not None and extern_to_stop.is_set():
                         break
                     t = executor.submit(func, x, loud_exception=False, **kwargs)
                     tasks.put((x, t))
@@ -1569,6 +1604,7 @@ class ParmapperAsync(Iterable):
         return_exceptions: bool = False,
         parmapper_name='parmapper-sync-async',
         async_context: dict = None,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
         **kwargs,
     ):
         """
@@ -1606,13 +1642,14 @@ class ParmapperAsync(Iterable):
         self._name = parmapper_name
         self._worker_thread = None
         self._stopped = None
+        self._externally_stopped = to_stop
         self._async_context = async_context or {}
 
     def _start(self):
         self._outstream = queue.Queue(self._num_workers)
         self._stopped = threading.Event()
 
-        self._worker_thread = Thread(
+        self._worker_thread = mpservice.threading.Thread(
             target=self._run_worker,
             name=f'{self._name}-thread',
             # TODO: what if there are multiple such threads owned by multiple ParmapperAsync objects?
@@ -1637,10 +1674,13 @@ class ParmapperAsync(Iterable):
             func = self._func
             kwargs = {**self._func_kwargs, **self._async_context}
             to_stop = self._stopped
+            extern_to_stop = self._externally_stopped
             try:
                 instream = AsyncIter(self._instream)
                 async for x in instream:
                     if to_stop.is_set():
+                        break
+                    if extern_to_stop is not None and extern_to_stop.is_set():
                         break
                     t = loop.create_task(func(x, **kwargs))
                     await tasks.put((x, t))
@@ -2182,16 +2222,16 @@ class EagerBatcher(Iterable):
             yield batch
 
 
-class IterableQueue(Iterable, Generic[T]):
+class IterableQueue(Iterator[T]):
     def __init__(
         self,
         q: queue.Queue
         | queue.SimpleQueue
-        | multiprocessing.queues.Queue
-        | multiprocessing.queues.SimpleQueue,
+        | mpservice.multiprocessing.Queue
+        | mpservice.multiprocessing.SimpleQueue,
         *,
         num_suppliers: int = 1,
-        to_stop: threading.Event | multiprocessing.synchronize.Event = None,
+        to_stop: threading.Event | mpservice.multiprocessing.Event = None,
     ):
         """
         `num_suppliers`: number of parties that will supply data elements to the queue by calling :meth:`put`.
@@ -2222,12 +2262,12 @@ class IterableQueue(Iterable, Generic[T]):
 
         The consumers collectively consume the data elements that have been put in the queue.
         """
-        if isinstance(q, multiprocessing.queues.SimpleQueue):
+        if isinstance(q, mpservice.multiprocessing.SimpleQueue):
             if to_stop is not None:
                 raise ValueError(
                     f'`to_stop` is not compatible with `q` of type {type(q).__name__}'
                 )
-                # Because `multiprocessing.queues.SimpleQueue.{get, put}` do not take argument `timeout`.
+                # Because `mpservice.multiprocessing.SimpleQueue.{get, put}` do not take argument `timeout`.
         self._q = q
         self._to_stop = to_stop
         self._wait_interval = 1.0
@@ -2238,11 +2278,35 @@ class IterableQueue(Iterable, Generic[T]):
             self._applied_lids = queue.Queue(maxsize=num_suppliers)
             self._removed_lids = queue.Queue(maxsize=num_suppliers)
         else:
-            self._spare_lids = multiprocessing.queues.Queue(maxsize=0)
-            self._applied_lids = multiprocessing.queues.Queue(maxsize=num_suppliers)
-            self._removed_lids = multiprocessing.queues.Queue(maxsize=num_suppliers)
+            self._spare_lids = mpservice.multiprocessing.Queue(maxsize=0)
+            self._applied_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
+            self._removed_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
         for _ in range(num_suppliers):
             self._spare_lids.put(None)
+        self._spare_lids.put('')
+
+    def __getstate__(self):
+        # This will fail if the queues are not pickle-able. That would be a user mistake.
+        return (
+            self._q,
+            self._to_stop,
+            self._wait_interval,
+            self._num_suppliers,
+            self._spare_lids,
+            self._applied_lids,
+            self._removed_lids,
+        )
+
+    def __setstate__(self, zz):
+        (
+            self._q,
+            self._to_stop,
+            self._wait_interval,
+            self._num_suppliers,
+            self._spare_lids,
+            self._applied_lids,
+            self._removed_lids,
+        ) = zz
 
     @property
     def maxsize(self) -> int:
@@ -2256,9 +2320,15 @@ class IterableQueue(Iterable, Generic[T]):
 
     def put(self, x: T) -> None:
         """
+        Use this method to put data elements in the queue.
+
+        Once finished putting data in the queue (as far as one supplier,
+        such as one thread or process, is concerned), call `put_end()` exactly once
+        (per supplier).
+
         User should never call `put(None)`.
-        That is reserved to be called within `put_end()`
-        for special purposes.
+        That is reserved to be called by `put_end()` to indicate the end of
+        one supplier's data input.
         """
         Full = queue.Full
         while True:
@@ -2268,11 +2338,11 @@ class IterableQueue(Iterable, Generic[T]):
             except Full:
                 if self._to_stop is not None and self._to_stop.is_set():
                     raise StopRequested
-                time.sleep
+                time.sleep(0)  # force a context switch
 
     def get(self) -> T:
         """
-        Usually you should not use `get` directly. Instead, use :meth:`__iter__` or :meth:`__next__`.
+        Usually you should not call `get` directly. Instead, use :meth:`__iter__` or :meth:`__next__`.
 
         If you do use `get` directly, then you need to interpret the meaning of `None` yourself.
         Correspondingly, you may have used `put(None)` instead of `put_end()`.
@@ -2287,34 +2357,41 @@ class IterableQueue(Iterable, Generic[T]):
             except Empty:
                 if self._to_stop is not None and self._to_stop.is_set():
                     raise StopRequested
-                time.sleep()  # force a context switch
+                time.sleep(0)  # force a context switch
 
     def put_end(self) -> None:
         """
         Each "supplier" must call this method exactly once, after it is done putting
         data in the queue. Do not use `put(None)` for this purpose.
         """
-        self._spare_lids.get_nowait()  # error if `put_end` is called more than `num_suppliers` times
-        self._applied_lids.put_nowait(None)
+        z = self._spare_lids.get()
+        if z == '':
+            raise RuntimeError('`put_end()` has been called too many times')
         self.put(None)
+        self._applied_lids.put(None)
+        # A `None` in the queue corresponds to a `None` in `self._applied_lids`.
 
     def __next__(self) -> T:
         z = self.get()
         if z is None:
             if self._removed_lids.full():
-                # Another consumer has seen the end marker earlier.
+                # Other consumers have removed all the lids and confirmed
+                # there's no more data to come from the queue.
+                # There's no more `None` in `self._applied_lids`.
                 self.put(None)
                 # Let there always be an end marker so that other consumers
                 # can still iterate over this queue and see it's finished.
+                # `self._removed_lids` remains full, hence the next call
+                # to `__next__` will get here again.
                 raise StopIteration
-            self._applied_lids.get_nowait()
-            self._removed_lids.put_nowait(None)
+            self._applied_lids.get()
+            self._removed_lids.put(None)
             if self._removed_lids.full():
-                # This is the first consumer that sees the queue is exhausted.
+                # This is the first consumer who sees the queue is exhausted.
                 self.put(None)
                 raise StopIteration
-            # The queue is not exhausted because all suppliers have not called
-            # `put_end()` yet.
+            # The queue is not exhausted because all suppliers's end markers ("lids")
+            # have not been collected yet.
             return self.__next__()
         return z
 

@@ -33,28 +33,36 @@ Besides these fixes to "pain points", the module :mod:`mpservice.multiprocessing
 to the "manager" facility in the standard ``multiprocessing``, especially about "shared memory".
 """
 
+# The directory structure in this subpackage mirrors that of the standard `multiprocessing`.
+# There are a few modules that do not exist in the standard `multiprocessing`.
+# For all symbols that are importable from here, it's recommended to import them from `mpservice.multiprocessing`
+# instead of from the individual modules (e.g., instead of from `mpservice.multiprocessing.synchronize`).
+# For content in the few modules that do not have counterparts in the standard `multiprocessing`,
+# e.g. `remote_exception` and `server_process`,
+# you need to import from the individual modules.
+
 import concurrent.futures
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 
 from mpservice.threading import Thread
 
-from ._context import (
+from .context import (
     MP_SPAWN_CTX,
+    SpawnContext,
+    SpawnProcess,
+)
+from .managers import SyncManager
+from .pool import Pool
+from .queues import JoinableQueue, Queue, SimpleQueue
+from .synchronize import (
     Barrier,
     BoundedSemaphore,
     Condition,
     Event,
-    JoinableQueue,
     Lock,
-    Pool,
-    Queue,
     RLock,
     Semaphore,
-    SimpleQueue,
-    SpawnContext,
-    SpawnProcess,
-    SyncManager,
 )
 
 Process = SpawnProcess
