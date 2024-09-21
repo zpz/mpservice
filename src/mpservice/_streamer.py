@@ -2242,7 +2242,7 @@ class IterableQueue(Iterator[T]):
             If the queue is to be passed between processes, `to_stop` should be a
             `multiprocessing.synchronize.Event`; otherwise, `to_stop` can be either `threading.Event`
             or `multiprocessing.synchronize.Event` (the latter may be required because the object `to_stop`
-            needs to be passed between processes in other parts of the application).
+            needs to be passed between processes in other parts of the user application).
 
         `None` is used internally as a special indicator. It must not be a valid value in the user application.
 
@@ -2367,8 +2367,8 @@ class IterableQueue(Iterator[T]):
         z = self._spare_lids.get()
         if z == '':
             raise RuntimeError('`put_end()` has been called too many times')
-        self.put(None)
         self._applied_lids.put(None)
+        self.put(None)
         # A `None` in the queue corresponds to a `None` in `self._applied_lids`.
 
     def __next__(self) -> T:
