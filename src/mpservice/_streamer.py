@@ -2268,6 +2268,9 @@ class IterableQueue(Iterator[T]):
                     f'`to_stop` is not compatible with `q` of type {type(q).__name__}'
                 )
                 # Because `mpservice.multiprocessing.SimpleQueue.{get, put}` do not take argument `timeout`.
+            self._can_timeout = False
+        else:
+            self._can_timeout = True
         self._q = q
         self._to_stop = to_stop
         self._wait_interval = 1.0
@@ -2284,6 +2287,7 @@ class IterableQueue(Iterator[T]):
         for _ in range(num_suppliers):
             self._spare_lids.put(None)
         self._spare_lids.put('')
+        # User should not touch these internal helper queues.
 
     def __getstate__(self):
         # This will fail if the queues are not pickle-able. That would be a user mistake.
@@ -2295,6 +2299,7 @@ class IterableQueue(Iterator[T]):
             self._spare_lids,
             self._applied_lids,
             self._removed_lids,
+            self._can_timeout,
         )
 
     def __setstate__(self, zz):
@@ -2306,6 +2311,7 @@ class IterableQueue(Iterator[T]):
             self._spare_lids,
             self._applied_lids,
             self._removed_lids,
+            self._can_timeout,
         ) = zz
 
     @property
@@ -2330,6 +2336,10 @@ class IterableQueue(Iterator[T]):
         That is reserved to be called by `put_end()` to indicate the end of
         one supplier's data input.
         """
+        if not self._can_timeout:
+            self._q.put(x)
+            return
+
         Full = queue.Full
         while True:
             try:
@@ -2349,6 +2359,9 @@ class IterableQueue(Iterator[T]):
         However, you would be ignoring most of this class's facilities, and you may as well
         not use this class to begin with.
         """
+        if not self._can_timeout:
+            return self._q.get()
+
         Empty = queue.Empty
         while True:
             try:
