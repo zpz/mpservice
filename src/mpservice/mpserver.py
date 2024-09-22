@@ -1916,10 +1916,10 @@ class Server:
             subsequent steps.
 
             Usually this callable should be light weight. It may be a lambda function.
-            
+
             This callable should not modify its input.
 
-            The application of this callable happens in the current process/thread. 
+            The application of this callable happens in the current process/thread.
             This differs from the `preprocess` attribute of the :class:`Worker`
             class---in there, `preprocess` is called in the worker process/thread, hence the data
             element may have gone through pickling (in the case of `ProcessServlet`).
@@ -2221,6 +2221,7 @@ class AsyncServer:
 
         .. seealso:: :meth:`Server.stream`
         """
+
         async def _enqueue(tasks, timeout, preprocess):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
