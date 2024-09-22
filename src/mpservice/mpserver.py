@@ -1862,6 +1862,7 @@ class Server:
         return_x: bool = False,
         return_exceptions: bool = False,
         timeout: int | float = 3600,
+        preprocess: Callable = None,
         to_stop: threading.Event | Event = None,
     ) -> Iterator:
         """
@@ -1899,9 +1900,32 @@ class Server:
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value or make it
             even larger as needed.
+        preprocess
+            A function to be applied to each element of `data_stream`, the output of which
+            is passed to workers. If exception is raised, the exception object becomes
+            the result of that input element. Whether the exception will propagate depends
+            on the value of `return_exceptions`.
+
+            This parameter is supposed to be used together with `return_x=True`, for otherwise
+            the user could apply any preprocessing themselves on the data stream before calling
+            `stream`. The "x" returned via `return_x=True` is the original element (not after
+            application of `preprocess`).
+
+            A typical use of this parameter is to extract part of the data element as the real input
+            to the service, while let the full element flow along (due to `return_x=True`) to
+            subsequent steps.
+
+            Usually this callable should be light weight. It may be a lambda function.
+            
+            This callable should not modify its input.
+
+            The application of this callable happens in the current process/thread. 
+            This differs from the `preprocess` attribute of the :class:`Worker`
+            class---in there, `preprocess` is called in the worker process/thread, hence the data
+            element may have gone through pickling (in the case of `ProcessServlet`).
         """
 
-        def _enqueue(tasks, stopped, timeout, extern_stopped):
+        def _enqueue(tasks, stopped, timeout, preprocess, extern_stopped):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
@@ -1914,7 +1938,16 @@ class Server:
                         # `timeout`.
                     if extern_stopped is not None and extern_stopped.is_set():
                         break
-                    fut = _enq(x, timeout, False)
+                    if preprocess is None:
+                        fut = _enq(x, timeout, False)
+                    else:
+                        try:
+                            xx = preprocess(x)
+                        except Exception as e:
+                            fut = concurrent.futures.Future()
+                            fut.set_exception(e)
+                        else:
+                            fut = _enq(xx, timeout, False)
                     tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
@@ -1930,7 +1963,7 @@ class Server:
         extern_stopped = to_stop
         worker = Thread(
             target=_enqueue,
-            args=(tasks, stopped, timeout, extern_stopped),
+            args=(tasks, stopped, timeout, preprocess, extern_stopped),
             name=f'{self.__class__.__name__}.stream._enqueue',
         )
         worker.start()
@@ -2179,6 +2212,7 @@ class AsyncServer:
         return_x: bool = False,
         return_exceptions: bool = False,
         timeout: int | float = 3600,
+        preprocess: Callable = None,
     ) -> AsyncIterator:
         """
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
@@ -2187,14 +2221,22 @@ class AsyncServer:
 
         .. seealso:: :meth:`Server.stream`
         """
-
-        async def _enqueue(tasks, timeout):
+        async def _enqueue(tasks, timeout, preprocess):
             # Putting input data in the queue does not need concurrency.
             # The speed of sequential push is as fast as it can go.
             _enq = self._enqueue
             try:
                 async for x in data_stream:
-                    fut = await _enq(x, timeout, backpressure=False)
+                    if preprocess is None:
+                        fut = await _enq(x, timeout, backpressure=False)
+                    else:
+                        try:
+                            xx = preprocess(x)
+                        except Exception as e:
+                            fut = asyncio.Future()
+                            fut.set_exception(e)
+                        else:
+                            fut = await _enq(xx, timeout, backpressure=False)
                     await tasks.put((x, fut))
                 # Exceptions in `fut` is covered by `return_exceptions`.
                 # Uncaught exceptions will propagate and cause the thread to exit in
@@ -2210,7 +2252,7 @@ class AsyncServer:
 
         tasks = asyncio.Queue(max(1, self.capacity - 2))
         t_enqueue = asyncio.create_task(
-            _enqueue(tasks, timeout),
+            _enqueue(tasks, timeout, preprocess),
             name=f'{self.__class__.__name__}.async_stream._enqueue',
         )
 

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 - Bug fix in `IterableQueue` when using a multiprocessing SimpleQueue.
+- `mpservice.mpserver.Server.stream` gets a new parameter `preprocess`.
 
 
 ## [0.15.8] - 2024-0921

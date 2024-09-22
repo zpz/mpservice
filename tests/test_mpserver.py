@@ -186,6 +186,17 @@ def test_stream_early_quit():
             if n > 33:
                 break
 
+def test_stream_preprocess():
+    with Server(ProcessServlet(Double, cpus=3)) as service:
+        data = [{'name': 'tom', 'value': 8}, {'name': 'jack', 'value': 7}, {'name': 'jane', 'value': None}]
+        zz = list(
+            service.stream(data, return_x=True, return_exceptions=True, preprocess=lambda x: x['value'])
+        )
+        assert zz[0] == (data[0], 16)
+        assert zz[1] == (data[1], 14)
+        assert zz[2][0] == data[2]
+        assert isinstance(zz[2][1], TypeError)
+
 
 @pytest.mark.asyncio
 async def test_sequential_async_stream():
