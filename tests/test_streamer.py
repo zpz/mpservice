@@ -8,7 +8,7 @@ from time import perf_counter, sleep
 import pytest
 
 import mpservice
-from mpservice._streamer import AsyncIter, SyncIter
+from mpservice._streamer import AsyncIter, CyclicProcess, CyclicProcessWorker, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
@@ -16,7 +16,6 @@ from mpservice.streamer import (
     Stream,
     tee,
 )
-from mpservice._streamer import CyclicProcessWorker, CyclicProcess
 
 
 async def agen(n=10):
@@ -1169,7 +1168,6 @@ def test_iterable_queue_multi_parties():
         assert sorted(zz) == list(range(80))
 
 
-
 class MyCyclicWorker(CyclicProcessWorker):
     def __init__(self, factor):
         self._factor = factor
@@ -1179,7 +1177,7 @@ class MyCyclicWorker(CyclicProcessWorker):
             out_queue.put(x * multiplier)
         out_queue.put_end()
         return multiplier * self._factor
-    
+
 
 def test_process_chainer():
     q_in = IterableQueue(mpservice.multiprocessing.Queue())
@@ -1189,7 +1187,7 @@ def test_process_chainer():
         in_queue=q_in,
         out_queue=q_out,
         target=MyCyclicWorker,
-        args=(3, ),
+        args=(3,),
     )
     chainer.start()
 

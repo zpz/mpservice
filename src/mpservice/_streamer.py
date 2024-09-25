@@ -38,6 +38,8 @@ import random
 import threading
 import time
 import traceback
+import warnings
+from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
 from inspect import iscoroutinefunction
@@ -52,8 +54,6 @@ from typing import (
     Optional,
     TypeVar,
 )
-import warnings
-from abc import ABC, abstractmethod
 
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -2390,7 +2390,9 @@ class IterableQueue(Iterator[T]):
                 z = self._spare_lids.get(timeout=1.0)
                 break
             except queue.Empty:
-                warnings.warn("Have you called `put_end` too many times? Calls to `put_end` should match `num_suppliers`.")
+                warnings.warn(
+                    'Have you called `put_end` too many times? Calls to `put_end` should match `num_suppliers`.'
+                )
                 if self._to_stop is not None and self._to_stop.is_set():
                     raise StopRequested
 
@@ -2454,8 +2456,7 @@ class IterableQueue(Iterator[T]):
                 break
             self._spare_lids.put(z)
             k += 1
-        assert k == self._num_suppliers, f"{k} == {self._num_suppliers}"
-            
+        assert k == self._num_suppliers, f'{k} == {self._num_suppliers}'
 
 
 class CyclicProcessWorker(ABC):
@@ -2466,7 +2467,9 @@ class CyclicProcessWorker(ABC):
         pass
 
     @abstractmethod
-    def __call__(self, in_queue: IterableQueue, out_queue: IterableQueue, /, **kwargs) -> Any:
+    def __call__(
+        self, in_queue: IterableQueue, out_queue: IterableQueue, /, **kwargs
+    ) -> Any:
         # This function should iterate over `in_queue` and do things with its data elements.
         # Put outgoing results in `out_queue`. After exhausting `in_queue` and placed all results
         # in `out_queue`, you should call `out_queue.put_end()` as usual.
@@ -2476,9 +2479,17 @@ class CyclicProcessWorker(ABC):
         raise NotImplementedError
 
 
-
 class CyclicProcess:
-    def __init__(self, in_queue: IterableQueue, out_queue: IterableQueue = None, *, target: type[CyclicProcessWorker], args=None, kwargs=None, name=None):
+    def __init__(
+        self,
+        in_queue: IterableQueue,
+        out_queue: IterableQueue = None,
+        *,
+        target: type[CyclicProcessWorker],
+        args=None,
+        kwargs=None,
+        name=None,
+    ):
         self._in_queue = in_queue
         self._out_queue = out_queue
         self._instructions = mpservice.multiprocessing.Queue(maxsize=1)
@@ -2497,7 +2508,16 @@ class CyclicProcess:
         )
 
     @staticmethod
-    def _work(in_queue, out_queue, *, instructions, result, worker_cls: type[CyclicProcessWorker], args, kwargs):
+    def _work(
+        in_queue,
+        out_queue,
+        *,
+        instructions,
+        result,
+        worker_cls: type[CyclicProcessWorker],
+        args,
+        kwargs,
+    ):
         worker = worker_cls(*args, **kwargs)
         with worker:
             while True:
@@ -2526,4 +2546,3 @@ class CyclicProcess:
         if isinstance(z, Exception):
             raise z
         return z
-
