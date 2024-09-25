@@ -2467,9 +2467,7 @@ class CyclicProcessWorker(ABC):
         pass
 
     @abstractmethod
-    def __call__(
-        self, in_queue: IterableQueue, /, **kwargs
-    ) -> Any:
+    def __call__(self, in_queue: IterableQueue, /, **kwargs) -> Any:
         # This function should iterate over `in_queue` and do things with its data elements.
         # If you need an outgoing queue (as well as anything else), you can take that as
         # a `__init__` parameter and provide it via `CyclicProcess.__init__`.
@@ -2491,7 +2489,7 @@ class CyclicProcess:
         self._result = mpservice.multiprocessing.Queue(maxsize=1)
         self._process = mpservice.multiprocessing.Process(
             target=self._work,
-            args=(in_queue, ),
+            args=(in_queue,),
             kwargs={
                 'instructions': self._instructions,
                 'result': self._result,
