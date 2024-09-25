@@ -2468,14 +2468,11 @@ class CyclicProcessWorker(ABC):
 
     @abstractmethod
     def __call__(
-        self, in_queue: IterableQueue, out_queue: IterableQueue, /, **kwargs
+        self, in_queue: IterableQueue, /, **kwargs
     ) -> Any:
         # This function should iterate over `in_queue` and do things with its data elements.
-        # Put outgoing results in `out_queue`. After exhausting `in_queue` and placed all results
-        # in `out_queue`, you should call `out_queue.put_end()` as usual.
-        # If there are no outgoing results, then
-        # you should have not provided `out_queue` to `CyclicProcess`, and then this `out_queue`
-        # is `None`.
+        # If you need an outgoing queue (as well as anything else), you can take that as
+        # a `__init__` parameter and provide it via `CyclicProcess.__init__`.
         raise NotImplementedError
 
 
@@ -2483,7 +2480,6 @@ class CyclicProcess:
     def __init__(
         self,
         in_queue: IterableQueue,
-        out_queue: IterableQueue = None,
         *,
         target: type[CyclicProcessWorker],
         args=None,
@@ -2491,12 +2487,11 @@ class CyclicProcess:
         name=None,
     ):
         self._in_queue = in_queue
-        self._out_queue = out_queue
         self._instructions = mpservice.multiprocessing.Queue(maxsize=1)
         self._result = mpservice.multiprocessing.Queue(maxsize=1)
         self._process = mpservice.multiprocessing.Process(
             target=self._work,
-            args=(in_queue, out_queue),
+            args=(in_queue, ),
             kwargs={
                 'instructions': self._instructions,
                 'result': self._result,
@@ -2510,7 +2505,6 @@ class CyclicProcess:
     @staticmethod
     def _work(
         in_queue,
-        out_queue,
         *,
         instructions,
         result,
@@ -2525,7 +2519,7 @@ class CyclicProcess:
                 if zz is None:
                     break
                 try:
-                    z = worker(in_queue, out_queue, *zz[0], **zz[1])
+                    z = worker(in_queue, *zz[0], **zz[1])
                 except Exception as e:
                     z = mpservice.multiprocessing.remote_exception(e)
                 in_queue.renew()

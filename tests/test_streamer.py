@@ -1169,25 +1169,26 @@ def test_iterable_queue_multi_parties():
 
 
 class MyCyclicWorker(CyclicProcessWorker):
-    def __init__(self, factor):
+    def __init__(self, factor, out_queue):
         self._factor = factor
+        self._out_queue = out_queue
 
-    def __call__(self, in_queue, out_queue, /, multiplier):
+    def __call__(self, in_queue, /, multiplier):
+        out_queue = self._out_queue
         for x in in_queue:
             out_queue.put(x * multiplier)
         out_queue.put_end()
         return multiplier * self._factor
 
 
-def test_process_chainer():
+def test_cyclic_process():
     q_in = IterableQueue(mpservice.multiprocessing.Queue())
     q_out = IterableQueue(mpservice.multiprocessing.Queue())
 
     chainer = CyclicProcess(
         in_queue=q_in,
-        out_queue=q_out,
         target=MyCyclicWorker,
-        args=(3,),
+        args=(3, q_out),
     )
     chainer.start()
 
