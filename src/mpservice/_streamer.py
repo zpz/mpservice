@@ -52,11 +52,14 @@ from typing import (
     Optional,
     TypeVar,
 )
+import warnings
+from abc import ABC, abstractmethod
 
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 import mpservice.multiprocessing
+import mpservice.multiprocessing.remote_exception
 import mpservice.threading
 
 from ._common import StopRequested
@@ -2274,20 +2277,24 @@ class IterableQueue(Iterator[T]):
         self._q = q
         self._to_stop = to_stop
         self._wait_interval = 1.0
+        # User may revise this value after the object is initiated.
 
         self._num_suppliers = num_suppliers
         if isinstance(q, (queue.Queue, queue.SimpleQueue)):
-            self._spare_lids = queue.Queue(maxsize=0)
+            self._spare_lids = queue.Queue(maxsize=num_suppliers)
             self._applied_lids = queue.Queue(maxsize=num_suppliers)
-            self._removed_lids = queue.Queue(maxsize=num_suppliers)
+            self._used_lids = queue.Queue(maxsize=num_suppliers)
+            # self._lock = threading.Lock()
         else:
-            self._spare_lids = mpservice.multiprocessing.Queue(maxsize=0)
+            self._spare_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
             self._applied_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
-            self._removed_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
+            self._used_lids = mpservice.multiprocessing.Queue(maxsize=num_suppliers)
+            # self._lock = mpservice.multiprocessing.Lock()
         for _ in range(num_suppliers):
             self._spare_lids.put(None)
-        self._spare_lids.put('')
         # User should not touch these internal helper queues.
+        # TODO: the name 'lid' is not very good; something implying the "bottom" would be better.
+        # TODO: do we need to use a lock to group the access to the helper queues?
 
     def __getstate__(self):
         # This will fail if the queues are not pickle-able. That would be a user mistake.
@@ -2298,7 +2305,7 @@ class IterableQueue(Iterator[T]):
             self._num_suppliers,
             self._spare_lids,
             self._applied_lids,
-            self._removed_lids,
+            self._used_lids,
             self._can_timeout,
         )
 
@@ -2310,7 +2317,7 @@ class IterableQueue(Iterator[T]):
             self._num_suppliers,
             self._spare_lids,
             self._applied_lids,
-            self._removed_lids,
+            self._used_lids,
             self._can_timeout,
         ) = zz
 
@@ -2320,6 +2327,7 @@ class IterableQueue(Iterator[T]):
             return self._q.maxsize
         except AttributeError:
             return self._q._maxsize
+        # If you used a SimpleQueue for `__init__`, this would raise `AttributeError`.
 
     def qsize(self) -> int:
         return self._q.qsize()
@@ -2377,30 +2385,44 @@ class IterableQueue(Iterator[T]):
         Each "supplier" must call this method exactly once, after it is done putting
         data in the queue. Do not use `put(None)` for this purpose.
         """
-        z = self._spare_lids.get()
-        if z == '':
-            raise RuntimeError('`put_end()` has been called too many times')
-        self._applied_lids.put(None)
+        while True:
+            try:
+                z = self._spare_lids.get(timeout=1.0)
+                break
+            except queue.Empty:
+                warnings.warn("Have you called `put_end` too many times? Calls to `put_end` should match `num_suppliers`.")
+                if self._to_stop is not None and self._to_stop.is_set():
+                    raise StopRequested
+
+        self._applied_lids.put(z)
         self.put(None)
         # A `None` in the queue corresponds to a `None` in `self._applied_lids`.
 
     def __next__(self) -> T:
         z = self.get()
         if z is None:
-            if self._removed_lids.full():
+            if self._used_lids.full():
                 # Other consumers have removed all the lids and confirmed
                 # there's no more data to come from the queue.
                 # There's no more `None` in `self._applied_lids`.
                 self.put(None)
                 # Let there always be an end marker so that other consumers
                 # can still iterate over this queue and see it's finished.
-                # `self._removed_lids` remains full, hence the next call
+                # `self._used_lids` remains full, hence the next call
                 # to `__next__` will get here again.
+                # This does not increase the number of `None`s in the queue
+                # as it simply replaces the one that is just taken off the queue.
                 raise StopIteration
-            self._applied_lids.get()
-            self._removed_lids.put(None)
-            if self._removed_lids.full():
+            z = self._applied_lids.get()
+            self._used_lids.put(z)
+            if self._used_lids.full():
                 # This is the first consumer who sees the queue is exhausted.
+                # Put an extra `None` in the queue for other consumers to see.
+                # This is needed because we don't assume nor limit the number
+                # of consumers to the queue.
+                # This is the only extra `None`: there is only one consumer
+                # who is the first to see the bottom of the queue, and subsequent
+                # consumers will get/put this `None` without increasing its count.
                 self.put(None)
                 raise StopIteration
             # The queue is not exhausted because all suppliers's end markers ("lids")
@@ -2414,3 +2436,94 @@ class IterableQueue(Iterator[T]):
                 yield self.__next__()
             except StopIteration:
                 break
+
+    def renew(self):
+        # This is for special use cases where the queue needs to be "reused" for
+        # more than one round of iterations.
+        # In those use cases, typically the consumer (or consuming side if there are
+        # more than one consumers) calls `renew` exactly once upon finishing iteration
+        # over the content of the queue. The suppliers can put more data into the queue
+        # and call `put_end` as usual once done; the consumer then iterates over the queue
+        # as if there were no previous rounds.
+        assert self.get() is None  # take out the extra `None`
+        k = 0
+        while True:
+            try:
+                z = self._used_lids.get_nowait()
+            except queue.Empty:
+                break
+            self._spare_lids.put(z)
+            k += 1
+        assert k == self._num_suppliers, f"{k} == {self._num_suppliers}"
+            
+
+
+class CyclicProcessWorker(ABC):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    @abstractmethod
+    def __call__(self, in_queue: IterableQueue, out_queue: IterableQueue, /, **kwargs) -> Any:
+        # This function should iterate over `in_queue` and do things with its data elements.
+        # Put outgoing results in `out_queue`. After exhausting `in_queue` and placed all results
+        # in `out_queue`, you should call `out_queue.put_end()` as usual.
+        # If there are no outgoing results, then
+        # you should have not provided `out_queue` to `CyclicProcess`, and then this `out_queue`
+        # is `None`.
+        raise NotImplementedError
+
+
+
+class CyclicProcess:
+    def __init__(self, in_queue: IterableQueue, out_queue: IterableQueue = None, *, target: type[CyclicProcessWorker], args=None, kwargs=None, name=None):
+        self._in_queue = in_queue
+        self._out_queue = out_queue
+        self._instructions = mpservice.multiprocessing.Queue(maxsize=1)
+        self._result = mpservice.multiprocessing.Queue(maxsize=1)
+        self._process = mpservice.multiprocessing.Process(
+            target=self._work,
+            args=(in_queue, out_queue),
+            kwargs={
+                'instructions': self._instructions,
+                'result': self._result,
+                'worker_cls': target,
+                'args': args or (),
+                'kwargs': kwargs or {},
+            },
+            name=name,
+        )
+
+    @staticmethod
+    def _work(in_queue, out_queue, *, instructions, result, worker_cls: type[CyclicProcessWorker], args, kwargs):
+        worker = worker_cls(*args, **kwargs)
+        with worker:
+            while True:
+                zz = instructions.get()
+                if zz is None:
+                    break
+                try:
+                    z = worker(in_queue, out_queue, *zz[0], **zz[1])
+                except Exception as e:
+                    z = mpservice.multiprocessing.remote_exception(e)
+                in_queue.renew()
+                result.put(z)
+
+    def start(self):
+        self._process.start()
+
+    def join(self, timeout=None):
+        self._instructions.put(None)
+        self._process.join(timeout=timeout)
+
+    def restart(self, *args, **kwargs):
+        self._instructions.put((args, kwargs))
+
+    def rejoin(self):
+        z = self._result.get()
+        if isinstance(z, Exception):
+            raise z
+        return z
+

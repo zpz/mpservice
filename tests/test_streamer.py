@@ -16,6 +16,7 @@ from mpservice.streamer import (
     Stream,
     tee,
 )
+from mpservice._streamer import CyclicProcessWorker, CyclicProcess
 
 
 async def agen(n=10):
@@ -1166,3 +1167,54 @@ def test_iterable_queue_multi_parties():
         for z in q2:
             zz.append(z)
         assert sorted(zz) == list(range(80))
+
+
+
+class MyCyclicWorker(CyclicProcessWorker):
+    def __init__(self, factor):
+        self._factor = factor
+
+    def __call__(self, in_queue, out_queue, /, multiplier):
+        for x in in_queue:
+            out_queue.put(x * multiplier)
+        out_queue.put_end()
+        return multiplier * self._factor
+    
+
+def test_process_chainer():
+    q_in = IterableQueue(mpservice.multiprocessing.Queue())
+    q_out = IterableQueue(mpservice.multiprocessing.Queue())
+
+    chainer = CyclicProcess(
+        in_queue=q_in,
+        out_queue=q_out,
+        target=MyCyclicWorker,
+        args=(3, ),
+    )
+    chainer.start()
+
+    q_in.put(1)
+    q_in.put(2)
+    q_in.put(3)
+    q_in.put(4)
+    q_in.put_end()
+
+    chainer.restart(multiplier=2)
+    z = chainer.rejoin()
+    assert z == 6
+
+    assert list(q_out) == [2, 4, 6, 8]
+    q_out.renew()
+
+    q_in.put(9)
+    q_in.put(12)
+    q_in.put(13)
+    q_in.put(8)
+    q_in.put_end()
+    chainer.restart(multiplier=3)
+    z = chainer.rejoin()
+    assert z == 9
+    assert list(q_out) == [27, 36, 39, 24]
+    q_out.renew()
+
+    chainer.join()
