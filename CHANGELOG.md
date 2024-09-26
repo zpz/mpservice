@@ -9,7 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 - Bug fix in `IterableQueue` when using a multiprocessing SimpleQueue.
+- Refinements and enhancements to `IterableQueue`.
 - `mpservice.mpserver.Server.stream` gets a new parameter `preprocess`.
+- New classes `ProcessRunner` and `ProcessRunnee` in `mpservice._streamer`.
 
 
 ## [0.15.8] - 2024-0921
