@@ -8,7 +8,7 @@ from time import perf_counter, sleep
 import pytest
 
 import mpservice
-from mpservice._streamer import AsyncIter, ProcessRunner, ProcessRunnee, SyncIter
+from mpservice._streamer import AsyncIter, ProcessRunnee, ProcessRunner, SyncIter
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
@@ -1214,4 +1214,3 @@ def test_process_runner():
         assert list(q_out) == [27, 36, 39, 24]
         q_in.renew()
         q_out.renew()
-

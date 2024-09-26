@@ -38,7 +38,6 @@ import random
 import threading
 import time
 import traceback
-import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
@@ -2389,7 +2388,7 @@ class IterableQueue(Iterator[T]):
         a consumer is designed to call `renew` after it finishes iterating the queue, allowing
         the next round of data population/consumption. Before the consumer calls `renew`,
         this object does not forbid the supplier from calling `put` to add new data elements
-        to the queue (unless the user imposes such restriction themselves), although these 
+        to the queue (unless the user imposes such restriction themselves), although these
         new data elements are not accessible via `__next__` or `__iter__` until the consumer
         has called `renew`. Suppose the supplier gets to call `put_end` before the consumer
         calls `renew`, the object is in an unexpected state. If `wait_for_renew` is `True`,
@@ -2409,8 +2408,10 @@ class IterableQueue(Iterator[T]):
             try:
                 z = self._spare_lids.get(timeout=0.01)
             except queue.Empty:
-                raise RuntimeError("`put_end` is called more than `num_suppliers` times")
-            
+                raise RuntimeError(
+                    '`put_end` is called more than `num_suppliers` times'
+                )
+
         self._applied_lids.put(z)
         self.put(None)
         # A `None` in the queue corresponds to a `None` in `self._applied_lids`.
@@ -2458,7 +2459,7 @@ class IterableQueue(Iterator[T]):
                 break
 
     def renew(self):
-        '''
+        """
         This is for special use cases where the queue needs to be "reused" for
         more than one round of iterations.
         In those use cases, typically the consumer (or consuming side if there are
@@ -2473,17 +2474,16 @@ class IterableQueue(Iterator[T]):
         state.
 
         The application needs to ensure `renew` is called only once after one round of iteration.
-        '''
+        """
         if not self._used_lids.full():
-            raise RuntimeError("the object is not in a renewable state")
+            raise RuntimeError('the object is not in a renewable state')
         z = self.get()  # take out the extra `None`
         if z is not None:
-            raise RuntimeError(f"expecting None, got {z}")
+            raise RuntimeError(f'expecting None, got {z}')
 
         for _ in range(self._num_suppliers):
             z = self._used_lids.get()
             self._spare_lids.put(z)
-            
 
 
 class ProcessRunnee(ABC):
@@ -2499,7 +2499,7 @@ class ProcessRunnee(ABC):
 
 
 class ProcessRunner:
-    '''
+    """
     `ProcessRunner` creates a custom object (of a subclass of `ProcessRunnee`)
     in "background" process, and calls the object's `__call__` method as needed,
     any number of times, while keeping the background process alive until `join` is called.
@@ -2518,7 +2518,8 @@ class ProcessRunner:
       If either is possible, the class `ProcessRunner` is not that needed.
 
     In some use cases, `ProcessRunner`, along with `IterableQueue` and its method `renew`, are useful in stream processing.
-    '''
+    """
+
     def __init__(
         self,
         *,
@@ -2579,11 +2580,10 @@ class ProcessRunner:
     def __enter__(self):
         self.start()
         return self
-    
+
     def __exit__(self, *args):
         self.join()
 
     def __call__(self, *args, **kwargs):
         self.restart(*args, **kwargs)
         return self.rejoin()
-
