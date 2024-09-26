@@ -2380,27 +2380,45 @@ class IterableQueue(Iterator[T]):
                     raise StopRequested
                 time.sleep(0)  # force a context switch
 
-    def put_end(self) -> None:
+    def put_end(self, *, wait_for_renew: bool = False) -> None:
         """
         Each "supplier" must call this method exactly once, after it is done putting
         data in the queue. Do not use `put(None)` for this purpose.
-        """
-        while True:
-            try:
-                z = self._spare_lids.get(timeout=1.0)
-                break
-            except queue.Empty:
-                warnings.warn(
-                    'Have you called `put_end` too many times? Calls to `put_end` should match `num_suppliers`.'
-                )
-                if self._to_stop is not None and self._to_stop.is_set():
-                    raise StopRequested
 
+        Suppose in a certain use case a queue is populated by a supplier, which has called `put_end`;
+        a consumer is designed to call `renew` after it finishes iterating the queue, allowing
+        the next round of data population/consumption. Before the consumer calls `renew`,
+        this object does not forbid the supplier from calling `put` to add new data elements
+        to the queue (unless the user imposes such restriction themselves), although these 
+        new data elements are not accessible via `__next__` or `__iter__` until the consumer
+        has called `renew`. Suppose the supplier gets to call `put_end` before the consumer
+        calls `renew`, the object is in an unexpected state. If `wait_for_renew` is `True`,
+        this situation is allowed, and `put_end` will wait to go through once `renew` is called.
+        If `wait_for_renew` is `False` (the default), exception is raised in this situation.
+        """
+        # TODO: add an overall `timeout`?
+        if wait_for_renew:
+            while True:
+                try:
+                    z = self._spare_lids.get(timeout=self._wait_interval)
+                    break
+                except queue.Empty:
+                    if self._to_stop is not None and self._to_stop.is_set():
+                        raise StopRequested
+        else:
+            try:
+                z = self._spare_lids.get(timeout=0.01)
+            except queue.Empty:
+                raise RuntimeError("`put_end` is called more than `num_suppliers` times")
+            
         self._applied_lids.put(z)
         self.put(None)
         # A `None` in the queue corresponds to a `None` in `self._applied_lids`.
 
     def __next__(self) -> T:
+        if self._used_lids.full():
+            raise StopIteration
+
         z = self.get()
         if z is None:
             if self._used_lids.full():
@@ -2440,26 +2458,35 @@ class IterableQueue(Iterator[T]):
                 break
 
     def renew(self):
-        # This is for special use cases where the queue needs to be "reused" for
-        # more than one round of iterations.
-        # In those use cases, typically the consumer (or consuming side if there are
-        # more than one consumers) calls `renew` exactly once upon finishing iteration
-        # over the content of the queue. The suppliers can put more data into the queue
-        # and call `put_end` as usual once done; the consumer then iterates over the queue
-        # as if there were no previous rounds.
-        assert self.get() is None  # take out the extra `None`
-        k = 0
-        while True:
-            try:
-                z = self._used_lids.get_nowait()
-            except queue.Empty:
-                break
+        '''
+        This is for special use cases where the queue needs to be "reused" for
+        more than one round of iterations.
+        In those use cases, typically the consumer (or consuming side if there are
+        more than one consumers) calls `renew` exactly once upon finishing iteration
+        over the content of the queue. The suppliers can put more data into the queue
+        and call `put_end` as usual once done; the consumer then iterates over the queue
+        as if there were no previous rounds.
+
+        This method can only be called after one round of consumption (by iteration) is complete.
+        It can not be called at the beginning when no data has been placed in the queue,
+        because the implementation does not provide a way to tell the object is in such "brand new"
+        state.
+
+        The application needs to ensure `renew` is called only once after one round of iteration.
+        '''
+        if not self._used_lids.full():
+            raise RuntimeError("the object is not in a renewable state")
+        z = self.get()  # take out the extra `None`
+        if z is not None:
+            raise RuntimeError(f"expecting None, got {z}")
+
+        for _ in range(self._num_suppliers):
+            z = self._used_lids.get()
             self._spare_lids.put(z)
-            k += 1
-        assert k == self._num_suppliers, f'{k} == {self._num_suppliers}'
+            
 
 
-class CyclicProcessWorker(ABC):
+class ProcessRunnee(ABC):
     def __enter__(self):
         return self
 
@@ -2467,29 +2494,43 @@ class CyclicProcessWorker(ABC):
         pass
 
     @abstractmethod
-    def __call__(self, in_queue: IterableQueue, /, **kwargs) -> Any:
-        # This function should iterate over `in_queue` and do things with its data elements.
-        # If you need an outgoing queue (as well as anything else), you can take that as
-        # a `__init__` parameter and provide it via `CyclicProcess.__init__`.
+    def __call__(self, *args, **kwargs) -> Any:
         raise NotImplementedError
 
 
-class CyclicProcess:
+class ProcessRunner:
+    '''
+    `ProcessRunner` creates a custom object (of a subclass of `ProcessRunnee`)
+    in "background" process, and calls the object's `__call__` method as needed,
+    any number of times, while keeping the background process alive until `join` is called.
+
+    Some initial motivations for this class include:
+
+    - The custom object may perform nontrivial setup once, and keep the setup in effect
+      through the object's lifetime.
+
+    - User may pass certain data to the custom object's `__init__` via `ProcessRunner.__init__`.
+      A particular use case is to pass in a `mpservice.multiprocessing.Queue` or `mpservice.streamer.IterableQueue`,
+      because these objects can't be passed to the custom object via `ProcessRunner.restart`.
+
+      Note that a `mpservice.multiprocessing.Queue` can't be contained in another `mpservice.multiprocessing.Queue`,
+      nor can it be passed to a `mpservice.multiprocessing.Manager` in a call to a "proxy method".
+      If either is possible, the class `ProcessRunner` is not that needed.
+
+    In some use cases, `ProcessRunner`, along with `IterableQueue` and its method `renew`, are useful in stream processing.
+    '''
     def __init__(
         self,
-        in_queue: IterableQueue,
         *,
-        target: type[CyclicProcessWorker],
+        target: type[ProcessRunnee],
         args=None,
         kwargs=None,
         name=None,
     ):
-        self._in_queue = in_queue
-        self._instructions = mpservice.multiprocessing.Queue(maxsize=1)
+        self._instructions = mpservice.multiprocessing.Queue()
         self._result = mpservice.multiprocessing.Queue(maxsize=1)
         self._process = mpservice.multiprocessing.Process(
             target=self._work,
-            args=(in_queue,),
             kwargs={
                 'instructions': self._instructions,
                 'result': self._result,
@@ -2502,25 +2543,21 @@ class CyclicProcess:
 
     @staticmethod
     def _work(
-        in_queue,
-        *,
         instructions,
         result,
-        worker_cls: type[CyclicProcessWorker],
+        worker_cls: type[ProcessRunnee],
         args,
         kwargs,
     ):
-        worker = worker_cls(*args, **kwargs)
-        with worker:
+        with worker_cls(*args, **kwargs) as worker:
             while True:
                 zz = instructions.get()
                 if zz is None:
                     break
                 try:
-                    z = worker(in_queue, *zz[0], **zz[1])
+                    z = worker(*zz[0], **zz[1])
                 except Exception as e:
                     z = mpservice.multiprocessing.remote_exception(e)
-                in_queue.renew()
                 result.put(z)
 
     def start(self):
@@ -2538,3 +2575,15 @@ class CyclicProcess:
         if isinstance(z, Exception):
             raise z
         return z
+
+    def __enter__(self):
+        self.start()
+        return self
+    
+    def __exit__(self, *args):
+        self.join()
+
+    def __call__(self, *args, **kwargs):
+        self.restart(*args, **kwargs)
+        return self.rejoin()
+
