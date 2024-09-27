@@ -64,6 +64,8 @@ from .synchronize import (
     RLock,
     Semaphore,
 )
+from . import remote_exception, server_process
+
 
 Process = SpawnProcess
 # ``SpawnProcess`` can be imported and used, but ``Process`` is preferred.

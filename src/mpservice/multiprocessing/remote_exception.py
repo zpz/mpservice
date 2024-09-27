@@ -307,7 +307,7 @@ import traceback
 from types import TracebackType
 from typing import Optional
 
-__call__ = [
+__all__ = [
     'RemoteException',
     'get_remote_traceback',
     'is_remote_exception',
