@@ -2238,12 +2238,12 @@ class IterableQueue(Iterator[T]):
         """
         `num_suppliers`: number of parties that will supply data elements to the queue by calling :meth:`put`.
             The parties are typically in different threads or processes.
-            Each supplier should call :meth:`put_end` exactly once to indicate it is done supplying data.
+            Each supplier should call :meth:`put_end` exactly once to indicate it is done adding data.
         `to_stop`: this is used by other parts of the application to tell this queue to exit (because
-            some error has happened); e.g. stop waiting on `get` or `put`.
+            some error has happened elsewhere), e.g. stop waiting on `get` or `put`.
             If the queue is to be passed between processes, `to_stop` should be a
-            `multiprocessing.synchronize.Event`; otherwise, `to_stop` can be either `threading.Event`
-            or `multiprocessing.synchronize.Event` (the latter may be required because the object `to_stop`
+            `mpservice.multiprocessing.Event`; otherwise, `to_stop` can be either `threading.Event`
+            or `mpservice.multiprocessing.Event` (the latter may be required because the object `to_stop`
             needs to be passed between processes in other parts of the user application).
 
         `None` is used internally as a special indicator. It must not be a valid value in the user application.

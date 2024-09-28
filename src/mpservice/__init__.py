@@ -26,7 +26,7 @@ To install, do
    python3 -m pip install mpservice
 """
 
-__version__ = '0.15.9b4'
+__version__ = '0.15.9'
 
 
 from . import (
