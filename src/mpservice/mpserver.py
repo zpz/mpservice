@@ -528,7 +528,8 @@ class Worker(ABC):
     def _start_batch(self, *, q_in, q_out):
         def print_batching_info():
             logger.info(
-                '%d batches with sizes %d--%d, mean %.1f',
+                '%s: %d batches with sizes %d--%d, mean %.1f',
+                self.name,
                 n_batches,
                 batch_size_min,
                 batch_size_max,
