@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.0] - in progress
+
+- `IterableQueue.put` gets keyword arg `timeout`.
+- `IterableQueue.get` becomes `_get`.
+
+
 ## [0.15.9] - 20204-09-28
 
 

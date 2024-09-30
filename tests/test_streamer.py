@@ -1118,6 +1118,16 @@ def test_iterable_queue_basic():
 
     assert z == [1, 2, 3, 4, 5]
 
+    q = IterableQueue(mpservice.multiprocessing.Queue(maxsize=3))
+    q.put(1, timeout=3)
+    q.put(2, timeout=3)
+    q.put(3, timeout=3)
+    t0 = perf_counter()
+    with pytest.raises(queue.Full):
+        q.put(4, timeout=3)
+    t1 = perf_counter()
+    assert (t1 - t0) > 2.9
+
 
 def _produce(qin, qout):
     while True:
