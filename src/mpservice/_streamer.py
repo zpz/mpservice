@@ -57,8 +57,6 @@ import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from . import multiprocessing
-from .threading import Thread
-from .multiprocessing import remote_exception
 from ._common import StopRequested
 from ._queues import SingleLane
 from .concurrent.futures import (
@@ -67,6 +65,8 @@ from .concurrent.futures import (
     get_shared_process_pool,
     get_shared_thread_pool,
 )
+from .multiprocessing import remote_exception
+from .threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -1170,9 +1170,7 @@ class Buffer(Iterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(
-            target=self._run_worker, name='Buffer-worker-thread'
-        )
+        self._worker = Thread(target=self._run_worker, name='Buffer-worker-thread')
         self._worker.start()
 
     def _run_worker(self):
@@ -1239,9 +1237,7 @@ class AsyncBuffer(AsyncIterable):
     def _start(self):
         self._stopped = threading.Event()
         self._tasks = SingleLane(self.maxsize)
-        self._worker = Thread(
-            target=self._run_worker, name='AsyncBuffer-worker-thread'
-        )
+        self._worker = Thread(target=self._run_worker, name='AsyncBuffer-worker-thread')
         self._worker.start()
 
     def _run_worker(self):
@@ -2342,7 +2338,9 @@ class IterableQueue(Iterator[T]):
         """
         if not self._can_timeout:
             if timeout is not None:
-                raise ValueError(f"`timeout` is not supported for the type of queue used in this object: {type(self._q).__name__}")
+                raise ValueError(
+                    f'`timeout` is not supported for the type of queue used in this object: {type(self._q).__name__}'
+                )
             self._q.put(x)
             return
 
