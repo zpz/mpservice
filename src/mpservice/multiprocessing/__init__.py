@@ -13,7 +13,7 @@ The :class:`mpservice.multiprocessing.SpawnContext` customizes the standard coun
 Second, in well structured code, a **spawned** process will not get the logging configurations that have been set
 in the main process. On the other hand, we should definitely not separately configure logging in
 child processes. The class :class:`mpservice.multiprocessing.SpawnProcess` addresses this issue by
-sending log messages if child processes to the main process for handling, all transparently.
+sending log messages of child processes to the main process for handling, all transparently.
 
 Third, one convenience of `concurrent.futures`_ compared to `multiprocessing`_ is that the former
 makes it easy to get the results or exceptions of the child process via the object returned from job submission.

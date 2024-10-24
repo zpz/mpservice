@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `IterableQueue.get` becomes `_get`.
 
 
-## [0.15.9] - 20204-09-28
+## [0.15.9] - 2024-09-28
 
 
 - Bug fix in `IterableQueue` when using a multiprocessing SimpleQueue.
