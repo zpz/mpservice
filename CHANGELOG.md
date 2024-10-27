@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `IterableQueue.get` becomes `_get`.
 - New functions `mpservice.streamer.{fifo_stream, async_fifo_stream}`.
 - Simplified implementations of classes `mpservice._streamer.*Parmapper*` and methods `mpservice.mpserver.{Server, AsyncServer}.stream` using these functions.
-- `mpservice.streamer.Stream.parmapper` parameter `num_workers` was renamed `concurrency` because the latter sounds more correct in async contexts.
+- `mpservice.streamer.Stream.parmapper` parameter `num_workers` was renamed `concurrency` because the meaning of the latter is more correct in async contexts.
 - `mpservice.mpserver.Server.stream` and `mpservice.mpserver.AsyncServer.stream` lost parameter `to_stop`.
 
 
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Bug fix in `IterableQueue` when using a multiprocessing SimpleQueue.
 - Refinements and enhancements to `IterableQueue`.
-- `mpservice.mpserver.Server.stream` gets a new parameter `preprocess`.
+- `mpservice.mpserver.{Server, AsyncServer}.stream` gets a new parameter `preprocess`.
 - New classes `ProcessRunner` and `ProcessRunnee` in `mpservice._streamer`.
 
 
