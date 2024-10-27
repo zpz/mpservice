@@ -16,6 +16,7 @@ from mpservice.streamer import (
     IterableQueue,
     Stream,
     fifo_stream,
+    fifo_astream,
     tee,
 )
 
@@ -801,10 +802,35 @@ def test_fifo_stream():
         results = fifo_stream(
             data,
             functools.partial(executor.submit, delayed_double),
-            buffer_size=30,
+            capacity=30,
         )
         results = list(results)
         assert results == [_ * 2 for _ in data]
+
+
+@pytest.mark.asyncio
+async def test_fifo_astream():
+    async def delayed_double(x):
+        await asyncio.sleep(random.uniform(0.01, 0.1))
+        return x * 2
+
+    async def _func(x, loop):
+        return loop.create_task(delayed_double(x))
+    
+    data = list(range(100))
+
+    async def get_data():
+        for d in data:
+            yield d
+
+    results = [y async for y in fifo_astream(
+        get_data(),
+        _func,
+        loop=asyncio.get_running_loop(),
+    )]
+
+    assert results == [_ * 2 for _ in data]
+
 
 
 def double(x):
@@ -945,7 +971,9 @@ def test_parmap_async_context():
     assert t1 - t0 < 2
 
 
-@pytest.mark.asyncio
+# This test prints some warnings.
+# It seems to be a py.test issue. See bottom of this function.
+@pytest.mark.asyncio()
 async def test_async_parmap():
     print('')
     stream = Stream(range(1000))
@@ -968,14 +996,16 @@ async def test_async_parmap():
                 yield x
 
     # Test exception in the worker function
-    stream = Stream(data1()).parmap(plus2, executor='process')
-    with pytest.raises(TypeError):
-        x = 0
-        async for y in stream:
+    stream = Stream(data1()).parmap(plus2, executor='process', return_exceptions=True)
+    x = 0
+    async for y in stream:
+        if x == 11:
+            assert isinstance(y, TypeError)
+        else:
             assert y == x + 2
-            x += 1
+        x += 1
 
-    # # Test premature quit, i.e. GeneratorExit
+    # # # Test premature quit, i.e. GeneratorExit
     stream = Stream(data1()).parmap(plus2, executor='process')
     x = 0
     # async for y in stream:
@@ -987,7 +1017,8 @@ async def test_async_parmap():
             break
 
     # # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
-    # await ss.aclose()
+    # The follow no longer makes it clean.
+    await ss.aclose()
 
 
 @pytest.mark.asyncio
@@ -1240,3 +1271,7 @@ def test_process_runner():
         assert list(q_out) == [27, 36, 39, 24]
         q_in.renew()
         q_out.renew()
+
+
+if __name__ == '__main__':
+    asyncio.run(test_async_parmap())

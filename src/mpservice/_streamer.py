@@ -1381,7 +1381,7 @@ def fifo_stream(
     func: Callable[Concatenate[T, ...], concurrent.futures.Future],
     *,
     name: str = 'fifo-stream',
-    buffer_size: int = 32,
+    capacity: int = 32,
     return_x: bool = False,
     return_exceptions: bool = False,
     **kwargs,
@@ -1396,11 +1396,13 @@ def fifo_stream(
     ``func`` takes the data element of ``instream`` as the first positional argument, plus optional
     keyword args passed in via ``kwargs``.
 
-    ``buffer_size`` is the max number of concurrent calls at any moment.
-    If ``func`` uses a ``ThreadPoolExecutor`` or ``ProcessPoolExecutor``, this buffer size does not need
+    ``capacity`` is the max number of elements that have fetched from ``instream`` but have not been
+    yielded out with results yet. This number may be larger than the max number of concurrent executions
+    of (the function behind) ``func``.
+    If ``func`` uses a ``ThreadPoolExecutor`` or ``ProcessPoolExecutor``, this capacity does not need
     to be much larger than the pool size.
 
-    Although ``buffer_size`` has a default value, user is recommended
+    Although ``capacity`` has a default value, user is recommended
     to specify a value that is appropriate for their particular use case.
     """
 
@@ -1418,7 +1420,7 @@ def fifo_stream(
         else:
             q.put(None)
 
-    tasks = SingleLane(buffer_size + 1)
+    tasks = SingleLane(capacity + 1)
     to_stop = threading.Event()
     feeder = Thread(
         target=feed,
@@ -1471,10 +1473,10 @@ def fifo_stream(
 
 async def fifo_astream(
     instream: AsyncIterable[T],
-    func: Callable[Concatenate[T, ...], Awaitable[TT]],
+    func: Callable[Concatenate[T, ...], Awaitable[asyncio.Future]],
     *,
     name: str = 'fifo-astream-worker',
-    buffer_size: int = 128,
+    capacity: int = 128,
     return_x: bool = False,
     return_exceptions: bool = False,
     **kwargs,
@@ -1484,12 +1486,11 @@ async def fifo_astream(
     """
 
     async def feed(instream, func, *, to_stop, tasks, **func_kwargs):
-        loop = asyncio.get_running_loop()
         try:
             async for x in instream:
                 if to_stop.is_set():
                     break
-                t = loop.create_task(func(x, **func_kwargs))
+                t = await func(x, **func_kwargs)
                 await tasks.put((x, t))
                 # The size of the queue `tasks` regulates how many
                 # concurrent calls to `func` there can be.
@@ -1499,7 +1500,7 @@ async def fifo_astream(
             await tasks.put(None)
 
     to_stop = asyncio.Event()
-    tasks = asyncio.Queue(buffer_size + 1)
+    tasks = asyncio.Queue(capacity + 1)
     feeder = asyncio.create_task(
         feed(instream, func, to_stop=to_stop, tasks=tasks, **kwargs), name=name
     )
@@ -1630,7 +1631,7 @@ class Parmapper(Iterable):
                 self._instream,
                 _work,
                 name=self._name,
-                buffer_size=self._concurrency * 2,
+                capacity=self._concurrency * 2,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
                 **self._func_kwargs,
@@ -1689,13 +1690,14 @@ class AsyncParmapper(AsyncIterable):
 
             async def func(x, *, executor, loop, **kwargs):
                 fut = executor.submit(self._func, x, **kwargs)
-                return await loop.run_in_executor(None, fut.result)
+                return loop.run_in_executor(None, fut.result)
 
             loop = asyncio.get_running_loop()
+
             async for z in fifo_astream(
                 self._instream,
                 func,
-                buffer_size=self._concurrency * 2,
+                capacity=self._concurrency * 2,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
                 executor=executor,
@@ -1756,8 +1758,8 @@ class ParmapperAsync(Iterable):
         self._async_context = async_context or {}
 
     def __iter__(self):
-        def _do_async(to_stop, q):
-            async def main(loop, to_stop):
+        def _do_async(to_stop, loop):
+            async def main(to_stop):
                 async with contextlib.AsyncExitStack() as stack:
                     for cm in self._async_context.values():
                         await stack.enter_async_context(cm)
@@ -1766,19 +1768,16 @@ class ParmapperAsync(Iterable):
                             break
                         await asyncio.sleep(1)
 
-            loop = asyncio.new_event_loop()
-            q.put(loop)
-            loop.run_until_complete(main(loop, to_stop))
+            loop.run_until_complete(main(to_stop))
 
-        q = queue.Queue()
+        loop = asyncio.new_event_loop()
         to_stop = threading.Event()
         worker = Thread(
             target=_do_async,
-            args=(to_stop, q),
+            args=(to_stop, loop),
             name=self._name,
         )
         worker.start()
-        loop = q.get()
 
         def func(x, **kwargs):
             return asyncio.run_coroutine_threadsafe(
@@ -1790,7 +1789,7 @@ class ParmapperAsync(Iterable):
             yield from fifo_stream(
                 self._instream,
                 func,
-                buffer_size=self._concurrency * 2,
+                capacity=self._concurrency * 2,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
                 **self._func_kwargs,
@@ -1823,13 +1822,17 @@ class AsyncParmapperAsync(AsyncIterable):
         self._name = parmapper_name
 
     def __aiter__(self):
+        async def func(x, loop, **kwargs):
+            return loop.create_task(self._func(x, **kwargs))
+
         return fifo_astream(
             self._instream,
-            self._func,
+            func,
             name=self._name,
-            buffer_size=self._concurrency * 2,
+            capacity=self._concurrency * 2,
             return_x=self._return_x,
             return_exceptions=self._return_exceptions,
+            loop=asyncio.get_running_loop(),
             **self._func_kwargs,
         )
 

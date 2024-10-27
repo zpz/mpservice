@@ -44,6 +44,7 @@ from .multiprocessing import MP_SPAWN_CTX, Event
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
+from ._streamer import fifo_stream, fifo_astream
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -434,7 +435,7 @@ class Worker(ABC):
                 xx,
                 self.call,
                 executor='thread',
-                num_workers=self.num_stream_threads,
+                concurrency=self.num_stream_threads,
                 return_exceptions=True,
                 parmapper_name=f'{self.__class__.__name__}.stream',
             )
@@ -1864,7 +1865,6 @@ class Server:
         return_exceptions: bool = False,
         timeout: int | float = 3600,
         preprocess: Callable = None,
-        to_stop: threading.Event | Event = None,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1926,92 +1926,29 @@ class Server:
             element may have gone through pickling (in the case of `ProcessServlet`).
         """
 
-        def _enqueue(tasks, stopped, timeout, preprocess, extern_stopped):
-            # Putting input data in the queue does not need concurrency.
-            # The speed of sequential push is as fast as it can go.
-            _enq = self._enqueue
+        def _func(x, timeout, preprocess):
+            if preprocess is None:
+                return self._enqueue(x, timeout, False)
             try:
-                for x in data_stream:
-                    if stopped.is_set():
-                        break
-                        # If user prematurally aborts the stream, then it could end up
-                        # waiting for a while to exit, because `_enq` may wait up to
-                        # `timeout`.
-                    if extern_stopped is not None and extern_stopped.is_set():
-                        break
-                    if preprocess is None:
-                        fut = _enq(x, timeout, False)
-                    else:
-                        try:
-                            xx = preprocess(x)
-                        except Exception as e:
-                            fut = concurrent.futures.Future()
-                            fut.set_exception(e)
-                        else:
-                            fut = _enq(xx, timeout, False)
-                    tasks.put((x, fut))
-                # Exceptions in `fut` is covered by `return_exceptions`.
-                # Uncaught exceptions will propagate and cause the thread to exit in
-                # exception state. This exception is not covered by `return_exceptions`;
-                # it will be detected in the main thread.
+                xx = preprocess(x)
             except Exception as e:
-                tasks.put(e)
+                fut = concurrent.futures.Future()
+                fut.set_exception(e)
             else:
-                tasks.put(None)
+                fut = self._enqueue(xx, timeout, False)
+            return fut
 
-        tasks = queue.Queue(max(1, self.capacity - 2))
-        stopped = threading.Event()
-        extern_stopped = to_stop
-        worker = Thread(
-            target=_enqueue,
-            args=(tasks, stopped, timeout, preprocess, extern_stopped),
-            name=f'{self.__class__.__name__}.stream._enqueue',
+        return fifo_stream(
+            data_stream,
+            _func,
+            name=f'{self.__class__.__name__}.worker_thread',
+            return_x=return_x,
+            return_exceptions=return_exceptions,
+            capacity=self.capacity,
+            timeout=timeout,
+            preprocess=preprocess,
         )
-        worker.start()
 
-        _wait = self._wait_for_result
-
-        try:
-            while True:
-                z = tasks.get()
-                if z is None:
-                    break
-                try:
-                    x, fut = z
-                except TypeError:
-                    raise z
-
-                try:
-                    y = _wait(fut)
-                    # May raise TimeoutError or an exception out of RemoteException.
-                except Exception as e:
-                    if return_exceptions:
-                        if return_x:
-                            yield x, e
-                        else:
-                            yield e
-                    else:
-                        raise
-                else:
-                    if return_x:
-                        yield x, y
-                    else:
-                        yield y
-        finally:
-            stopped.set()
-            while True:
-                while not tasks.empty():
-                    v = tasks.get()
-                    if v is None:
-                        break
-                    try:
-                        _, fut = v
-                    except TypeError:
-                        break
-                    fut.cancel()
-                worker.join(timeout=0.1)
-                if not worker.is_alive():
-                    break
 
 
 class AsyncServer:
@@ -2223,83 +2160,29 @@ class AsyncServer:
         .. seealso:: :meth:`Server.stream`
         """
 
-        async def _enqueue(tasks, timeout, preprocess):
-            # Putting input data in the queue does not need concurrency.
-            # The speed of sequential push is as fast as it can go.
-            _enq = self._enqueue
+        async def _func(x, preprocess, timeout):
+            if preprocess is None:
+                return await self._enqueue(x, timeout, backpressure=False)
             try:
-                async for x in data_stream:
-                    if preprocess is None:
-                        fut = await _enq(x, timeout, backpressure=False)
-                    else:
-                        try:
-                            xx = preprocess(x)
-                        except Exception as e:
-                            fut = asyncio.Future()
-                            fut.set_exception(e)
-                        else:
-                            fut = await _enq(xx, timeout, backpressure=False)
-                    await tasks.put((x, fut))
-                # Exceptions in `fut` is covered by `return_exceptions`.
-                # Uncaught exceptions will propagate and cause the thread to exit in
-                # exception state. This exception is not covered by `return_exceptions`;
-                # it will be detected in the main thread.
-            except asyncio.CancelledError:
-                await tasks.put(None)
-                raise
+                xx = preprocess(x)
             except Exception as e:
-                await tasks.put(e)
+                fut = asyncio.Future()
+                fut.set_exception(e)
             else:
-                await tasks.put(None)
+                fut = await self._enqueue(xx, timeout, backpressure=False)
+            return fut
+        
+        async for z in fifo_astream(
+            data_stream,
+            _func,
+            capacity=self._capacity,
+            preprocess=preprocess,
+            timeout=timeout,
+            return_x=return_x,
+            return_exceptions=return_exceptions,
+        ):
+            yield z
 
-        tasks = asyncio.Queue(max(1, self.capacity - 2))
-        t_enqueue = asyncio.create_task(
-            _enqueue(tasks, timeout, preprocess),
-            name=f'{self.__class__.__name__}.async_stream._enqueue',
-        )
-
-        _wait = self._wait_for_result
-
-        try:
-            while True:
-                z = await tasks.get()
-                if z is None:
-                    break
-                try:
-                    x, fut = z
-                except TypeError:
-                    raise z
-                try:
-                    y = await _wait(fut)
-                    # May raise TimeoutError or an exception out of RemoteException.
-                except Exception as e:
-                    if return_exceptions:
-                        if return_x:
-                            yield x, e
-                        else:
-                            yield e
-                    else:
-                        raise
-                else:
-                    if return_x:
-                        yield x, y
-                    else:
-                        yield y
-        finally:
-            t_enqueue.cancel()
-            while True:
-                while not tasks.empty():
-                    v = tasks.get_nowait()
-                    if v is None:
-                        break
-                    try:
-                        x, fut = v
-                    except TypeError:
-                        break
-                    fut.cancel()
-                if t_enqueue.done():
-                    break
-                await asyncio.sleep(0.1)
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:
