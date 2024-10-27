@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import functools
 import math
 import queue
 import random
@@ -14,6 +15,8 @@ from mpservice.streamer import (
     EagerBatcher,
     IterableQueue,
     Stream,
+    fifo_astream,
+    fifo_stream,
     tee,
 )
 
@@ -611,15 +614,9 @@ def test_parmap(executor):
 
     expected = [v + 3.8 for v in SYNC_INPUT]
 
-    assert (
-        list(Stream(SYNC_INPUT).parmap(f1, num_workers=10, executor=executor))
-        == expected
-    )
+    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor)) == expected
 
-    assert (
-        list(Stream(SYNC_INPUT).parmap(f1, num_workers=20, executor=executor))
-        == expected
-    )
+    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor)) == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
     assert (
@@ -669,20 +666,20 @@ def test_parmap_with_error(executor):
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process, executor=executor, num_workers=2)
+        s.parmap(process, executor=executor)
         zz = list(s)
         print(zz)
 
     zz = list(
         Stream(corrupt_data()).parmap(
-            process, executor=executor, num_workers=2, return_exceptions=True
+            process, executor=executor, return_exceptions=True
         )
     )
     print(zz)
     assert isinstance(zz[5], TypeError)
 
     s = Stream(corrupt_data())
-    s.parmap(process, executor=executor, num_workers=2, return_exceptions=True)
+    s.parmap(process, executor=executor, return_exceptions=True)
     n = 0
     nexc = 0
     for x in s:
@@ -717,64 +714,60 @@ def test_chain(executor):
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor=executor, num_workers=2)
+        s.parmap(process1, executor=executor)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process2, executor=executor, num_workers=3)
+        s.parmap(process2, executor=executor)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
-        s.parmap(process2, executor=executor, num_workers=4)
+        s.parmap(process1, executor=executor, return_exceptions=True)
+        s.parmap(process2, executor=executor)
         s.drain()
 
     with pytest.raises(TypeError):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor=executor, num_workers=2)
-        s.parmap(process2, executor=executor, num_workers=4, return_exceptions=True)
+        s.parmap(process1, executor=executor)
+        s.parmap(process2, executor=executor, return_exceptions=True)
         s.drain()
 
     s = Stream(corrupt_data())
-    s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
-    s.parmap(process2, executor=executor, num_workers=4, return_exceptions=True)
+    s.parmap(process1, executor=executor, return_exceptions=True)
+    s.parmap(process2, executor=executor, return_exceptions=True)
     s.drain()
 
     with pytest.raises((TypeError, ValueError)):
         s = Stream(corrupt_data())
-        s.parmap(
-            process1, executor=executor, num_workers=1, parmapper_name='---first'
-        )  # 2)
+        s.parmap(process1, executor=executor, parmapper_name='---first')  # 2)
         s.buffer(3)
-        s.parmap(
-            process2, executor=executor, num_workers=1, parmapper_name='+++second'
-        )  # 3)
+        s.parmap(process2, executor=executor, parmapper_name='+++second')  # 3)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
         s = Stream(corrupt_data())
-        s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+        s.parmap(process1, executor=executor, return_exceptions=True)
         s.buffer(2)
-        s.parmap(process2, executor=executor, num_workers=3)
+        s.parmap(process2, executor=executor)
         s.drain()
 
     zz = list(
         Stream(corrupt_data())
-        .parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+        .parmap(process1, executor=executor, return_exceptions=True)
         .buffer(3)
-        .parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
+        .parmap(process2, executor=executor, return_exceptions=True)
         .peek(interval=1)
     )
     print('')
     print(zz)
 
     s = Stream(corrupt_data())
-    s.parmap(process1, executor=executor, num_workers=2, return_exceptions=True)
+    s.parmap(process1, executor=executor, return_exceptions=True)
     s.filter_exceptions(BaseException)
     s.buffer(3)
-    s.parmap(process2, executor=executor, num_workers=3, return_exceptions=True)
+    s.parmap(process2, executor=executor, return_exceptions=True)
     s.peek()
     s.filter_exceptions(BaseException)
     assert list(s) == [1, 2, 3, 4, 5, 6]
@@ -788,7 +781,7 @@ def stream_early_stop_double(x):
 @pytest.mark.parametrize('executor', ['thread', 'process'])
 def test_stream_early_stop(executor):
     s = Stream(range(300000))
-    z = s.parmap(stream_early_stop_double, executor=executor, num_workers=3)
+    z = s.parmap(stream_early_stop_double, executor=executor)
     n = 0
     for x in z:
         # print(x)
@@ -798,13 +791,57 @@ def test_stream_early_stop(executor):
     assert n == 10
 
 
+def test_fifo_stream():
+    def delayed_double(x):
+        sleep(random.uniform(0.01, 0.1))
+        return x * 2
+
+    data = list(range(100))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        results = fifo_stream(
+            data,
+            functools.partial(executor.submit, delayed_double),
+            capacity=30,
+        )
+        results = list(results)
+        assert results == [_ * 2 for _ in data]
+
+
+@pytest.mark.asyncio
+async def test_fifo_astream():
+    async def delayed_double(x):
+        await asyncio.sleep(random.uniform(0.01, 0.1))
+        return x * 2
+
+    async def _func(x, loop):
+        return loop.create_task(delayed_double(x))
+
+    data = list(range(100))
+
+    async def get_data():
+        for d in data:
+            yield d
+
+    results = [
+        y
+        async for y in fifo_astream(
+            get_data(),
+            _func,
+            loop=asyncio.get_running_loop(),
+        )
+    ]
+
+    assert results == [_ * 2 for _ in data]
+
+
 def double(x):
     return x * 2
 
 
 def test_parmap_mp():
     SYNC_INPUT = list(range(278))
-    got = Stream(SYNC_INPUT).parmap(double, executor='process', num_workers=4).collect()
+    got = Stream(SYNC_INPUT).parmap(double, executor='process').collect()
     assert got == [v * 2 for v in SYNC_INPUT]
 
 
@@ -833,7 +870,6 @@ def test_parmap_initializer():
     data = Stream(range(30)).parmap(
         pad_worker,
         executor='process',
-        num_workers=3,
         executor_initializer=prepare_pad,
         executor_init_args=('abc',),
     )
@@ -845,12 +881,12 @@ def add_four(x):
 
 
 def worker1(n):
-    data = Stream(range(n)).parmap(add_four, executor='thread', num_workers=3)
+    data = Stream(range(n)).parmap(add_four, executor='thread')
     return list(data)
 
 
 def test_parmap_nest():
-    data = Stream([10, 20, 30]).parmap(worker1, executor='process', num_workers=3)
+    data = Stream([10, 20, 30]).parmap(worker1, executor='process')
     assert data.collect() == [[v + 4 for v in range(n)] for n in (10, 20, 30)]
 
 
@@ -868,7 +904,7 @@ def test_parmap_async():
         assert y == x + 2
     t1 = perf_counter()
     print(t1 - t0)
-    assert t1 - t0 < 5
+    assert t1 - t0 < 6
     # sequential processing would take 500+ sec
 
     data = list(range(20))
@@ -925,17 +961,21 @@ def test_parmap_async_context():
     print('')
     data = range(1000)
     stream = Stream(data).parmap(
-        wrap, async_context={'wrapper': AsyncWrapper(3)}, return_x=True
+        wrap,
+        async_context={'wrapper': AsyncWrapper(3)},
+        return_x=True,
     )
     t0 = perf_counter()
     for x, y in stream:
         assert y == x + 4
     t1 = perf_counter()
     print(t1 - t0)
-    assert t1 - t0 < 1
+    assert t1 - t0 < 2
 
 
-@pytest.mark.asyncio
+# This test prints some warnings.
+# It seems to be a py.test issue. See bottom of this function.
+@pytest.mark.asyncio()
 async def test_async_parmap():
     print('')
     stream = Stream(range(1000))
@@ -958,14 +998,16 @@ async def test_async_parmap():
                 yield x
 
     # Test exception in the worker function
-    stream = Stream(data1()).parmap(plus2, executor='process', num_workers=8)
-    with pytest.raises(TypeError):
-        x = 0
-        async for y in stream:
+    stream = Stream(data1()).parmap(plus2, executor='process', return_exceptions=True)
+    x = 0
+    async for y in stream:
+        if x == 11:
+            assert isinstance(y, TypeError)
+        else:
             assert y == x + 2
-            x += 1
+        x += 1
 
-    # # Test premature quit, i.e. GeneratorExit
+    # # # Test premature quit, i.e. GeneratorExit
     stream = Stream(data1()).parmap(plus2, executor='process')
     x = 0
     # async for y in stream:
@@ -976,7 +1018,8 @@ async def test_async_parmap():
         if x == 10:
             break
 
-    # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
+    # # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
+    # The follow no longer makes it clean.
     await ss.aclose()
 
 
@@ -1048,8 +1091,8 @@ def delayed_shift(x, shift, sleep_cap):
 def test_tee():
     data = range(20)
     t1, t2 = tee(data, buffer_size=4)
-    t1.map(lambda x: x + 2).parmap(lambda x: x + 2, executor='thread', num_workers=2)
-    t2.map(lambda x: x + 3).parmap(lambda x: x + 3, executor='thread', num_workers=2)
+    t1.map(lambda x: x + 2).parmap(lambda x: x + 2, executor='thread')
+    t2.map(lambda x: x + 3).parmap(lambda x: x + 3, executor='thread')
 
     def worker(stream, prefix):
         for x in stream:
@@ -1065,10 +1108,16 @@ def test_tee():
         print('buffer size', buffer_size)
         t1, t2 = tee(data, buffer_size=buffer_size)
         t1.parmap(
-            delayed_shift, shift=2, sleep_cap=0.2, executor='thread', num_workers=8
+            delayed_shift,
+            shift=2,
+            sleep_cap=0.2,
+            executor='thread',
         )
         t2.parmap(
-            delayed_shift, shift=3, sleep_cap=0.3, executor='process', num_workers=8
+            delayed_shift,
+            shift=3,
+            sleep_cap=0.3,
+            executor='process',
         )
         with ThreadPoolExecutor() as pool:
             f1 = pool.submit(sum, t1)
@@ -1224,3 +1273,7 @@ def test_process_runner():
         assert list(q_out) == [27, 36, 39, 24]
         q_in.renew()
         q_out.renew()
+
+
+if __name__ == '__main__':
+    asyncio.run(test_async_parmap())

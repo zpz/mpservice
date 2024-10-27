@@ -162,7 +162,7 @@ def test_sequential_stream():
         ss = service.stream(data)
         assert list(ss) == [v * v for v in data]
 
-        s = Stream(data).parmap(service.call, executor='thread', num_workers=10)
+        s = Stream(data).parmap(service.call, executor='thread', concurrency=10)
         assert list(s) == [v * v for v in data]
 
 
@@ -217,7 +217,7 @@ async def test_sequential_async_stream():
     async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
-        s = Stream(data()).parmap(service.call, num_workers=50, _async=True)
+        s = Stream(data()).parmap(service.call, concurrency=50, _async=True)
         assert (await s.collect()) == [v * v for v in range(100)]
 
 
@@ -363,7 +363,7 @@ def test_ensemble_stream():
         ss = service.stream(data)
         assert list(ss) == [[v + 1, v + 7] for v in data]
 
-        s = Stream(data).parmap(service.call, executor='thread', num_workers=10)
+        s = Stream(data).parmap(service.call, executor='thread', concurrency=10)
         assert list(s) == [[v + 1, v + 7] for v in data]
 
 

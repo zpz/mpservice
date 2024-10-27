@@ -32,7 +32,7 @@ def main():
         N = 10
         data = Stream(range(N))
         t0 = time.perf_counter()
-        results = data.parmap(server.call, num_workers=256, timeout=10, executor='thread').collect()
+        results = data.parmap(server.call, concurrency=256, timeout=10, executor='thread').collect()
         t1 = time.perf_counter()
         assert results == [v * 6 for v in range(N)]
         print(t1 - t0)

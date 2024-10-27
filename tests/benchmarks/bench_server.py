@@ -31,7 +31,7 @@ def main():
         server._count_cancelled_in_backlog = False
         data = Stream(range(N))
         t0 = time.perf_counter()
-        results = data.parmap(server.async_call, num_workers=256, timeout=10).collect()
+        results = data.parmap(server.async_call, concurrency=256, timeout=10).collect()
         t1 = time.perf_counter()
         assert results == [v * 6 for v in range(N)]
         print(t1 - t0)
