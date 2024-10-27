@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `IterableQueue.put` gets keyword arg `timeout`.
 - `IterableQueue.get` becomes `_get`.
+- New functions `mpservice.streamer.{fifo_stream, fifo_astream}`.
+- Simplified implementations of `mpservice._streamer.*Parmapper*` classes.
+- `mpservice.streamer.Stream.parmapper` parameter `num_workers` was renamed `concurrency` because the latter sounds more correct in async contexts.
 
 
 ## [0.15.9] - 2024-09-28
