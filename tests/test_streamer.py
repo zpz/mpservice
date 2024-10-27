@@ -15,7 +15,7 @@ from mpservice.streamer import (
     EagerBatcher,
     IterableQueue,
     Stream,
-    fifo_astream,
+    async_fifo_stream,
     fifo_stream,
     tee,
 )
@@ -809,7 +809,7 @@ def test_fifo_stream():
 
 
 @pytest.mark.asyncio
-async def test_fifo_astream():
+async def test_async_fifo_stream():
     async def delayed_double(x):
         await asyncio.sleep(random.uniform(0.01, 0.1))
         return x * 2
@@ -825,7 +825,7 @@ async def test_fifo_astream():
 
     results = [
         y
-        async for y in fifo_astream(
+        async for y in async_fifo_stream(
             get_data(),
             _func,
             loop=asyncio.get_running_loop(),
