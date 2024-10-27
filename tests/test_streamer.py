@@ -1,10 +1,10 @@
 import asyncio
 import concurrent.futures
+import functools
 import math
 import queue
 import random
 from time import perf_counter, sleep
-import functools
 
 import pytest
 
@@ -15,8 +15,8 @@ from mpservice.streamer import (
     EagerBatcher,
     IterableQueue,
     Stream,
-    tee,
     fifo_stream,
+    tee,
 )
 
 
@@ -613,15 +613,9 @@ def test_parmap(executor):
 
     expected = [v + 3.8 for v in SYNC_INPUT]
 
-    assert (
-        list(Stream(SYNC_INPUT).parmap(f1, executor=executor))
-        == expected
-    )
+    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor)) == expected
 
-    assert (
-        list(Stream(SYNC_INPUT).parmap(f1, executor=executor))
-        == expected
-    )
+    assert list(Stream(SYNC_INPUT).parmap(f1, executor=executor)) == expected
 
     expected = [(v + 3.8) * 2 for v in SYNC_INPUT]
     assert (
@@ -746,13 +740,9 @@ def test_chain(executor):
 
     with pytest.raises((TypeError, ValueError)):
         s = Stream(corrupt_data())
-        s.parmap(
-            process1, executor=executor, parmapper_name='---first'
-        )  # 2)
+        s.parmap(process1, executor=executor, parmapper_name='---first')  # 2)
         s.buffer(3)
-        s.parmap(
-            process2, executor=executor, parmapper_name='+++second'
-        )  # 3)
+        s.parmap(process2, executor=executor, parmapper_name='+++second')  # 3)
         s.drain()
 
     with pytest.raises((ValueError, TypeError)):
@@ -804,7 +794,7 @@ def test_fifo_stream():
     def delayed_double(x):
         sleep(random.uniform(0.01, 0.1))
         return x * 2
-    
+
     data = list(range(100))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
@@ -943,7 +933,9 @@ def test_parmap_async_context():
     print('')
     data = range(1000)
     stream = Stream(data).parmap(
-        wrap, async_context={'wrapper': AsyncWrapper(3)}, return_x=True,
+        wrap,
+        async_context={'wrapper': AsyncWrapper(3)},
+        return_x=True,
     )
     t0 = perf_counter()
     for x, y in stream:
@@ -1083,10 +1075,16 @@ def test_tee():
         print('buffer size', buffer_size)
         t1, t2 = tee(data, buffer_size=buffer_size)
         t1.parmap(
-            delayed_shift, shift=2, sleep_cap=0.2, executor='thread',
+            delayed_shift,
+            shift=2,
+            sleep_cap=0.2,
+            executor='thread',
         )
         t2.parmap(
-            delayed_shift, shift=3, sleep_cap=0.3, executor='process',
+            delayed_shift,
+            shift=3,
+            sleep_cap=0.3,
+            executor='process',
         )
         with ThreadPoolExecutor() as pool:
             f1 = pool.submit(sum, t1)

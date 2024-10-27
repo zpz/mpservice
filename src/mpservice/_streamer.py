@@ -41,17 +41,24 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence, Callable, Awaitable
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from inspect import iscoroutinefunction
 from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
+    Concatenate,
     Generic,
     Literal,
     Optional,
     TypeVar,
-    Concatenate,
 )
 
 import asyncstdlib.itertools
@@ -63,8 +70,6 @@ from ._queues import SingleLane
 from .concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
-    get_shared_process_pool,
-    get_shared_thread_pool,
 )
 from .multiprocessing import remote_exception
 from .threading import Thread
@@ -1371,13 +1376,17 @@ class AsyncBuffer(AsyncIterable):
             self._finalize()
 
 
-def fifo_stream(instream: Iterable[T], func: Callable[Concatenate[T, ...], concurrent.futures.Future], 
-                *, 
-                name: str = 'fifo-stream',
-                buffer_size: int = 32,
-                return_x: bool = False, return_exceptions: bool = False, 
-                **kwargs) -> Iterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
-    '''
+def fifo_stream(
+    instream: Iterable[T],
+    func: Callable[Concatenate[T, ...], concurrent.futures.Future],
+    *,
+    name: str = 'fifo-stream',
+    buffer_size: int = 32,
+    return_x: bool = False,
+    return_exceptions: bool = False,
+    **kwargs,
+) -> Iterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
+    """
     This is a helper function for preserving order of input/output elements during concurrent processing.
 
     ``func`` is a function that returns a ``concurrent.futures.Future`` object.
@@ -1389,11 +1398,12 @@ def fifo_stream(instream: Iterable[T], func: Callable[Concatenate[T, ...], concu
 
     ``buffer_size`` is the max number of concurrent calls at any moment.
     If ``func`` uses a ``ThreadPoolExecutor`` or ``ProcessPoolExecutor``, this buffer size does not need
-    to be much larger than the pool size. 
-    
+    to be much larger than the pool size.
+
     Although ``buffer_size`` has a default value, user is recommended
     to specify a value that is appropriate for their particular use case.
-    '''
+    """
+
     def feed(instream, func, *, to_stop, q, **func_kwargs):
         try:
             for x in instream:
@@ -1450,7 +1460,7 @@ def fifo_stream(instream: Iterable[T], func: Callable[Concatenate[T, ...], concu
                 break
             if isinstance(z, Exception):
                 break
-            _, t = z 
+            _, t = z
             t.cancel()
         feeder.join()
 
@@ -1460,16 +1470,19 @@ def fifo_stream(instream: Iterable[T], func: Callable[Concatenate[T, ...], concu
 
 
 async def fifo_astream(
-        instream: AsyncIterable[T], 
-        func: Callable[Concatenate[T, ...], Awaitable[TT]], 
-        *, 
-        name: str = 'fifo-astream-worker',
-        buffer_size: int = 128,
-        return_x: bool = False, return_exceptions: bool = False, 
-        **kwargs) -> AsyncIterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
-    '''
+    instream: AsyncIterable[T],
+    func: Callable[Concatenate[T, ...], Awaitable[TT]],
+    *,
+    name: str = 'fifo-astream-worker',
+    buffer_size: int = 128,
+    return_x: bool = False,
+    return_exceptions: bool = False,
+    **kwargs,
+) -> AsyncIterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
+    """
     Analogous to :func:`fifo_stream` except for using an async worker function in an async context.
-    '''
+    """
+
     async def feed(instream, func, *, to_stop, tasks, **func_kwargs):
         loop = asyncio.get_running_loop()
         try:
@@ -1487,7 +1500,9 @@ async def fifo_astream(
 
     to_stop = asyncio.Event()
     tasks = asyncio.Queue(buffer_size + 1)
-    feeder = asyncio.create_task(feed(instream, func, to_stop=to_stop, tasks=tasks, **kwargs), name=name)
+    feeder = asyncio.create_task(
+        feed(instream, func, to_stop=to_stop, tasks=tasks, **kwargs), name=name
+    )
 
     try:
         while True:
@@ -1525,7 +1540,7 @@ async def fifo_astream(
             cancelled_tasks.append(t)
         for t in cancelled_tasks:
             try:
-                await t 
+                await t
             except (asyncio.CancelledError, Exception):  # noqa: S110
                 pass
         try:
@@ -1542,7 +1557,6 @@ async def fifo_astream(
         #  https://snarky.ca/unravelling-async-for-loops/
         #  https://github.com/python/cpython/blob/3.11/Lib/asyncio/base_events.py#L539
         #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
-
 
 
 class Parmapper(Iterable):
@@ -1608,6 +1622,7 @@ class Parmapper(Iterable):
             # TODO: what about the process names?
 
         with executor:
+
             def _work(x, **kwargs):
                 return executor.submit(self._func, x, loud_exception=False, **kwargs)
 
@@ -1671,13 +1686,22 @@ class AsyncParmapper(AsyncIterable):
             # TODO: what about the process names?
 
         with executor:
+
             async def func(x, *, executor, loop, **kwargs):
                 fut = executor.submit(self._func, x, **kwargs)
                 return await loop.run_in_executor(None, fut.result)
-            
+
             loop = asyncio.get_running_loop()
-            async for z in fifo_astream(self._instream, func, buffer_size=self._concurrency * 2, return_x=self._return_x, return_exceptions=self._return_exceptions,
-                                        executor=executor, loop=loop, **self._func_kwargs):
+            async for z in fifo_astream(
+                self._instream,
+                func,
+                buffer_size=self._concurrency * 2,
+                return_x=self._return_x,
+                return_exceptions=self._return_exceptions,
+                executor=executor,
+                loop=loop,
+                **self._func_kwargs,
+            ):
                 yield z
 
 
@@ -1741,7 +1765,7 @@ class ParmapperAsync(Iterable):
                         if to_stop.is_set():
                             break
                         await asyncio.sleep(1)
-            
+
             loop = asyncio.new_event_loop()
             q.put(loop)
             loop.run_until_complete(main(loop, to_stop))
@@ -1806,7 +1830,7 @@ class AsyncParmapperAsync(AsyncIterable):
             buffer_size=self._concurrency * 2,
             return_x=self._return_x,
             return_exceptions=self._return_exceptions,
-            **self._func_kwargs
+            **self._func_kwargs,
         )
 
 
