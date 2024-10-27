@@ -39,12 +39,11 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from ._streamer import Parmapper
-from .multiprocessing import MP_SPAWN_CTX, Event
+from ._streamer import Parmapper, fifo_astream, fifo_stream
+from .multiprocessing import MP_SPAWN_CTX
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .threading import Thread as _Thread
-from ._streamer import fifo_stream, fifo_astream
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -1950,7 +1949,6 @@ class Server:
         )
 
 
-
 class AsyncServer:
     """
     An ``AsyncServer`` object must be started in an async context manager.
@@ -2171,7 +2169,7 @@ class AsyncServer:
             else:
                 fut = await self._enqueue(xx, timeout, backpressure=False)
             return fut
-        
+
         async for z in fifo_astream(
             data_stream,
             _func,
@@ -2182,7 +2180,6 @@ class AsyncServer:
             return_exceptions=return_exceptions,
         ):
             yield z
-
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:

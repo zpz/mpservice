@@ -15,8 +15,8 @@ from mpservice.streamer import (
     EagerBatcher,
     IterableQueue,
     Stream,
-    fifo_stream,
     fifo_astream,
+    fifo_stream,
     tee,
 )
 
@@ -816,21 +816,23 @@ async def test_fifo_astream():
 
     async def _func(x, loop):
         return loop.create_task(delayed_double(x))
-    
+
     data = list(range(100))
 
     async def get_data():
         for d in data:
             yield d
 
-    results = [y async for y in fifo_astream(
-        get_data(),
-        _func,
-        loop=asyncio.get_running_loop(),
-    )]
+    results = [
+        y
+        async for y in fifo_astream(
+            get_data(),
+            _func,
+            loop=asyncio.get_running_loop(),
+        )
+    ]
 
     assert results == [_ * 2 for _ in data]
-
 
 
 def double(x):
