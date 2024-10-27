@@ -39,7 +39,7 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from ._streamer import Parmapper, fifo_astream, fifo_stream
+from ._streamer import Parmapper, async_fifo_stream, fifo_stream
 from .multiprocessing import MP_SPAWN_CTX
 from .multiprocessing import Process as _Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
@@ -2170,7 +2170,7 @@ class AsyncServer:
                 fut = await self._enqueue(xx, timeout, backpressure=False)
             return fut
 
-        async for z in fifo_astream(
+        async for z in async_fifo_stream(
             data_stream,
             _func,
             capacity=self._capacity,

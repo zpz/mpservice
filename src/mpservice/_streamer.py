@@ -1380,7 +1380,7 @@ def fifo_stream(
     instream: Iterable[T],
     func: Callable[Concatenate[T, ...], concurrent.futures.Future],
     *,
-    name: str = 'fifo-stream',
+    name: str = 'fifo-stream-feeder-thread',
     capacity: int = 32,
     return_x: bool = False,
     return_exceptions: bool = False,
@@ -1471,11 +1471,11 @@ def fifo_stream(
     #   https://docs.python.org/3.6/reference/expressions.html#generator.close
 
 
-async def fifo_astream(
+async def async_fifo_stream(
     instream: AsyncIterable[T],
     func: Callable[Concatenate[T, ...], Awaitable[asyncio.Future]],
     *,
-    name: str = 'fifo-astream-worker',
+    name: str = 'async-fifo-stream-feeder-task',
     capacity: int = 128,
     return_x: bool = False,
     return_exceptions: bool = False,
@@ -1573,7 +1573,7 @@ class Parmapper(Iterable):
         return_exceptions: bool = False,
         executor_initializer=None,
         executor_init_args=(),
-        parmapper_name='parmapper-sync-sync',
+        parmapper_name='parmapper',
         **kwargs,
     ):
         """
@@ -1694,7 +1694,7 @@ class AsyncParmapper(AsyncIterable):
 
             loop = asyncio.get_running_loop()
 
-            async for z in fifo_astream(
+            async for z in async_fifo_stream(
                 self._instream,
                 func,
                 capacity=self._concurrency * 2,
@@ -1825,7 +1825,7 @@ class AsyncParmapperAsync(AsyncIterable):
         async def func(x, loop, **kwargs):
             return loop.create_task(self._func(x, **kwargs))
 
-        return fifo_astream(
+        return async_fifo_stream(
             self._instream,
             func,
             name=self._name,
