@@ -45,7 +45,7 @@ Since ``double`` is an I/O-bound operation, let's use multiple threads to speed 
 the processing of the input stream.
 For this purpose, we add a :meth:`~Stream.parmap` (or "parallel map") operator to the stream:
 
->>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+>>> data_stream.parmap(double, executor='thread', concurrency=8)  # doctest: +ELLIPSIS
 <mpservice._streamer.Stream object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
@@ -70,7 +70,7 @@ Despite the concurrency in the operation, the order of the input elements is pre
 In other words, the output elements correspond to the input elements in order.
 Let's verify:
 
->>> data_stream = Stream(range(100)).parmap(double, executor='thread', num_workers=8)
+>>> data_stream = Stream(range(100)).parmap(double, executor='thread', concurrency=8)
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP
@@ -101,7 +101,7 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 This is quick and easy; we decide do it "in-line" by :meth:`~Stream.map`:
 
 >>> data_stream = Stream(range(20))
->>> data_stream.parmap(double, executor='thread', num_workers=8)  # doctest: +ELLIPSIS
+>>> data_stream.parmap(double, executor='thread', concurrency=8)  # doctest: +ELLIPSIS
 <mpservice._streamer.Stream object at 0x7...>
 >>> data_stream.map(shift, amount=0.8)  # doctest: +SKIP
 <mpservice._streamer.Stream object at 0x7...>
@@ -115,7 +115,7 @@ This is quick and easy; we decide do it "in-line" by :meth:`~Stream.map`:
 
 The first three lines are equivalent to this one line:
 
->>> data_stream = Stream(range(20)).parmap(double, executor='thread', num_workers=8).map(shift, amount=0.8)
+>>> data_stream = Stream(range(20)).parmap(double, executor='thread', concurrency=8).map(shift, amount=0.8)
 
 Operators
 =========

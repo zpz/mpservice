@@ -107,7 +107,7 @@ Basic workflow
             with ServerProcess() as server:
                 doubler = server.Doubler()
 
-                ss = Stream(range(100)).parmap(doubler.do, executor='thread', num_workers=50)
+                ss = Stream(range(100)).parmap(doubler.do, executor='thread', concurrency=50)
                 t0 = time.perf_counter()
                 zz = list(ss)
                 t1 = time.perf_counter()
