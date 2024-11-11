@@ -19,28 +19,29 @@ from mpservice.streamer import (
     fifo_stream,
     tee,
 )
+from mpservice._streamer import AsyncStream
 
 
-async def agen(n=10):
-    for x in range(n):
-        yield x
+async def arange(n=10):
+    for k in range(n):
+        yield k
 
 
-def gen(n=10):
-    for x in range(n):
-        yield x
+async def agen(data):
+    for d in data:
+        yield d
 
 
 @pytest.mark.asyncio
 async def test_synciter():
-    for i, x in enumerate(SyncIter(agen(10))):
+    for i, x in enumerate(SyncIter(arange(10))):
         assert x == i
 
 
 @pytest.mark.asyncio
 async def test_asynciter():
     i = 0
-    async for x in AsyncIter(gen(10)):
+    async for x in AsyncIter(range(10)):
         assert x == i
         i += 1
 
@@ -62,7 +63,7 @@ def test_drain():
 
 @pytest.mark.asyncio
 async def test_async_drain():
-    assert await Stream(range(8)).to_async().drain() == 8
+    assert await AsyncStream(arange(8)).drain() == 8
 
 
 def test_collect():
@@ -71,7 +72,7 @@ def test_collect():
 
 @pytest.mark.asyncio
 async def test_async_collect():
-    assert await Stream(range(3)).to_async().collect() == [0, 1, 2]
+    assert await AsyncStream(arange(3)).collect() == [0, 1, 2]
 
 
 def test_map():
@@ -88,20 +89,17 @@ async def test_async_map():
     def inc(x, shift=1):
         return x + shift
 
-    s = Stream(range(5)).map(inc, shift=2)
-    with pytest.raises(AttributeError):
-        async for x in s:
-            print(x)
+    s = AsyncStream(arange(5)).map(inc, shift=2)
 
-    assert await s.to_async().collect() == [2, 3, 4, 5, 6]
-    assert await Stream(range(5)).to_async().map(inc, shift=2).collect() == [
+    assert await s.collect() == [2, 3, 4, 5, 6]
+    assert await AsyncStream(arange(5)).map(inc, shift=2).collect() == [
         2,
         3,
         4,
         5,
         6,
     ]
-    assert await Stream(range(5)).to_async().map(lambda x: x * 2).collect() == [
+    assert await AsyncStream(arange(5)).map(lambda x: x * 2).collect() == [
         0,
         2,
         4,
@@ -149,7 +147,7 @@ def test_filter():
 
 @pytest.mark.asyncio
 async def test_async_filter():
-    assert await Stream(range(7)).to_async().filter(
+    assert await AsyncStream(arange(7)).filter(
         lambda n: (n % 2) == 0
     ).collect() == [0, 2, 4, 6]
 
@@ -158,13 +156,13 @@ async def test_async_filter():
             return (x % 2) == 0
         return (x % 2) != 0
 
-    assert await Stream(range(7)).to_async().filter(odd_or_even).collect() == [
+    assert await AsyncStream(arange(7)).filter(odd_or_even).collect() == [
         0,
         2,
         4,
         6,
     ]
-    assert await Stream(range(7)).to_async().filter(
+    assert await AsyncStream(arange(7)).filter(
         odd_or_even, even=False
     ).collect() == [1, 3, 5]
 
@@ -180,7 +178,7 @@ async def test_async_filter():
             self._idx += 1
             return z
 
-    assert await Stream(data).to_async().filter(Tail(6)).collect() == [6, 7]
+    assert await AsyncStream(agen(data)).filter(Tail(6)).collect() == [6, 7]
 
     class Head:
         def __init__(self):
@@ -191,7 +189,7 @@ async def test_async_filter():
             self._idx += 1
             return z
 
-    assert [x async for x in Stream((2, 3, 1, 5, 4, 7)).to_async().filter(Head())] == [
+    assert [x async for x in AsyncStream(agen((2, 3, 1, 5, 4, 7))).filter(Head())] == [
         1,
         4,
     ]
@@ -244,31 +242,31 @@ async def test_async_filter_exceptions():
         4,
     ]
 
-    assert await Stream(exc).to_async().filter_exceptions(BaseException).collect() == [
+    assert await AsyncStream(agen(exc)).filter_exceptions(BaseException).collect() == [
         1,
         2,
         3,
         4,
     ]
 
-    assert await Stream(exc).to_async().filter_exceptions(
+    assert await AsyncStream(agen(exc)).filter_exceptions(
         BaseException, Exception
     ).collect() == exc[:-2] + [exc[-1]]
 
     with pytest.raises(IndexError):
         assert (
-            await Stream(exc).to_async().filter_exceptions(ValueError).collect() == exc
+            await AsyncStream(agen(exc)).filter_exceptions(ValueError).collect() == exc
         )
 
     with pytest.raises(FileNotFoundError):
-        ss = Stream(exc).to_async()
+        ss = AsyncStream(agen(exc))
         assert await ss.filter_exceptions((ValueError, IndexError)).collect() == exc
 
-    ss = Stream(exc).to_async()
+    ss = AsyncStream(agen(exc))
     with pytest.raises(KeyboardInterrupt):
         assert await ss.filter_exceptions(Exception, FileNotFoundError).collect() == exc
 
-    assert await Stream(exc).to_async().filter_exceptions(
+    assert await AsyncStream(agen(exc)).filter_exceptions(
         BaseException, FileNotFoundError
     ).collect() == [1, 2, exc[4], 3, 4]
 
@@ -305,7 +303,7 @@ async def test_async_peek():
         for x in range(10):
             yield x
 
-    s = Stream(data())
+    s = AsyncStream(data())
     n = await s.peek(interval=3).drain()
     assert n == 10
     print('')
@@ -313,12 +311,12 @@ async def test_async_peek():
     def foo(x):
         print(x)
 
-    assert await Stream(data()).peek(print_func=foo, interval=0.6).drain() == 10
+    assert await AsyncStream(data()).peek(print_func=foo, interval=0.6).drain() == 10
     print('')
 
     exc = [0, 1, 2, ValueError(100), 4]
     # `peek` does not drop exceptions
-    assert await Stream(exc).to_async().peek().drain() == len(exc)
+    assert await AsyncStream(agen(exc)).peek().drain() == len(exc)
 
 
 def test_shuffle():
@@ -337,9 +335,9 @@ async def test_async_shuffle():
             yield x
 
     print('')
-    shuffled = [v async for v in Stream(data()).shuffle(5)]
+    shuffled = [v async for v in AsyncStream(data()).shuffle(5)]
     print(shuffled)
-    shuffled = [v async for v in Stream(data()).shuffle(50)]
+    shuffled = [v async for v in AsyncStream(data()).shuffle(50)]
     print(shuffled)
 
 
@@ -352,8 +350,9 @@ def test_head():
 @pytest.mark.asyncio
 async def test_async_head():
     data = [0, 1, 2, 3, 'a', 5]
-    assert [x async for x in Stream(data).to_async().head(3)] == data[:3]
-    assert await Stream(data).to_async().head(30).collect() == data
+    # assert [x async for x in AsyncStream(agen(data)).head(3)] == data[:3]
+    assert await AsyncStream(agen(data)).head(3).collect() == data[:3]
+    assert await AsyncStream(agen(data)).head(30).collect() == data
 
 
 def test_tail():
@@ -367,8 +366,8 @@ def test_tail():
 async def test_async_tail():
     data = [0, 1, 2, 3, 'a', 5]
 
-    assert await Stream(data).to_async().tail(2).collect() == ['a', 5]
-    assert await Stream(data).to_async().tail(10).collect() == data
+    assert await AsyncStream(agen(data)).tail(2).collect() == ['a', 5]
+    assert await AsyncStream(agen(data)).tail(10).collect() == data
 
 
 def test_groupby():
@@ -409,15 +408,11 @@ async def test_async_groupby():
         'please',
     ]
 
-    async def gen():
-        for x in data:
-            yield x
-
     async def gather(x):
         key, grp = x
         return [v async for v in grp]
 
-    assert await Stream(gen()).groupby(lambda x: x[0]).map(gather).collect() == [
+    assert await AsyncStream(agen(data)).groupby(lambda x: x[0]).map(gather).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],
@@ -437,10 +432,10 @@ def test_batch():
 
 @pytest.mark.asyncio
 async def test_async_batch():
-    s = Stream(range(11)).to_async()
+    s = AsyncStream(arange(11))
     assert [x async for x in s.batch(3)] == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
-    s = Stream(list(range(11))).to_async()
+    s = AsyncStream(arange(11))
     assert await s.batch(3).unbatch().collect() == list(range(11))
 
 
@@ -452,7 +447,7 @@ def test_unbatch():
 @pytest.mark.asyncio
 async def test_async_unbatch():
     data = [[0, 1, 2], [], [3, 4], [], [5, 6, 7]]
-    assert await Stream(data).to_async().unbatch().collect() == list(range(8))
+    assert await AsyncStream(agen(data)).unbatch().collect() == list(range(8))
 
 
 def test_accumulate():
@@ -481,7 +476,7 @@ async def test_async_accumulate():
         for x in range(6):
             yield x
 
-    assert await Stream(data()).accumulate(lambda x, y: x + y).collect() == [
+    assert await AsyncStream(data()).accumulate(lambda x, y: x + y).collect() == [
         0,
         1,
         3,
@@ -489,7 +484,7 @@ async def test_async_accumulate():
         10,
         15,
     ]
-    assert await Stream(data()).accumulate(lambda x, y: x + y, 3).collect() == [
+    assert await AsyncStream(data()).accumulate(lambda x, y: x + y, 3).collect() == [
         3,
         4,
         6,
@@ -503,7 +498,7 @@ async def test_async_accumulate():
             return x + y
         return x - y
 
-    assert await Stream(data()).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
+    assert await AsyncStream(data()).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
 
 
 def test_buffer():
@@ -513,8 +508,8 @@ def test_buffer():
 
 @pytest.mark.asyncio
 async def test_async_buffer():
-    assert await Stream(range(11)).to_async().buffer(5).collect() == list(range(11))
-    assert await Stream(range(11)).to_async().buffer(20).collect() == list(range(11))
+    assert await AsyncStream(arange(11)).buffer(5).collect() == list(range(11))
+    assert await AsyncStream(arange(11)).buffer(20).collect() == list(range(11))
 
 
 def test_buffer_noop():
@@ -531,8 +526,7 @@ def test_buffer_batch():
 @pytest.mark.asyncio
 async def test_async_buffer_batch():
     n = (
-        await Stream(range(19))
-        .to_async()
+        await AsyncStream(arange(19))
         .buffer(10)
         .batch(5)
         .unbatch()
@@ -571,8 +565,8 @@ async def test_async_buffer_break():
             await asyncio.sleep(random.random() * 0.02)
             yield x
 
-    x = Stream(make_data()).buffer(23).map(lambda x: x * 2)
-    with pytest.raises(AttributeError):
+    x = AsyncStream(make_data()).buffer(23).map(lambda x: x * 2)
+    with pytest.raises(TypeError):
         for v in x:
             print(v)
 
@@ -580,7 +574,7 @@ async def test_async_buffer_break():
         if v > 50:
             break
 
-    x = Stream(make_data()).buffer(23).map(lambda x: x * 2)
+    x = AsyncStream(make_data()).buffer(23).map(lambda x: x * 2)
     with pytest.raises(ValueError):
         async for v in x:
             pass
@@ -978,8 +972,8 @@ def test_parmap_async_context():
 @pytest.mark.asyncio()
 async def test_async_parmap():
     print('')
-    stream = Stream(range(1000))
-    stream.to_async().parmap(plus2, executor='thread')
+    stream = AsyncStream(arange(1000))
+    stream.parmap(plus2, executor='thread')
     t0 = perf_counter()
     x = 0
     async for y in stream:
@@ -998,7 +992,7 @@ async def test_async_parmap():
                 yield x
 
     # Test exception in the worker function
-    stream = Stream(data1()).parmap(plus2, executor='process', return_exceptions=True)
+    stream = AsyncStream(data1()).parmap(plus2, executor='process', return_exceptions=True)
     x = 0
     async for y in stream:
         if x == 11:
@@ -1008,7 +1002,7 @@ async def test_async_parmap():
         x += 1
 
     # # # Test premature quit, i.e. GeneratorExit
-    stream = Stream(data1()).parmap(plus2, executor='process')
+    stream = AsyncStream(data1()).parmap(plus2, executor='process')
     x = 0
     # async for y in stream:
     ss = stream.__aiter__()
@@ -1026,8 +1020,8 @@ async def test_async_parmap():
 @pytest.mark.asyncio
 async def test_async_parmap_async():
     print('')
-    stream = Stream(range(1000))
-    stream.to_async().parmap(async_plus_2)
+    stream = AsyncStream(arange(1000))
+    stream.parmap(async_plus_2)
     t0 = perf_counter()
     x = 0
     async for y in stream:
@@ -1046,7 +1040,7 @@ async def test_async_parmap_async():
                 yield x
 
     # Test exception in the worker function
-    stream = Stream(data1()).parmap(async_plus_2)
+    stream = AsyncStream(data1()).parmap(async_plus_2)
     with pytest.raises(TypeError):
         x = 0
         async for y in stream:
@@ -1054,7 +1048,7 @@ async def test_async_parmap_async():
             x += 1
 
     # Test premature quit, i.e. GeneratorExit
-    stream = Stream(data1()).parmap(async_plus_2)
+    stream = AsyncStream(data1()).parmap(async_plus_2)
     x = 0
     # async for y in stream:
     data = stream.__aiter__()
@@ -1070,15 +1064,15 @@ async def test_async_parmap_async():
 
 @pytest.mark.asyncio
 async def test_async_switch():
-    s = Stream(range(100)).to_async().map(plus2)
+    s = AsyncStream(arange(100)).map(plus2)
     x = 0
     async for y in s:
         assert y == x + 2
         x += 1
 
-    s = Stream(range(100)).to_async().parmap(async_plus_2).to_sync().map(plus2)
+    s = AsyncStream(arange(100)).parmap(async_plus_2).map(plus2)
     x = 0
-    for y in s:  # `async for` would work too.
+    async for y in s:
         assert y == x + 4
         x += 1
 

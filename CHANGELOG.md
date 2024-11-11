@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.1] - 2024-11-10
+
+- Removed async capabilities from `Stream`.
+- New class `AsyncStream`, providing the async capabilities of the previous `Stream`.
+  This new class is not available in `mpservice.streamer`; it's only in `mpservice._streamer` because I'm still not sure
+  whether async streaming is useful.
+
+
 ## [0.16.0] - 2024-10-27
 
 - `IterableQueue.put` gets keyword arg `timeout`.
