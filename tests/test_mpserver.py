@@ -28,6 +28,7 @@ from mpservice.multiprocessing.remote_exception import (
     is_remote_exception,
 )
 from mpservice.streamer import Stream
+from mpservice._streamer import AsyncStream
 from mpservice.threading import Thread
 
 # NOTE: all calls like `await async_generator.aclose()` in this module is a work around
@@ -217,7 +218,7 @@ async def test_sequential_async_stream():
     async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
-        s = Stream(data()).parmap(service.call, concurrency=50, _async=True)
+        s = AsyncStream(data()).parmap(service.call, concurrency=50, _async=True)
         assert (await s.collect()) == [v * v for v in range(100)]
 
 
