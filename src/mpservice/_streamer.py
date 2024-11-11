@@ -55,7 +55,6 @@ from typing import (
     Any,
     Awaitable,
     Concatenate,
-    Generic,
     Literal,
     Optional,
     TypeVar,
@@ -106,11 +105,11 @@ def isasynciterable(x):
         return False
 
 
-class Stream(Generic[Elem]):
+class Stream(Iterable[Elem]):
     """
     The class ``Stream`` is the "entry-point" for the "streamer" utilities.
     User constructs a ``Stream`` object
-    by passing an `Iterable`_ or `AsyncIterable_` to it, then calls its methods to use it.
+    by passing an `Iterable`_ to it, then calls its methods to use it.
     Most of the methods return the object itself, facilitating calls
     in a "chained" fashion, like this::
 
@@ -127,52 +126,21 @@ class Stream(Generic[Elem]):
         s.unbatch(...)
     """
 
-    def __init__(self, instream: Iterable | AsyncIterable, /):
+    def __init__(self, instream: Iterable, /):
         """
         Parameters
         ----------
         instream
             The input stream of elements, possibly unlimited.
-
-            The sync-ness or async-ness of ``instream`` suggests to the ``Stream`` object
-            whether the host environment is sync or async.
-            In an async context, you may pass in a sync ``instream`` (hence creating
-            a sync Stream), then turn it async like this::
-
-                stream = Stream(range(1000)).to_async()
         """
         self.streamlets: list[Iterable | AsyncIterable] = [instream]
 
-    def to_sync(self):
-        """
-        Make the stream "sync" iterable only.
-        """
-        if not isiterable(self):
-            self.streamlets.append(SyncIter(self.streamlets[-1]))
-        return self
-
-    def to_async(self):
-        """
-        Make the stream "async" iterable only.
-        """
-        if not isasynciterable(self):
-            self.streamlets.append(AsyncIter(self.streamlets[-1]))
-        return self
-
     def __iter__(self) -> Iterator[Elem]:
-        # Usually between ``__iter__`` and ``__aiter__`` only
-        # one is available, dependending on the type of
-        # ``self.streamlets[-1]``.
         return self.streamlets[-1].__iter__()
 
-    def __aiter__(self) -> AsyncIterator[Elem]:
-        return self.streamlets[-1].__aiter__()
-
     def drain(self) -> int:
-        """Drain off the stream.
-
-        If ``self`` is sync, return the number of elements processed.
-        If ``self`` is async, return an awaitable that will do what the sync version does.
+        """
+        Drain off the stream and return the number of elements processed.
 
         This method is for the side effect: the entire stream has been processed
         by all the operations and results have been taken care of, for example,
@@ -183,41 +151,22 @@ class Stream(Generic[Elem]):
         then don't use this method. Instead, iterate the streamer yourself
         and do whatever you need to do.
         """
-        if isiterable(self):
-            n = 0
-            for _ in self:
-                n += 1
-            return n
-
-        async def main():
-            n = 0
-            async for _ in self:
-                n += 1
-            return n
-
-        return main()
+        n = 0
+        for _ in self:
+            n += 1
+        return n
 
     def collect(self) -> list[Elem]:
-        """If ``self`` is sync, return all the elements in a list.
-        If ``self`` is async, return an awaitable that will do what the sync version does.
+        """
+        Return all the elements in a list.
 
         .. warning:: Do not call this method on "big data".
         """
-        if isiterable(self):
-            return list(self)
-
-        async def main():
-            return [x async for x in self]
-
-        return main()
-
-    def _choose_by_mode(self, sync_choice, async_choice):
-        if isiterable(self):
-            return sync_choice
-        return async_choice
+        return list(self)
 
     def map(self, func: Callable[[T], Any], /, **kwargs) -> Self:
-        """Perform a simple transformation on each data element.
+        """
+        Perform a simple transformation on each data element.
 
         This operation happens "inline"--there is no other threads or processes
         used. For this reason, the method is for "light-weight" transforms.
@@ -255,12 +204,12 @@ class Stream(Generic[Elem]):
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
         """
-        cls = self._choose_by_mode(Mapper, AsyncMapper)
-        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
+        self.streamlets.append(Mapper(self.streamlets[-1], func, **kwargs))
         return self
 
     def filter(self, func: Callable[[T], bool], /, **kwargs) -> Self:
-        """Select data elements to keep in the stream according to the predicate ``func``.
+        """
+        Select data elements to keep in the stream according to the predicate ``func``.
 
         This method can be used to either "keep" or "drop" elements according to various conditions.
         If the logic needs to keep some state or history info, then define a class and implement
@@ -291,8 +240,7 @@ class Stream(Generic[Elem]):
             Additional keyword arguments to ``func``, after the first argument, which
             is the data element.
         """
-        cls = self._choose_by_mode(Filter, AsyncFilter)
-        self.streamlets.append(cls(self.streamlets[-1], func, **kwargs))
+        self.streamlets.append(Filter(self.streamlets[-1], func, **kwargs))
         return self
 
     def filter_exceptions(
@@ -369,7 +317,8 @@ class Stream(Generic[Elem]):
         prefix: str = '',
         suffix: str = '',
     ) -> Self:
-        """Take a peek at the data element *before* it continues in the stream.
+        """
+        Take a peek at the data element *before* it continues in the stream.
 
         This is implemented by :meth:`map`, where the mapper function prints
         some info under certain conditions before returning the input value unchanged.
@@ -482,8 +431,7 @@ class Stream(Generic[Elem]):
         If ``buffer_size`` is ``>=`` the number of the elements, then the shuffling is fully random.
         Otherwise, the shuffling is somewhat "localized".
         """
-        cls = self._choose_by_mode(Shuffler, AsyncShuffler)
-        self.streamlets.append(cls(self.streamlets[-1], buffer_size=buffer_size))
+        self.streamlets.append(Shuffler(self.streamlets[-1], buffer_size=buffer_size))
         return self
 
     def head(self, n: int) -> Self:
@@ -495,8 +443,7 @@ class Stream(Generic[Elem]):
         would need to walk through the entire stream,
         which is not needed for ``head``.
         """
-        cls = self._choose_by_mode(Header, AsyncHeader)
-        self.streamlets.append(cls(self.streamlets[-1], n))
+        self.streamlets.append(Header(self.streamlets[-1], n))
         return self
 
     def tail(self, n: int) -> Self:
@@ -507,8 +454,7 @@ class Stream(Generic[Elem]):
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
-        cls = self._choose_by_mode(Tailor, AsyncTailor)
-        self.streamlets.append(cls(self.streamlets[-1], n))
+        self.streamlets.append(Tailor(self.streamlets[-1], n))
         return self
 
     def groupby(self, key: Callable[[T], Any], /, **kwargs) -> Self:
@@ -533,8 +479,7 @@ class Stream(Generic[Elem]):
         >>> print(Stream(data).groupby(lambda x: x[0]).map(lambda x: list(x[1])).collect())
         [['atlas', 'apple', 'answer'], ['bee', 'block'], ['away'], ['peter'], ['question'], ['plum', 'please']]
         """
-        cls = self._choose_by_mode(Grouper, AsyncGrouper)
-        self.streamlets.append(cls(self.streamlets[-1], key, **kwargs))
+        self.streamlets.append(Grouper(self.streamlets[-1], key, **kwargs))
         return self
 
     def batch(self, batch_size: int) -> Self:
@@ -556,8 +501,7 @@ class Stream(Generic[Elem]):
         >>> print(ss.collect())
         [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
         """
-        cls = self._choose_by_mode(Batcher, AsyncBatcher)
-        self.streamlets.append(cls(self.streamlets[-1], batch_size))
+        self.streamlets.append(Batcher(self.streamlets[-1], batch_size))
         return self
 
     def unbatch(self) -> Self:
@@ -589,8 +533,7 @@ class Stream(Generic[Elem]):
         >>> print(stream)
         [1, 2, 2, 4, 4, 4, 4, 3, 3, 3, 5, 5, 5, 5, 5]
         """
-        cls = self._choose_by_mode(Unbatcher, AsyncUnbatcher)
-        self.streamlets.append(cls(self.streamlets[-1]))
+        self.streamlets.append(Unbatcher(self.streamlets[-1]))
         return self
 
     def accumulate(
@@ -652,7 +595,8 @@ class Stream(Generic[Elem]):
         return self.map(Accumulator())
 
     def buffer(self, maxsize: int) -> Self:
-        """Buffer is used to stabilize and improve the speed of data flow.
+        """
+        Buffer is used to stabilize and improve the speed of data flow.
 
         A buffer is useful following any operation that can not guarantee
         (almost) instant availability of output. A buffer allows its
@@ -663,8 +607,7 @@ class Stream(Generic[Elem]):
 
         ``maxsize`` is the size of the internal buffer.
         """
-        cls = self._choose_by_mode(Buffer, AsyncBuffer)
-        self.streamlets.append(cls(self.streamlets[-1], maxsize))
+        self.streamlets.append(Buffer(self.streamlets[-1], maxsize))
         return self
 
     def parmap(
@@ -678,7 +621,8 @@ class Stream(Generic[Elem]):
         _async: bool | None = None,
         **kwargs,
     ) -> Self:
-        """Parallel, or concurrent, counterpart of :meth:`map`.
+        """
+        Parallel, or concurrent, counterpart of :meth:`map`.
 
         New threads or processes are created to execute ``func``.
         The function is applied on each element of the data stream and produces a new value,
@@ -725,19 +669,106 @@ class Stream(Generic[Elem]):
             exceptions raised by ``func`` only.
         """
         if (_async is None and inspect.iscoroutinefunction(func)) or (_async is True):
-            if isasynciterable(self):
-                # This method is called within an async environment.
-                # The operator runs in the current thread on the current asyncio event loop.
-                cls = AsyncParmapperAsync
-            else:
-                # Usually this method is called within a sync environment.
-                # The operator uses a worker thread to run the async ``func``.
-                cls = ParmapperAsync
+            # Usually this method is called within a sync environment.
+            # The operator uses a worker thread to run the async ``func``.
+            cls = ParmapperAsync
         else:
-            if isasynciterable(self):
-                cls = AsyncParmapper
-            else:
-                cls = Parmapper
+            cls = Parmapper
+
+        self.streamlets.append(
+            cls(
+                self.streamlets[-1],
+                func,
+                concurrency=concurrency,
+                return_x=return_x,
+                return_exceptions=return_exceptions,
+                **kwargs,
+            )
+        )
+        return self
+
+
+class AsyncStream(AsyncIterable[Elem]):
+    def __init__(self, instream: AsyncIterable, /):
+        self.streamlets: list[AsyncIterable] = [instream]
+
+    def __aiter__(self) -> AsyncIterator[Elem]:
+        return self.streamlets[-1].__aiter__()
+
+    async def drain(self) -> int:
+        n = 0
+        async for _ in self:
+            n += 1
+        return n
+
+    async def collect(self) -> list[Elem]:
+        return [x async for x in self]
+
+    def _choose_by_mode(self, sync_choice, async_choice):
+        if isiterable(self):
+            return sync_choice
+        return async_choice
+
+    def map(self, func: Callable[[T], Any], /, **kwargs) -> Self:
+        self.streamlets.append(AsyncMapper(self.streamlets[-1], func, **kwargs))
+        return self
+
+    def filter(self, func: Callable[[T], bool], /, **kwargs) -> Self:
+        self.streamlets.append(AsyncFilter(self.streamlets[-1], func, **kwargs))
+        return self
+
+    filter_exceptions = Stream.filter_exceptions
+
+    peek = Stream.peek
+
+    def shuffle(self, buffer_size: int = 1000) -> Self:
+        self.streamlets.append(
+            AsyncShuffler(self.streamlets[-1], buffer_size=buffer_size)
+        )
+        return self
+
+    def head(self, n: int) -> Self:
+        self.streamlets.append(AsyncHeader(self.streamlets[-1], n))
+        return self
+
+    def tail(self, n: int) -> Self:
+        self.streamlets.append(AsyncTailor(self.streamlets[-1], n))
+        return self
+
+    def groupby(self, key: Callable[[T], Any], /, **kwargs) -> Self:
+        self.streamlets.append(AsyncGrouper(self.streamlets[-1], key, **kwargs))
+        return self
+
+    def batch(self, batch_size: int) -> Self:
+        self.streamlets.append(AsyncBatcher(self.streamlets[-1], batch_size))
+        return self
+
+    def unbatch(self) -> Self:
+        self.streamlets.append(AsyncUnbatcher(self.streamlets[-1]))
+        return self
+
+    accumulate = Stream.accumulate
+
+    def buffer(self, maxsize: int) -> Self:
+        self.streamlets.append(AsyncBuffer(self.streamlets[-1], maxsize))
+        return self
+
+    def parmap(
+        self,
+        func: Callable[[T], TT],
+        /,
+        *,
+        concurrency: int = None,
+        return_x: bool = False,
+        return_exceptions: bool = False,
+        _async: bool | None = None,
+        **kwargs,
+    ) -> Self:
+        if (_async is None and inspect.iscoroutinefunction(func)) or (_async is True):
+            # The operator runs in the current thread on the current asyncio event loop.
+            cls = AsyncParmapperAsync
+        else:
+            cls = AsyncParmapper
 
         self.streamlets.append(
             cls(
@@ -932,12 +963,11 @@ class AsyncHeader(AsyncIterable):
 
     async def __aiter__(self):
         n = 0
-        nn = self.n
         async for v in self._instream:
-            if n >= nn:
-                break
             yield v
             n += 1
+            if n >= self.n:
+                break
 
 
 class Tailor(Iterable):
