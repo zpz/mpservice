@@ -55,7 +55,6 @@ from typing import (
     Any,
     Awaitable,
     Concatenate,
-    Generic,
     Literal,
     Optional,
     TypeVar,
@@ -689,10 +688,7 @@ class Stream(Iterable[Elem]):
         return self
 
 
-
-
 class AsyncStream(AsyncIterable[Elem]):
-
     def __init__(self, instream: AsyncIterable, /):
         self.streamlets: list[AsyncIterable] = [instream]
 
@@ -726,7 +722,9 @@ class AsyncStream(AsyncIterable[Elem]):
     peek = Stream.peek
 
     def shuffle(self, buffer_size: int = 1000) -> Self:
-        self.streamlets.append(AsyncShuffler(self.streamlets[-1], buffer_size=buffer_size))
+        self.streamlets.append(
+            AsyncShuffler(self.streamlets[-1], buffer_size=buffer_size)
+        )
         return self
 
     def head(self, n: int) -> Self:
@@ -783,7 +781,6 @@ class AsyncStream(AsyncIterable[Elem]):
             )
         )
         return self
-
 
 
 class SyncIter(Iterable):

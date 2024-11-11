@@ -9,7 +9,13 @@ from time import perf_counter, sleep
 import pytest
 
 import mpservice
-from mpservice._streamer import AsyncIter, ProcessRunnee, ProcessRunner, SyncIter
+from mpservice._streamer import (
+    AsyncIter,
+    AsyncStream,
+    ProcessRunnee,
+    ProcessRunner,
+    SyncIter,
+)
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
@@ -19,7 +25,6 @@ from mpservice.streamer import (
     fifo_stream,
     tee,
 )
-from mpservice._streamer import AsyncStream
 
 
 async def arange(n=10):
@@ -147,9 +152,12 @@ def test_filter():
 
 @pytest.mark.asyncio
 async def test_async_filter():
-    assert await AsyncStream(arange(7)).filter(
-        lambda n: (n % 2) == 0
-    ).collect() == [0, 2, 4, 6]
+    assert await AsyncStream(arange(7)).filter(lambda n: (n % 2) == 0).collect() == [
+        0,
+        2,
+        4,
+        6,
+    ]
 
     def odd_or_even(x, even=True):
         if even:
@@ -162,9 +170,11 @@ async def test_async_filter():
         4,
         6,
     ]
-    assert await AsyncStream(arange(7)).filter(
-        odd_or_even, even=False
-    ).collect() == [1, 3, 5]
+    assert await AsyncStream(arange(7)).filter(odd_or_even, even=False).collect() == [
+        1,
+        3,
+        5,
+    ]
 
     data = [0, 1, 2, 'a', 4, ValueError(8), 6, 7]
 
@@ -412,7 +422,9 @@ async def test_async_groupby():
         key, grp = x
         return [v async for v in grp]
 
-    assert await AsyncStream(agen(data)).groupby(lambda x: x[0]).map(gather).collect() == [
+    assert await AsyncStream(agen(data)).groupby(lambda x: x[0]).map(
+        gather
+    ).collect() == [
         ['atlas', 'apple', 'answer'],
         ['bee', 'block'],
         ['away'],
@@ -498,7 +510,14 @@ async def test_async_accumulate():
             return x + y
         return x - y
 
-    assert await AsyncStream(data()).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
+    assert await AsyncStream(data()).accumulate(add, -1).collect() == [
+        -1,
+        -2,
+        0,
+        -3,
+        1,
+        -4,
+    ]
 
 
 def test_buffer():
@@ -992,7 +1011,9 @@ async def test_async_parmap():
                 yield x
 
     # Test exception in the worker function
-    stream = AsyncStream(data1()).parmap(plus2, executor='process', return_exceptions=True)
+    stream = AsyncStream(data1()).parmap(
+        plus2, executor='process', return_exceptions=True
+    )
     x = 0
     async for y in stream:
         if x == 11:
