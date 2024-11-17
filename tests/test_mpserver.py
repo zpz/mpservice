@@ -8,7 +8,7 @@ from time import perf_counter, sleep
 
 import pytest
 
-from mpservice._streamer import AsyncStream
+from mpservice._async_streamer import AsyncStream
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
@@ -218,7 +218,7 @@ async def test_sequential_async_stream():
     async with AsyncServer(ProcessServlet(Square, cpus=[1, 2, 3])) as service:
         ss = service.stream(data())
         assert [v async for v in ss] == [v * v for v in range(100)]
-        s = AsyncStream(data()).parmap(service.call, concurrency=50, _async=True)
+        s = AsyncStream(data()).parmap(service.call, concurrency=50)
         assert (await s.collect()) == [v * v for v in range(100)]
 
 

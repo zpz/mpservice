@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.2] - 2024-11-17
+
+- Further separate "async_streamer" from "streamer" because I doubt "async_streamer" has a strong use case.
+- Update documentation for "streamer".
+- Requires Python 3.10.
+
+
 ## [0.16.1] - 2024-11-10
 
 - Removed async capabilities from `Stream`.
