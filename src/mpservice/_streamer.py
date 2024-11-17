@@ -683,9 +683,6 @@ class Stream(Iterable[Elem]):
         return self
 
 
-
-
-
 class Mapper(Iterable):
     def __init__(self, instream: Iterable, func: Callable[[T], Any], **kwargs):
         self._instream = instream
@@ -709,7 +706,6 @@ class Filter(Iterable):
                 yield v
 
 
-
 class Header(Iterable):
     def __init__(self, instream: Iterable, /, n: int):
         """
@@ -727,7 +723,6 @@ class Header(Iterable):
                 break
             yield v
             n += 1
-
 
 
 class Tailor(Iterable):
@@ -751,7 +746,6 @@ class Tailor(Iterable):
         for v in self._instream:
             data.append(v)
         yield from data
-
 
 
 class Grouper(Iterable):
@@ -780,9 +774,6 @@ class Grouper(Iterable):
         #     yield _z, group
 
 
-
-
-
 class Batcher(Iterable):
     """
     See :meth:`Stream.batch`.
@@ -803,7 +794,6 @@ class Batcher(Iterable):
                 batch = []
         if batch:
             yield batch
-
 
 
 class Unbatcher(Iterable):
@@ -925,8 +915,6 @@ class Shuffler(Iterable):
             yield from buffer
 
 
-
-
 class Buffer(Iterable):
     def __init__(
         self,
@@ -992,7 +980,6 @@ class Buffer(Iterable):
                 yield z
         finally:
             self._finalize()
-
 
 
 def fifo_stream(
@@ -1168,7 +1155,6 @@ class Parmapper(Iterable):
             )
 
 
-
 class ParmapperAsync(Iterable):
     # Environ is sync; worker func is async.
 
@@ -1260,7 +1246,6 @@ class ParmapperAsync(Iterable):
         finally:
             to_stop.set()
             worker.join()
-
 
 
 class TeeX:

@@ -27,19 +27,12 @@ from __future__ import annotations
 # https://stackoverflow.com/a/49872353
 # Will no longer be needed in Python 3.10.
 import asyncio
-import concurrent.futures
-import contextlib
 import functools
 import inspect
-import itertools
 import logging
-import os
 import queue
 import random
 import threading
-import time
-import traceback
-from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -47,16 +40,13 @@ from collections.abc import (
     Callable,
     Iterable,
     Iterator,
-    Sequence,
 )
 from inspect import iscoroutinefunction
-from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
     Concatenate,
     Literal,
-    Optional,
     TypeVar,
 )
 
@@ -65,15 +55,12 @@ from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from . import multiprocessing
 from ._queues import SingleLane
+from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream
 from .concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
 )
-from .multiprocessing import remote_exception
 from .threading import Thread
-
-from ._streamer import Stream, _NUM_THREADS, _NUM_PROCESSES
-
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +72,6 @@ NOTSET = object()
 T = TypeVar('T')  # indicates input data element
 TT = TypeVar('TT')  # indicates output after an op on `T`
 Elem = TypeVar('Elem')
-
 
 
 def isiterable(x):
@@ -198,7 +184,6 @@ class AsyncStream(AsyncIterable[Elem]):
         return self
 
 
-
 class SyncIter(Iterable):
     def __init__(self, instream: AsyncIterable):
         self._instream = instream
@@ -285,8 +270,6 @@ class AsyncIter(AsyncIterable):
                 yield x
 
 
-
-
 class AsyncMapper(AsyncIterable):
     def __init__(
         self,
@@ -307,8 +290,6 @@ class AsyncMapper(AsyncIterable):
         else:
             async for v in self._instream:
                 yield func(v)
-
-
 
 
 class AsyncFilter(AsyncIterable):
@@ -362,7 +343,6 @@ class AsyncTailor(AsyncIterable):
             yield x
 
 
-
 class AsyncGrouper(AsyncIterable):
     def __init__(
         self,
@@ -396,8 +376,6 @@ class AsyncGrouper(AsyncIterable):
         #     yield _z, group
 
 
-
-
 class AsyncBatcher(AsyncIterable):
     def __init__(self, instream: AsyncIterable, /, batch_size: int):
         self._instream = instream
@@ -416,8 +394,6 @@ class AsyncBatcher(AsyncIterable):
             yield batch
 
 
-
-
 class AsyncUnbatcher(AsyncIterable):
     def __init__(self, instream: AsyncIterable, /):
         self._instream = instream
@@ -431,7 +407,6 @@ class AsyncUnbatcher(AsyncIterable):
             else:
                 async for y in x:
                     yield y
-
 
 
 class AsyncShuffler(AsyncIterable):
@@ -456,7 +431,6 @@ class AsyncShuffler(AsyncIterable):
             random.shuffle(buffer)
             for x in buffer:
                 yield x
-
 
 
 class AsyncBuffer(AsyncIterable):
@@ -532,9 +506,6 @@ class AsyncBuffer(AsyncIterable):
                 yield z
         finally:
             self._finalize()
-
-
-
 
 
 async def async_fifo_stream(
@@ -626,7 +597,6 @@ async def async_fifo_stream(
         #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
 
 
-
 class AsyncParmapper(AsyncIterable):
     # Environ is async; worker func is sync.
     def __init__(
@@ -694,9 +664,6 @@ class AsyncParmapper(AsyncIterable):
                 **self._func_kwargs,
             ):
                 yield z
-
-
-
 
 
 class AsyncParmapperAsync(AsyncIterable):
