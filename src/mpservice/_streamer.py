@@ -133,7 +133,7 @@ class Stream(Iterable[Elem]):
         instream
             The input stream of elements, possibly unlimited.
         """
-        self.streamlets: list[Iterable | AsyncIterable] = [instream]
+        self.streamlets: list[Iterable] = [instream]
 
     def __iter__(self) -> Iterator[Elem]:
         return self.streamlets[-1].__iter__()
@@ -618,7 +618,6 @@ class Stream(Iterable[Elem]):
         concurrency: int = None,
         return_x: bool = False,
         return_exceptions: bool = False,
-        _async: bool | None = None,
         **kwargs,
     ) -> Self:
         """
@@ -668,7 +667,7 @@ class Stream(Iterable[Elem]):
             raised by *previous* operators in the pipeline; it is concerned about
             exceptions raised by ``func`` only.
         """
-        if (_async is None and inspect.iscoroutinefunction(func)) or (_async is True):
+        if inspect.iscoroutinefunction(func):
             # Usually this method is called within a sync environment.
             # The operator uses a worker thread to run the async ``func``.
             cls = ParmapperAsync
