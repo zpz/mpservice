@@ -26,6 +26,6 @@ Python version
 --------------
 
 Development and testing were conducted in Python 3.8 until version 0.12.0.
-Starting with 0.12.1, development and testing happen in Python 3.10.
-Code continues to NOT intentionally use features beyond Python 3.8.
-I expect to require 3.10 at some pont in 2024.
+Starting with 0.12.1, development and testing happen in Python 3.10, although
+there is no intentional use of features beyond Python 3.8.
+Starting with 0.16.2, Python 3.10 is required.
