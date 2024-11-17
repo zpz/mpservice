@@ -262,12 +262,12 @@ from ._streamer import (
     StopRequested,
     Stream,
     Unbatcher,
-    async_fifo_stream,
     fifo_stream,
     isasynciterable,
     isiterable,
     tee,
 )
+from ._async_streamer import async_fifo_stream
 
 __all__ = [
     'Batcher',
