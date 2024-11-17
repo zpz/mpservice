@@ -1262,7 +1262,7 @@ class ParmapperAsync(Iterable):
                     return response.content
 
                 stream = Stream(urls)
-                stream.parmap_async(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
+                stream.parmap(download_image, async_context={'session': httpx.AsyncClient()}, **kwargs)
                 for img in stream:
                     ...
         """
