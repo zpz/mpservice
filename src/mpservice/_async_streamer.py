@@ -1,31 +1,6 @@
-# Iterable vs iterator
-#
-# if we need to use
-#
-#   for v in X:
-#       ...
-#
-# then `X.__iter__()` is called to get an "iterator".
-# In this case, `X` is an "iterable", and it must implement `__iter__`.
-#
-# If we do not use it that way, but rather only directly call
-#
-#   next(X)
-#
-# then `X` must implement `__next__` (but does not need to implement `__iter__`).
-# This `X` is an "iterator".
-#
-# Often we let `__iter__` return `self`, and implement `__next__` in the same class.
-# This way the class is both an iterable and an iterator.
 
 # Async generator returns an async iterator.
 
-from __future__ import annotations
-
-# Enable using a class in type annotations in the code
-# that defines that class itself.
-# https://stackoverflow.com/a/49872353
-# Will no longer be needed in Python 3.10.
 import asyncio
 import functools
 import inspect
@@ -39,13 +14,11 @@ from collections.abc import (
     AsyncIterator,
     Callable,
     Iterable,
-    Iterator,
 )
 from inspect import iscoroutinefunction
 from typing import (
     Any,
     Awaitable,
-    Concatenate,
     Literal,
     TypeVar,
 )
@@ -55,7 +28,7 @@ from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from . import multiprocessing
 from ._queues import SingleLane
-from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream
+from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream, async_fifo_stream
 from .concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
@@ -66,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 FINISHED = '8d906c4b-1161-40cc-b585-7cfb012bca26'
 STOPPED = 'ceccca5e-9bb2-46c3-a5ad-29b3ba00ad3e'
-NOTSET = object()
 
 
 T = TypeVar('T')  # indicates input data element
@@ -506,95 +478,6 @@ class AsyncBuffer(AsyncIterable):
                 yield z
         finally:
             self._finalize()
-
-
-async def async_fifo_stream(
-    instream: AsyncIterable[T],
-    func: Callable[Concatenate[T, ...], Awaitable[asyncio.Future]],
-    *,
-    name: str = 'async-fifo-stream-feeder-task',
-    capacity: int = 128,
-    return_x: bool = False,
-    return_exceptions: bool = False,
-    **kwargs,
-) -> AsyncIterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
-    """
-    Analogous to :func:`fifo_stream` except for using an async worker function in an async context.
-    """
-
-    async def feed(instream, func, *, to_stop, tasks, **func_kwargs):
-        try:
-            async for x in instream:
-                if to_stop.is_set():
-                    break
-                t = await func(x, **func_kwargs)
-                await tasks.put((x, t))
-                # The size of the queue `tasks` regulates how many
-                # concurrent calls to `func` there can be.
-        except Exception as e:
-            await tasks.put(e)
-        else:
-            await tasks.put(None)
-
-    to_stop = asyncio.Event()
-    tasks = asyncio.Queue(capacity + 1)
-    feeder = asyncio.create_task(
-        feed(instream, func, to_stop=to_stop, tasks=tasks, **kwargs), name=name
-    )
-
-    try:
-        while True:
-            z = await tasks.get()
-            if z is None:
-                break
-            if isinstance(z, Exception):
-                raise z
-
-            x, t = z
-            try:
-                y = await t
-            except Exception as e:
-                if return_exceptions:
-                    y = e
-                else:
-                    raise
-            if return_x:
-                yield x, y
-            else:
-                yield y
-    except BaseException:
-        to_stop.set()
-        raise
-    finally:
-        cancelled_tasks = []
-        while not tasks.empty():
-            z = await tasks.get()
-            if z is None:
-                break
-            if isinstance(z, Exception):
-                break
-            _, t = z
-            t.cancel()
-            cancelled_tasks.append(t)
-        for t in cancelled_tasks:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):  # noqa: S110
-                pass
-        try:
-            await feeder
-        except asyncio.CancelledError:
-            pass
-
-        # About termination of async generators, see
-        #  https://docs.python.org/3.6/reference/expressions.html#asynchronous-generator-functions
-        #
-        # and
-        #  https://peps.python.org/pep-0525/#finalization
-        #  https://docs.python.org/3/library/sys.html#sys.set_asyncgen_hooks
-        #  https://snarky.ca/unravelling-async-for-loops/
-        #  https://github.com/python/cpython/blob/3.11/Lib/asyncio/base_events.py#L539
-        #  https://stackoverflow.com/questions/60226557/how-to-forcefully-close-an-async-generator
 
 
 class AsyncParmapper(AsyncIterable):

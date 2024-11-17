@@ -252,7 +252,6 @@ The class :class:`EagerBatcher` is analogous to :class:`Batcher` but has a timeo
 which controls how long to wait before yielding an under-sized batch.
 """
 
-from ._async_streamer import async_fifo_stream
 from ._streamer import (
     Batcher,
     EagerBatcher,
@@ -264,8 +263,7 @@ from ._streamer import (
     Stream,
     Unbatcher,
     fifo_stream,
-    isasynciterable,
-    isiterable,
+    async_fifo_stream,
     tee,
 )
 
@@ -281,7 +279,5 @@ __all__ = [
     'Unbatcher',
     'fifo_stream',
     'async_fifo_stream',
-    'isasynciterable',
-    'isiterable',
     'tee',
 ]
