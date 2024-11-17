@@ -2,8 +2,8 @@ import asyncio
 import random
 from time import perf_counter
 
-
 import pytest
+
 from mpservice._async_streamer import AsyncIter, AsyncStream, SyncIter
 
 
@@ -14,7 +14,6 @@ def plus2(x):
 async def async_plus_2(x):
     await asyncio.sleep(random.uniform(0.5, 1))
     return x + 2
-
 
 
 async def arange(n=10):
@@ -46,11 +45,9 @@ async def test_async_drain():
     assert await AsyncStream(arange(8)).drain() == 8
 
 
-
 @pytest.mark.asyncio
 async def test_async_collect():
     assert await AsyncStream(arange(3)).collect() == [0, 1, 2]
-
 
 
 @pytest.mark.asyncio
@@ -220,7 +217,6 @@ async def test_async_head():
     assert await AsyncStream(agen(data)).head(30).collect() == data
 
 
-
 @pytest.mark.asyncio
 async def test_async_tail():
     data = [0, 1, 2, 3, 'a', 5]
@@ -356,8 +352,6 @@ async def test_async_buffer_break():
             pass
 
 
-
-
 # This test prints some warnings.
 # It seems to be a py.test issue. See bottom of this function.
 @pytest.mark.asyncio()
@@ -453,7 +447,6 @@ async def test_async_parmap_async():
 
     # workaround pytest-asyncio issue; see https://github.com/pytest-dev/pytest-asyncio/issues/759
     await data.aclose()
-
 
 
 @pytest.mark.asyncio

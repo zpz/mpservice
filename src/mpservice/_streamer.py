@@ -19,8 +19,8 @@
 # This way the class is both an iterable and an iterator.
 
 from __future__ import annotations
-# This is needed before 3.11 to allow `...` as the last parameter to `Concatenate`.
 
+# This is needed before 3.11 to allow `...` as the last parameter to `Concatenate`.
 import asyncio
 import concurrent.futures
 import contextlib
@@ -37,12 +37,12 @@ import traceback
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
     Callable,
     Iterable,
     Iterator,
     Sequence,
-    AsyncIterable,
-    AsyncIterator,
 )
 from types import SimpleNamespace
 from typing import (
@@ -80,7 +80,6 @@ Elem = TypeVar('Elem')
 
 _NUM_THREADS = min(32, os.cpu_count() + 4)
 _NUM_PROCESSES = os.cpu_count()
-
 
 
 class Stream(Iterable[Elem]):
@@ -1057,7 +1056,6 @@ def fifo_stream(
     # Regarding clean-up of generators, see
     #   https://stackoverflow.com/a/30862344/6178706
     #   https://docs.python.org/3.6/reference/expressions.html#generator.close
-
 
 
 async def async_fifo_stream(

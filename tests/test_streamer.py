@@ -13,14 +13,13 @@ from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
     IterableQueue,
-    Stream,
-    fifo_stream,
-    async_fifo_stream,
-    tee,
     ProcessRunnee,
     ProcessRunner,
+    Stream,
+    async_fifo_stream,
+    fifo_stream,
+    tee,
 )
-
 
 
 def test_stream():
@@ -49,7 +48,6 @@ def test_map():
     assert Stream(range(5)).map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
     assert Stream(range(5)).map(inc, shift=2).collect() == [2, 3, 4, 5, 6]
     assert Stream(range(5)).map(lambda x: x * 2).collect() == [0, 2, 4, 6, 8]
-
 
 
 def test_filter():
@@ -87,9 +85,6 @@ def test_filter():
             return z
 
     assert list(Stream((2, 3, 1, 5, 4, 7)).filter(Head())) == [1, 4]
-
-
-
 
 
 def test_filter_exceptions():
@@ -149,7 +144,6 @@ def test_peek():
     assert Stream(exc).peek().drain() == len(exc)
 
 
-
 def test_shuffle():
     print('')
     data = list(range(20))
@@ -163,7 +157,6 @@ def test_head():
     data = [0, 1, 2, 3, 'a', 5]
     assert list(Stream(data).head(3)) == data[:3]
     assert list(Stream(data).head(30)) == data
-
 
 
 def test_tail():
@@ -196,14 +189,12 @@ def test_groupby():
     ]
 
 
-
 def test_batch():
     s = Stream(range(11))
     assert list(s.batch(3)) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]]
 
     s = Stream(list(range(11)))
     assert list(s.batch(3).unbatch()) == list(range(11))
-
 
 
 def test_unbatch():
@@ -231,12 +222,9 @@ def test_accumulate():
     assert Stream(data).accumulate(add, -1).collect() == [-1, -2, 0, -3, 1, -4]
 
 
-
-
 def test_buffer():
     assert list(Stream(range(11)).buffer(5)) == list(range(11))
     assert list(Stream(range(11)).buffer(20)) == list(range(11))
-
 
 
 def test_buffer_noop():
@@ -248,7 +236,6 @@ def test_buffer_noop():
 def test_buffer_batch():
     n = Stream(range(19)).buffer(10).batch(5).unbatch().peek(interval=1).drain()
     assert n == 19
-
 
 
 # @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
@@ -493,7 +480,6 @@ def test_fifo_stream():
         assert results == [_ * 2 for _ in data]
 
 
-
 @pytest.mark.asyncio
 async def test_async_fifo_stream():
     async def delayed_double(x):
@@ -657,8 +643,6 @@ def test_parmap_async_context():
     t1 = perf_counter()
     print(t1 - t0)
     assert t1 - t0 < 2
-
-
 
 
 def delayed_shift(x, shift, sleep_cap):
@@ -851,4 +835,3 @@ def test_process_runner():
         assert list(q_out) == [27, 36, 39, 24]
         q_in.renew()
         q_out.renew()
-

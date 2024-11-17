@@ -262,8 +262,8 @@ from ._streamer import (
     StopRequested,
     Stream,
     Unbatcher,
-    fifo_stream,
     async_fifo_stream,
+    fifo_stream,
     tee,
 )
 
