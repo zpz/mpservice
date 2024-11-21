@@ -70,7 +70,7 @@ class Ring:
 
 class RateLimiter:
     """
-    This class is used to impose rate limits in one or more threads.
+    This class is used to impose rate limits in one thread or across threads.
     If you need rate limiting across processes, you can use this facility
     in a multiprocessing "manager".
     """
