@@ -196,6 +196,7 @@ There are two helper functions :func:`fifo_stream` and :func:`async_fifo_stream`
 They implement a pattern that preserves element order in concurrent processing.
 """
 
+from ._rate_limiter import RateLimiter
 from ._streamer import (
     Batcher,
     EagerBatcher,
@@ -210,8 +211,6 @@ from ._streamer import (
     fifo_stream,
     tee,
 )
-from ._rate_limiter import RateLimiter
-
 
 __all__ = [
     'Batcher',

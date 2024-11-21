@@ -20,10 +20,10 @@ class Ring:
 
     def __len__(self):
         return self._n
-        
+
     def full(self):
         return self.__len__() == self._maxlen
-    
+
     def empty(self):
         return self.__len__() == 0
 
@@ -57,7 +57,7 @@ class Ring:
         if self.empty():
             raise Empty
         return self._data[self._head]
-    
+
     def tail(self):
         # Return (w/o removing) the latest element.
         if self.empty():
@@ -68,13 +68,13 @@ class Ring:
         return self._data[t]
 
 
-
 class RateLimiter:
     """
     This class is used to impose rate limits in one or more threads.
     If you need rate limiting across processes, you can use this facility
     in a multiprocessing "manager".
     """
+
     def __init__(self, limit: int, time_window_in_seconds: float | int = 1):
         """
         Suppose ``limit = 10`` and ``time_window_in_seconds=60``, that specifies a
@@ -95,7 +95,7 @@ class RateLimiter:
 
     def wait(self):
         """
-        Once the user is ready to do "the thing" (such as calling an HTTP service) 
+        Once the user is ready to do "the thing" (such as calling an HTTP service)
         that's subject to this rate limit, call this method. This method may block.
         Once this method returns, user can go ahead to do the thing.
 

@@ -1,9 +1,10 @@
+import random
 import time
 from threading import Thread
-import random
 
-from mpservice._rate_limiter import RateLimiter, Ring, Full, Empty
 import pytest
+
+from mpservice._rate_limiter import Empty, Full, RateLimiter, Ring
 
 
 def test_ring():
@@ -59,7 +60,6 @@ def test_ring():
         ring.pop()
 
 
-
 def test_rate_limiter():
     limiter = RateLimiter(3)
     t0 = time.perf_counter()
@@ -77,12 +77,8 @@ def test_rate_limiter_threads():
             print(x)
             time.sleep(random.uniform(0.1, 0.3))
 
-
     limiter = RateLimiter(5, time_window_in_seconds=2)
-    workers = [
-        Thread(target=worker, args=(n, limiter))
-        for n in (4, 5, 7, 9, 12)
-    ]
+    workers = [Thread(target=worker, args=(n, limiter)) for n in (4, 5, 7, 9, 12)]
     t0 = time.perf_counter()
     for w in workers:
         w.start()
