@@ -210,6 +210,8 @@ from ._streamer import (
     fifo_stream,
     tee,
 )
+from ._rate_limiter import RateLimiter
+
 
 __all__ = [
     'Batcher',
@@ -218,6 +220,7 @@ __all__ = [
     'Parmapper',
     'ProcessRunner',
     'ProcessRunnee',
+    'RateLimiter',
     'StopRequested',
     'Stream',
     'Unbatcher',
