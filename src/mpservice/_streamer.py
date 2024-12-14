@@ -431,7 +431,7 @@ class Stream(Iterable[Elem]):
         .. note:: ``n`` data elements need to be kept in memory, hence ``n`` should
             not be "too large" for the typical size of the data elements.
         """
-        self.streamlets.append(Tailor(self.streamlets[-1], n))
+        self.streamlets.append(Tailer(self.streamlets[-1], n))
         return self
 
     def groupby(self, key: Callable[[T], Any], /, **kwargs) -> Self:
@@ -706,7 +706,7 @@ class Header(Iterable):
             n += 1
 
 
-class Tailor(Iterable):
+class Tailer(Iterable):
     def __init__(self, instream: Iterable, /, n: int):
         """
         Keeps the last ``n`` elements and ignores all the previous ones.
@@ -816,7 +816,7 @@ class EagerBatcher(Iterable):
         timeout: float = None,
         endmarker=None,
     ):
-        # ``instream`` is a queue (thread or process) with the specicial value ``endmarker``
+        # ``instream`` is a queue (thread or process) with the special value ``endmarker``
         # indicating the end of the stream.
         # ``timeout`` can be 0.
         self._instream = instream
@@ -971,34 +971,69 @@ def fifo_stream(
     capacity: int = 32,
     return_x: bool = False,
     return_exceptions: bool = False,
+    preprocessor: Callable[[T], Any] = None,
     **kwargs,
 ) -> Iterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
     """
     This is a helper function for preserving order of input/output elements during concurrent processing.
 
-    ``func`` is a function that returns a ``concurrent.futures.Future`` object.
-    This function is typically a wrapper of the ``submit`` method of a ``concurrent.futures.ThreadPoolExecutor``
-    or ``concurrent.futures.ProcessPoolExecutor``.
+    Parameters
+    ----------
+    func
+        A function that returns a ``concurrent.futures.Future`` object.
+        This function is often a wrapper of the ``submit`` method of a ``concurrent.futures.ThreadPoolExecutor``
+        or ``concurrent.futures.ProcessPoolExecutor``, but see
+        ``mpservice.mpserver.Server.stream`` for a flexible example.
 
-    ``func`` takes the data element of ``instream`` as the first positional argument, plus optional
-    keyword args passed in via ``kwargs``.
+        ``func`` takes the data element of ``instream`` as the first positional argument, plus optional
+        keyword args passed in via ``kwargs``.
+    capacity
+        The max number of elements that have been fetched from ``instream`` but have not been
+        yielded out with results yet. This number may be larger than the max number of concurrent executions
+        of (the function behind) ``func``.
+        If ``func`` uses a ``ThreadPoolExecutor`` or ``ProcessPoolExecutor``, this capacity does not need
+        to be much larger than the pool size.
 
-    ``capacity`` is the max number of elements that have fetched from ``instream`` but have not been
-    yielded out with results yet. This number may be larger than the max number of concurrent executions
-    of (the function behind) ``func``.
-    If ``func`` uses a ``ThreadPoolExecutor`` or ``ProcessPoolExecutor``, this capacity does not need
-    to be much larger than the pool size.
+        Although ``capacity`` has a default value, user is recommended
+        to specify a value that is appropriate for their particular use case.
+    preprocessor
+        A function to be applied to each element of `instream`, the output of which
+        is passed on to ``func``. If exception is raised, the exception object becomes
+        the result of that input element (and the input element does not get called by ``func``).
+        Whether the exception will propagate depends on the value of `return_exceptions`.
 
-    Although ``capacity`` has a default value, user is recommended
-    to specify a value that is appropriate for their particular use case.
+        One can imagine two use cases for ``preprocessor``.
+        The first is a data validation "gate". The function returns the input unchanged
+        if it's "valid", or raises an exception otherwise. This short-circuits bad data
+        and prevents them from applied by ``func`` (which could involve multiprocessing and pickling).
+
+        In the second use case, ``preprocessor`` extracts part of the data element as the
+        real input to ``func``. This is supposed to be used along with ``return_x=True``;
+        the original data element (rather than the output of ``preprocessor``) is returned.
+        By this mechanism, only part of the data element is acted upon by ``func``,
+        while the full element flows on to subsequent steps.
+
+        The application of this callable happens in the current process/thread.
+        It may be a lambda function.
+        Usually this callable should be light weight.
+        It should not modify its input.
     """
 
-    def feed(instream, func, *, to_stop, q, **func_kwargs):
+    def feed(instream, func, *, to_stop, q, preprocessor, **func_kwargs):
         try:
             for x in instream:
                 if to_stop.is_set():
                     break
-                fut = func(x, **func_kwargs)
+                if preprocessor is None:
+                    fut = func(x, **func_kwargs)
+                else:
+                    try:
+                        xx = preprocessor(x)
+                    except Exception as e:
+                        fut = concurrent.futures.Future()
+                        fut.set_exception(e)
+                    else:
+                        fut = func(xx, **func_kwargs)
                 q.put((x, fut))
                 # The size of the queue `q` regulates how many
                 # concurrent calls to `func` there can be.
@@ -1012,7 +1047,7 @@ def fifo_stream(
     feeder = Thread(
         target=feed,
         args=(instream, func),
-        kwargs={'to_stop': to_stop, 'q': tasks, **kwargs},
+        kwargs={'to_stop': to_stop, 'q': tasks, 'preprocessor': preprocessor, **kwargs},
         name=name,
     )
     feeder.start()
@@ -1066,18 +1101,28 @@ async def async_fifo_stream(
     capacity: int = 128,
     return_x: bool = False,
     return_exceptions: bool = False,
+    preprocessor: Callable[[T], Any] = None,
     **kwargs,
 ) -> AsyncIterator[TT | Exception] | Iterator[tuple[T, TT | Exception]]:
     """
     Analogous to :func:`fifo_stream` except for using an async worker function in an async context.
     """
 
-    async def feed(instream, func, *, to_stop, tasks, **func_kwargs):
+    async def feed(instream, func, *, to_stop, tasks, preprocessor, **func_kwargs):
         try:
             async for x in instream:
                 if to_stop.is_set():
                     break
-                t = await func(x, **func_kwargs)
+                if preprocessor is None:
+                    t = await func(x, **func_kwargs)
+                else:
+                    try:
+                        xx = preprocessor(x)
+                    except Exception as e:
+                        fut = asyncio.Future()
+                        fut.set_exception(e)
+                    else:
+                        t = await func(xx, **func_kwargs)
                 await tasks.put((x, t))
                 # The size of the queue `tasks` regulates how many
                 # concurrent calls to `func` there can be.
@@ -1089,7 +1134,15 @@ async def async_fifo_stream(
     to_stop = asyncio.Event()
     tasks = asyncio.Queue(capacity + 1)
     feeder = asyncio.create_task(
-        feed(instream, func, to_stop=to_stop, tasks=tasks, **kwargs), name=name
+        feed(
+            instream,
+            func,
+            to_stop=to_stop,
+            tasks=tasks,
+            preprocessor=preprocessor,
+            **kwargs,
+        ),
+        name=name,
     )
 
     try:

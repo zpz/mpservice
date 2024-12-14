@@ -11,14 +11,14 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
-from zpz.logging import config_logger, unuse_console_handler
 
+# from zpz.logging import config_logger, unuse_console_handler
 from mpservice.http import start_server, stop_server
 from mpservice.mpserver import AsyncServer, ThreadServlet, Worker
 from mpservice.multiprocessing import Process, Queue
 
-unuse_console_handler()
-config_logger(with_thread_name=True, with_process_name=True)
+# unuse_console_handler()
+# config_logger(with_thread_name=True, with_process_name=True)
 
 logger = getLogger('test')
 

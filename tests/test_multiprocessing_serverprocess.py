@@ -6,7 +6,7 @@ from multiprocessing import active_children
 from traceback import print_exc
 
 import pytest
-from zpz.logging import config_logger, unuse_console_handler
+from zpz.logging import config_logger
 
 from mpservice.multiprocessing import Process, Queue, SpawnProcess
 from mpservice.multiprocessing.server_process import (
@@ -18,7 +18,6 @@ from mpservice.multiprocessing.server_process import (
 )
 from mpservice.threading import Thread
 
-unuse_console_handler()
 config_logger()
 
 logger = logging.getLogger(__name__)
