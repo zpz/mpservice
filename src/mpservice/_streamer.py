@@ -52,7 +52,6 @@ from typing import (
     Literal,
     Optional,
     TypeVar,
-    Callable,
 )
 
 from typing_extensions import Self  # In 3.11, import this from `typing`
@@ -1135,7 +1134,15 @@ async def async_fifo_stream(
     to_stop = asyncio.Event()
     tasks = asyncio.Queue(capacity + 1)
     feeder = asyncio.create_task(
-        feed(instream, func, to_stop=to_stop, tasks=tasks, preprocessor=preprocessor, **kwargs), name=name
+        feed(
+            instream,
+            func,
+            to_stop=to_stop,
+            tasks=tasks,
+            preprocessor=preprocessor,
+            **kwargs,
+        ),
+        name=name,
     )
 
     try:

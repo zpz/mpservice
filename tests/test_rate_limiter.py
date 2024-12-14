@@ -5,7 +5,7 @@ from threading import Thread
 
 import pytest
 
-from mpservice._rate_limiter import Empty, Full, RateLimiter, Ring, AsyncRateLimiter
+from mpservice._rate_limiter import AsyncRateLimiter, Empty, Full, RateLimiter, Ring
 
 
 def test_ring():

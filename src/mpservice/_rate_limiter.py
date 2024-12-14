@@ -86,7 +86,7 @@ class RateLimiter:
         The 10 events do not need to happen **evenly** in the 60-second time window;
         they can very well happen in a burst or multiple bursts.
 
-        The methods :meth:`wait` and :meth:`nowait` are thread safe. 
+        The methods :meth:`wait` and :meth:`nowait` are thread safe.
         This object can be passed into multiple threads and used in each thread concurrently.
         """
         self.limit = limit
@@ -106,7 +106,7 @@ class RateLimiter:
             tokens.push(perf_counter())
             return True
         return False
-            
+
     def wait(self) -> None:
         """
         Once the user is ready to do "the thing" (such as calling an HTTP service)
@@ -153,14 +153,13 @@ class RateLimiter:
             return self._push_one()
 
 
-
-
 class AsyncRateLimiter:
-    '''
+    """
     An ``AsyncRateLimiter`` is used by one or more async workers in the same thread.
 
     See :class:`RateLimiter` for doc.
-    '''
+    """
+
     def __init__(self, limit: int, time_window_in_seconds: float | int = 1):
         self.limit = limit
         self._time_window = time_window_in_seconds
@@ -169,7 +168,7 @@ class AsyncRateLimiter:
 
     def _push_one(self):
         return RateLimiter._push_one(self)
-            
+
     async def wait(self) -> None:
         async with self._lock:
             if self._push_one():
