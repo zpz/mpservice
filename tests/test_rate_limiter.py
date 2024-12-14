@@ -76,7 +76,7 @@ def test_rate_limiter_threads():
         for x in range(n):
             limiter.wait()
             print(x)
-            time.sleep(random.uniform(0.1, 0.3))
+            time.sleep(random.uniform(0.01, 0.03))
 
     limiter = RateLimiter(5, time_window_in_seconds=2)
     workers = [Thread(target=worker, args=(n, limiter)) for n in (4, 5, 7, 9, 12)]
@@ -110,7 +110,7 @@ async def test_async_rate_limiter_tasks():
         for x in range(n):
             await limiter.wait()
             print(x)
-            await asyncio.sleep(random.uniform(0.1, 0.3))
+            await asyncio.sleep(random.uniform(0.01, 0.03))
 
     limiter = AsyncRateLimiter(5, time_window_in_seconds=2)
     tasks = [worker(n, limiter) for n in (4, 5, 7, 9, 12)]
