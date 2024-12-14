@@ -188,7 +188,7 @@ def test_stream_early_quit():
                 break
 
 
-def test_stream_preprocess():
+def test_stream_preprocessor():
     with Server(ProcessServlet(Double, cpus=3)) as service:
         data = [
             {'name': 'tom', 'value': 8},
@@ -200,7 +200,7 @@ def test_stream_preprocess():
                 data,
                 return_x=True,
                 return_exceptions=True,
-                preprocess=lambda x: x['value'],
+                preprocessor=lambda x: x['value'],
             )
         )
         assert zz[0] == (data[0], 16)

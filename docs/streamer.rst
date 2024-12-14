@@ -23,9 +23,25 @@ API reference
 
 .. autoclass:: mpservice.streamer.Unbatcher
 
-.. autofunction:: mpservice.streamer.tee
+.. autoclass:: mpservice.streamer.Parmapper
 
 .. autoclass:: mpservice.streamer.EagerBatcher
+
+.. autoclass:: mpservice.streamer.RateLimiter
+
+.. autoclass:: mpservice.streamer.AsyncRateLimiter
+
+.. autoclass:: mpservice.streamer.IterableQueue
+
+.. autoclass:: mpservice.streamer.ProcessRunner
+
+.. autoclass:: mpservice.streamer.ProcessRunnee
+
+.. autofunction:: mpservice.streamer.fifo_stream
+
+.. autofunction:: mpservice.streamer.async_fifo_stream
+
+.. autofunction:: mpservice.streamer.tee
 
 
 

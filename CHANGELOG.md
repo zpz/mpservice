@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.4] - 2024-12-14
+
+- Classes `Tailor` and `AsyncTailor` were renamed to `Tailer` and `AsyncTailer`.
+- `mpservice.streamer.{fifo_stream, async_fifo_stream}` get new parameter `preprocessor`.
+- `mpservice.mpserver.{Server, AsyncServer}.stream` parameter `preprocess` was renamed to `preprocessor`,
+  and they are now simply passed on to `fifo_stream` or `async_fifo_stream`.
+- New class `mpservice.streamer.AsyncRateLimiter`.
+
+
 ## [0.16.3] - 2024-11-20
 
 - New class `mpservice.streamer.RateLimiter`.

@@ -337,12 +337,12 @@ class Worker(ABC):
         If a subclass has a method ``preprocess`` or an attribute ``preprocess`` that is a free-standing
         function, this method or function must take one data element (not a batch) as the sole, positional
         argument. This processes/transforms the data, and the output is used in :meth:`call`. If this function
-        raises an exception, this element is not sent to :meth:`call`; instead, the exception is short-circuited
-        to the output queue.
+        raises an exception, this element is not sent to :meth:`call`; instead, the exception object
+        is short-circuited to the output queue.
 
         When ``self.batch_size > 1``, if :meth:`call` needs to take care of an element of the batch that
         might fail a pre-condition, it is tedious to properly assemble the "good" and "bad" elements to further processing
-        or output in right order. This ``preprocess`` mechanism helps to deal with that situation.
+        or to output in right order. This ``preprocess`` mechanism helps to deal with that situation.
 
         When a subclass is designed to do non-batching work, this attribute is not necessary, because the same
         concern can be handled in :meth:`call` directly.
@@ -1863,7 +1863,7 @@ class Server:
         return_x: bool = False,
         return_exceptions: bool = False,
         timeout: int | float = 3600,
-        preprocess: Callable = None,
+        preprocessor: Callable = None,
     ) -> Iterator:
         """
         Use this method for high-throughput processing of a long stream of
@@ -1900,52 +1900,19 @@ class Server:
             In a streaming task, "timeout" is usually not a concern compared
             to overall throughput. You can usually leave it at the default value or make it
             even larger as needed.
-        preprocess
-            A function to be applied to each element of `data_stream`, the output of which
-            is passed to workers. If exception is raised, the exception object becomes
-            the result of that input element. Whether the exception will propagate depends
-            on the value of `return_exceptions`.
-
-            This parameter is supposed to be used together with `return_x=True`, for otherwise
-            the user could apply any preprocessing themselves on the data stream before calling
-            `stream`. The "x" returned via `return_x=True` is the original element (not after
-            application of `preprocess`).
-
-            A typical use of this parameter is to extract part of the data element as the real input
-            to the service, while let the full element flow along (due to `return_x=True`) to
-            subsequent steps.
-
-            Usually this callable should be light weight. It may be a lambda function.
-
-            This callable should not modify its input.
-
-            The application of this callable happens in the current process/thread.
-            This differs from the `preprocess` attribute of the :class:`Worker`
-            class---in there, `preprocess` is called in the worker process/thread, hence the data
-            element may have gone through pickling (in the case of `ProcessServlet`).
+        preprocessor
+            See :func:`fifo_stream`.
         """
-
-        def _func(x, timeout, preprocess):
-            if preprocess is None:
-                return self._enqueue(x, timeout, False)
-            try:
-                xx = preprocess(x)
-            except Exception as e:
-                fut = concurrent.futures.Future()
-                fut.set_exception(e)
-            else:
-                fut = self._enqueue(xx, timeout, False)
-            return fut
-
         return fifo_stream(
             data_stream,
-            _func,
+            self._enqueue,
             name=f'{self.__class__.__name__}.worker_thread',
             return_x=return_x,
             return_exceptions=return_exceptions,
             capacity=self.capacity,
             timeout=timeout,
-            preprocess=preprocess,
+            backpressure=False,
+            preprocessor=preprocessor,
         )
 
 
@@ -2148,7 +2115,7 @@ class AsyncServer:
         return_x: bool = False,
         return_exceptions: bool = False,
         timeout: int | float = 3600,
-        preprocess: Callable = None,
+        preprocessor: Callable = None,
     ) -> AsyncIterator:
         """
         Calls to :meth:`stream` and :meth:`call` can happen at the same time
@@ -2157,25 +2124,13 @@ class AsyncServer:
 
         .. seealso:: :meth:`Server.stream`
         """
-
-        async def _func(x, preprocess, timeout):
-            if preprocess is None:
-                return await self._enqueue(x, timeout, backpressure=False)
-            try:
-                xx = preprocess(x)
-            except Exception as e:
-                fut = asyncio.Future()
-                fut.set_exception(e)
-            else:
-                fut = await self._enqueue(xx, timeout, backpressure=False)
-            return fut
-
         async for z in async_fifo_stream(
             data_stream,
-            _func,
+            self._enqueue,
             capacity=self._capacity,
-            preprocess=preprocess,
             timeout=timeout,
+            backpressure=False,
+            preprocessor=preprocessor,
             return_x=return_x,
             return_exceptions=return_exceptions,
         ):

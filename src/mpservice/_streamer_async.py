@@ -106,7 +106,7 @@ class AsyncStream(AsyncIterable[Elem]):
         return self
 
     def tail(self, n: int) -> Self:
-        self.streamlets.append(AsyncTailor(self.streamlets[-1], n))
+        self.streamlets.append(AsyncTailer(self.streamlets[-1], n))
         return self
 
     def groupby(self, key: Callable[[T], Any], /, **kwargs) -> Self:
@@ -301,7 +301,7 @@ class AsyncHeader(AsyncIterable):
                 break
 
 
-class AsyncTailor(AsyncIterable):
+class AsyncTailer(AsyncIterable):
     def __init__(self, instream: AsyncIterable, /, n: int):
         self._instream = instream
         assert n > 0

@@ -1,10 +1,11 @@
+import asyncio
 import random
 import time
 from threading import Thread
 
 import pytest
 
-from mpservice._rate_limiter import Empty, Full, RateLimiter, Ring
+from mpservice._rate_limiter import Empty, Full, RateLimiter, Ring, AsyncRateLimiter
 
 
 def test_ring():
@@ -84,6 +85,37 @@ def test_rate_limiter_threads():
         w.start()
     for w in workers:
         w.join()
+    t1 = time.perf_counter()
+    print('time taken:', t1 - t0)
+
+    mult, rem = divmod(4 + 5 + 7 + 9 + 12, 5)
+    print(mult * 2, rem)
+    assert mult * 2 <= t1 - t0 < mult * 2 + 1.0
+
+
+@pytest.mark.asyncio
+async def test_async_rate_limiter():
+    limiter = AsyncRateLimiter(3)
+    t0 = time.perf_counter()
+    for x in range(20):
+        await limiter.wait()
+    t1 = time.perf_counter()
+    print('time taken:', t1 - t0)
+    assert 6 < t1 - t0 < 7
+
+
+@pytest.mark.asyncio
+async def test_async_rate_limiter_tasks():
+    async def worker(n, limiter):
+        for x in range(n):
+            await limiter.wait()
+            print(x)
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+
+    limiter = AsyncRateLimiter(5, time_window_in_seconds=2)
+    tasks = [worker(n, limiter) for n in (4, 5, 7, 9, 12)]
+    t0 = time.perf_counter()
+    await asyncio.gather(*tasks)
     t1 = time.perf_counter()
     print('time taken:', t1 - t0)
 
