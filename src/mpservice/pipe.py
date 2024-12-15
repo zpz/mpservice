@@ -28,11 +28,11 @@ are created.
 
 from __future__ import annotations
 
+__all__ = ['Server', 'Client']
+
 import multiprocessing.connection
 import os
 import stat
-
-__all__ = ['Server', 'Client']
 
 
 def _mkfifo(path: str):

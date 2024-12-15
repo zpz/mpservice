@@ -59,9 +59,10 @@ The use of ``starlette`` is very lightweight: it just handles HTTP
 routing and request acceptance/response.
 """
 
-from ._http import start_server, stop_server
-
 __all__ = ['start_server', 'stop_server']
+
+
+from ._http import start_server, stop_server
 
 
 # About server shutdown:

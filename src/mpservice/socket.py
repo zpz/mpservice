@@ -4,6 +4,13 @@ two Python processes on the same machine.
 
 from __future__ import annotations
 
+__all__ = [
+    'SocketApplication',
+    'SocketServer',
+    'SocketClient',
+    'make_server',
+]
+
 import asyncio
 import concurrent.futures
 import functools
@@ -24,13 +31,6 @@ from typing import Any, Awaitable, Callable
 from ._queues import SingleLane
 from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing.remote_exception import RemoteException
-
-__all__ = [
-    'SocketApplication',
-    'SocketServer',
-    'SocketClient',
-    'make_server',
-]
 
 logger = logging.getLogger(__name__)
 

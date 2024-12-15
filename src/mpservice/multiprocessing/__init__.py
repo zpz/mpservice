@@ -33,6 +33,35 @@ Besides these fixes to "pain points", the module :mod:`mpservice.multiprocessing
 to the "manager" facility in the standard ``multiprocessing``, especially about "shared memory".
 """
 
+__all__ = [
+    'SpawnContext',
+    'MP_SPAWN_CTX',
+    'Process',
+    'Manager',
+    'SyncManager',
+    'Lock',
+    'RLock',
+    'Condition',
+    'Semaphore',
+    'BoundedSemaphore',
+    'Event',
+    'Barrier',
+    'Queue',
+    'JoinableQueue',
+    'SimpleQueue',
+    'Pool',
+    'RawValue',
+    'RawArray',
+    'Value',
+    'Array',
+    'cpu_count',
+    'wait',
+    'as_completed',
+    'ALL_COMPLETED',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
+]
+
 # The directory structure in this subpackage mirrors that of the standard `multiprocessing`.
 # There are a few modules that do not exist in the standard `multiprocessing`.
 # For all symbols that are importable from here, it's recommended to import them from `mpservice.multiprocessing`
@@ -78,35 +107,6 @@ Array = MP_SPAWN_CTX.Array
 # These are functions, not classes!
 
 cpu_count = MP_SPAWN_CTX.cpu_count
-
-__all__ = [
-    'SpawnContext',
-    'MP_SPAWN_CTX',
-    'Process',
-    'Manager',
-    'SyncManager',
-    'Lock',
-    'RLock',
-    'Condition',
-    'Semaphore',
-    'BoundedSemaphore',
-    'Event',
-    'Barrier',
-    'Queue',
-    'JoinableQueue',
-    'SimpleQueue',
-    'Pool',
-    'RawValue',
-    'RawArray',
-    'Value',
-    'Array',
-    'cpu_count',
-    'wait',
-    'as_completed',
-    'ALL_COMPLETED',
-    'FIRST_COMPLETED',
-    'FIRST_EXCEPTION',
-]
 
 
 def wait(

@@ -27,15 +27,7 @@ API reference
 
 .. autoclass:: mpservice.streamer.EagerBatcher
 
-.. autoclass:: mpservice.streamer.RateLimiter
-
-.. autoclass:: mpservice.streamer.AsyncRateLimiter
-
 .. autoclass:: mpservice.streamer.IterableQueue
-
-.. autoclass:: mpservice.streamer.ProcessRunner
-
-.. autoclass:: mpservice.streamer.ProcessRunnee
 
 .. autofunction:: mpservice.streamer.fifo_stream
 

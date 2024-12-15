@@ -303,15 +303,15 @@ Run it::
 
 from __future__ import annotations
 
-import traceback
-from types import TracebackType
-from typing import Optional
-
 __all__ = [
     'RemoteException',
     'get_remote_traceback',
     'is_remote_exception',
 ]
+
+import traceback
+from types import TracebackType
+from typing import Optional
 
 
 # This class should be in the module `mpserver`.

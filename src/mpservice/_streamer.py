@@ -34,7 +34,6 @@ import random
 import threading
 import time
 import traceback
-from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -1211,6 +1210,7 @@ class Parmapper(Iterable):
         concurrency: int = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        preprocessor: Callable = None,
         executor_initializer=None,
         executor_init_args=(),
         parmapper_name='parmapper',
@@ -1238,6 +1238,7 @@ class Parmapper(Iterable):
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
+        self._preprocessor = preprocessor
         self._executor_type = executor
         if concurrency is None:
             concurrency = _NUM_THREADS if executor == 'thread' else _NUM_PROCESSES
@@ -1245,6 +1246,9 @@ class Parmapper(Iterable):
         self._executor_initializer = executor_initializer
         self._executor_init_args = executor_init_args
         self._name = parmapper_name
+        self._fifo_capacity = (
+            self._concurrency * 2
+        )  # user might want to experiment with this value
 
     def __iter__(self):
         if self._executor_type == 'thread':
@@ -1271,9 +1275,10 @@ class Parmapper(Iterable):
                 self._instream,
                 _work,
                 name=self._name,
-                capacity=self._concurrency * 2,
+                capacity=self._fifo_capacity,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
+                preprocessor=self._preprocessor,
                 **self._func_kwargs,
             )
 
@@ -1289,6 +1294,7 @@ class ParmapperAsync(Iterable):
         concurrency: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        preprocessor: Callable = None,
         parmapper_name='parmapper-sync-async',
         async_context: dict = None,
         **kwargs,
@@ -1324,9 +1330,11 @@ class ParmapperAsync(Iterable):
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
+        self._preprocessor = preprocessor
         self._concurrency = concurrency or 128
         self._name = parmapper_name
         self._async_context = async_context or {}
+        self._fifo_capacity = self._concurrency * 2
 
     def __iter__(self):
         def _do_async(to_stop, loop):
@@ -1360,9 +1368,10 @@ class ParmapperAsync(Iterable):
             yield from fifo_stream(
                 self._instream,
                 func,
-                capacity=self._concurrency * 2,
+                capacity=self._fifo_capacity,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
+                preprocessor=self._preprocessor,
                 **self._func_kwargs,
                 **self._async_context,
             )
@@ -1835,106 +1844,3 @@ class IterableQueue(Iterator[T]):
         for _ in range(self._num_suppliers):
             z = self._used_lids.get()
             self._spare_lids.put(z)
-
-
-class ProcessRunnee(ABC):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs) -> Any:
-        raise NotImplementedError
-
-
-class ProcessRunner:
-    """
-    `ProcessRunner` creates a custom object (of a subclass of `ProcessRunnee`)
-    in "background" process, and calls the object's `__call__` method as needed,
-    any number of times, while keeping the background process alive until `join` is called.
-
-    Some initial motivations for this class include:
-
-    - The custom object may perform nontrivial setup once, and keep the setup in effect
-      through the object's lifetime.
-
-    - User may pass certain data to the custom object's `__init__` via `ProcessRunner.__init__`.
-      A particular use case is to pass in a `mpservice.multiprocessing.Queue` or `mpservice.streamer.IterableQueue`,
-      because these objects can't be passed to the custom object via `ProcessRunner.restart`.
-
-      Note that a `mpservice.multiprocessing.Queue` can't be contained in another `mpservice.multiprocessing.Queue`,
-      nor can it be passed to a `mpservice.multiprocessing.Manager` in a call to a "proxy method".
-      If either is possible, the class `ProcessRunner` is not that needed.
-
-    In some use cases, `ProcessRunner`, along with `IterableQueue` and its method `renew`, are useful in stream processing.
-    """
-
-    def __init__(
-        self,
-        *,
-        target: type[ProcessRunnee],
-        args=None,
-        kwargs=None,
-        name=None,
-    ):
-        self._instructions = multiprocessing.Queue()
-        self._result = multiprocessing.Queue(maxsize=1)
-        self._process = multiprocessing.Process(
-            target=self._work,
-            kwargs={
-                'instructions': self._instructions,
-                'result': self._result,
-                'worker_cls': target,
-                'args': args or (),
-                'kwargs': kwargs or {},
-            },
-            name=name,
-        )
-
-    @staticmethod
-    def _work(
-        instructions,
-        result,
-        worker_cls: type[ProcessRunnee],
-        args,
-        kwargs,
-    ):
-        with worker_cls(*args, **kwargs) as worker:
-            while True:
-                zz = instructions.get()
-                if zz is None:
-                    break
-                try:
-                    z = worker(*zz[0], **zz[1])
-                except Exception as e:
-                    z = remote_exception.RemoteException(e)
-                result.put(z)
-
-    def start(self):
-        self._process.start()
-
-    def join(self, timeout=None):
-        self._instructions.put(None)
-        self._process.join(timeout=timeout)
-
-    def restart(self, *args, **kwargs):
-        self._instructions.put((args, kwargs))
-
-    def rejoin(self):
-        z = self._result.get()
-        if isinstance(z, Exception):
-            raise z
-        return z
-
-    def __enter__(self):
-        self.start()
-        return self
-
-    def __exit__(self, *args):
-        self.join()
-
-    def __call__(self, *args, **kwargs):
-        self.restart(*args, **kwargs)
-        return self.rejoin()
