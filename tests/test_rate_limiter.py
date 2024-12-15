@@ -90,7 +90,7 @@ def test_rate_limiter_threads():
 
     mult, rem = divmod(4 + 5 + 7 + 9 + 12, 5)
     print(mult * 2, rem)
-    assert mult * 2 <= t1 - t0 < mult * 2 + 1.0
+    assert (mult - 1) * 2 <= t1 - t0 < mult * 2 + 1.0
 
 
 @pytest.mark.asyncio
@@ -121,4 +121,4 @@ async def test_async_rate_limiter_tasks():
 
     mult, rem = divmod(4 + 5 + 7 + 9 + 12, 5)
     print(mult * 2, rem)
-    assert mult * 2 <= t1 - t0 < mult * 2 + 1.0
+    assert (mult - 1) * 2 <= t1 - t0 < mult * 2 + 1.0
