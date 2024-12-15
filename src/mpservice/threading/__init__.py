@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+__all__ = [
+    'InvalidStateError',
+    'Thread',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
+    'ALL_COMPLETED',
+    'wait',
+    'as_completed',
+]
+
 import concurrent.futures
 import ctypes
 import threading
@@ -14,15 +24,6 @@ from typing import Type
 # https://stackoverflow.com/questions/36484151/throw-an-exception-into-another-thread
 from .._common import TimeoutError
 
-__all__ = [
-    'InvalidStateError',
-    'Thread',
-    'FIRST_COMPLETED',
-    'FIRST_EXCEPTION',
-    'ALL_COMPLETED',
-    'wait',
-    'as_completed',
-]
 
 
 class InvalidStateError(RuntimeError):

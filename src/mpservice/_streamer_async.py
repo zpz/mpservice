@@ -1,5 +1,6 @@
 # Async generator returns an async iterator.
-
+# This module gets less attention than `_streamer` because
+# I'm still unsure whether this module has strong use cases.
 
 import asyncio
 import functools
@@ -491,6 +492,7 @@ class AsyncParmapper(AsyncIterable):
         concurrency: int = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        preprocessor: Callable = None,
         executor_initializer=None,
         executor_init_args=(),
         parmapper_name='parmapper-async-sync',
@@ -504,6 +506,7 @@ class AsyncParmapper(AsyncIterable):
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
+        self._preprocessor = preprocessor
         self._executor_type = executor
         if concurrency is None:
             concurrency = _NUM_THREADS if executor == 'thread' else _NUM_PROCESSES
@@ -542,6 +545,7 @@ class AsyncParmapper(AsyncIterable):
                 capacity=self._concurrency * 2,
                 return_x=self._return_x,
                 return_exceptions=self._return_exceptions,
+                preprocessor=self._preprocessor,
                 executor=executor,
                 loop=loop,
                 **self._func_kwargs,
@@ -559,6 +563,7 @@ class AsyncParmapperAsync(AsyncIterable):
         concurrency: int | None = None,
         return_x: bool = False,
         return_exceptions: bool = False,
+        preprocessor: Callable = None,
         parmapper_name='parmapper-async-async',
         **kwargs,
     ):
@@ -567,6 +572,7 @@ class AsyncParmapperAsync(AsyncIterable):
         self._func_kwargs = kwargs
         self._return_x = return_x
         self._return_exceptions = return_exceptions
+        self._preprocessor = preprocessor
         self._concurrency = concurrency or 128
         self._name = parmapper_name
 
@@ -581,6 +587,7 @@ class AsyncParmapperAsync(AsyncIterable):
             capacity=self._concurrency * 2,
             return_x=self._return_x,
             return_exceptions=self._return_exceptions,
+            preprocessor=self._preprocessor,
             loop=asyncio.get_running_loop(),
             **self._func_kwargs,
         )

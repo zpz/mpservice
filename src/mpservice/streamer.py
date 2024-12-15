@@ -97,7 +97,7 @@ Suppose we want to follow the heavy ``double`` operation by a shift to each elem
 >>> def shift(x, amount):
 ...     return x + amount
 
-This is quick and easy; we decide do it "in-line" by :meth:`~Stream.map`:
+This is quick and easy; we decided to do it "in-line" by :meth:`~Stream.map`:
 
 >>> data_stream = Stream(range(20))
 >>> data_stream.parmap(double, executor='thread', concurrency=8)  # doctest: +ELLIPSIS
@@ -196,14 +196,25 @@ There are two helper functions :func:`fifo_stream` and :func:`async_fifo_stream`
 They implement a pattern that preserves element order in concurrent processing.
 """
 
-from ._rate_limiter import AsyncRateLimiter, RateLimiter
+__all__ = [
+    'Batcher',
+    'EagerBatcher',
+    'IterableQueue',
+    'Parmapper',
+    'StopRequested',
+    'Stream',
+    'Unbatcher',
+    'fifo_stream',
+    'async_fifo_stream',
+    'tee',
+]
+
+
 from ._streamer import (
     Batcher,
     EagerBatcher,
     IterableQueue,
     Parmapper,
-    ProcessRunnee,
-    ProcessRunner,
     StopRequested,
     Stream,
     Unbatcher,
@@ -212,19 +223,3 @@ from ._streamer import (
     tee,
 )
 
-__all__ = [
-    'AsyncRateLimiter',
-    'Batcher',
-    'EagerBatcher',
-    'IterableQueue',
-    'Parmapper',
-    'ProcessRunner',
-    'ProcessRunnee',
-    'RateLimiter',
-    'StopRequested',
-    'Stream',
-    'Unbatcher',
-    'fifo_stream',
-    'async_fifo_stream',
-    'tee',
-]

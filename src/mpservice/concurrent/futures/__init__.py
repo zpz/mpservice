@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+__all__ = [
+    'ThreadPoolExecutor',
+    'ProcessPoolExecutor',
+    'wait',
+    'as_completed',
+    'ALL_COMPLETED',
+    'FIRST_COMPLETED',
+    'FIRST_EXCEPTION',
+]
+
 import concurrent.futures
 import multiprocessing
 import os
@@ -17,15 +27,6 @@ FIRST_COMPLETED = concurrent.futures.FIRST_COMPLETED
 FIRST_EXCEPTION = concurrent.futures.FIRST_EXCEPTION
 
 
-__all__ = [
-    'ThreadPoolExecutor',
-    'ProcessPoolExecutor',
-    'wait',
-    'as_completed',
-    'ALL_COMPLETED',
-    'FIRST_COMPLETED',
-    'FIRST_EXCEPTION',
-]
 
 
 def _loud_thread_function(fn, *args, **kwargs):

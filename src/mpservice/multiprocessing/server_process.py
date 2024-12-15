@@ -233,6 +233,20 @@ Then we may use it like this::
 
 from __future__ import annotations
 
+__all__ = [
+    'ServerProcess',
+    'add_proxy_methods',
+    'managed',
+    'managed_list',
+    'managed_dict',
+    'managed_value',
+    'managed_array',
+    'managed_namespace',
+    'managed_iterator',
+    'BaseProxy',
+    'AutoProxy',
+]
+
 import functools
 import os
 import sys
@@ -263,19 +277,6 @@ from traceback import format_exc
 from .context import MP_SPAWN_CTX
 from .remote_exception import RemoteException
 
-__all__ = [
-    'ServerProcess',
-    'add_proxy_methods',
-    'managed',
-    'managed_list',
-    'managed_dict',
-    'managed_value',
-    'managed_array',
-    'managed_namespace',
-    'managed_iterator',
-    'BaseProxy',
-    'AutoProxy',
-]
 
 
 def get_server(address=None):

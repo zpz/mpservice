@@ -22,6 +22,22 @@ There are three levels of constructs.
 
 from __future__ import annotations
 
+__all__ = [
+    'ServerBacklogFull',
+    'Worker',
+    'make_worker',
+    'PassThrough',
+    'Servlet',
+    'ProcessServlet',
+    'ThreadServlet',
+    'SequentialServlet',
+    'EnsembleServlet',
+    'SwitchServlet',
+    'Server',
+    'AsyncServer',
+    'TimeoutError',
+]
+
 import asyncio
 import concurrent.futures
 import logging
@@ -56,21 +72,6 @@ from .threading import Thread as _Thread
 # However, if the queue is a thread queue, then a RemoteException object put in it
 # will come out as a RemoteException unchanged.
 
-__all__ = [
-    'ServerBacklogFull',
-    'Worker',
-    'make_worker',
-    'PassThrough',
-    'Servlet',
-    'ProcessServlet',
-    'ThreadServlet',
-    'SequentialServlet',
-    'EnsembleServlet',
-    'SwitchServlet',
-    'Server',
-    'AsyncServer',
-    'TimeoutError',
-]
 
 # Set level for logs produced by the standard `multiprocessing` module.
 multiprocessing.log_to_stderr(logging.WARNING)
@@ -141,7 +142,7 @@ class _SimpleThreadQueue(queue.SimpleQueue):
         self._rlock = threading.RLock()
 
 
-class Worker(ABC):
+class Worker:
     """
     ``Worker`` defines operations on a single input item or a batch of items
     in usual synchronous code. This is supposed to run in its own process (or thread)
@@ -348,9 +349,12 @@ class Worker(ABC):
         concern can be handled in :meth:`call` directly.
 
         When ``self.preprocess`` is defined, it is used in :meth:`_start_single` and :meth:`_build_input_batches`.
+
+        If a ``Server`` contains a single servlet, which uses this ``Worker``, then the functionalities of this
+        ``self.preprocess`` can be largely provided by the parameter ``preprocessor`` to ``Server.stream``.
+        In those case, there is no need for this ``self.preprocess``.
         """
 
-    @abstractmethod
     def call(self, x):
         """
         Private methods of this class wait on the input queue to gather "work orders",
@@ -368,7 +372,7 @@ class Worker(ABC):
         will be split and individually put in the output queue,
         so that the elements in the output queue (``q_out``)
         correspond to the elements in the input queue (``q_in``),
-        although *vectorized* computation, or *batching*, has happended internally.
+        although *vectorized* computation, or *batching*, has happened internally.
 
         When batching is enabled (i.e. when ``self.batch_size > 0``), the number of
         elements in ``x`` varies between calls depending on the supply
@@ -390,6 +394,10 @@ class Worker(ABC):
         If this method raises exceptions, unless the user has specific things to do,
         do not handle them; just let them happen. They will be handled
         in private methods of this class that call this method.
+
+        Usually this is the only method a subclass needs to customize.
+        In rare cases, a subclass may want to customize :meth:`stream` instead of
+        or in addition to :meth:`call`.
         """
         raise NotImplementedError
 
@@ -408,9 +416,9 @@ class Worker(ABC):
         set `self.num_stream_threads` to a positive number, thereby use threading concurrency
         in this method.
 
-        If a subclass re-implements this method without calling :meth:`call`,
-        then it needs to provide a dummy body for :meth:`call` to satisfy the requirement
-        of `abstractmethod`; the method :meth:`call` is then ignored.
+        If a subclass re-implements this method without calling :meth:`call`, then
+        :meth:`call` does not need to be implemented, because this method is the only place
+        of this class that calls :meth:`call`.
         """
         if self.num_stream_threads < 1:
             for x in xx:
@@ -477,7 +485,7 @@ class Worker(ABC):
             self.cleanup()
 
     def _start_single(self, *, q_in, q_out):
-        def get_input(q_uid):
+        def get_input(q_in, q_out, q_uid):
             batched = self.batch_size > 0
             preprocess = getattr(self, 'preprocess', None)
 
@@ -513,7 +521,7 @@ class Worker(ABC):
 
         q_uid = queue.SimpleQueue()
         batched = self.batch_size > 0
-        for y in self.stream(get_input(q_uid)):
+        for y in self.stream(get_input(q_in, q_out, q_uid)):
             if isinstance(y, Exception):
                 y = RemoteException(y)
                 # There are opportunities to print traceback
@@ -545,7 +553,7 @@ class Worker(ABC):
         )
         collector_thread.start()
 
-        def get_input(q_uids):
+        def get_input(q_in, q_out, q_uids):
             while True:
                 batch = self._get_input_batch()
                 if batch is None:
@@ -565,7 +573,7 @@ class Worker(ABC):
         q_uids = queue.SimpleQueue()
 
         try:
-            for yy in self.stream(get_input(q_uids)):
+            for yy in self.stream(get_input(q_in, q_out, q_uids)):
                 if batch_size_log_cadence and n_batches == 0:
                     batch_size_max = -1
                     batch_size_min = 1000000

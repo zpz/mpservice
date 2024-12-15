@@ -91,3 +91,12 @@ Server Process
 .. autoclass:: mpservice.multiprocessing.server_process.MemoryBlockProxy
 
 .. autofunction:: mpservice.multiprocessing.server_process.managed
+
+
+Runner
+======
+
+.. autoclass:: mpservice.multiprocessing.runner import ProcessRunner
+
+.. autoclass:: mpservice.multiprocessing.runner import ProcessRunnee
+
