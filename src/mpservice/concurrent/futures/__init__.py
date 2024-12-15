@@ -27,8 +27,6 @@ FIRST_COMPLETED = concurrent.futures.FIRST_COMPLETED
 FIRST_EXCEPTION = concurrent.futures.FIRST_EXCEPTION
 
 
-
-
 def _loud_thread_function(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)

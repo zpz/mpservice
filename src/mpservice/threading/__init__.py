@@ -25,7 +25,6 @@ from typing import Type
 from .._common import TimeoutError
 
 
-
 class InvalidStateError(RuntimeError):
     pass
 

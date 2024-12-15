@@ -32,8 +32,6 @@ from ._queues import SingleLane
 from .concurrent.futures import ThreadPoolExecutor
 from .multiprocessing.remote_exception import RemoteException
 
-
-
 logger = logging.getLogger(__name__)
 
 

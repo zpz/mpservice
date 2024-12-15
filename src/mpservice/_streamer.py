@@ -34,7 +34,6 @@ import random
 import threading
 import time
 import traceback
-from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -1247,7 +1246,9 @@ class Parmapper(Iterable):
         self._executor_initializer = executor_initializer
         self._executor_init_args = executor_init_args
         self._name = parmapper_name
-        self._fifo_capacity = self._concurrency * 2  # user might want to experiment with this value
+        self._fifo_capacity = (
+            self._concurrency * 2
+        )  # user might want to experiment with this value
 
     def __iter__(self):
         if self._executor_type == 'thread':

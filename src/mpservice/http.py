@@ -65,7 +65,6 @@ __all__ = ['start_server', 'stop_server']
 from ._http import start_server, stop_server
 
 
-
 # About server shutdown:
 #  https://github.com/encode/uvicorn/issues/742
 #  https://stackoverflow.com/questions/58133694/graceful-shutdown-of-uvicorn-starlette-app-with-websockets

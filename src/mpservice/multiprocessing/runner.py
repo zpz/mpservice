@@ -3,8 +3,7 @@ __all__ = ['ProcessRunner', 'ProcessRunnee']
 from abc import ABC, abstractmethod
 from typing import Any
 
-from . import Queue, Process
-from . import remote_exception
+from . import Process, Queue, remote_exception
 
 
 class ProcessRunnee(ABC):

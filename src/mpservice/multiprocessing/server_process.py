@@ -278,7 +278,6 @@ from .context import MP_SPAWN_CTX
 from .remote_exception import RemoteException
 
 
-
 def get_server(address=None):
     # If `None`, the caller is not running in the manager server process.
     # Otherwise, the return is the `Server` object that is running in the current process.

@@ -1,6 +1,6 @@
 import mpservice
+from mpservice.multiprocessing.runner import ProcessRunnee, ProcessRunner
 from mpservice.streamer import IterableQueue
-from mpservice.multiprocessing.runner import ProcessRunner, ProcessRunnee
 
 
 class MyProcessRunnee(ProcessRunnee):

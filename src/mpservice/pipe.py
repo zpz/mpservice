@@ -35,7 +35,6 @@ import os
 import stat
 
 
-
 def _mkfifo(path: str):
     if os.path.exists(path):
         assert stat.S_ISFIFO(
