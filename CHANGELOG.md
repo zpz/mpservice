@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.6] - 2024-12-17
+
+- Removed module `mpservice.rate_limiter` (moved to package `cloudly`).
+- Bug fix regarding `mpservice.mpserver.Worker.preprocess`--now Exception objects are not sent to `preprocess`.
+
+
 ## [0.16.5] - 2024-12-14
 
 - `mpservice.streamer.Parmapper` gets new parameter `preprocessor`, which is passed on to `fifo_stream`.
