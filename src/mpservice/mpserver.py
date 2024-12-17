@@ -364,6 +364,11 @@ class Worker:
         If ``self.batch_size == 0``, then ``x`` is a single
         element, and this method returns result for ``x``.
 
+        `x` is not an ``Exception`` or ``RemoteException`` object;
+        such a value would have been routed to the outgoing pipe and not
+        passed to this method.
+        The same is true for elements of `x` when `self.batch_size > 0`.
+
         If ``self.batch_size > 0`` (including 1), then
         ``x`` is a list of input data elements, and this
         method returns a list (or `Sequence`_) of results corresponding
@@ -408,6 +413,10 @@ class Worker:
         This function yields the results of :meth:`call` for the elements of `xx`,
         in the right order. If any invocation of :meth:`call` raises an exception,
         the exception object is yielded.
+
+        The elements of `xx` (or elements of the elements of ``x`` when `self.batch_size > 0`)
+        are not instances of `Exception` or `RemoteException`. Such values would have
+        been routed to the outgoing pipe and not passed to this method.
 
         The background loop in :meth:`start` calls this method and does not
         call :meth:`call` directly.
@@ -499,10 +508,11 @@ class Worker:
                 uid, x = z
 
                 if preprocess is not None:
-                    try:
-                        x = preprocess(x)
-                    except Exception as e:
-                        x = e
+                    if not isinstance(x, (Exception, RemoteException)):
+                        try:
+                            x = preprocess(x)
+                        except Exception as e:
+                            x = e
 
                 # If it's an exception, short-circuit to output.
                 if isinstance(
@@ -641,10 +651,11 @@ class Worker:
                         uid, x = z
 
                         if preprocess is not None:
-                            try:
-                                x = preprocess(x)
-                            except Exception as e:
-                                x = e
+                            if not isinstance(x, (Exception, RemoteException)):
+                                try:
+                                    x = preprocess(x)
+                                except Exception as e:
+                                    x = e
 
                         if isinstance(x, Exception):
                             q_out.put((uid, RemoteException(x)))
