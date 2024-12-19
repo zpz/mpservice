@@ -1,17 +1,17 @@
 import multiprocessing
 import threading
 
-from mpservice.multiprocessing import Process, ProcessPoolExecutor
-from mpservice.threading import Thread, ThreadPoolExecutor
-
+from mpservice.multiprocessing import Process
+from mpservice.threading import Thread
+from mpservice.concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 def loud_worker():
     raise ValueError(3)
 
 
 def main():
-    # This prints error info
     print('\nstandard thread\n')
+    # This prints error info within the thread, as `join` does not propagate the exception.
     t = threading.Thread(target=loud_worker)
     t.start()
     t.join()
@@ -23,8 +23,10 @@ def main():
         t.join()
     except ValueError as e:
         print(repr(e))
+    # Also remove the exception handling and see the printout when it crashes here.
 
     print('\nstandard process\n')
+    # This prints error info within the process, as `join` does not propagate the exception.
     t = multiprocessing.Process(target=loud_worker)
     t.start()
     t.join()
@@ -36,6 +38,8 @@ def main():
         t.join()
     except ValueError as e:
         print(repr(e))
+    # Also remove the exception handling and see the printout when it crashes here.
+
 
     print('\ncustom thread pool loud\n')
     with ThreadPoolExecutor() as pool:

@@ -312,6 +312,7 @@ __all__ = [
 import traceback
 from types import TracebackType
 from typing import Optional
+import multiprocessing
 
 
 # This class should be in the module `mpserver`.
@@ -406,6 +407,14 @@ class RemoteException:
             pass
         elif isinstance(tb, TracebackType):
             tb = ''.join(traceback.format_exception(type(exc), exc, tb))
+            tb = f"[{multiprocessing.current_process().name}] " + tb
+
+            # The traceback will print like this:
+            #
+            # mpservice.multiprocessing.remote_exception.RemoteTraceback: (SpawnProcess-2) Traceback (most recent call last):
+            #   File ....
+            #   File ....
+            # ValueError: 3
         else:
             if tb is not None:
                 raise ValueError(f'expecting no traceback but got: {tb}')
@@ -427,6 +436,8 @@ class RemoteException:
                 tb = ''.join(
                     traceback.format_exception(type(exc), exc, exc.__traceback__)
                 )
+                tb = f"[{multiprocessing.current_process().name}] " + tb
+
             else:
                 # This use case is not in an "except" block, rather somehow there's an
                 # exception object and we need to pickle it, so we put it in a

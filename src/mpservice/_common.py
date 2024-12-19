@@ -5,5 +5,5 @@ class TimeoutError(builtins.TimeoutError):
     pass
 
 
-class StopRequested(Exception):
+class StopRequested(BaseException):
     pass
