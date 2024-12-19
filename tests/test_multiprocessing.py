@@ -203,6 +203,6 @@ def test_exit_code():
     p.start()
     try:
         p.join()
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     assert p.exitcode > 0
