@@ -13,9 +13,9 @@ import multiprocessing.queues
 import multiprocessing.synchronize
 import multiprocessing.util
 import os
+import sys
 import time
 import traceback
-import sys
 
 from .._common import TimeoutError
 from ..threading import Thread
@@ -253,7 +253,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             result_and_error.send(None)
             result_and_error.close()
             return
-        
+
         logger_queue = self._kwargs.pop('_logger_queue_')
 
         if not logging.getLogger().hasHandlers():
@@ -301,7 +301,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
                     self.handle_exception(e)
                     sys.stderr.write(f'exitcode: {e.code}' + '\n')
                     result_and_error.send(None)
-                    result_and_error.send(RemoteException(e))        
+                    result_and_error.send(RemoteException(e))
         except BaseException as e:
             self.handle_exception(e)
             # This must go before the two lines below, in case

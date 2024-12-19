@@ -55,8 +55,7 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from .multiprocessing import MP_SPAWN_CTX
-from .multiprocessing import Process
+from .multiprocessing import MP_SPAWN_CTX, Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .streamer import Parmapper, async_fifo_stream, fifo_stream
 from .threading import Thread

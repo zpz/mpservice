@@ -309,10 +309,10 @@ __all__ = [
     'is_remote_exception',
 ]
 
+import multiprocessing
 import traceback
 from types import TracebackType
 from typing import Optional
-import multiprocessing
 
 
 # This class should be in the module `mpserver`.
@@ -407,7 +407,7 @@ class RemoteException:
             pass
         elif isinstance(tb, TracebackType):
             tb = ''.join(traceback.format_exception(type(exc), exc, tb))
-            tb = f"[{multiprocessing.current_process().name}] " + tb
+            tb = f'[{multiprocessing.current_process().name}] ' + tb
 
             # The traceback will print like this:
             #
@@ -436,7 +436,7 @@ class RemoteException:
                 tb = ''.join(
                     traceback.format_exception(type(exc), exc, exc.__traceback__)
                 )
-                tb = f"[{multiprocessing.current_process().name}] " + tb
+                tb = f'[{multiprocessing.current_process().name}] ' + tb
 
             else:
                 # This use case is not in an "except" block, rather somehow there's an

@@ -13,10 +13,10 @@ __all__ = [
 import concurrent.futures
 import ctypes
 import threading
+import traceback
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 from typing import Type
-import traceback
 
 # Overhead of Thread:
 # sequentially creating/running/joining
@@ -80,10 +80,8 @@ class Thread(threading.Thread):
         except BaseException as e:
             self.handle_exception(e)
 
-            tb = ''.join(
-                traceback.format_exception(type(e), e, e.__traceback__)
-            )
-            tb = f"[{threading.current_thread().name}] " + tb
+            tb = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            tb = f'[{threading.current_thread().name}] ' + tb
             e.__cause__ = type(e)(tb)
             e.__traceback__ = None
 

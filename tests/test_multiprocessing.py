@@ -1,6 +1,6 @@
 import logging
-from time import sleep
 import multiprocessing
+from time import sleep
 
 import pytest
 
@@ -206,4 +206,3 @@ def test_exit_code():
     except Exception:
         pass
     assert p.exitcode > 0
-    
