@@ -13,6 +13,7 @@ __all__ = [
 import concurrent.futures
 import ctypes
 import threading
+import traceback
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, FIRST_EXCEPTION
 from typing import Type
@@ -46,8 +47,10 @@ class Thread(threading.Thread):
 
     @staticmethod
     def handle_exception(exc):
-        # Subclass can customize this to log more info.
-        print(f'{threading.current_thread().name}: {repr(exc)}')
+        # Subclass can customize this to log more info,
+        # however, usually you should do that when calling `.join`.
+        # This method should not raise exceptions.
+        print(f'Exception in {threading.current_thread().name}: {repr(exc)}')
 
     def run(self):
         """
@@ -60,16 +63,35 @@ class Thread(threading.Thread):
                 self._future_.set_result(z)
             else:
                 self._future_.set_result(None)
-        except SystemExit:
-            # TODO: what if `e.code` is not 0?
+        except SystemExit as e:
             # TODO: what if the code has created other threads?
-            self._future_.set_result(None)
-            return
+            if e.code is None:
+                self._future_.set_result(None)
+            else:
+                if isinstance(e.code, int):
+                    if e.code == 0:
+                        self._future_.set_result(None)
+                    else:
+                        self.handle_exception(e)
+                        self._future_.set_exception(e)
+                else:
+                    self.handle_exception(e)
+                    self._future_.set_exception(e)
         except BaseException as e:
             self.handle_exception(e)
+
+            tb = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            tb = f'[{threading.current_thread().name}] ' + tb
+            e.__cause__ = type(e)(tb)
+            e.__traceback__ = None
+
             self._future_.set_exception(e)
             # Sometimes somehow error is not visible (maybe it's a `pytest` issue?).
-            raise  # Standard threading will print error info here.
+
+            if self._daemonic:
+                traceback.print_exc()
+            # In non-daemonic thread, let user control printing of exception
+            # when they call `join`.
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.

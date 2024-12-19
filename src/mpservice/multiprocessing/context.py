@@ -13,7 +13,9 @@ import multiprocessing.queues
 import multiprocessing.synchronize
 import multiprocessing.util
 import os
+import sys
 import time
+import traceback
 
 from .._common import TimeoutError
 from ..threading import Thread
@@ -162,7 +164,7 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
             target=self._run_logger,
             args=(self._logger_queue_,),
             name=f'{self.name}-LoggerThread',
-            daemon=self.daemon,
+            daemon=getattr(self, 'daemon', None),
         )
         self._logger_thread_.start()
 
@@ -232,7 +234,9 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
     @staticmethod
     def handle_exception(exc):
         # Subclass can customize this to log more info.
-        print(f'{multiprocessing.current_process().name}: {repr(exc)}')
+        # however, usually you should do that when calling `.join`.
+        # This method must not raise exceptions.
+        print(f'Exception in {multiprocessing.current_process().name}: {repr(exc)}')
 
     def run(self):
         """
@@ -241,61 +245,85 @@ class SpawnProcess(multiprocessing.context.SpawnProcess):
         ``start`` arranges for this to be run in a child process.
         """
         result_and_error = self._kwargs.pop('_result_and_error_')
-
         # Upon completion, `result_and_error` will contain `result` and `exception`
         # in this order; both may be `None`.
-        if self._target:
-            logger_queue = self._kwargs.pop('_logger_queue_')
-            if not logging.getLogger().hasHandlers():
-                # Set up putting all log messages
-                # ever produced in this process into ``logger_queue``,
-                # The log messages will be consumed
-                # in the main process by ``self._run_logger_thread``.
-                #
-                # During the execution of this process, logging should not be configured.
-                # Logging config should happen in the main process/thread.
-                root = logging.getLogger()
-                root.setLevel(logging.DEBUG)
-                qh = logging.handlers.QueueHandler(logger_queue)
-                root.addHandler(qh)
-                logging.captureWarnings(True)
-            else:
-                # If logger is configured in this process, then do not start log forwarding,
-                # but this is usually not recommended.
-                # This sually happends because logging is configured on the module level rather than
-                # in the ``if __name__ == '__main__':`` block.
-                logger_queue.close()
-                logger_queue = None
-                qh = None
 
-            try:
-                z = self._target(*self._args, **self._kwargs)
-            except SystemExit:
-                # TODO: what if `e.code` is not 0?
-                result_and_error.send(None)
-                result_and_error.send(None)
-                raise  # should it raise or stay silent?
-            except BaseException as e:
-                self.handle_exception(e)
-                # For some reason, this needs to go before the two lines below.
-                # If this is after them, the customization in `mpservice.mpserver`
-                # will not work---the extra log does not show.
-
-                result_and_error.send(None)
-                result_and_error.send(RemoteException(e))
-                raise
-            else:
-                result_and_error.send(z)
-                result_and_error.send(None)
-            finally:
-                result_and_error.close()
-                if qh is not None:
-                    logging.getLogger().removeHandler(qh)
-                    logger_queue.close()
-        else:
+        if not self._target:
             result_and_error.send(None)
             result_and_error.send(None)
             result_and_error.close()
+            return
+
+        logger_queue = self._kwargs.pop('_logger_queue_')
+
+        if not logging.getLogger().hasHandlers():
+            # Set up putting all log messages
+            # ever produced in this process into ``logger_queue``,
+            # The log messages will be consumed
+            # in the main process by ``self._run_logger_thread``.
+            #
+            # During the execution of this process, logging should not be configured.
+            # Logging config should happen in the main process/thread.
+            root = logging.getLogger()
+            root.setLevel(logging.DEBUG)
+            qh = logging.handlers.QueueHandler(logger_queue)
+            root.addHandler(qh)
+            logging.captureWarnings(True)
+        else:
+            # If logger is configured in this process, then do not start log forwarding,
+            # but this is usually not recommended.
+            # This sually happends because logging is configured on the module level rather than
+            # in the ``if __name__ == '__main__':`` block.
+            logger_queue.close()
+            logger_queue = None
+            qh = None
+
+        self._mpservice_exitcode_ = 0
+
+        try:
+            z = self._target(*self._args, **self._kwargs)
+        except SystemExit as e:
+            if e.code is None:
+                result_and_error.send(None)
+                result_and_error.send(None)
+            else:
+                if isinstance(e.code, int):
+                    if e.code == 0:
+                        result_and_error.send(None)
+                        result_and_error.send(None)
+                    else:
+                        self._mpservice_exitcode_ = e.code
+                        self.handle_exception(e)
+                        result_and_error.send(None)
+                        result_and_error.send(RemoteException(e))
+                else:
+                    self._mpservice_exitcode_ = 1
+                    self.handle_exception(e)
+                    sys.stderr.write(f'exitcode: {e.code}' + '\n')
+                    result_and_error.send(None)
+                    result_and_error.send(RemoteException(e))
+        except BaseException as e:
+            self.handle_exception(e)
+            # This must go before the two lines below, in case
+            # user's custom `handle_exception` writes logs.
+            self._mpservice_exitcode_ = 1
+            if self.daemon:
+                traceback.print_exc()
+            result_and_error.send(None)
+            result_and_error.send(RemoteException(e))
+        else:
+            result_and_error.send(z)
+            result_and_error.send(None)
+        finally:
+            result_and_error.close()
+            if qh is not None:
+                logging.getLogger().removeHandler(qh)
+                logger_queue.close()
+
+    def _bootstrap(self, parent_sentinel=None):
+        exitcode = super()._bootstrap(parent_sentinel)
+        assert exitcode == 0
+        return self._mpservice_exitcode_
 
     def join(self, timeout=None):
         """

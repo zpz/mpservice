@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.7] - 20204-12-18
+
+- Make `StopRequested` inherit from `BaseException` instead of `Exception`.
+- Finetune printout of exception info in process and threads.
+
+
 ## [0.16.6] - 2024-12-17
 
 - Removed module `mpservice.rate_limiter` (moved to package `cloudly`).

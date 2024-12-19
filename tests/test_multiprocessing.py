@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 from time import sleep
 
 import pytest
@@ -174,3 +175,34 @@ def test_pool():
 
         result = pool.map(pool_f, range(10))
         assert result == [v * v for v in range(10)]
+
+
+def error_worker(x):
+    if x > 10:
+        raise ValueError(x)
+    return x
+
+
+def test_exit_code():
+    p = multiprocessing.get_context('spawn').Process(target=error_worker, args=(3,))
+    p.start()
+    p.join()
+    assert p.exitcode == 0
+
+    p = multiprocessing.get_context('spawn').Process(target=error_worker, args=(30,))
+    p.start()
+    p.join()
+    assert p.exitcode > 0
+
+    p = Process(target=error_worker, args=(3,))
+    p.start()
+    p.join()
+    assert p.exitcode == 0
+
+    p = Process(target=error_worker, args=(30,))
+    p.start()
+    try:
+        p.join()
+    except Exception:  # noqa: S110
+        pass
+    assert p.exitcode > 0

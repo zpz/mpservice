@@ -55,11 +55,10 @@ from typing import Any, Callable, Literal, final
 
 from ._common import TimeoutError
 from ._queues import SingleLane
-from .multiprocessing import MP_SPAWN_CTX
-from .multiprocessing import Process as _Process
+from .multiprocessing import MP_SPAWN_CTX, Process
 from .multiprocessing.remote_exception import EnsembleError, RemoteException
 from .streamer import Parmapper, async_fifo_stream, fifo_stream
-from .threading import Thread as _Thread
+from .threading import Thread
 
 # This modules uses the 'spawn' method to create processes.
 
@@ -77,20 +76,6 @@ from .threading import Thread as _Thread
 multiprocessing.log_to_stderr(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-
-class Thread(_Thread):
-    @staticmethod
-    def handle_exception(exc):
-        # print(f'{threading.current_thread().name}: {repr(exc)}')
-        logger.exception(exc)
-
-
-class Process(_Process):
-    @staticmethod
-    def handle_exception(exc):
-        # print(f'{multiprocessing.current_process().name}: {repr(exc)}')
-        logger.exception(exc)
 
 
 class ServerBacklogFull(RuntimeError):
