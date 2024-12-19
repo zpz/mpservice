@@ -1250,13 +1250,6 @@ class Parmapper(Iterable):
             self._concurrency * 2
         )  # user might want to experiment with this value
 
-
-
-
-
-
-
-
     def __iter__(self):
         if self._executor_type == 'thread':
             executor = ThreadPoolExecutor(
