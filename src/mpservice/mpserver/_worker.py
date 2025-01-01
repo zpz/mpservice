@@ -1,31 +1,21 @@
-import asyncio
-import concurrent.futures
 import logging
 import multiprocessing
 import multiprocessing.queues
 import os
 import queue
 import threading
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
-from datetime import datetime, timezone
+from collections.abc import Iterable, Iterator
 from queue import Empty
-from time import perf_counter, sleep
-from typing import Any, Callable, Literal, final
+from time import perf_counter
+from typing import Any, Callable
 
-from mpservice._common import TimeoutError
 from mpservice._queues import SingleLane
-from mpservice.multiprocessing import MP_SPAWN_CTX, Process
-from mpservice.multiprocessing.remote_exception import EnsembleError, RemoteException
-from mpservice.streamer import Parmapper, async_fifo_stream, fifo_stream
+from mpservice.multiprocessing import MP_SPAWN_CTX
+from mpservice.multiprocessing.remote_exception import RemoteException
+from mpservice.streamer import Parmapper
 from mpservice.threading import Thread
 
-
-
 logger = logging.getLogger(__name__)
-
-
-
 
 
 class _SimpleProcessQueue(multiprocessing.queues.SimpleQueue):
@@ -64,7 +54,6 @@ class _SimpleThreadQueue(queue.SimpleQueue):
     def __init__(self):
         super().__init__()
         self._rlock = threading.RLock()
-
 
 
 class Worker:
@@ -656,7 +645,6 @@ class Worker:
 
         self._batch_get_called.set()
         return out
-
 
 
 def make_worker(func: Callable[[Any], Any]) -> type[Worker]:

@@ -29,12 +29,13 @@ from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from mpservice import multiprocessing
 from mpservice._queues import SingleLane
-from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream, async_fifo_stream
 from mpservice.concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
 )
 from mpservice.threading import Thread
+
+from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream, async_fifo_stream
 
 logger = logging.getLogger(__name__)
 

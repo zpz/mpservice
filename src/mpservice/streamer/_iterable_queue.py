@@ -1,10 +1,11 @@
-from collections.abc import Iterable, Iterator
 import queue
 import threading
 import time
+from collections.abc import Iterator
 
-from mpservice._common import StopRequested
 from mpservice import multiprocessing
+from mpservice._common import StopRequested
+
 from ._streamer import T
 
 

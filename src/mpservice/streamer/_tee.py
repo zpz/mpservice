@@ -1,10 +1,9 @@
 import queue
 import threading
-from collections.abc import Iterator, Iterable
+from collections.abc import Iterable, Iterator
 from types import SimpleNamespace
 
-from ._streamer import Stream, Elem
-
+from ._streamer import Elem, Stream
 
 
 class TeeX:

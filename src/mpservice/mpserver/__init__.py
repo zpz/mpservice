@@ -20,7 +20,6 @@ There are three levels of constructs.
    a :class:`Servlet` and relays the latter's result back to the outside world.
 """
 
-
 __all__ = [
     'Worker',
     'make_worker',
@@ -38,13 +37,9 @@ __all__ = [
     'TimeoutError',
 ]
 
-from ._server import ServerBacklogFull, Server, AsyncServer, TimeoutError
-from ._servlet import Servlet, ProcessServlet, ThreadServlet, EnsembleServlet, SequentialServlet, SwitchServlet, EnsembleError
-from ._worker import Worker, make_worker, PassThrough
-
+import logging
 
 # This modules uses the 'spawn' method to create processes.
-
 # Note on the use of RemoteException:
 # The motivation of RemoteException is to wrap an Exception object to go through
 # pickling (process queue) and pass traceback info (as a str) along with it.
@@ -53,10 +48,19 @@ from ._worker import Worker, make_worker, PassThrough
 # As a result, objects taken off of a process queue will never be RemoteException objects.
 # However, if the queue is a thread queue, then a RemoteException object put in it
 # will come out as a RemoteException unchanged.
-
-
 # Set level for logs produced by the standard `multiprocessing` module.
 import multiprocessing
-import logging
+
+from ._server import AsyncServer, Server, ServerBacklogFull, TimeoutError
+from ._servlet import (
+    EnsembleError,
+    EnsembleServlet,
+    ProcessServlet,
+    SequentialServlet,
+    Servlet,
+    SwitchServlet,
+    ThreadServlet,
+)
+from ._worker import PassThrough, Worker, make_worker
 
 multiprocessing.log_to_stderr(logging.WARNING)

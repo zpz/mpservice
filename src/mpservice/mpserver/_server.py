@@ -1,30 +1,23 @@
-
 import asyncio
 import concurrent.futures
 import logging
 import multiprocessing
 import multiprocessing.queues
-import os
 import queue
 import threading
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from datetime import datetime, timezone
-from queue import Empty
-from time import perf_counter, sleep
-from typing import Any, Callable, Literal, final
-
+from time import perf_counter
+from typing import Callable, final
 
 from mpservice._common import TimeoutError
-from mpservice._queues import SingleLane
-from mpservice.multiprocessing import MP_SPAWN_CTX, Process
-from mpservice.multiprocessing.remote_exception import EnsembleError, RemoteException
-from mpservice.streamer import Parmapper, async_fifo_stream, fifo_stream
+from mpservice.multiprocessing import MP_SPAWN_CTX
+from mpservice.multiprocessing.remote_exception import RemoteException
+from mpservice.streamer import async_fifo_stream, fifo_stream
 from mpservice.threading import Thread
 
-from ._worker import Worker, _SimpleProcessQueue, _SimpleThreadQueue
 from ._servlet import Servlet
-
+from ._worker import _SimpleProcessQueue, _SimpleThreadQueue
 
 logger = logging.getLogger(__name__)
 

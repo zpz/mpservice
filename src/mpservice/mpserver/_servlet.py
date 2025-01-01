@@ -1,36 +1,18 @@
-
-
 from __future__ import annotations
 
-
-import asyncio
-import concurrent.futures
 import logging
-import multiprocessing
-import multiprocessing.queues
-import os
-import queue
-import threading
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Sequence
-from datetime import datetime, timezone
-from queue import Empty
-from time import perf_counter, sleep
-from typing import Any, Callable, Literal, final
+from collections.abc import Sequence
+from time import sleep
+from typing import Literal
 
-from mpservice._common import TimeoutError
-from mpservice._queues import SingleLane
-from mpservice.multiprocessing import MP_SPAWN_CTX, Process
+from mpservice.multiprocessing import Process
 from mpservice.multiprocessing.remote_exception import EnsembleError, RemoteException
-from mpservice.streamer import Parmapper, async_fifo_stream, fifo_stream
 from mpservice.threading import Thread
 
-from ._worker import _SimpleProcessQueue, _SimpleThreadQueue, Worker
-
+from ._worker import Worker, _SimpleProcessQueue, _SimpleThreadQueue
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class Servlet(ABC):
@@ -808,4 +790,3 @@ class SwitchServlet(Servlet):
     @property
     def children(self):
         return self._servlets
-

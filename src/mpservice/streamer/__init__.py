@@ -210,6 +210,7 @@ __all__ = [
 ]
 
 
+from ._iterable_queue import IterableQueue
 from ._streamer import (
     Batcher,
     EagerBatcher,
@@ -220,5 +221,4 @@ from ._streamer import (
     async_fifo_stream,
     fifo_stream,
 )
-from ._iterable_queue import IterableQueue
 from ._tee import tee

@@ -43,7 +43,6 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
-from types import SimpleNamespace
 from typing import (
     Any,
     Awaitable,
@@ -56,7 +55,6 @@ from typing import (
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
 from mpservice import multiprocessing
-from mpservice._common import StopRequested
 from mpservice._queues import SingleLane
 from mpservice.concurrent.futures import (
     ProcessPoolExecutor,
