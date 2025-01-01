@@ -8,7 +8,6 @@ from time import perf_counter, sleep
 
 import pytest
 
-from mpservice._streamer_async import AsyncStream
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
@@ -29,6 +28,7 @@ from mpservice.multiprocessing.remote_exception import (
     is_remote_exception,
 )
 from mpservice.streamer import Stream
+from mpservice.streamer._streamer_async import AsyncStream
 from mpservice.threading import Thread
 
 # NOTE: all calls like `await async_generator.aclose()` in this module is a work around
