@@ -213,12 +213,12 @@ __all__ = [
 from ._streamer import (
     Batcher,
     EagerBatcher,
-    IterableQueue,
     Parmapper,
     StopRequested,
     Stream,
     Unbatcher,
     async_fifo_stream,
     fifo_stream,
-    tee,
 )
+from ._iterable_queue import IterableQueue
+from ._tee import tee

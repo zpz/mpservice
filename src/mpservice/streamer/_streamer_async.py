@@ -27,14 +27,14 @@ from typing import (
 import asyncstdlib.itertools
 from typing_extensions import Self  # In 3.11, import this from `typing`
 
-from . import multiprocessing
-from ._queues import SingleLane
+from mpservice import multiprocessing
+from mpservice._queues import SingleLane
 from ._streamer import _NUM_PROCESSES, _NUM_THREADS, Stream, async_fifo_stream
-from .concurrent.futures import (
+from mpservice.concurrent.futures import (
     ProcessPoolExecutor,
     ThreadPoolExecutor,
 )
-from .threading import Thread
+from mpservice.threading import Thread
 
 logger = logging.getLogger(__name__)
 
