@@ -43,7 +43,7 @@ the processing of the input stream.
 For this purpose, we add a :meth:`~Stream.parmap` (i.e. "parallel map") operator to the stream:
 
 >>> data_stream.parmap(double, executor='thread', concurrency=8)  # doctest: +ELLIPSIS
-<mpservice._streamer.Stream object at 0x7...>
+<mpservice.streamer._streamer.Stream object at 0x7...>
 
 This requests the function ``double`` to be run in 8 threads;
 they will collectively process the input stream.
@@ -101,9 +101,9 @@ This is quick and easy; we decided to do it "in-line" by :meth:`~Stream.map`:
 
 >>> data_stream = Stream(range(20))
 >>> data_stream.parmap(double, executor='thread', concurrency=8)  # doctest: +ELLIPSIS
-<mpservice._streamer.Stream object at 0x7...>
+<mpservice.streamer._streamer.Stream object at 0x7...>
 >>> data_stream.map(shift, amount=0.8)  # doctest: +SKIP
-<mpservice._streamer.Stream object at 0x7...>
+<mpservice.streamer._streamer.Stream object at 0x7...>
 >>> for k, y in enumerate(data_stream):  # doctest: +SKIP
 ...     print(y, end='  ')  # doctest: +SKIP
 ...     if (k + 1) % 10 == 0:  # doctest: +SKIP
@@ -210,12 +210,11 @@ __all__ = [
 ]
 
 
-from ._iterable_queue import IterableQueue
+from ._iterable_queue import IterableQueue, StopRequested
 from ._streamer import (
     Batcher,
     EagerBatcher,
     Parmapper,
-    StopRequested,
     Stream,
     Unbatcher,
     async_fifo_stream,

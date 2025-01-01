@@ -4,7 +4,7 @@ from time import perf_counter
 
 import pytest
 
-from mpservice._streamer_async import AsyncIter, AsyncStream, SyncIter
+from mpservice.streamer._streamer_async import AsyncIter, AsyncStream, SyncIter
 
 
 def plus2(x):

@@ -137,10 +137,6 @@ Before continuing, can you figure out what will be printed?
 Workers
 =======
 
-.. autoclass:: mpservice.mpserver._SimpleProcessQueue
-
-.. autoclass:: mpservice.mpserver._SimpleThreadQueue
-
 .. autoclass:: mpservice.mpserver.Worker
 
 .. autofunction:: mpservice.mpserver.make_worker

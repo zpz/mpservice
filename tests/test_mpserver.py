@@ -8,7 +8,7 @@ from time import perf_counter, sleep
 
 import pytest
 
-from mpservice._streamer_async import AsyncStream
+from mpservice.streamer._streamer_async import AsyncStream
 from mpservice.mpserver import (
     AsyncServer,
     EnsembleError,
