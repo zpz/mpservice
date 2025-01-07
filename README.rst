@@ -1,7 +1,7 @@
 mpservice
 =========
 
-The package ``mpservice`` provides a few groups of facilities. The first group helps ochestrating an operation 
+The package ``mpservice`` provides a few groups of facilities. The first group helps orchestrating an operation 
 with multiple stages/components in threads and processes, such as a machine learning model;
 the second group concerns stream processing, optionally involving threads or processes for concurrency;
 the third group provides customization and enhancements to the standard packages ``multiprocessing`` and ``threading``.
@@ -22,10 +22,10 @@ Status
 Production ready. Under active development.
 
 
-Python version
---------------
 
-Development and testing were conducted in Python 3.8 until version 0.12.0.
-Starting with 0.12.1, development and testing happen in Python 3.10, although
-there is no intentional use of features beyond Python 3.8.
-Starting with 0.16.2, Python 3.10 is required.
+Licence
+-------
+
+In addition to what the LICENSE file states, permission is **NOT** granted
+for any content of this repository to be used in training, or "development" in general,
+of "coding assistance" or "code generation" models.
