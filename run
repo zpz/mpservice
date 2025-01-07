@@ -1,3 +1,4 @@
 #!/bin/bash
 
-bash <(curl -s https://raw.githubusercontent.com/zpz/biglist/master/run) $@
+export PARENT=zppz/py3:24.12.16
+bash <(curl -s https://raw.githubusercontent.com/zpz/docker-mini/main/tools/pip-based/run) $@
