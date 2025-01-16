@@ -11,6 +11,8 @@ from mpservice import multiprocessing
 from mpservice._common import StopRequested
 
 Elem = TypeVar('Elem')
+Empty = queue.Empty
+Full = queue.Full
 
 
 class Queue(queue.Queue, Generic[Elem]):
@@ -27,10 +29,6 @@ class LifoQueue(queue.LifoQueue, Generic[Elem]):
 
 class PriorityQueue(queue.PriorityQueue, Generic[Elem]):
     pass
-
-
-Empty = queue.Empty
-Full = queue.Full
 
 
 class ResponsiveQueue:

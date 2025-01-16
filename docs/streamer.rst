@@ -27,8 +27,6 @@ API reference
 
 .. autoclass:: mpservice.streamer.EagerBatcher
 
-.. autoclass:: mpservice.streamer.IterableQueue
-
 .. autofunction:: mpservice.streamer.fifo_stream
 
 .. autofunction:: mpservice.streamer.async_fifo_stream
