@@ -210,7 +210,11 @@ __all__ = [
 ]
 
 
-from ._iterable_queue import IterableQueue, StopRequested
+from mpservice.queue import (
+    IterableQueue,
+    StopRequested,
+)  # TODO: remove in release 0.17.*
+
 from ._streamer import (
     Batcher,
     EagerBatcher,
