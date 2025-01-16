@@ -12,7 +12,6 @@ import mpservice
 from mpservice.concurrent.futures import ThreadPoolExecutor
 from mpservice.streamer import (
     EagerBatcher,
-    IterableQueue,
     Stream,
     async_fifo_stream,
     fifo_stream,
@@ -712,76 +711,3 @@ def test_eager_batcher():
     zz = list(walker)
     print(zz)
     assert zz == [[1, 2, 3], [4, 5], [6], [7]]
-
-
-def test_iterable_queue_basic():
-    data = [1, 2, 3, 4, 5]
-    q = IterableQueue(queue.Queue(maxsize=10))
-    for d in data:
-        q.put(d)
-    q.put_end()
-
-    z = []
-    for d in q:
-        z.append(d)
-
-    assert z == [1, 2, 3, 4, 5]
-
-    q = IterableQueue(mpservice.multiprocessing.Queue(maxsize=3))
-    q.put(1, timeout=3)
-    q.put(2, timeout=3)
-    q.put(3, timeout=3)
-    t0 = perf_counter()
-    with pytest.raises(queue.Full):
-        q.put(4, timeout=3)
-    t1 = perf_counter()
-    assert (t1 - t0) > 2.9
-
-
-def _produce(qin, qout):
-    while True:
-        sleep(random.uniform(0.001, 0.02))
-        try:
-            z = qin.get_nowait()
-            qout.put(z)
-        except queue.Empty:
-            break
-    qout.put_end()
-
-
-def _consume(qin, qout):
-    for z in qin:
-        qout.put(z)
-        sleep(random.uniform(0.001, 0.01))
-    qout.put_end()
-
-
-def test_iterable_queue_multi_parties():
-    n_suppliers = 3
-    n_consumers = 4
-
-    for qcls, wcls in [
-        (mpservice.queue.Queue, mpservice.threading.Thread),
-        (mpservice.multiprocessing.Queue, mpservice.multiprocessing.Process),
-    ]:
-        # print()
-        # print(qcls, wcls)
-        q0 = qcls()
-        for d in range(80):
-            q0.put(d)
-
-        q1 = IterableQueue(qcls(maxsize=1000), num_suppliers=n_suppliers)
-        q2 = IterableQueue(qcls(maxsize=200), num_suppliers=n_consumers)
-
-        producers = [wcls(target=_produce, args=(q0, q1)) for _ in range(n_suppliers)]
-        consumers = [wcls(target=_consume, args=(q1, q2)) for _ in range(n_consumers)]
-
-        for w in producers + consumers:
-            w.start()
-        for w in producers + consumers:
-            w.join()
-
-        zz = []
-        for z in q2:
-            zz.append(z)
-        assert sorted(zz) == list(range(80))

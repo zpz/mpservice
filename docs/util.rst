@@ -24,3 +24,10 @@ Concurrent Futures
 
 .. autofunction:: mpservice.concurrent.futures.get_shared_process_pool
 
+
+Queue
+=====
+
+.. autoclass:: mpservice.queue.ResponsiveQueue
+
+.. autoclass:: mpservice.queue.IterableQueue

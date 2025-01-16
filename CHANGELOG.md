@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.16.7] - 20204-12-18
+## [0.16.8] - 2025-01-15
+
+- New class `mpservice.queue.ResponsiveQueue`.
+- `IterableQueue` was moved from `mpservice.streamer` into `mpservice.queue`; its implementation makes use of `ResponsiveQueue`.
+
+
+## [0.16.7] - 2024-12-18
 
 - Make `StopRequested` inherit from `BaseException` instead of `Exception`.
 - Finetune printout of exception info in process and threads.
