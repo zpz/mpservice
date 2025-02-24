@@ -199,9 +199,7 @@ They implement a pattern that preserves element order in concurrent processing.
 __all__ = [
     'Batcher',
     'EagerBatcher',
-    'IterableQueue',
     'Parmapper',
-    'StopRequested',
     'Stream',
     'Unbatcher',
     'fifo_stream',
@@ -209,11 +207,6 @@ __all__ = [
     'tee',
 ]
 
-
-from mpservice.queue import (
-    IterableQueue,
-    StopRequested,
-)  # TODO: remove in release 0.17.*
 
 from ._streamer import (
     Batcher,
