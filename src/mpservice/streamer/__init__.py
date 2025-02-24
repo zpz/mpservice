@@ -189,9 +189,6 @@ There is a module function :func:`tee`, which is analogous to the standard
 The class :class:`EagerBatcher` is analogous to :class:`Batcher` but has a timeout,
 which controls how long to wait before yielding an under-sized batch.
 
-The classes :class:`IterableQueue`, :class:`ProcessRunner` and :class:`ProcessRunee` are unrelated to :class:`Stream`.
-They have their own use cases.
-
 There are two helper functions :func:`fifo_stream` and :func:`async_fifo_stream` that can be useful independent of :class:`Stream`.
 They implement a pattern that preserves element order in concurrent processing.
 """

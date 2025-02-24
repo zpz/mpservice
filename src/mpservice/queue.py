@@ -84,10 +84,10 @@ class ResponsiveQueue:
 class IterableQueue(Iterator[Elem]):
     def __init__(
         self,
-        q: queue.Queue
-        | queue.SimpleQueue
-        | multiprocessing.Queue
-        | multiprocessing.SimpleQueue,
+        q: Queue[Elem]
+        | SimpleQueue[Elem]
+        | multiprocessing.Queue[Elem]
+        | multiprocessing.SimpleQueue[Elem],
         *,
         num_suppliers: int = 1,
         to_stop: threading.Event | multiprocessing.Event = None,
