@@ -810,23 +810,26 @@ class EagerBatcher(Iterable):
         instream,
         /,
         batch_size: int,
-        timeout: float = None,
+        batch_wait_time: float = None,
         endmarker=None,
     ):
         # ``instream`` is a queue (thread or process) with the special value ``endmarker``
         # indicating the end of the stream.
-        # ``timeout`` can be 0.
+        # ``batch_wait_time`` can be 0.
         self._instream = instream
         self._batch_size = batch_size
-        if timeout is None:
-            timeout = 3600 * 24  # effectively unlimited wait
-        self._timeout = timeout
+        if batch_wait_time is None:
+            if batch_size > 1:
+                batch_wait_time = 60
+            else:
+                batch_wait_time = 0
+        self._batch_wait_time = batch_wait_time
         self._endmarker = endmarker
 
     def __iter__(self):
         q_in = self._instream
         batchsize = self._batch_size
-        timeout = self._timeout
+        batchwaittime = self._batch_wait_time
         end = self._endmarker
 
         while True:
@@ -840,7 +843,7 @@ class EagerBatcher(Iterable):
 
             batch = [z]
             n = 1
-            deadline = time.perf_counter() + timeout
+            deadline = time.perf_counter() + batchwaittime
             # Timeout starts after the first item is obtained.
 
             while n < batchsize:
