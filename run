@@ -1,4 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-export PARENT=zppz/py3:24.12.16
-bash <(curl -s https://raw.githubusercontent.com/zpz/docker-mini/main/tools/pip-based/run) $@
+if [[ "$MSYSTEM" == "MINGW64" ]]; then
+    # Running in Git Bash on Windows.
+
+    winpty python3 -m minidocker.py run mpservice:dev
+else
+    python3 -m minidocker.py run mpservice:dev
+fi
