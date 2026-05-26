@@ -801,7 +801,7 @@ class EagerBatcher(Iterable):
     """
     ``EagerBatcher`` collects items from the incoming stream towards a target batch size and yields the batches.
     For each batch, after getting the first item, it will yield the batch either it has collected enough items
-    or has reached ``timeout``. Note, the timer starts upon getting the first item, whereas getting the first item
+    or has reached ``batch_wait_time``. Note, the timer starts upon getting the first item, whereas getting the first item
     for a new batch may take however long.
     """
 
