@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+# binary files, so they are never touched
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.gz binary
+
+# only if you ever add Windows-only scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
