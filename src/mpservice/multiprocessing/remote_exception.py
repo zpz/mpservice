@@ -329,7 +329,7 @@ class EnsembleError(RuntimeError):
             if isinstance(v, (BaseException, RemoteException)):
                 errmsg = repr(v)
                 break
-        msg = f"{results['n']}/{len(results['y'])} ensemble members finished, with {nerr} error{'s' if nerr > 1 else ''}; first error: {errmsg}"
+        msg = f'{results["n"]}/{len(results["y"])} ensemble members finished, with {nerr} error{"s" if nerr > 1 else ""}; first error: {errmsg}'
         super().__init__(msg, results)
         # self.args[1] is the results
 

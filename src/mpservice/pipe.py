@@ -37,9 +37,9 @@ import stat
 
 def _mkfifo(path: str):
     if os.path.exists(path):
-        assert stat.S_ISFIFO(
-            os.stat(path).st_mode
-        ), f"file '{path}' exists but is not a FIFO"
+        assert stat.S_ISFIFO(os.stat(path).st_mode), (
+            f"file '{path}' exists but is not a FIFO"
+        )
     else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
@@ -47,9 +47,9 @@ def _mkfifo(path: str):
         except FileExistsError:
             # The file may have been created by the other side of the connection
             # in another process since the above `exists` check.
-            assert stat.S_ISFIFO(
-                os.stat(path).st_mode
-            ), f"file '{path}' exists but is not a FIFO"
+            assert stat.S_ISFIFO(os.stat(path).st_mode), (
+                f"file '{path}' exists but is not a FIFO"
+            )
 
 
 class _Pipe:

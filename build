@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-python3 -m minidocker.py build \
-    --parent=$(python3 -m minidocker find-local-image zppz/py312)
+minidocker py build \
+    --parent=$(minidocker find-local-image zppz/py312)
 
