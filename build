@@ -1,5 +1,26 @@
 #!/usr/bin/env bash
 
-minidocker py build \
-    --parent=$(minidocker find-local-image zppz/py312)
+set -e
 
+if [[ "$(uname -o)" == "Msys" ]]; then
+    export MSYS2_ARG_CONV_EXCL='*'
+fi
+
+PARENT=$(minidocker find-local-image zppz/py314)
+PROJ="$(basename "$(pwd)")"
+
+DEPS="$(minidocker py all-deps)"
+
+docker build --no-cache -t "${PROJ}:dev" \
+    --build-arg PARENT="${PARENT}" \
+    --build-arg DEPS="${DEPS}" \
+    -f- . <<'EOF'
+ARG PARENT
+FROM ${PARENT}
+USER root
+
+ARG DEPS
+RUN printf '%s\n' "$DEPS" | pip-install -r /dev/stdin
+
+USER docker-user
+EOF
