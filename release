@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -e 
+
+rm -rf ./dist
+./run python -m build .
+echo "release artifacts are saved in dist/"

@@ -335,7 +335,7 @@ class Server:
             t0 = fut.data['t0']
             fut.data['t_cancelled'] = perf_counter()
             raise TimeoutError(
-                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
+                f'{fut.data["t1"] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total'
             ) from e
 
     def _gather_output(self) -> None:
@@ -594,7 +594,7 @@ class AsyncServer:
             fut.cancel()
             fut.data['t_cancelled'] = perf_counter()  # time of abandonment
             raise TimeoutError(
-                f"{fut.data['t1'] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total"
+                f'{fut.data["t1"] - t0:.3f} seconds enqueue, {perf_counter() - t0:.3f} seconds total'
             )
             # `fut` is also cancelled; to confirm
         except asyncio.CancelledError:

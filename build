@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [[ "$(uname -o)" == "Msys" ]]; then
+    export MSYS2_ARG_CONV_EXCL='*'
+fi
+
+PARENT=$(minidocker find-local-image zppz/py314)
+PROJ="$(basename "$(pwd)")"
+
+DEPS="$(minidocker py all-deps)"
+
+curl -fsSL https://raw.githubusercontent.com/zpz/minidocker/main/build-docker/py/Dockerfile | \
+    docker build --no-cache -t "${PROJ}:dev" \
+        --build-arg PARENT="${PARENT}" \
+        --build-arg DEPS="${DEPS}" \
+        -f- .

@@ -1,4 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-export PARENT=zppz/py3:24.12.16
-bash <(curl -s https://raw.githubusercontent.com/zpz/docker-mini/main/tools/pip-based/run) $@
+if [[ "$(uname -o)" == "Msys" ]]; then
+    export MSYS2_ARG_CONV_EXCL='*'
+fi
+
+PROJHOME=$(pwd)
+PROJ=$(basename ${PROJHOME})
+DOCKERHOME=/home/docker-user/${PROJ}
+
+docker run \
+    -v "${PROJHOME}:${DOCKERHOME}" \
+    -w "${DOCKERHOME}" \
+    -e PYTHONPATH=${DOCKERHOME}/src \
+    -it --rm --init \
+    mpservice:dev $@
+

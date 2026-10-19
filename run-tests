@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+./run py.test --cov=mpservice tests

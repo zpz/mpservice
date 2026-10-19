@@ -181,9 +181,9 @@ async def run_unix_server(conn_handler: Callable, path: str):
         In fact, if the file exists, it will be removed first.
     """
     if os.path.exists(path):
-        assert stat.S_ISSOCK(
-            os.stat(path).st_mode
-        ), f"file '{path}' exists but is not a socket file"
+        assert stat.S_ISSOCK(os.stat(path).st_mode), (
+            f"file '{path}' exists but is not a socket file"
+        )
     else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
     server = await asyncio.start_unix_server(conn_handler, path)

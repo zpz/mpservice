@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.16.9] - in progress
+
+- New script `build` using `minidocker`.
+- Replace test dependency `httpx` by `httpx2`.
+
+
 ## [0.16.8] - 2025-01-15
 
 - New class `mpservice.queue.ResponsiveQueue`.

@@ -706,7 +706,7 @@ def test_eager_batcher():
     q = queue.Queue()
     stuffer = mpservice.threading.Thread(target=stuff, args=(q,))
     stuffer.start()
-    walker = EagerBatcher(q, batch_size=3, timeout=0.2)
+    walker = EagerBatcher(q, batch_size=3, batch_wait_time=0.2)
     q.get()
     zz = list(walker)
     print(zz)

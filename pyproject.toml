@@ -39,7 +39,7 @@ doc = [
 test = [
     "coverage[toml]",
     "Faker",
-    "httpx",
+    "httpx2",
     "pytest",
     "pytest-asyncio",
     "requests",

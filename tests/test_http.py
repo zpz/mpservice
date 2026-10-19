@@ -5,7 +5,7 @@ from logging import getLogger
 from time import sleep
 
 import httpcore
-import httpx
+import httpx2 as httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse
