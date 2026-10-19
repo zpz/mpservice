@@ -11,16 +11,8 @@ PROJ="$(basename "$(pwd)")"
 
 DEPS="$(minidocker py all-deps)"
 
-docker build --no-cache -t "${PROJ}:dev" \
-    --build-arg PARENT="${PARENT}" \
-    --build-arg DEPS="${DEPS}" \
-    -f- . <<'EOF'
-ARG PARENT
-FROM ${PARENT}
-USER root
-
-ARG DEPS
-RUN printf '%s\n' "$DEPS" | pip-install -r /dev/stdin
-
-USER docker-user
-EOF
+curl -fsSL https://raw.githubusercontent.com/zpz/minidocker/main/build-docker/py/Dockerfile | \
+    docker build --no-cache -t "${PROJ}:dev" \
+        --build-arg PARENT="${PARENT}" \
+        --build-arg DEPS="${DEPS}" \
+        -f- .

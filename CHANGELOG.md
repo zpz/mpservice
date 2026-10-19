@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.16.9] - in progress
 
-- New scripts `build` and `run` using `minidocker`.
+- New script `build` using `minidocker`.
 - Replace test dependency `httpx` by `httpx2`.
 
 
